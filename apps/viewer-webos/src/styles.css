@@ -14,8 +14,8 @@
 /* Auth Card */
 .auth-screen-card {
   width: 100%;
-  max-width: 520px;
-  padding: 48px 40px;
+  max-width: 460px;
+  padding: 40px 32px;
   border-radius: 24px;
   background: rgba(30, 30, 35, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -24,16 +24,16 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 28px;
+  align-items: stretch;
+  gap: 24px;
 }
 
 /* Logo Section */
 .auth-logo {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 12px;
-  margin-bottom: 8px;
 }
 
 .auth-logo-icon {
@@ -69,9 +69,9 @@
 
 /* Subtitle */
 .auth-subtitle {
-  margin: -16px 0 0;
+  margin: -12px 0 4px;
   color: rgba(255, 255, 255, 0.6);
-  font-size: 1.1rem;
+  font-size: 1rem;
   text-align: center;
 }
 
@@ -80,7 +80,8 @@
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
+  align-items: stretch;
 }
 
 .auth-field-label {
@@ -238,8 +239,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
-  margin-top: 8px;
+  gap: 12px;
+  text-align: center;
 }
 
 .auth-link-text {
@@ -306,16 +307,16 @@
 /* Code Display Box */
 .auth-code-box {
   width: 100%;
-  padding: 32px 24px;
+  padding: 20px;
   border-radius: 20px;
   background: rgba(0, 0, 0, 0.4);
   border: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: 12px;
   position: relative;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .auth-code-box.generating {
@@ -332,7 +333,6 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  margin-bottom: 8px;
 }
 
 .auth-code-label {
@@ -364,11 +364,12 @@
 
 .auth-code-value {
   font-family: "SF Mono", "Segoe UI Mono", "Roboto Mono", monospace;
-  font-size: 1.8rem;
+  font-size: 1.5rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   color: white;
   text-align: center;
+  word-break: break-all;
 }
 
 /* Code Progress */
@@ -398,6 +399,7 @@
   grid-template-columns: 1fr 1fr;
   gap: 12px;
   width: 100%;
+  margin-top: 4px;
 }
 
 .auth-action-btn {
@@ -437,13 +439,14 @@
 /* Warning Box */
 .auth-warning {
   display: flex;
-  gap: 16px;
-  padding: 20px;
+  gap: 14px;
+  padding: 16px;
   border-radius: 16px;
   background: rgba(244, 6, 18, 0.08);
   border: 1px solid rgba(244, 6, 18, 0.15);
   opacity: 0.5;
   transition: opacity 0.3s ease;
+  box-sizing: border-box;
 }
 
 .auth-warning.active {
@@ -483,7 +486,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px;
+  padding: 14px 16px;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
@@ -491,6 +494,7 @@
   transition: all 0.2s ease;
   opacity: 0.5;
   pointer-events: none;
+  box-sizing: border-box;
 }
 
 .auth-checkbox-row.enabled {
@@ -545,7 +549,6 @@
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
   width: 100%;
-  margin-top: 8px;
 }
 
 .auth-feature-card {

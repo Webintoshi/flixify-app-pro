@@ -669,17 +669,19 @@ button {
 
 .login-container {
   width: 100%;
-  max-width: 480px;
+  max-width: 460px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 32px;
+  align-items: stretch;
+  gap: 24px;
+  padding: 0 20px;
 }
 
 /* Logo */
 .login-logo {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 12px;
 }
 
@@ -710,9 +712,10 @@ button {
 
 /* Subtitle */
 .login-subtitle {
-  margin: -16px 0 0;
+  margin: -12px 0 4px;
   color: rgba(255, 255, 255, 0.6);
   font-size: 1rem;
+  text-align: center;
 }
 
 /* Form */
@@ -721,6 +724,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  align-items: stretch;
 }
 
 .login-label {
@@ -732,19 +736,21 @@ button {
 .login-input-wrapper {
   position: relative;
   width: 100%;
+  display: flex;
+  align-items: center;
 }
 
 .login-input {
   width: 100%;
   height: 64px;
-  padding: 0 56px 0 24px;
+  padding: 0 60px 0 20px;
   border-radius: 16px;
   border: 2px solid rgba(255, 255, 255, 0.15);
   background: rgba(30, 30, 35, 0.8);
   color: #ffffff;
-  font-size: 1.4rem;
+  font-size: 1.3rem;
   font-weight: 600;
-  letter-spacing: 0.15em;
+  letter-spacing: 0.12em;
   font-family: "SF Mono", "Segoe UI Mono", "Roboto Mono", monospace;
   transition: all 200ms ease;
   box-shadow: 
@@ -867,7 +873,8 @@ button {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
+  text-align: center;
 }
 
 .login-register-link {
@@ -907,7 +914,7 @@ button {
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
   width: 100%;
-  margin-top: 16px;
+  margin-top: 8px;
 }
 
 .login-feature-card {
@@ -996,12 +1003,14 @@ button {
 
 /* Code Display Box */
 .code-display-box {
+  width: 100%;
   background: rgba(0, 0, 0, 0.4);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 20px;
-  padding: 24px;
+  padding: 20px;
   position: relative;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .code-display-box.generating {
@@ -1136,7 +1145,8 @@ button {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
-  margin-top: 8px;
+  width: 100%;
+  margin-top: 4px;
 }
 
 .code-action-btn {
@@ -1174,14 +1184,16 @@ button {
 
 /* Warning Box */
 .warning-box {
+  width: 100%;
   display: flex;
-  gap: 16px;
-  padding: 20px;
+  gap: 14px;
+  padding: 16px;
   border-radius: 16px;
   background: rgba(244, 6, 18, 0.08);
   border: 1px solid rgba(244, 6, 18, 0.15);
   opacity: 0.5;
   transition: opacity 0.3s ease;
+  box-sizing: border-box;
 }
 
 .warning-box.active {
@@ -1224,10 +1236,11 @@ button {
 
 /* Acknowledgment Checkbox */
 .acknowledgment-row {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px;
+  padding: 14px 16px;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
@@ -1235,6 +1248,7 @@ button {
   transition: all 0.2s ease;
   opacity: 0.5;
   pointer-events: none;
+  box-sizing: border-box;
 }
 
 .acknowledgment-row.enabled {
