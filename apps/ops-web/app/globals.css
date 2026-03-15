@@ -1412,43 +1412,43 @@ button {
 
 .admin-shell {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr);
   min-height: 100vh;
-  background: #040404;
+  background: #0a0a0c;
 }
 
 .admin-sidebar {
   display: grid;
   align-content: start;
-  gap: 28px;
-  padding: 24px;
-  background: rgba(8, 9, 11, 0.98);
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 24px;
+  padding: 20px;
+  background: rgba(12, 13, 16, 0.98);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .admin-brand {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
   padding-bottom: 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .admin-brand-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 58px;
-  height: 58px;
-  border-radius: 18px;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
   background: linear-gradient(180deg, var(--accent), var(--accent-deep));
   color: white;
   font-weight: 900;
-  font-size: 1.6rem;
+  font-size: 1.4rem;
 }
 
 .admin-brand strong {
-  font-size: 1.95rem;
+  font-size: 1.6rem;
 }
 
 .admin-sidebar-nav {
@@ -1459,13 +1459,18 @@ button {
 .admin-sidebar-link {
   display: flex;
   align-items: center;
-  min-height: 68px;
-  padding: 0 22px;
-  border-radius: 22px;
-  color: rgba(255, 255, 255, 0.68);
-  font-size: 1.1rem;
-  font-weight: 700;
+  min-height: 52px;
+  padding: 0 18px;
+  border-radius: 14px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 1rem;
+  font-weight: 600;
   transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+}
+
+.admin-sidebar-link:hover {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .admin-sidebar-link:hover,
@@ -1482,7 +1487,8 @@ button {
   display: grid;
   align-content: start;
   gap: 24px;
-  padding: 18px 24px 32px;
+  padding: 20px 28px 32px;
+  overflow-x: hidden;
 }
 
 .admin-topbar {
@@ -1490,9 +1496,9 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 68px;
-  padding: 0 8px 18px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  min-height: 56px;
+  padding: 0 4px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .admin-topbar-link,
@@ -1536,8 +1542,9 @@ button {
 .admin-page-heading h1,
 .admin-section-header h2 {
   margin: 0;
-  font-size: clamp(2.1rem, 4vw, 3rem);
-  letter-spacing: -0.04em;
+  font-size: clamp(1.8rem, 3vw, 2.4rem);
+  letter-spacing: -0.02em;
+  font-weight: 800;
 }
 
 .admin-page-heading p,
@@ -1548,8 +1555,8 @@ button {
 
 .admin-stats-grid {
   display: grid;
-  gap: 18px;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
 .admin-stat-card,
@@ -1562,13 +1569,15 @@ button {
 
 .admin-stat-card {
   display: grid;
-  gap: 12px;
-  padding: 28px;
+  gap: 10px;
+  padding: 20px 24px;
+  border-radius: 20px;
 }
 
 .admin-stat-card strong {
-  font-size: clamp(2.5rem, 5vw, 3.5rem);
+  font-size: clamp(2rem, 4vw, 2.8rem);
   line-height: 1;
+  font-weight: 800;
 }
 
 .admin-stat-kicker {
@@ -1587,7 +1596,8 @@ button {
 }
 
 .admin-section-card {
-  padding: 28px;
+  padding: 24px;
+  border-radius: 20px;
 }
 
 .admin-section-header {
@@ -1626,11 +1636,11 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 34px;
-  padding: 0 14px;
+  min-height: 28px;
+  padding: 0 12px;
   border-radius: 999px;
-  font-size: 0.95rem;
-  font-weight: 700;
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .admin-badge.is-success {
@@ -1672,20 +1682,23 @@ button {
 .admin-users-head,
 .admin-user-row {
   display: grid;
-  gap: 18px;
+  gap: 16px;
   grid-template-columns: 1.2fr 1.5fr 0.8fr 0.8fr 1fr 0.9fr 1.4fr;
   align-items: center;
 }
 
 .admin-users-head {
-  padding: 0 0 18px;
-  color: rgba(255, 255, 255, 0.44);
-  font-size: 0.95rem;
+  padding: 0 0 14px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .admin-user-row {
-  padding: 22px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 16px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .admin-user-cell {
@@ -1693,9 +1706,10 @@ button {
 }
 
 .admin-user-code {
-  font-size: 1.1rem;
+  font-size: 1rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
+  font-family: "SF Mono", "Segoe UI Mono", monospace;
 }
 
 .admin-user-notes {
@@ -1975,7 +1989,16 @@ button {
 
   .admin-sidebar {
     border-right: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 16px;
+  }
+
+  .admin-sidebar-link {
+    min-height: 48px;
+  }
+
+  .admin-main {
+    padding: 16px 20px 24px;
   }
 
   .admin-users-head {
@@ -1983,10 +2006,10 @@ button {
   }
 
   .admin-user-row {
-    gap: 12px;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding: 18px;
-    border-radius: 24px;
+    gap: 10px;
+    grid-template-columns: 1fr;
+    padding: 16px;
+    border-radius: 16px;
     background: rgba(255, 255, 255, 0.03);
   }
 
