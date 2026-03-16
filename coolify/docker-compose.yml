@@ -1,7 +1,7 @@
 services:
   api:
     build:
-      context: ..
+      context: .
       dockerfile: coolify/docker/api.Dockerfile
     environment:
       NODE_ENV: production
@@ -27,7 +27,7 @@ services:
 
   worker:
     build:
-      context: ..
+      context: .
       dockerfile: coolify/docker/worker.Dockerfile
     environment:
       NODE_ENV: production
@@ -39,7 +39,7 @@ services:
 
   ops-web:
     build:
-      context: ..
+      context: .
       dockerfile: coolify/docker/ops-web.Dockerfile
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
@@ -71,7 +71,7 @@ services:
 
   viewer-webos:
     build:
-      context: ..
+      context: .
       dockerfile: coolify/docker/viewer-webos.Dockerfile
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL}
