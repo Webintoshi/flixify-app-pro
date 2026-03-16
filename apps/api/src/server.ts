@@ -808,6 +808,13 @@ export function buildServer() {
       const transport = resolved.transport;
       const errorMessage = resolved.errorMessage;
 
+      const canAttemptPlayback = Boolean(userContext.canPlay) && Boolean(resolved.sourceUrl);
+      const optimisticProbeFallback =
+        canAttemptPlayback &&
+        !resolved.ok &&
+        typeof errorMessage === "string" &&
+        /^upstream\\s+4\\d\\d$/i.test(errorMessage.trim());
+
       await updateLiveChannelHealth(channel.id, channel.snapshot_version, {
         status: healthStatus,
         errorMessage,
@@ -816,7 +823,7 @@ export function buildServer() {
         touchPlaybackRequest: true
       });
 
-      const canPlay = Boolean(userContext.canPlay) && resolved.ok;
+      const canPlay = Boolean(userContext.canPlay) && (resolved.ok || optimisticProbeFallback);
 
       const playback = await livePlaybackManager.createPlayback({
         channelId,
@@ -827,7 +834,7 @@ export function buildServer() {
         healthStatus,
         lastCheckedAt: checkedAt,
         canPlay,
-        isVerified: Boolean(checkedAt),
+        isVerified: resolved.ok,
         errorMessage: canPlay ? null : errorMessage ?? "Canli yayin gecici olarak kullanilamiyor.",
         forceRelayRestart,
         allowFileProxyFallback: debugFileProxy,
