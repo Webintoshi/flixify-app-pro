@@ -1,0 +1,50 @@
+# viewer-windows
+
+Bu paket `apps/viewer-webos` istemcisini masaustu kabugunda (Electron) paketleyerek Windows `.exe` uretir.
+
+## Komutlar
+
+- `npm run dist:win:portable -w @flixify/viewer-windows`
+  Tek dosya portable `.exe` uretir.
+- `npm run dist:win:installer -w @flixify/viewer-windows`
+  NSIS installer `.exe` uretir.
+- `npm run dist:win -w @flixify/viewer-windows`
+  Her ikisini birden uretir.
+
+Mimariye ozel:
+
+- `npm run dist:win:installer:x64 -w @flixify/viewer-windows`
+- `npm run dist:win:installer:arm64 -w @flixify/viewer-windows`
+- `npm run dist:win:portable:x64 -w @flixify/viewer-windows`
+- `npm run dist:win:portable:arm64 -w @flixify/viewer-windows`
+
+## Cikti
+
+Uretilen dosyalar:
+
+- `apps/viewer-windows/dist-electron/*.exe`
+
+Not: build once `apps/viewer-webos` derlenir ve `dist` icerigi otomatik olarak bu pakete kopyalanir.
+
+## Runtime API Ayari
+
+- Paketleme sirasinda `web-dist/app-config.json` otomatik olusturulur.
+- Production paket icin public API adresi zorunludur (`FLIXIFY_API_BASE_URL` veya `PUBLIC_API_BASE_URL`).
+- Production build `localhost` API ile bilerek hata verir; yanlis EXE dagitimi engellenir.
+- Ornek:
+  - `FLIXIFY_API_BASE_URL=https://api.example.com npm run dist:win:installer:x64 -w @flixify/viewer-windows`
+
+Son kullanici tarafinda ekstra ayar gerekmez. API adresi EXE icine gomulu gelir.
+
+Sadece destek/operasyon icin, kurulu uygulamada API adresi yeniden paketlemeden degistirilebilir:
+
+1. Windows'ta su dosyayi olusturun/guncelleyin:
+   - `%APPDATA%\\Flixify Pro\\app-config.json`
+2. Icerik:
+   - `{ "apiBaseUrl": "https://api.example.com" }`
+3. Uygulamayi tamamen kapatip tekrar acin.
+
+Oncelik sirasi:
+1. `FLIXIFY_API_BASE_URL` (process env)
+2. `%APPDATA%\\Flixify Pro\\app-config.json`
+3. Paket icindeki `web-dist/app-config.json`

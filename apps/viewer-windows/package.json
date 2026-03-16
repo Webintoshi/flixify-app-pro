@@ -1,0 +1,63 @@
+{
+  "name": "@flixify/viewer-windows",
+  "version": "1.31.0",
+  "private": true,
+  "description": "Flixify Pro Windows desktop wrapper",
+  "author": "Flixify",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "clean": "rm -rf web-dist dist-electron",
+    "build:web": "npm run build -w @flixify/viewer-webos",
+    "sync:web": "node ./scripts/sync-web-dist.mjs",
+    "sync:web:prod": "node ./scripts/sync-web-dist.mjs --require-api-base-url",
+    "prepare:win": "npm run build:web && npm run sync:web",
+    "prepare:win:prod": "npm run build:web && npm run sync:web:prod",
+    "start": "npm run prepare:win && electron .",
+    "dist:win:portable": "npm run prepare:win:prod && electron-builder --win portable",
+    "dist:win:portable:x64": "npm run prepare:win:prod && electron-builder --win portable --x64",
+    "dist:win:portable:arm64": "npm run prepare:win:prod && electron-builder --win portable --arm64",
+    "dist:win:installer": "npm run prepare:win:prod && electron-builder --win nsis",
+    "dist:win:installer:x64": "npm run prepare:win:prod && electron-builder --win nsis --x64",
+    "dist:win:installer:arm64": "npm run prepare:win:prod && electron-builder --win nsis --arm64",
+    "dist:win": "npm run prepare:win:prod && electron-builder --win portable nsis --x64 --arm64"
+  },
+  "dependencies": {
+    "@flixify/sdk": "*",
+    "@flixify/viewer-core": "*"
+  },
+  "devDependencies": {
+    "electron": "35.2.2",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "electronVersion": "35.2.2",
+    "appId": "pro.flixify.viewer.windows",
+    "productName": "Flixify Pro",
+    "directories": {
+      "output": "dist-electron",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "web-dist/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "portable": {
+      "artifactName": "Flixify-Pro-Portable-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "artifactName": "Flixify-Pro-Setup-${version}-${arch}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "include": "build/installer.nsh"
+    }
+  }
+}

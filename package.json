@@ -1,0 +1,26 @@
+{
+  "name": "flixify-app-pro",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @flixify/contracts && npm run build -w @flixify/sdk && npm run build -w @flixify/viewer-core && npm run build -w @flixify/api && npm run build -w @flixify/worker && npm run build -w @flixify/ops-web && npm run build -w @flixify/viewer-webos",
+    "check:env": "node scripts/preflight.mjs",
+    "dev": "node scripts/preflight.mjs && node scripts/dev-stack.mjs",
+    "dev:api": "npm run dev -w @flixify/api",
+    "dev:worker": "npm run dev -w @flixify/worker",
+    "dev:ops": "npm run dev -w @flixify/ops-web",
+    "dev:ops:turbo": "npm run dev:turbo -w @flixify/ops-web",
+    "dev:webos": "npm run dev -w @flixify/viewer-webos",
+    "typecheck:native": "npm run typecheck -w @flixify/viewer-native",
+    "smoke:p0": "node scripts/smoke-p0.mjs",
+    "quality:p0": "npm run test && npm run build && npm run smoke:p0",
+    "supabase:run-sql": "node scripts/run-supabase-sql.mjs",
+    "test": "npm run test -w @flixify/contracts && npm run test -w @flixify/api && npm run test -w @flixify/worker && npm run typecheck:native"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

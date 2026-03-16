@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+.git
+.gitignore
+.DS_Store
+tmp
+output
+apps/viewer-windows/dist-electron
+apps/viewer-windows/web-dist
+**/dist-electron
+**/.next
+**/dist
+**/coverage
+**/*.log

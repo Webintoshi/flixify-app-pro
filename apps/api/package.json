@@ -1,0 +1,30 @@
+{
+  "name": "@flixify/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsup src/server.ts --format esm --clean",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.0",
+    "@flixify/contracts": "*",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.1",
+    "ffmpeg-static": "^5.3.0",
+    "jose": "^6.0.8",
+    "pg": "^8.13.3",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsup": "^8.4.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}

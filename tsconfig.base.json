@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "baseUrl": ".",
+    "paths": {
+      "@flixify/contracts": [
+        "packages/contracts/src/index.ts"
+      ],
+      "@flixify/viewer-core": [
+        "packages/viewer-core/src/index.ts"
+      ],
+      "@flixify/sdk": [
+        "packages/sdk/src/index.ts"
+      ]
+    }
+  }
+}

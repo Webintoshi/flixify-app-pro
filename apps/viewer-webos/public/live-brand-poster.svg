@@ -1,0 +1,29 @@
+<svg width="1920" height="1080" viewBox="0 0 1920 1080" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1920" height="1080" fill="#04070F"/>
+  <rect x="0" y="0" width="1920" height="1080" fill="url(#paint0_radial)" opacity="0.88"/>
+  <rect x="0" y="0" width="1920" height="1080" fill="url(#paint1_linear)" opacity="0.58"/>
+  <g opacity="0.18">
+    <circle cx="1580" cy="160" r="240" fill="#E50914"/>
+    <circle cx="300" cy="920" r="280" fill="#123D89"/>
+  </g>
+  <g transform="translate(640 408)">
+    <rect x="0" y="0" width="120" height="86" rx="20" stroke="#FF3040" stroke-width="8"/>
+    <path d="M36 0L60 24L84 0" stroke="#FF3040" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M60 86V108" stroke="#FF3040" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <text x="780" y="478" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="108" font-weight="700" letter-spacing="-3">FLIXIFY</text>
+  <rect x="1260" y="396" width="152" height="64" rx="20" fill="#E50914"/>
+  <text x="1300" y="441" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="800">PRO</text>
+  <text x="760" y="560" fill="rgba(255,255,255,0.72)" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="500">Canli yayin baslatiliyor</text>
+  <defs>
+    <radialGradient id="paint0_radial" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(960 540) rotate(90) scale(640 1140)">
+      <stop stop-color="#152544"/>
+      <stop offset="1" stop-color="#04070F"/>
+    </radialGradient>
+    <linearGradient id="paint1_linear" x1="120" y1="84" x2="1824" y2="1020" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4D0B13"/>
+      <stop offset="0.48" stop-color="#0B1330"/>
+      <stop offset="1" stop-color="#141A2D"/>
+    </linearGradient>
+  </defs>
+</svg>

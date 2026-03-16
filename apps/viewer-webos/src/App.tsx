@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import type {
   CatalogGroup,
@@ -21,7 +21,10 @@ import {
   useViewerCore
 } from "@flixify/viewer-core";
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:4000";
+const ENV_API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined;
+const DEV_API_BASE_URL = "http://localhost:4000";
+const API_HEALTH_PATH = "/health";
+const DEFAULT_RUNTIME_CONFIG_PATH = "/app-config.json";
 const LIVE_PLAYER_POSTER_URL = "/live-brand-poster.svg";
 const TV_FOCUSABLE_SELECTOR = '[data-tv-focusable="true"]';
 const AUTH_PREFILL_CODE_KEY = "flixify-auth-prefill-code";
@@ -32,6 +35,10 @@ const AUTH_ROUTE_PATHS = new Set<string>([
   registerRoute,
   ...Object.keys(legacyAuthRedirects)
 ]);
+
+type RuntimeAppConfig = {
+  apiBaseUrl?: string | null;
+};
 
 type ViewerCoreHandle = ReturnType<typeof useViewerCore>;
 type PlaybackKind = "live" | "movie" | "episode";
@@ -224,6 +231,199 @@ function downloadAuthCodeAsText(code: string) {
   URL.revokeObjectURL(downloadUrl);
 }
 
+function isLiveDebugEnabled() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    const fromStorage = window.localStorage.getItem("flixify-live-debug");
+    if (fromStorage === "1" || fromStorage === "true") {
+      return true;
+    }
+
+    const searchParams = new URLSearchParams(window.location.search);
+    const fromSearch = searchParams.get("liveDebug");
+    if (fromSearch === "1" || fromSearch === "true") {
+      return true;
+    }
+
+    const hash = window.location.hash;
+    const queryStart = hash.indexOf("?");
+    if (queryStart >= 0) {
+      const hashParams = new URLSearchParams(hash.slice(queryStart + 1));
+      const fromHash = hashParams.get("liveDebug");
+      if (fromHash === "1" || fromHash === "true") {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+function isVodDebugEnabled() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    const fromStorage = window.localStorage.getItem("flixify-vod-debug");
+    if (fromStorage === "1" || fromStorage === "true") {
+      return true;
+    }
+
+    const searchParams = new URLSearchParams(window.location.search);
+    const fromSearch = searchParams.get("vodDebug");
+    if (fromSearch === "1" || fromSearch === "true") {
+      return true;
+    }
+
+    const hash = window.location.hash;
+    const queryStart = hash.indexOf("?");
+    if (queryStart >= 0) {
+      const hashParams = new URLSearchParams(hash.slice(queryStart + 1));
+      const fromHash = hashParams.get("vodDebug");
+      if (fromHash === "1" || fromHash === "true") {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+function getRuntimeConfigPath() {
+  if (typeof window !== "undefined" && window.location.protocol === "file:") {
+    return "./app-config.json";
+  }
+  return DEFAULT_RUNTIME_CONFIG_PATH;
+}
+
+function normalizeApiBaseUrl(value: string | null | undefined) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim().replace(/\/+$/, "");
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return null;
+    }
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function resolveApiBaseUrlFromLocation() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const searchParams = new URLSearchParams(window.location.search);
+    const direct = normalizeApiBaseUrl(searchParams.get("apiBaseUrl"));
+    if (direct) {
+      return direct;
+    }
+
+    const hash = window.location.hash;
+    const queryStart = hash.indexOf("?");
+    if (queryStart >= 0) {
+      const hashParams = new URLSearchParams(hash.slice(queryStart + 1));
+      const fromHash = normalizeApiBaseUrl(hashParams.get("apiBaseUrl"));
+      if (fromHash) {
+        return fromHash;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function resolveApiBaseUrl(runtimeConfig: RuntimeAppConfig | null) {
+  const locationApiBaseUrl = resolveApiBaseUrlFromLocation();
+  if (locationApiBaseUrl) {
+    return locationApiBaseUrl;
+  }
+
+  const runtimeApiBaseUrl = normalizeApiBaseUrl(runtimeConfig?.apiBaseUrl ?? undefined);
+  if (runtimeApiBaseUrl) {
+    return runtimeApiBaseUrl;
+  }
+
+  const envApiBaseUrl = normalizeApiBaseUrl(ENV_API_BASE_URL);
+  if (envApiBaseUrl) {
+    return envApiBaseUrl;
+  }
+
+  return import.meta.env.DEV ? DEV_API_BASE_URL : null;
+}
+
+async function loadRuntimeConfig() {
+  try {
+    const response = await fetch(getRuntimeConfigPath(), { cache: "no-store" });
+    if (!response.ok) {
+      return null;
+    }
+
+    const parsed = (await response.json()) as RuntimeAppConfig;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    return {
+      apiBaseUrl: typeof parsed.apiBaseUrl === "string" ? parsed.apiBaseUrl : null
+    } satisfies RuntimeAppConfig;
+  } catch {
+    return null;
+  }
+}
+
+async function probeApiHealth(baseUrl: string) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const response = await fetch(`${baseUrl}${API_HEALTH_PATH}`, {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        message: `API yanit veriyor fakat /health ${response.status} dondu.`
+      };
+    }
+
+    return {
+      ok: true,
+      message: null
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: getMediaErrorMessage(error, "API'ye baglanilamadi.")
+    };
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 function getMediaErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
@@ -244,6 +444,19 @@ function isPlayInterruptedError(error: unknown) {
 
   const signal = `${error.name} ${error.message}`.toLowerCase();
   return signal.includes("aborterror") || signal.includes("interrupted");
+}
+
+function isUnsupportedSourceError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const signal = `${error.name} ${error.message}`.toLowerCase();
+  return (
+    signal.includes("notsupportederror") ||
+    signal.includes("no supported sources") ||
+    signal.includes("not supported")
+  );
 }
 
 function escapeFocusKey(value: string) {
@@ -592,6 +805,31 @@ function shouldUseHlsForVodPlayback(playback: VodPlaybackRecord) {
   return detectVodTransport(url) === "hls";
 }
 
+function clampPlaybackTime(nextTime: number, duration: number) {
+  const safeTime = Number.isFinite(nextTime) ? nextTime : 0;
+  if (!Number.isFinite(duration) || duration <= 0) {
+    return Math.max(0, safeTime);
+  }
+
+  return Math.min(Math.max(0, safeTime), duration);
+}
+
+function isEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+    return true;
+  }
+
+  if (target instanceof HTMLInputElement) {
+    return !["button", "checkbox", "radio", "range", "submit"].includes((target.type || "text").toLowerCase());
+  }
+
+  return false;
+}
+
 function createQueueItem(item: PlaybackItem): PlaybackQueueItem {
   return {
     id: item.id,
@@ -823,6 +1061,41 @@ function ExitFullscreenGlyph() {
       <path d="M15 9h5" />
       <path d="M9 15H4" />
       <path d="M15 15h5" />
+    </svg>
+  );
+}
+
+function PlayGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="site-glyph vod-mini-glyph" aria-hidden="true">
+      <path d="M8 6.5l9 5.5-9 5.5z" />
+    </svg>
+  );
+}
+
+function PauseGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="site-glyph vod-mini-glyph" aria-hidden="true">
+      <path d="M8.5 7v10" />
+      <path d="M15.5 7v10" />
+    </svg>
+  );
+}
+
+function SeekBackwardGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="site-glyph vod-mini-glyph" aria-hidden="true">
+      <path d="M14.5 7l-5 5 5 5" />
+      <path d="M20 7l-5 5 5 5" />
+    </svg>
+  );
+}
+
+function SeekForwardGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="site-glyph vod-mini-glyph" aria-hidden="true">
+      <path d="M9.5 7l5 5-5 5" />
+      <path d="M4 7l5 5-5 5" />
     </svg>
   );
 }
@@ -3185,6 +3458,14 @@ function LivePlayerSurface({
   const lastVolumeBeforeMuteRef = useRef(1);
   const playbackStartedAtRef = useRef(0);
   const mediaErrorStreakRef = useRef(0);
+  const relayFallbackAttemptCountRef = useRef(0);
+  const lastRelayFallbackAttemptAtRef = useRef(0);
+  const lastRelayFallbackResultRef = useRef<"none" | "success" | "fallback-direct" | "failed">("none");
+  const lastHlsNetworkRecoveryAtRef = useRef(0);
+  const lastHlsMediaRecoveryAtRef = useRef(0);
+  const lastDebugSnapshotAtRef = useRef(0);
+  const debugLogCountRef = useRef(0);
+  const liveDebugEnabledRef = useRef(false);
   const playerEngineRef = useRef<"native" | "hls.js" | "mpegts.js" | "unknown">("unknown");
   const hlsControllerRef = useRef<{
     startLoad?: (startPosition?: number) => void;
@@ -3322,6 +3603,21 @@ function LivePlayerSurface({
       return;
     }
     const media = mediaElement;
+    const liveBufferTargetSec = 180;
+    const liveBufferMaxSec = 360;
+    const liveBackBufferSec = 180;
+    const liveBufferByteCap = 220 * 1000 * 1000;
+    const liveSyncDurationSegments = 10;
+    const liveMaxLatencySegments = 30;
+    const liveDriftSoftNudgeSec = 16;
+    const liveDriftHardResyncSec = 140;
+    const liveTrimBehindEdgeSec = 30;
+    const liveWatchdogIntervalMs = 4_000;
+    const liveSilentThresholdMs = 10_000;
+    const liveAdvanceWindowMs = 10_000;
+    const liveStallRecoveryThresholdMs = 18_000;
+    const liveDebugEnabled = isLiveDebugEnabled();
+    liveDebugEnabledRef.current = liveDebugEnabled;
 
     const sessionId = sessionRef.current + 1;
     sessionRef.current = sessionId;
@@ -3367,6 +3663,27 @@ function LivePlayerSurface({
       }
     }
 
+    function debugLog(event: string, detail?: Record<string, unknown>) {
+      if (!liveDebugEnabledRef.current || typeof console === "undefined") {
+        return;
+      }
+
+      debugLogCountRef.current += 1;
+      const payload = {
+        channelId: item.id,
+        event,
+        playerState: playerStateRef.current,
+        engine: playerEngineRef.current,
+        currentTime: Number.isFinite(media.currentTime) ? Number(media.currentTime.toFixed(2)) : null,
+        bufferedSeconds: Number(getBufferRemaining().toFixed(2)),
+        bufferTargetSeconds: liveBufferTargetSec,
+        bufferMaxSeconds: liveBufferMaxSec,
+        debugIndex: debugLogCountRef.current,
+        ...(detail ?? {})
+      };
+      console.info("[flixify-live-debug]", payload);
+    }
+
     function getBufferRemaining() {
       for (let index = 0; index < media.buffered.length; index += 1) {
         const start = media.buffered.start(index);
@@ -3405,12 +3722,16 @@ function LivePlayerSurface({
       }
 
       const liveDrift = bufferedEnd - media.currentTime;
-      if (!Number.isFinite(liveDrift) || liveDrift < 18) {
+      if (!Number.isFinite(liveDrift) || liveDrift < liveDriftHardResyncSec) {
         return false;
       }
 
-      media.currentTime = Math.max(0, bufferedEnd - 2.5);
+      media.currentTime = Math.max(0, bufferedEnd - liveTrimBehindEdgeSec);
       lastProgressAtRef.current = Date.now();
+      debugLog("latency-trimmed", {
+        liveDrift: Number(liveDrift.toFixed(2)),
+        trimTargetBehindEdgeSec: liveTrimBehindEdgeSec
+      });
       return true;
     }
 
@@ -3428,6 +3749,10 @@ function LivePlayerSurface({
         playerState: playerStateRef.current,
         stallCount: stallCountRef.current,
         recoveryTier: recoveryTierRef.current,
+        bufferTargetSeconds: liveBufferTargetSec,
+        bufferMaxSeconds: liveBufferMaxSec,
+        liveSyncDurationSegments,
+        liveMaxLatencySegments,
         lastPlaybackPosition: Number(lastPlaybackPositionRef.current.toFixed(2)),
         lastFragmentBufferedAt:
           lastFragmentBufferedAtRef.current > 0
@@ -3438,7 +3763,14 @@ function LivePlayerSurface({
             ? new Date(lastManifestAdvanceAtRef.current).toISOString()
             : null,
         manifestSeq: lastManifestSequenceRef.current,
-        playlistAgeMs
+        playlistAgeMs,
+        relayAttempted: relayFallbackAttemptCountRef.current > 0,
+        relayAttemptCount: relayFallbackAttemptCountRef.current,
+        lastRelayAttemptAt:
+          lastRelayFallbackAttemptAtRef.current > 0
+            ? new Date(lastRelayFallbackAttemptAtRef.current).toISOString()
+            : null,
+        relayResult: lastRelayFallbackResultRef.current
       };
       return {
         diagnosticsSessionId: playback?.diagnosticsSessionId ?? null,
@@ -3509,7 +3841,10 @@ function LivePlayerSurface({
         errorMessage: message,
         errorCode: "playback-failed",
         detail: {
-          lastKnownPosition: lastPlaybackPositionRef.current
+          lastKnownPosition: lastPlaybackPositionRef.current,
+          relayAttempted: relayFallbackAttemptCountRef.current > 0,
+          relayAttemptCount: relayFallbackAttemptCountRef.current,
+          relayResult: lastRelayFallbackResultRef.current
         }
       });
     }
@@ -3543,6 +3878,11 @@ function LivePlayerSurface({
       stallCountRef.current = 0;
       recoveryTierRef.current = 0;
       mediaErrorStreakRef.current = 0;
+      if ((playbackSnapshotRef.current?.deliveryMode ?? "file_proxy") !== "file_proxy") {
+        relayFallbackAttemptCountRef.current = 0;
+        lastRelayFallbackAttemptAtRef.current = 0;
+        lastRelayFallbackResultRef.current = "none";
+      }
       recoveryInFlightRef.current = false;
       pendingRecoveryReportRef.current = false;
       setStateSafe("playing");
@@ -3579,6 +3919,12 @@ function LivePlayerSurface({
       if (Date.now() - lastRecoverAtRef.current < 10_000) {
         return;
       }
+      debugLog("recover-requested", {
+        reason,
+        errorCode,
+        mediaErrorStreak: mediaErrorStreakRef.current,
+        relayAttempts: relayFallbackAttemptCountRef.current
+      });
 
       recoveryInFlightRef.current = true;
       pendingRecoveryReportRef.current = playbackReportedRef.current;
@@ -3600,7 +3946,10 @@ function LivePlayerSurface({
         detail: {
           stallCount: nextStallCount,
           recoveryTier: nextRecoveryTier,
-          bufferedSeconds: Number(getBufferRemaining().toFixed(2))
+          bufferedSeconds: Number(getBufferRemaining().toFixed(2)),
+          relayAttempted: relayFallbackAttemptCountRef.current > 0,
+          relayAttemptCount: relayFallbackAttemptCountRef.current,
+          relayResult: lastRelayFallbackResultRef.current
         }
       });
 
@@ -3680,13 +4029,23 @@ function LivePlayerSurface({
       try {
         const snapshot = playbackSnapshotRef.current;
         const sourceTransport = snapshot?.sourceTransport ?? snapshot?.transport ?? item.transport ?? "unknown";
-        const shouldTryRelay =
-          snapshot?.deliveryMode === "file_proxy" &&
+        const activeDeliveryMode = snapshot?.deliveryMode ?? "file_proxy";
+        const relayFallbackCooldownMs = 20_000;
+        const relayFallbackMaxAttempts = 3;
+        const relayEligible =
+          activeDeliveryMode === "file_proxy" &&
           sourceTransport === "ts" &&
           (errorCode === "watchdog-timeout" || mediaErrorStreakRef.current >= 2);
+        const stickWithRelay = activeDeliveryMode !== "file_proxy" && sourceTransport === "ts";
+        const relayWithinLimit = relayFallbackAttemptCountRef.current < relayFallbackMaxAttempts;
+        const relayCooldownElapsed = Date.now() - lastRelayFallbackAttemptAtRef.current >= relayFallbackCooldownMs;
+        const shouldTryRelay = relayEligible && relayWithinLimit && relayCooldownElapsed;
 
         let playback: LivePlaybackRecord;
         if (shouldTryRelay) {
+          relayFallbackAttemptCountRef.current += 1;
+          lastRelayFallbackAttemptAtRef.current = Date.now();
+          lastRelayFallbackResultRef.current = "failed";
           try {
             const relayPlayback = await resolveLivePlayback(item.id, { preferRelay: true });
             if (
@@ -3695,13 +4054,33 @@ function LivePlayerSurface({
               relayPlayback.deliveryMode !== "file_proxy"
             ) {
               playback = relayPlayback;
+              lastRelayFallbackResultRef.current = "success";
             } else {
               playback = await resolveLivePlayback(item.id, { preferRelay: false });
+              lastRelayFallbackResultRef.current = "fallback-direct";
             }
           } catch {
             playback = await resolveLivePlayback(item.id, { preferRelay: false });
+            lastRelayFallbackResultRef.current = "fallback-direct";
+          }
+        } else if (stickWithRelay) {
+          try {
+            const relayPlayback = await resolveLivePlayback(item.id, { preferRelay: true });
+            if (relayPlayback.canPlay && relayPlayback.url) {
+              playback = relayPlayback;
+              lastRelayFallbackResultRef.current = "success";
+            } else {
+              playback = await resolveLivePlayback(item.id, { preferRelay: false });
+              lastRelayFallbackResultRef.current = "fallback-direct";
+            }
+          } catch {
+            playback = await resolveLivePlayback(item.id, { preferRelay: false });
+            lastRelayFallbackResultRef.current = "fallback-direct";
           }
         } else {
+          if (relayEligible && (!relayWithinLimit || !relayCooldownElapsed)) {
+            lastRelayFallbackResultRef.current = "failed";
+          }
           playback = await resolveLivePlayback(item.id, { preferRelay: false });
         }
 
@@ -3744,11 +4123,29 @@ function LivePlayerSurface({
           }
         }
 
+        const now = Date.now();
+        if (liveDebugEnabledRef.current && now - lastDebugSnapshotAtRef.current >= 8_000) {
+          lastDebugSnapshotAtRef.current = now;
+          debugLog("buffer-snapshot", {
+            bufferedEnd: bufferedEnd !== null ? Number(bufferedEnd.toFixed(2)) : null,
+            liveDrift: bufferedEnd !== null ? Number((bufferedEnd - media.currentTime).toFixed(2)) : null
+          });
+        }
+
         void trimLiveLatency();
       };
       const onWaiting = () => {
         if (!startedPlayingRef.current) {
           setStateSafe("buffering");
+          return;
+        }
+        if (
+          !recoveryInFlightRef.current &&
+          getBufferRemaining() < 0.25 &&
+          Date.now() - lastProgressAtRef.current >= liveSilentThresholdMs &&
+          Date.now() - lastRecoverAtRef.current > 10_000
+        ) {
+          void recoverPlayback("Canli akis waiting durumunda uzun sure kaldi.", "media-error");
           return;
         }
         if (getBufferRemaining() > 1.5) {
@@ -3760,6 +4157,14 @@ function LivePlayerSurface({
       const onStalled = () => {
         if (!startedPlayingRef.current) {
           setStateSafe("buffering");
+          return;
+        }
+        if (
+          !recoveryInFlightRef.current &&
+          getBufferRemaining() < 0.35 &&
+          Date.now() - lastRecoverAtRef.current > 10_000
+        ) {
+          void recoverPlayback("Canli akis stalled event ile durdu.", "media-error");
           return;
         }
         if (getBufferRemaining() > 1) {
@@ -3785,24 +4190,36 @@ function LivePlayerSurface({
         const fragmentQuietMs = now - lastFragmentBufferedAtRef.current;
         const manifestQuietMs = now - lastManifestAdvanceAtRef.current;
         const bufferedAhead = getBufferRemaining();
-        const streamAdvancing = fragmentQuietMs < 12_000 || manifestQuietMs < 12_000;
+        const streamAdvancing = fragmentQuietMs < liveAdvanceWindowMs || manifestQuietMs < liveAdvanceWindowMs;
         const bufferedEnd = getBufferedEnd();
         const liveDrift =
           bufferedEnd !== null && Number.isFinite(bufferedEnd)
             ? Math.max(0, bufferedEnd - media.currentTime)
             : bufferedAhead;
 
-        if (silentForMs < 12_000) {
+        if (silentForMs < liveSilentThresholdMs) {
           return;
         }
 
         if (streamAdvancing) {
-          if (liveDrift > 8 && playerEngineRef.current !== "mpegts.js") {
+          if (playerEngineRef.current !== "mpegts.js" && bufferedEnd !== null && liveDrift > liveDriftSoftNudgeSec) {
+            try {
+              media.currentTime = Math.max(0, bufferedEnd - Math.min(4, liveDrift / 3));
+              setStateSafe("buffering");
+              debugLog("soft-latency-nudge", {
+                liveDrift: Number(liveDrift.toFixed(2))
+              });
+              return;
+            } catch {
+              // noop
+            }
+          }
+          if (playerEngineRef.current !== "mpegts.js" && liveDrift > liveDriftHardResyncSec) {
             setStateSafe("recovering");
-            void recoverPlayback("Canli player takildi, akis canli kenara alinacak.", "player-desync");
+            void recoverPlayback("Canli player takildi, buyuk gecikme algilandi.", "player-desync");
             return;
           }
-          if (playerEngineRef.current === "mpegts.js" && silentForMs > 18_000) {
+          if (playerEngineRef.current === "mpegts.js" && silentForMs > liveStallRecoveryThresholdMs) {
             setStateSafe("buffering");
             void media.play().catch(() => undefined);
             return;
@@ -3811,13 +4228,13 @@ function LivePlayerSurface({
           return;
         }
 
-        if (silentForMs < 25_000) {
+        if (silentForMs < liveStallRecoveryThresholdMs) {
           return;
         }
 
         setStateSafe("stalled");
         void recoverPlayback("Canli akis uzun sure ilerlemedi.", "watchdog-timeout");
-      }, 5_000);
+      }, liveWatchdogIntervalMs);
 
       media.addEventListener("loadstart", onLoadStart);
       media.addEventListener("canplay", onCanPlay);
@@ -3915,24 +4332,69 @@ function LivePlayerSurface({
       const hls = new HlsCtor({
         enableWorker: true,
         lowLatencyMode: false,
-        backBufferLength: 0,
-        maxBufferSize: 64 * 1000 * 1000,
-        maxBufferLength: 24,
-        maxMaxBufferLength: 36,
-        maxBufferHole: 0.5,
-        startFragPrefetch: false,
+        initialLiveManifestSize: 6,
+        backBufferLength: liveBackBufferSec,
+        maxBufferSize: liveBufferByteCap,
+        maxBufferLength: liveBufferTargetSec,
+        maxMaxBufferLength: liveBufferMaxSec,
+        maxBufferHole: 0.45,
+        highBufferWatchdogPeriod: 2,
+        nudgeOffset: 0.1,
+        nudgeMaxRetry: 8,
+        startFragPrefetch: true,
         liveSyncMode: "buffered",
-        liveSyncDurationCount: 4,
-        liveMaxLatencyDurationCount: 8,
+        liveSyncDurationCount: liveSyncDurationSegments,
+        liveMaxLatencyDurationCount: liveMaxLatencySegments,
+        liveSyncOnStallIncrease: 2,
         maxLiveSyncPlaybackRate: 1,
-        manifestLoadingTimeOut: 12000,
-        manifestLoadingMaxRetry: 6,
-        manifestLoadingRetryDelay: 1000,
-        fragLoadingTimeOut: 15000,
-        fragLoadingMaxRetry: 6,
-        fragLoadingRetryDelay: 1000,
-        levelLoadingMaxRetry: 6,
-        levelLoadingRetryDelay: 1000
+        manifestLoadPolicy: {
+          default: {
+            maxTimeToFirstByteMs: 12_000,
+            maxLoadTimeMs: 20_000,
+            timeoutRetry: {
+              maxNumRetry: 4,
+              retryDelayMs: 500,
+              maxRetryDelayMs: 4_000
+            },
+            errorRetry: {
+              maxNumRetry: 4,
+              retryDelayMs: 1_000,
+              maxRetryDelayMs: 8_000
+            }
+          }
+        },
+        playlistLoadPolicy: {
+          default: {
+            maxTimeToFirstByteMs: 10_000,
+            maxLoadTimeMs: 16_000,
+            timeoutRetry: {
+              maxNumRetry: 4,
+              retryDelayMs: 500,
+              maxRetryDelayMs: 3_000
+            },
+            errorRetry: {
+              maxNumRetry: 4,
+              retryDelayMs: 900,
+              maxRetryDelayMs: 6_000
+            }
+          }
+        },
+        fragLoadPolicy: {
+          default: {
+            maxTimeToFirstByteMs: 12_000,
+            maxLoadTimeMs: 24_000,
+            timeoutRetry: {
+              maxNumRetry: 4,
+              retryDelayMs: 600,
+              maxRetryDelayMs: 4_000
+            },
+            errorRetry: {
+              maxNumRetry: 4,
+              retryDelayMs: 1_000,
+              maxRetryDelayMs: 8_000
+            }
+          }
+        }
       }) as {
         attachMedia: (element: HTMLMediaElement) => void;
         loadSource: (source: string) => void;
@@ -3985,12 +4447,50 @@ function LivePlayerSurface({
 
       hls.on(hlsEvents.ERROR, (_event, data) => {
         const errorData = data as { fatal?: boolean; details?: string; type?: string } | undefined;
-        if (errorData?.fatal) {
-          void recoverPlayback(
-            errorData.details ?? "Canli HLS akisi hata verdi.",
-            errorData.type ? `hls-${errorData.type}` : "hls-fatal"
-          );
+        const normalizedType = `${errorData?.type ?? ""}`.toLowerCase();
+        const normalizedDetail = `${errorData?.details ?? ""}`.toLowerCase();
+        const isNetworkError = normalizedType.includes("network");
+        const isMediaError = normalizedType.includes("media");
+        const isBufferStall =
+          normalizedDetail.includes("bufferstalled") || normalizedDetail.includes("buffer_stalled");
+
+        if (!errorData?.fatal) {
+          if (isBufferStall && getBufferRemaining() < 0.4 && Date.now() - lastRecoverAtRef.current > 10_000) {
+            void recoverPlayback("Canli HLS buffer takildi.", "hls-buffer-stalled");
+          }
+          return;
         }
+
+        if (isNetworkError && hlsControllerRef.current?.startLoad) {
+          const now = Date.now();
+          if (now - lastHlsNetworkRecoveryAtRef.current > 3_500) {
+            lastHlsNetworkRecoveryAtRef.current = now;
+            setStateSafe("recovering");
+            startedPlayingRef.current = false;
+            hlsControllerRef.current.startLoad?.(-1);
+            scheduleStartupTimeout("Canli yayin tekrar akmaya baslamadi.");
+            void media.play().catch(() => undefined);
+            return;
+          }
+        }
+
+        if (isMediaError && hlsControllerRef.current?.recoverMediaError) {
+          const now = Date.now();
+          if (now - lastHlsMediaRecoveryAtRef.current > 5_000) {
+            lastHlsMediaRecoveryAtRef.current = now;
+            setStateSafe("recovering");
+            startedPlayingRef.current = false;
+            hlsControllerRef.current.recoverMediaError?.();
+            scheduleStartupTimeout("Canli yayin tekrar akmaya baslamadi.");
+            void media.play().catch(() => undefined);
+            return;
+          }
+        }
+
+        void recoverPlayback(
+          errorData.details ?? "Canli HLS akisi hata verdi.",
+          errorData.type ? `hls-${errorData.type}` : "hls-fatal"
+        );
       });
 
       hls.attachMedia(media);
@@ -4059,10 +4559,15 @@ function LivePlayerSurface({
           enableWorkerForMSE: false,
           lazyLoad: false,
           enableStashBuffer: true,
-          stashInitialSize: 16 * 1024 * 1024,
-          autoCleanupSourceBuffer: false,
+          stashInitialSize: 2 * 1024 * 1024,
+          autoCleanupSourceBuffer: true,
+          autoCleanupMaxBackwardDuration: 90,
+          autoCleanupMinBackwardDuration: 45,
           liveBufferLatencyChasing: false,
+          liveBufferLatencyMaxLatency: 20,
+          liveBufferLatencyMinRemain: 6,
           liveBufferLatencyChasingOnPaused: false,
+          fixAudioTimestampGap: true,
           reuseRedirectedURL: true,
           referrerPolicy: "no-referrer"
         }
@@ -4070,7 +4575,7 @@ function LivePlayerSurface({
 
       if (mpegtsEvents?.ERROR) {
         player.on?.(mpegtsEvents.ERROR, () => {
-          void recoverPlayback("Canli TS akisi hata verdi.");
+          void recoverPlayback("Canli TS akisi hata verdi.", "media-error");
         });
       }
 
@@ -4168,11 +4673,16 @@ function LivePlayerSurface({
       stallCountRef.current = 0;
       recoveryTierRef.current = 0;
       mediaErrorStreakRef.current = 0;
+      relayFallbackAttemptCountRef.current = 0;
+      lastRelayFallbackAttemptAtRef.current = 0;
+      lastRelayFallbackResultRef.current = "none";
       playbackReportedRef.current = false;
       recoveryInFlightRef.current = false;
       pendingRecoveryReportRef.current = false;
       playerEngineRef.current = "unknown";
       hlsControllerRef.current = null;
+      lastHlsNetworkRecoveryAtRef.current = 0;
+      lastHlsMediaRecoveryAtRef.current = 0;
       lastBufferedEndRef.current = 0;
       lastManifestSequenceRef.current = null;
       lastProgressAtRef.current = Date.now();
@@ -4180,6 +4690,13 @@ function LivePlayerSurface({
       lastManifestAdvanceAtRef.current = Date.now();
       setInteractionRequiredSafe(false);
       setPlaybackSafe(initialLivePlayback);
+      debugLog("playback-start", {
+        sourceTransport: item.transport ?? "unknown",
+        bufferTargetSeconds: liveBufferTargetSec,
+        bufferMaxSeconds: liveBufferMaxSec,
+        liveSyncDurationSegments,
+        liveMaxLatencySegments
+      });
 
       try {
         const playback = await resolveLivePlayback(item.id, { preferRelay: false });
@@ -4423,24 +4940,57 @@ function useVodPlaybackController({
   const cleanupRef = useRef<(() => void) | null>(null);
   const sessionRef = useRef(0);
   const seekGuardTimerRef = useRef<number | null>(null);
+  const stallWatchdogTimerRef = useRef<number | null>(null);
   const desiredSeekTimeRef = useRef<number | null>(null);
   const recoverAttemptsRef = useRef(0);
+  const lastProgressAtRef = useRef(0);
+  const lastPlaybackPositionRef = useRef(0);
+  const waitingSinceRef = useRef(0);
+  const lastRecoverAtRef = useRef(0);
   const resolvedPlaybackRef = useRef<VodPlaybackRecord | null>(null);
+  const hlsControllerRef = useRef<{
+    startLoad?: (startPosition?: number) => void;
+    recoverMediaError?: () => void;
+    destroy?: () => void;
+  } | null>(null);
+  const lastHlsNetworkRecoveryAtRef = useRef(0);
+  const lastHlsMediaRecoveryAtRef = useRef(0);
+  const transcodeFallbackAttemptedRef = useRef(false);
+  const vodDebugEnabledRef = useRef(false);
+  const vodDebugCounterRef = useRef(0);
   const onEndedRef = useRef(onEnded);
 
   const [playerState, setPlayerState] = useState<PlayerState>("idle");
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [resolvedPlayback, setResolvedPlayback] = useState<VodPlaybackRecord | null>(null);
   const [interactionRequired, setInteractionRequired] = useState(false);
+  const [isPaused, setIsPaused] = useState(true);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [canSeek, setCanSeek] = useState(false);
 
   useEffect(() => {
     onEndedRef.current = onEnded;
   }, [onEnded]);
 
   useEffect(() => {
+    vodDebugEnabledRef.current = isVodDebugEnabled();
+    vodDebugCounterRef.current = 0;
     resolvedPlaybackRef.current = null;
+    hlsControllerRef.current = null;
+    lastHlsNetworkRecoveryAtRef.current = 0;
+    lastHlsMediaRecoveryAtRef.current = 0;
+    transcodeFallbackAttemptedRef.current = false;
+    lastProgressAtRef.current = Date.now();
+    lastPlaybackPositionRef.current = 0;
+    waitingSinceRef.current = 0;
+    lastRecoverAtRef.current = 0;
     setResolvedPlayback(null);
     setInteractionRequired(false);
+    setIsPaused(true);
+    setCurrentTime(0);
+    setDuration(0);
+    setCanSeek(false);
   }, [item.id]);
 
   useEffect(() => {
@@ -4449,6 +4999,10 @@ function useVodPlaybackController({
       return;
     }
     const media = mediaElement;
+    const vodWatchdogIntervalMs = 3_000;
+    const vodSilentThresholdMs = 12_000;
+    const waitingRecoveryThresholdMs = 5_500;
+    const recoveryCooldownMs = 6_000;
 
     const sessionId = sessionRef.current + 1;
     sessionRef.current = sessionId;
@@ -4458,6 +5012,42 @@ function useVodPlaybackController({
       if (seekGuardTimerRef.current !== null) {
         window.clearTimeout(seekGuardTimerRef.current);
         seekGuardTimerRef.current = null;
+      }
+    }
+
+    function clearStallWatchdog() {
+      if (stallWatchdogTimerRef.current !== null) {
+        window.clearInterval(stallWatchdogTimerRef.current);
+        stallWatchdogTimerRef.current = null;
+      }
+    }
+
+    function getBufferRemaining() {
+      const buffered = media.buffered;
+      if (!buffered || buffered.length === 0) {
+        return 0;
+      }
+
+      const current = media.currentTime;
+      for (let index = 0; index < buffered.length; index += 1) {
+        if (current >= buffered.start(index) && current <= buffered.end(index)) {
+          return Math.max(0, buffered.end(index) - current);
+        }
+      }
+
+      return 0;
+    }
+
+    function markPlaybackProgress(nextPosition?: number) {
+      const now = Date.now();
+      const position =
+        typeof nextPosition === "number" && Number.isFinite(nextPosition) ? nextPosition : media.currentTime;
+      if (Number.isFinite(position) && position > lastPlaybackPositionRef.current + 0.02) {
+        lastPlaybackPositionRef.current = position;
+        lastProgressAtRef.current = now;
+        waitingSinceRef.current = 0;
+      } else if (lastProgressAtRef.current === 0) {
+        lastProgressAtRef.current = now;
       }
     }
 
@@ -4486,8 +5076,67 @@ function useVodPlaybackController({
       }
     }
 
+    function setPausedSafe(nextValue: boolean) {
+      if (!disposed && sessionRef.current === sessionId) {
+        setIsPaused(nextValue);
+      }
+    }
+
+    function setCurrentTimeSafe(nextValue: number) {
+      if (!disposed && sessionRef.current === sessionId) {
+        setCurrentTime(nextValue);
+      }
+    }
+
+    function setDurationSafe(nextValue: number) {
+      if (!disposed && sessionRef.current === sessionId) {
+        setDuration(nextValue);
+      }
+    }
+
+    function setCanSeekSafe(nextValue: boolean) {
+      if (!disposed && sessionRef.current === sessionId) {
+        setCanSeek(nextValue);
+      }
+    }
+
+    function debugVod(event: string, detail?: Record<string, unknown>) {
+      if (!vodDebugEnabledRef.current || typeof console === "undefined") {
+        return;
+      }
+
+      vodDebugCounterRef.current += 1;
+      console.info("[flixify-vod-debug]", {
+        id: item.id,
+        kind: item.kind,
+        event,
+        index: vodDebugCounterRef.current,
+        state: playerState,
+        deliveryMode: resolvedPlaybackRef.current?.deliveryMode ?? null,
+        transport: resolvedPlaybackRef.current?.transport ?? null,
+        currentTime: Number.isFinite(media.currentTime) ? Number(media.currentTime.toFixed(2)) : null,
+        duration: Number.isFinite(media.duration) ? Number(media.duration.toFixed(2)) : null,
+        buffered: Number(getBufferRemaining().toFixed(2)),
+        ...(detail ?? {})
+      });
+    }
+
+    function syncTimelineState() {
+      const rawDuration = Number.isFinite(media.duration) ? media.duration : 0;
+      const normalizedDuration = rawDuration > 0 ? rawDuration : 0;
+      const normalizedCurrentTime = clampPlaybackTime(media.currentTime, normalizedDuration || Number.POSITIVE_INFINITY);
+      const nextCanSeek = normalizedDuration > 0 && media.readyState >= 1;
+
+      setDurationSafe(normalizedDuration);
+      setCurrentTimeSafe(normalizedCurrentTime);
+      setCanSeekSafe(nextCanSeek);
+      setPausedSafe(media.paused);
+    }
+
     function teardownPlayer() {
       clearSeekGuard();
+      clearStallWatchdog();
+      hlsControllerRef.current = null;
       cleanupRef.current?.();
       cleanupRef.current = null;
       try {
@@ -4498,23 +5147,44 @@ function useVodPlaybackController({
       media.removeAttribute("src");
       media.srcObject = null;
       media.load();
+      waitingSinceRef.current = 0;
+      lastPlaybackPositionRef.current = 0;
+      lastProgressAtRef.current = Date.now();
+      setPausedSafe(true);
+      setCurrentTimeSafe(0);
+      setDurationSafe(0);
+      setCanSeekSafe(false);
     }
 
     async function failPlayback(message: string) {
       if (disposed || sessionRef.current !== sessionId) {
         return;
       }
+      debugVod("playback-failed", {
+        message
+      });
       teardownPlayer();
       setStateSafe("failed");
       setErrorSafe(message);
       setInteractionRequiredSafe(false);
     }
 
-    async function resolvePlayback() {
+    async function resolvePlayback(options: { preferTranscode?: boolean } = {}) {
       setStateSafe("resolving");
       setErrorSafe(null);
       setInteractionRequiredSafe(false);
-      const playback = await resolveVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id);
+      const playback = await resolveVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
+        debugVod: vodDebugEnabledRef.current,
+        preferTranscode: options.preferTranscode === true
+      });
+      debugVod("resolve-playback", {
+        canPlay: playback.canPlay,
+        url: playback.url,
+        deliveryMode: playback.deliveryMode,
+        transport: playback.transport,
+        errorMessage: playback.errorMessage,
+        preferTranscode: options.preferTranscode === true
+      });
       setResolvedPlaybackSafe(playback);
       if (!playback.canPlay || !playback.url) {
         await failPlayback(playback.errorMessage ?? "VOD akisi hazirlanamadi.");
@@ -4536,6 +5206,15 @@ function useVodPlaybackController({
       if (disposed || sessionRef.current !== sessionId) {
         return;
       }
+      if (Date.now() - lastRecoverAtRef.current < recoveryCooldownMs) {
+        return;
+      }
+      debugVod("recover-requested", {
+        reason,
+        resumeAt
+      });
+      lastRecoverAtRef.current = Date.now();
+      waitingSinceRef.current = 0;
 
       const attempts = recoverAttemptsRef.current + 1;
       recoverAttemptsRef.current = attempts;
@@ -4547,6 +5226,31 @@ function useVodPlaybackController({
       }
 
       try {
+        if (attempts === 1 && hlsControllerRef.current) {
+          const now = Date.now();
+          const normalizedReason = reason.toLowerCase();
+          const shouldRecoverMedia =
+            normalizedReason.includes("hls") ||
+            normalizedReason.includes("oynatici hata") ||
+            normalizedReason.includes("decode");
+
+          if (shouldRecoverMedia && hlsControllerRef.current.recoverMediaError) {
+            if (now - lastHlsMediaRecoveryAtRef.current > 5_000) {
+              lastHlsMediaRecoveryAtRef.current = now;
+              hlsControllerRef.current.recoverMediaError();
+              await requestPlay();
+              return;
+            }
+          } else if (hlsControllerRef.current.startLoad) {
+            if (now - lastHlsNetworkRecoveryAtRef.current > 3_500) {
+              lastHlsNetworkRecoveryAtRef.current = now;
+              hlsControllerRef.current.startLoad(-1);
+              await requestPlay();
+              return;
+            }
+          }
+        }
+
         const resumeFrom = resumeAt ?? desiredSeekTimeRef.current ?? media.currentTime;
         const playback = resolvedPlaybackRef.current ?? (await resolvePlayback());
         if (!playback) {
@@ -4559,40 +5263,87 @@ function useVodPlaybackController({
     }
 
     function attachMediaEvents(onReady: (resumeAt?: number) => void, resumeAt?: number) {
-      const onLoadStart = () => setStateSafe("connecting");
+      const onLoadStart = () => {
+        setStateSafe("connecting");
+        syncTimelineState();
+      };
       const onLoadedMetadata = () => {
+        syncTimelineState();
         onReady(resumeAt);
       };
-      const onCanPlay = () => setStateSafe("buffering");
+      const onCanPlay = () => {
+        setStateSafe("buffering");
+        syncTimelineState();
+      };
       const onPlaying = () => {
         clearSeekGuard();
         desiredSeekTimeRef.current = null;
         recoverAttemptsRef.current = 0;
         setStateSafe("playing");
         setErrorSafe(null);
+        setPausedSafe(false);
+        markPlaybackProgress(media.currentTime);
+        syncTimelineState();
+      };
+      const onPlay = () => {
+        setPausedSafe(false);
+        waitingSinceRef.current = 0;
+        markPlaybackProgress(media.currentTime);
+        syncTimelineState();
+      };
+      const onPause = () => {
+        setPausedSafe(true);
+        waitingSinceRef.current = 0;
+        syncTimelineState();
+      };
+      const onTimeUpdate = () => {
+        markPlaybackProgress(media.currentTime);
+        syncTimelineState();
+      };
+      const onDurationChange = () => {
+        syncTimelineState();
       };
       const onWaiting = () => {
-        if (media.seeking) {
+        if (media.seeking || media.paused || media.ended) {
           return;
         }
         setStateSafe("buffering");
+        const now = Date.now();
+        if (waitingSinceRef.current === 0) {
+          waitingSinceRef.current = now;
+        }
+        if (
+          now - waitingSinceRef.current >= waitingRecoveryThresholdMs &&
+          now - lastProgressAtRef.current >= waitingRecoveryThresholdMs &&
+          getBufferRemaining() < 0.5
+        ) {
+          void recoverPlayback("Video bekleme durumunda uzun sure kaldi.", media.currentTime);
+        }
       };
       const onStalled = () => {
-        if (media.seeking) {
+        if (media.seeking || media.paused || media.ended) {
           return;
         }
+        waitingSinceRef.current = Date.now();
         void recoverPlayback("Film veya bolum akisinda takilma algilandi.", media.currentTime);
       };
       const onSeeking = () => {
         setStateSafe("buffering");
+        syncTimelineState();
         scheduleSeekRecovery(media.currentTime);
       };
       const onSeeked = () => {
         clearSeekGuard();
         desiredSeekTimeRef.current = null;
+        waitingSinceRef.current = 0;
+        markPlaybackProgress(media.currentTime);
+        syncTimelineState();
       };
       const onEnded = () => {
         setStateSafe("ended");
+        setPausedSafe(true);
+        waitingSinceRef.current = 0;
+        syncTimelineState();
         onEndedRef.current?.();
       };
       const onError = () => {
@@ -4607,6 +5358,10 @@ function useVodPlaybackController({
       media.addEventListener("loadedmetadata", onLoadedMetadata);
       media.addEventListener("canplay", onCanPlay);
       media.addEventListener("playing", onPlaying);
+      media.addEventListener("play", onPlay);
+      media.addEventListener("pause", onPause);
+      media.addEventListener("timeupdate", onTimeUpdate);
+      media.addEventListener("durationchange", onDurationChange);
       media.addEventListener("waiting", onWaiting);
       media.addEventListener("stalled", onStalled);
       media.addEventListener("seeking", onSeeking);
@@ -4614,17 +5369,51 @@ function useVodPlaybackController({
       media.addEventListener("ended", onEnded);
       media.addEventListener("error", onError);
 
+      stallWatchdogTimerRef.current = window.setInterval(() => {
+        if (media.paused || media.seeking || media.ended) {
+          return;
+        }
+
+        const now = Date.now();
+        if (lastProgressAtRef.current === 0) {
+          lastProgressAtRef.current = now;
+          return;
+        }
+
+        const silentForMs = now - lastProgressAtRef.current;
+        if (silentForMs < vodSilentThresholdMs) {
+          return;
+        }
+
+        const remaining = getBufferRemaining();
+        if (remaining > 6) {
+          try {
+            media.currentTime = clampPlaybackTime(media.currentTime + 0.08, Number.isFinite(media.duration) ? media.duration : Infinity);
+            markPlaybackProgress(media.currentTime);
+          } catch {
+            // noop
+          }
+        }
+
+        void recoverPlayback("Video ilerlemesi durdu, oynatma yenileniyor.", media.currentTime);
+      }, vodWatchdogIntervalMs);
+
       return () => {
         media.removeEventListener("loadstart", onLoadStart);
         media.removeEventListener("loadedmetadata", onLoadedMetadata);
         media.removeEventListener("canplay", onCanPlay);
         media.removeEventListener("playing", onPlaying);
+        media.removeEventListener("play", onPlay);
+        media.removeEventListener("pause", onPause);
+        media.removeEventListener("timeupdate", onTimeUpdate);
+        media.removeEventListener("durationchange", onDurationChange);
         media.removeEventListener("waiting", onWaiting);
         media.removeEventListener("stalled", onStalled);
         media.removeEventListener("seeking", onSeeking);
         media.removeEventListener("seeked", onSeeked);
         media.removeEventListener("ended", onEnded);
         media.removeEventListener("error", onError);
+        clearStallWatchdog();
       };
     }
 
@@ -4632,11 +5421,19 @@ function useVodPlaybackController({
       try {
         await media.play();
         setInteractionRequiredSafe(false);
+        setPausedSafe(false);
+        debugVod("play-success");
+        syncTimelineState();
       } catch (error) {
+        debugVod("play-error", {
+          message: getMediaErrorMessage(error, "play() hatasi"),
+          name: error instanceof Error ? error.name : null
+        });
         if (isAutoplayBlockedError(error)) {
           setStateSafe("idle");
           setInteractionRequiredSafe(true);
           setErrorSafe(null);
+          setPausedSafe(true);
           return;
         }
 
@@ -4697,21 +5494,79 @@ function useVodPlaybackController({
           });
         }
       }, resumeAt);
+      const startPosition = typeof resumeAt === "number" && resumeAt > 0 ? resumeAt : -1;
       const hls = new HlsCtor({
         enableWorker: true,
         lowLatencyMode: false,
-        backBufferLength: 90,
-        maxBufferLength: 60,
-        maxMaxBufferLength: 120,
-        liveSyncDurationCount: 4,
-        liveMaxLatencyDurationCount: 12,
-        manifestLoadingTimeOut: 8000,
-        fragLoadingTimeOut: 8000
+        backBufferLength: 45,
+        maxBufferLength: 90,
+        maxMaxBufferLength: 180,
+        maxBufferHole: 0.4,
+        highBufferWatchdogPeriod: 2,
+        nudgeOffset: 0.12,
+        nudgeMaxRetry: 6,
+        startFragPrefetch: true,
+        startPosition,
+        manifestLoadPolicy: {
+          default: {
+            maxTimeToFirstByteMs: 12_000,
+            maxLoadTimeMs: 22_000,
+            timeoutRetry: {
+              maxNumRetry: 4,
+              retryDelayMs: 500,
+              maxRetryDelayMs: 4_000
+            },
+            errorRetry: {
+              maxNumRetry: 4,
+              retryDelayMs: 900,
+              maxRetryDelayMs: 7_000
+            }
+          }
+        },
+        playlistLoadPolicy: {
+          default: {
+            maxTimeToFirstByteMs: 10_000,
+            maxLoadTimeMs: 20_000,
+            timeoutRetry: {
+              maxNumRetry: 4,
+              retryDelayMs: 500,
+              maxRetryDelayMs: 4_000
+            },
+            errorRetry: {
+              maxNumRetry: 4,
+              retryDelayMs: 900,
+              maxRetryDelayMs: 7_000
+            }
+          }
+        },
+        fragLoadPolicy: {
+          default: {
+            maxTimeToFirstByteMs: 12_000,
+            maxLoadTimeMs: 24_000,
+            timeoutRetry: {
+              maxNumRetry: 4,
+              retryDelayMs: 550,
+              maxRetryDelayMs: 4_000
+            },
+            errorRetry: {
+              maxNumRetry: 4,
+              retryDelayMs: 1_000,
+              maxRetryDelayMs: 8_000
+            }
+          }
+        }
       }) as {
         attachMedia: (element: HTMLMediaElement) => void;
         loadSource: (source: string) => void;
         on: (event: string, handler: (...args: unknown[]) => void) => void;
+        startLoad?: (startPosition?: number) => void;
+        recoverMediaError?: () => void;
         destroy: () => void;
+      };
+      hlsControllerRef.current = {
+        startLoad: (startPosition?: number) => hls.startLoad?.(startPosition),
+        recoverMediaError: () => hls.recoverMediaError?.(),
+        destroy: () => hls.destroy()
       };
 
       hls.on(hlsEvents.MEDIA_ATTACHED, () => {
@@ -4725,15 +5580,45 @@ function useVodPlaybackController({
       });
 
       hls.on(hlsEvents.ERROR, (_event, data) => {
-        const errorData = data as { fatal?: boolean; details?: string } | undefined;
-        if (errorData?.fatal) {
-          void recoverPlayback(errorData.details ?? "HLS akisi hata verdi.", media.currentTime);
+        const errorData = data as { fatal?: boolean; details?: string; type?: string } | undefined;
+        const normalizedType = `${errorData?.type ?? ""}`.toLowerCase();
+        const normalizedDetail = `${errorData?.details ?? ""}`.toLowerCase();
+        const isBufferStall =
+          normalizedDetail.includes("bufferstalled") || normalizedDetail.includes("buffer_stalled");
+
+        if (!errorData?.fatal) {
+          if (isBufferStall && getBufferRemaining() < 0.6) {
+            void recoverPlayback("HLS buffer gecici olarak takildi.", media.currentTime);
+          }
+          return;
         }
+
+        const now = Date.now();
+        if (normalizedType.includes("network") && hlsControllerRef.current?.startLoad) {
+          if (now - lastHlsNetworkRecoveryAtRef.current > 3_000) {
+            lastHlsNetworkRecoveryAtRef.current = now;
+            hlsControllerRef.current.startLoad(-1);
+            void requestPlay().catch(() => undefined);
+            return;
+          }
+        }
+
+        if (normalizedType.includes("media") && hlsControllerRef.current?.recoverMediaError) {
+          if (now - lastHlsMediaRecoveryAtRef.current > 5_000) {
+            lastHlsMediaRecoveryAtRef.current = now;
+            hlsControllerRef.current.recoverMediaError();
+            void requestPlay().catch(() => undefined);
+            return;
+          }
+        }
+
+        void recoverPlayback(errorData.details ?? "HLS akisi hata verdi.", media.currentTime);
       });
 
       hls.attachMedia(media);
       cleanupRef.current = () => {
         detachEvents();
+        hlsControllerRef.current = null;
         try {
           hls.destroy();
         } catch {
@@ -4756,10 +5641,39 @@ function useVodPlaybackController({
       }
 
       try {
+        debugVod("mount-native-attempt", {
+          url: playback.url,
+          transport: playback.transport,
+          deliveryMode: playback.deliveryMode
+        });
         await mountNative(playback.url, resumeAt);
       } catch (error) {
-        // Fallback to HLS engine when transport metadata is ambiguous.
-        if (playback.transport === "unknown") {
+        const unsupportedSource = isUnsupportedSourceError(error);
+        if (
+          unsupportedSource &&
+          item.kind === "movie" &&
+          !transcodeFallbackAttemptedRef.current &&
+          playback.deliveryMode === "file_proxy"
+        ) {
+          transcodeFallbackAttemptedRef.current = true;
+          debugVod("mount-native-request-transcode-fallback", {
+            url: playback.url,
+            transport: playback.transport,
+            message: getMediaErrorMessage(error, "native mount hatasi")
+          });
+          const transcodePlayback = await resolvePlayback({ preferTranscode: true });
+          if (transcodePlayback) {
+            await mountSource(transcodePlayback, resumeAt);
+            return;
+          }
+        }
+
+        // Fallback to HLS engine when transport metadata is ambiguous or native reports unsupported source.
+        if (playback.transport === "unknown" || unsupportedSource) {
+          debugVod("mount-native-fallback-hls", {
+            reason: unsupportedSource ? "unsupported-source" : "unknown-transport",
+            message: getMediaErrorMessage(error, "native mount hatasi")
+          });
           await mountHls(playback.url, resumeAt);
           return;
         }
@@ -4786,7 +5700,7 @@ function useVodPlaybackController({
     };
   }, [item.id, item.kind, item.playbackAllowed, resolveVodPlayback]);
 
-  async function continuePlayback() {
+  const continuePlayback = useCallback(async () => {
     const mediaElement = videoRef.current;
     if (!mediaElement) {
       return;
@@ -4797,22 +5711,81 @@ function useVodPlaybackController({
       setInteractionRequired(false);
       setPlayerError(null);
       setPlayerState("playing");
+      setIsPaused(false);
     } catch (error) {
       if (isAutoplayBlockedError(error)) {
         setPlayerState("idle");
         setInteractionRequired(true);
         setPlayerError(null);
+        setIsPaused(true);
         return;
       }
       if (isPlayInterruptedError(error)) {
         setPlayerState("buffering");
+        setIsPaused(mediaElement.paused);
         return;
       }
       setPlayerError(getMediaErrorMessage(error, "Video oynatilamadi."));
       setInteractionRequired(false);
       setPlayerState("failed");
+      setIsPaused(true);
     }
-  }
+  }, []);
+
+  const stopPlayback = useCallback(() => {
+    const mediaElement = videoRef.current;
+    if (!mediaElement) {
+      return;
+    }
+
+    try {
+      mediaElement.pause();
+      setIsPaused(true);
+      setInteractionRequired(false);
+    } catch {
+      // noop
+    }
+  }, []);
+
+  const seekBy = useCallback((seconds: number) => {
+    const mediaElement = videoRef.current;
+    if (!mediaElement || !Number.isFinite(seconds) || seconds === 0) {
+      return;
+    }
+
+    const mediaDuration =
+      Number.isFinite(mediaElement.duration) && mediaElement.duration > 0 ? mediaElement.duration : duration;
+    if (!Number.isFinite(mediaDuration) || mediaDuration <= 0) {
+      return;
+    }
+
+    const nextTime = clampPlaybackTime(mediaElement.currentTime + seconds, mediaDuration);
+    if (Math.abs(nextTime - mediaElement.currentTime) < 0.05) {
+      return;
+    }
+
+    try {
+      mediaElement.currentTime = nextTime;
+      setCurrentTime(nextTime);
+      setCanSeek(true);
+    } catch {
+      // noop
+    }
+  }, [duration]);
+
+  const togglePlayback = useCallback(async () => {
+    const mediaElement = videoRef.current;
+    if (!mediaElement) {
+      return;
+    }
+
+    if (mediaElement.paused || mediaElement.ended) {
+      await continuePlayback();
+      return;
+    }
+
+    stopPlayback();
+  }, [continuePlayback, stopPlayback]);
 
   return {
     videoRef,
@@ -4820,8 +5793,121 @@ function useVodPlaybackController({
     playerError,
     interactionRequired,
     resolvedPlayback,
-    continuePlayback
+    continuePlayback,
+    stopPlayback,
+    togglePlayback,
+    seekBy,
+    isPaused,
+    currentTime,
+    duration,
+    canSeek
   };
+}
+
+function useVodMediaShortcuts({
+  onTogglePlayback,
+  onStopPlayback
+}: {
+  onTogglePlayback: () => Promise<void> | void;
+  onStopPlayback: () => void;
+}) {
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) {
+        return;
+      }
+
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
+      if (event.key === "MediaPlayPause") {
+        event.preventDefault();
+        event.stopPropagation();
+        void onTogglePlayback();
+        return;
+      }
+
+      if (event.key === "MediaStop") {
+        event.preventDefault();
+        event.stopPropagation();
+        onStopPlayback();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onStopPlayback, onTogglePlayback]);
+}
+
+function VodMiniControls({
+  itemId,
+  kind,
+  canSeek,
+  isPaused,
+  controlsLocked,
+  onSeekBackward,
+  onSeekForward,
+  onTogglePlayback
+}: {
+  itemId: string;
+  kind: "movie" | "episode";
+  canSeek: boolean;
+  isPaused: boolean;
+  controlsLocked: boolean;
+  onSeekBackward: () => void;
+  onSeekForward: () => void;
+  onTogglePlayback: () => Promise<void> | void;
+}) {
+  const controlRegion = "overlay-player-actions";
+
+  return (
+    <div className="vod-mini-controls" role="group" aria-label="Video mini kontrolleri">
+      <button
+        type="button"
+        className="vod-mini-control"
+        onClick={onSeekBackward}
+        disabled={!canSeek || controlsLocked}
+        aria-label="10 saniye geri sar"
+        data-tv-focusable="true"
+        data-tv-region={controlRegion}
+        data-tv-focus-key={`${kind}-seek-back-${itemId}`}
+      >
+        <SeekBackwardGlyph />
+        <span>-10s</span>
+      </button>
+
+      <button
+        type="button"
+        className="vod-mini-control is-primary"
+        onClick={() => void onTogglePlayback()}
+        disabled={controlsLocked}
+        aria-label={isPaused ? "Oynat" : "Durdur"}
+        data-tv-focusable="true"
+        data-tv-region={controlRegion}
+        data-tv-focus-key={`${kind}-toggle-${itemId}`}
+      >
+        {isPaused ? <PlayGlyph /> : <PauseGlyph />}
+        <span>{isPaused ? "Oynat" : "Durdur"}</span>
+      </button>
+
+      <button
+        type="button"
+        className="vod-mini-control"
+        onClick={onSeekForward}
+        disabled={!canSeek || controlsLocked}
+        aria-label="10 saniye ileri sar"
+        data-tv-focusable="true"
+        data-tv-region={controlRegion}
+        data-tv-focus-key={`${kind}-seek-forward-${itemId}`}
+      >
+        <SeekForwardGlyph />
+        <span>+10s</span>
+      </button>
+    </div>
+  );
 }
 
 function MoviePlayerSurface({
@@ -4833,13 +5919,30 @@ function MoviePlayerSurface({
   resolveVodPlayback: ViewerCoreHandle["resolveVodPlayback"];
   onClose: () => void;
 }) {
-  const { videoRef, playerState, playerError, interactionRequired, continuePlayback } = useVodPlaybackController({
+  const {
+    videoRef,
+    playerState,
+    playerError,
+    interactionRequired,
+    continuePlayback,
+    stopPlayback,
+    togglePlayback,
+    seekBy,
+    isPaused,
+    canSeek
+  } = useVodPlaybackController({
     item,
     resolveVodPlayback
   });
   const currentStateTone =
     playerState === "failed" ? "danger" : playerState === "recovering" ? "warning" : "info";
   const showStatusBar = playerState !== "playing" || Boolean(playerError) || interactionRequired;
+  const controlsLocked = playerState === "resolving" || playerState === "connecting";
+
+  useVodMediaShortcuts({
+    onTogglePlayback: togglePlayback,
+    onStopPlayback: stopPlayback
+  });
 
   return (
     <div className="movie-player-shell">
@@ -4875,6 +5978,17 @@ function MoviePlayerSurface({
         >
           Tarayici video elementini desteklemiyor.
         </video>
+
+        <VodMiniControls
+          itemId={item.id}
+          kind="movie"
+          canSeek={canSeek}
+          isPaused={isPaused}
+          controlsLocked={controlsLocked}
+          onSeekBackward={() => seekBy(-10)}
+          onSeekForward={() => seekBy(10)}
+          onTogglePlayback={togglePlayback}
+        />
 
         {showStatusBar ? (
           <div className="movie-player-status">
@@ -4956,7 +6070,18 @@ function EpisodePlayerSurface({
     );
   }
 
-  const { videoRef, playerState, playerError, interactionRequired, continuePlayback } = useVodPlaybackController({
+  const {
+    videoRef,
+    playerState,
+    playerError,
+    interactionRequired,
+    continuePlayback,
+    stopPlayback,
+    togglePlayback,
+    seekBy,
+    isPaused,
+    canSeek
+  } = useVodPlaybackController({
     item,
     resolveVodPlayback,
     onEnded: () => {
@@ -4970,6 +6095,12 @@ function EpisodePlayerSurface({
     playerState === "failed" && autoSkipDepth >= autoSkipLimit && Boolean(nextPlayableItem);
   const noNextEpisodeCandidate =
     playerState === "failed" && !nextPlayableItem;
+  const controlsLocked = playerState === "resolving" || playerState === "connecting";
+
+  useVodMediaShortcuts({
+    onTogglePlayback: togglePlayback,
+    onStopPlayback: stopPlayback
+  });
 
   useEffect(() => {
     setNextCountdown(null);
@@ -5082,6 +6213,17 @@ function EpisodePlayerSurface({
         >
           Tarayici video elementini desteklemiyor.
         </video>
+
+        <VodMiniControls
+          itemId={item.id}
+          kind="episode"
+          canSeek={canSeek}
+          isPaused={isPaused}
+          controlsLocked={controlsLocked}
+          onSeekBackward={() => seekBy(-10)}
+          onSeekForward={() => seekBy(10)}
+          onTogglePlayback={togglePlayback}
+        />
 
         {showStatusBar ? (
           <div className="episode-player-status">
@@ -5552,7 +6694,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
   );
 }
 
-export function App() {
+function ConnectedApp({ baseUrl }: { baseUrl: string }) {
   const location = useLocation();
   const [storage] = useState(() =>
     typeof window !== "undefined"
@@ -5561,7 +6703,7 @@ export function App() {
   );
 
   const core = useViewerCore({
-    baseUrl: API_BASE_URL,
+    baseUrl,
     storage,
     platform: "webos",
     defaultDeviceName: "LG webOS TV"
@@ -5580,4 +6722,149 @@ export function App() {
   }
 
   return <HomeShell core={core} />;
+}
+
+function ApiConnectionScreen({
+  title,
+  message,
+  baseUrl,
+  busy,
+  retryLabel,
+  onRetry
+}: {
+  title: string;
+  message: string;
+  baseUrl: string | null;
+  busy: boolean;
+  retryLabel?: string;
+  onRetry?: () => void;
+}) {
+  return (
+    <div className="content auth-screen-content">
+      <section className="hero-card auth-screen-card">
+        <span className="pill">Baglanti Kontrolu</span>
+        <h1>{title}</h1>
+        <p className="muted">API baglantisi kurulmadan uygulama acilamaz.</p>
+        <div className="auth-warning active">
+          <div className="auth-warning-icon">!</div>
+          <div className="auth-warning-content">
+            <strong>API Erisimi</strong>
+            <p>{message}</p>
+            <p>Hedef: {baseUrl ?? "tanimli degil"}</p>
+          </div>
+        </div>
+        {onRetry ? (
+          <button className="button button-large auth-primary-button" type="button" onClick={onRetry} disabled={busy}>
+            {busy ? "Yeniden Kontrol Ediliyor" : retryLabel ?? "Yeniden Dene"}
+          </button>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+export function App() {
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeAppConfig | null>(null);
+  const [runtimeConfigLoaded, setRuntimeConfigLoaded] = useState(false);
+  const [probeState, setProbeState] = useState<{
+    status: "idle" | "checking" | "success" | "error";
+    message: string | null;
+  }>({
+    status: "idle",
+    message: null
+  });
+  const [probeAttempt, setProbeAttempt] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      const config = await loadRuntimeConfig();
+      if (!active) {
+        return;
+      }
+
+      setRuntimeConfig(config);
+      setRuntimeConfigLoaded(true);
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const resolvedApiBaseUrl = resolveApiBaseUrl(runtimeConfig);
+
+  useEffect(() => {
+    if (!runtimeConfigLoaded) {
+      return;
+    }
+
+    if (!resolvedApiBaseUrl) {
+      setProbeState({
+        status: "error",
+        message:
+          "API adresi tanimli degil. app-config.json icine apiBaseUrl ekleyin veya VITE_API_BASE_URL ayarlayin."
+      });
+      return;
+    }
+
+    let active = true;
+    setProbeState({
+      status: "checking",
+      message: null
+    });
+
+    void probeApiHealth(resolvedApiBaseUrl).then((result) => {
+      if (!active) {
+        return;
+      }
+
+      if (result.ok) {
+        setProbeState({
+          status: "success",
+          message: null
+        });
+        return;
+      }
+
+      setProbeState({
+        status: "error",
+        message: result.message
+      });
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [runtimeConfigLoaded, resolvedApiBaseUrl, probeAttempt]);
+
+  if (!runtimeConfigLoaded || probeState.status === "idle" || probeState.status === "checking") {
+    return <div className="content">Baglanti kontrol ediliyor...</div>;
+  }
+
+  if (!resolvedApiBaseUrl) {
+    return (
+      <ApiConnectionScreen
+        title="API Ayari Eksik"
+        message={probeState.message ?? "API adresi bulunamadi."}
+        baseUrl={null}
+        busy={false}
+      />
+    );
+  }
+
+  if (probeState.status === "error") {
+    return (
+      <ApiConnectionScreen
+        title="API Baglantisi Kurulamadi"
+        message={probeState.message ?? "API erisimi basarisiz."}
+        baseUrl={resolvedApiBaseUrl}
+        busy={false}
+        onRetry={() => setProbeAttempt((value) => value + 1)}
+      />
+    );
+  }
+
+  return <ConnectedApp baseUrl={resolvedApiBaseUrl} />;
 }
