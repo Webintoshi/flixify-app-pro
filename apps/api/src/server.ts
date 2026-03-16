@@ -825,6 +825,23 @@ export function buildServer() {
 
       const canPlay = Boolean(userContext.canPlay) && (resolved.ok || optimisticProbeFallback);
 
+      if (optimisticProbeFallback && resolved.sourceUrl) {
+        return {
+          channelId,
+          url: resolved.sourceUrl,
+          transport,
+          sourceTransport: transport,
+          deliveryMode: transport === "hls" ? "hls_proxy" : "file_proxy",
+          diagnosticsSessionId: null,
+          healthStatus,
+          lastCheckedAt: checkedAt,
+          expiresAt: null,
+          canPlay: true,
+          isVerified: false,
+          errorMessage: null
+        };
+      }
+
       const playback = await livePlaybackManager.createPlayback({
         channelId,
         snapshotVersion: channel.snapshot_version,
