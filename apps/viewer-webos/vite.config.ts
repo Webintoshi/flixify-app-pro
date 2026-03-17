@@ -12,6 +12,12 @@ export default defineConfig({
     // Keep previous hashed assets so stale clients can still fetch older dynamic chunks.
     emptyOutDir: false
   },
+  server: {
+    allowedHosts: [".flixify.pro", "localhost", "127.0.0.1"]
+  },
+  preview: {
+    allowedHosts: [".flixify.pro", "localhost", "127.0.0.1"]
+  },
   resolve: {
     alias: {
       "@flixify/contracts": path.resolve(__dirname, "../../packages/contracts/src/index.ts"),
