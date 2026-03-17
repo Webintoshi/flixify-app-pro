@@ -38,16 +38,22 @@ export default function AdminSettingsPage() {
   }, []);
 
   async function handleSave() {
-    await apiRequest("/admin/settings", {
-      method: "PUT",
-      body: {
-        ...settings,
-        salesPortalUrl: settings.salesPortalUrl || null,
-        sharedPlaylistUrl: settings.sharedPlaylistUrl || null
-      },
-      useAdminToken: true
-    });
-    setMessage("Ayarlar kaydedildi.");
+    setMessage(null);
+
+    try {
+      await apiRequest("/admin/settings", {
+        method: "PUT",
+        body: {
+          ...settings,
+          salesPortalUrl: settings.salesPortalUrl || null,
+          sharedPlaylistUrl: settings.sharedPlaylistUrl || null
+        },
+        useAdminToken: true
+      });
+      setMessage("Ayarlar kaydedildi.");
+    } catch (nextError) {
+      setMessage(nextError instanceof Error ? nextError.message : "Ayarlar kaydedilemedi.");
+    }
   }
 
   return (

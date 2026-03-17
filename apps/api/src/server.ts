@@ -116,6 +116,7 @@ import { probeLiveStream } from "./live.js";
 import { createLivePlaybackManager } from "./live-playback.js";
 import { createVodPlaybackManager, probeVodStream } from "./vod.js";
 import { API_CORS_CONFIG } from "./cors-config.js";
+import { stripEmptyJsonContentType } from "./http-headers.js";
 
 type UserRequest = {
   userId: string;
@@ -474,6 +475,10 @@ export function buildServer() {
   });
 
   app.register(cors, API_CORS_CONFIG);
+
+  app.addHook("onRequest", async (request) => {
+    stripEmptyJsonContentType(request.raw.method, request.raw.headers);
+  });
 
   app.addHook("onClose", async () => {
     await livePlaybackManager.dispose();

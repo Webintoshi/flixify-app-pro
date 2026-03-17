@@ -55,6 +55,45 @@ function clearCookie(name: string) {
   }
 }
 
+function parseJsonValue(value: string) {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeErrorMessage(rawBody: string, status: number) {
+  const trimmed = rawBody.trim();
+  if (!trimmed) {
+    return `HTTP ${status}`;
+  }
+
+  const parsed = parseJsonValue(trimmed);
+  if (parsed && typeof parsed === "object" && "message" in parsed) {
+    const message = (parsed as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim().length > 0) {
+      return message;
+    }
+  }
+
+  if (typeof parsed === "string" && parsed.trim().length > 0) {
+    return parsed;
+  }
+
+  return trimmed;
+}
+
+function parseSuccessBody(rawBody: string) {
+  const trimmed = rawBody.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const parsed = parseJsonValue(trimmed);
+  return parsed ?? trimmed;
+}
+
 export function getAdminToken() {
   if (typeof window === "undefined") {
     return null;
@@ -87,15 +126,23 @@ export async function apiRequest<T>(
   } = {}
 ) {
   const token = options.accessToken ?? (options.useAdminToken ? getAdminToken() : null);
+  const hasBody = options.body !== undefined;
+  const headers: Record<string, string> = {
+    ...(token ? { authorization: `Bearer ${token}` } : {})
+  };
+
+  if (hasBody) {
+    headers["content-type"] = "application/json";
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: options.method ?? "GET",
-    headers: {
-      "content-type": "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {})
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
+    headers,
+    body: hasBody ? JSON.stringify(options.body) : undefined,
     cache: "no-store"
   });
+
+  const responseText = await response.text();
 
   if (!response.ok) {
     if (options.useAdminToken && response.status === 401) {
@@ -104,8 +151,13 @@ export async function apiRequest<T>(
         window.location.href = "/admin";
       }
     }
-    throw new Error(await response.text());
+
+    throw new Error(normalizeErrorMessage(responseText, response.status));
   }
 
-  return (await response.json()) as T;
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  return parseSuccessBody(responseText) as T;
 }

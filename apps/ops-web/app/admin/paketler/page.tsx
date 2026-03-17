@@ -7,6 +7,7 @@ import { apiRequest } from "../../../lib/api";
 export default function AdminPackagesPage() {
   const [packages, setPackages] = useState<PackageRecord[]>([]);
   const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   async function loadPackages() {
     const response = await apiRequest<{ items: PackageRecord[] }>("/admin/packages", {
@@ -17,17 +18,27 @@ export default function AdminPackagesPage() {
 
   useEffect(() => {
     loadPackages()
-      .catch(() => setPackages([]));
+      .catch(() => {
+        setPackages([]);
+        setError("Paketler yuklenemedi.");
+      });
   }, []);
 
   async function togglePackage(id: string, isActive: boolean) {
-    await apiRequest(`/admin/packages/${id}`, {
-      method: "PATCH",
-      body: { isActive: !isActive },
-      useAdminToken: true
-    });
-    setMessage("Paket durumu guncellendi.");
-    await loadPackages();
+    setMessage(null);
+    setError(null);
+
+    try {
+      await apiRequest(`/admin/packages/${id}`, {
+        method: "PATCH",
+        body: { isActive: !isActive },
+        useAdminToken: true
+      });
+      setMessage("Paket durumu guncellendi.");
+      await loadPackages();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Paket durumu guncellenemedi.");
+    }
   }
 
   return (
@@ -53,6 +64,7 @@ export default function AdminPackagesPage() {
         ))}
       </section>
       {message ? <section className="panel">{message}</section> : null}
+      {error ? <section className="panel">{error}</section> : null}
     </main>
   );
 }
