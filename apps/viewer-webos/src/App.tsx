@@ -805,6 +805,18 @@ function shouldUseHlsForVodPlayback(playback: VodPlaybackRecord) {
   return detectVodTransport(url) === "hls";
 }
 
+function canUseVodCompatibilityRetry(playback: VodPlaybackRecord | null | undefined) {
+  if (!playback || !playback.url) {
+    return false;
+  }
+
+  if (playback.deliveryMode !== "file_proxy") {
+    return false;
+  }
+
+  return playback.transport !== "hls";
+}
+
 function clampPlaybackTime(nextTime: number, duration: number) {
   const safeTime = Number.isFinite(nextTime) ? nextTime : 0;
   if (!Number.isFinite(duration) || duration <= 0) {
@@ -5068,6 +5080,9 @@ function useVodPlaybackController({
   const lastHlsNetworkRecoveryAtRef = useRef(0);
   const lastHlsMediaRecoveryAtRef = useRef(0);
   const transcodeFallbackAttemptedRef = useRef(false);
+  const compatibilityRetryHandlerRef = useRef<(() => Promise<void>) | null>(null);
+  const compatibilityRetryingRef = useRef(false);
+  const autoCompatibilityEscalatedRef = useRef(false);
   const vodDebugEnabledRef = useRef(false);
   const vodDebugCounterRef = useRef(0);
   const onEndedRef = useRef(onEnded);
@@ -5076,6 +5091,7 @@ function useVodPlaybackController({
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [resolvedPlayback, setResolvedPlayback] = useState<VodPlaybackRecord | null>(null);
   const [interactionRequired, setInteractionRequired] = useState(false);
+  const [compatibilityRetrying, setCompatibilityRetrying] = useState(false);
   const [isPaused, setIsPaused] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -5093,12 +5109,16 @@ function useVodPlaybackController({
     lastHlsNetworkRecoveryAtRef.current = 0;
     lastHlsMediaRecoveryAtRef.current = 0;
     transcodeFallbackAttemptedRef.current = false;
+    compatibilityRetryHandlerRef.current = null;
+    compatibilityRetryingRef.current = false;
+    autoCompatibilityEscalatedRef.current = false;
     lastProgressAtRef.current = Date.now();
     lastPlaybackPositionRef.current = 0;
     waitingSinceRef.current = 0;
     lastRecoverAtRef.current = 0;
     setResolvedPlayback(null);
     setInteractionRequired(false);
+    setCompatibilityRetrying(false);
     setIsPaused(true);
     setCurrentTime(0);
     setDuration(0);
@@ -5209,6 +5229,12 @@ function useVodPlaybackController({
     function setCanSeekSafe(nextValue: boolean) {
       if (!disposed && sessionRef.current === sessionId) {
         setCanSeek(nextValue);
+      }
+    }
+
+    function setCompatibilityRetryingSafe(nextValue: boolean) {
+      if (!disposed && sessionRef.current === sessionId) {
+        setCompatibilityRetrying(nextValue);
       }
     }
 
@@ -5331,6 +5357,50 @@ function useVodPlaybackController({
       }
 
       return playback;
+    }
+
+    async function runCompatibilityRetry(
+      reason: string,
+      options: { resumeAt?: number; trigger: "manual" | "auto" }
+    ) {
+      if (disposed || sessionRef.current !== sessionId) {
+        return;
+      }
+
+      if (compatibilityRetryingRef.current) {
+        return;
+      }
+
+      if (!canUseVodCompatibilityRetry(resolvedPlaybackRef.current)) {
+        return;
+      }
+
+      compatibilityRetryingRef.current = true;
+      setCompatibilityRetryingSafe(true);
+      setStateSafe("recovering");
+      setErrorSafe(null);
+      setInteractionRequiredSafe(false);
+      debugVod("compatibility-retry-start", {
+        reason,
+        trigger: options.trigger,
+        resumeAt: options.resumeAt
+      });
+
+      try {
+        const resumeFrom =
+          options.resumeAt ?? desiredSeekTimeRef.current ?? media.currentTime;
+        const playback = await resolvePlayback({ preferTranscode: true });
+        if (!playback) {
+          return;
+        }
+
+        await mountSource(playback, resumeFrom);
+      } catch (error) {
+        await failPlayback(getMediaErrorMessage(error, "Uyumluluk modu baslatilamadi."));
+      } finally {
+        compatibilityRetryingRef.current = false;
+        setCompatibilityRetryingSafe(false);
+      }
     }
 
     function scheduleSeekRecovery(timeToResume: number) {
@@ -5527,6 +5597,15 @@ function useVodPlaybackController({
         }
 
         const remaining = getBufferRemaining();
+        if (!autoCompatibilityEscalatedRef.current && canUseVodCompatibilityRetry(resolvedPlaybackRef.current)) {
+          autoCompatibilityEscalatedRef.current = true;
+          void runCompatibilityRetry("Video ilerlemesi durdu, uyumluluk modu devreye aliniyor.", {
+            resumeAt: media.currentTime,
+            trigger: "auto"
+          });
+          return;
+        }
+
         if (remaining > 6) {
           try {
             media.currentTime = clampPlaybackTime(media.currentTime + 0.08, Number.isFinite(media.duration) ? media.duration : Infinity);
@@ -5796,7 +5875,6 @@ function useVodPlaybackController({
         const unsupportedSource = isUnsupportedSourceError(error);
         if (
           unsupportedSource &&
-          item.kind === "movie" &&
           !transcodeFallbackAttemptedRef.current &&
           playback.deliveryMode === "file_proxy"
         ) {
@@ -5813,13 +5891,10 @@ function useVodPlaybackController({
           }
         }
 
-        const shouldTryHlsFallback =
-          playback.transport === "unknown" || (unsupportedSource && shouldUseHlsForVodPlayback(playback));
-
-        // Fallback to HLS engine only for unknown transport or actual HLS sources.
+        const shouldTryHlsFallback = unsupportedSource && shouldUseHlsForVodPlayback(playback);
         if (shouldTryHlsFallback) {
           debugVod("mount-native-fallback-hls", {
-            reason: unsupportedSource ? "unsupported-source" : "unknown-transport",
+            reason: "unsupported-source",
             message: getMediaErrorMessage(error, "native mount hatasi")
           });
           await mountHls(playback.url, resumeAt);
@@ -5829,6 +5904,13 @@ function useVodPlaybackController({
         throw error;
       }
     }
+
+    compatibilityRetryHandlerRef.current = async () => {
+      await runCompatibilityRetry("Uyumluluk modu kullanici tarafindan tetiklendi.", {
+        resumeAt: media.currentTime,
+        trigger: "manual"
+      });
+    };
 
     void (async () => {
       try {
@@ -5844,6 +5926,8 @@ function useVodPlaybackController({
 
     return () => {
       disposed = true;
+      compatibilityRetryHandlerRef.current = null;
+      compatibilityRetryingRef.current = false;
       teardownPlayer();
     };
   }, [item.id, item.kind, item.playbackAllowed, resolveVodPlayback]);
@@ -5935,6 +6019,17 @@ function useVodPlaybackController({
     stopPlayback();
   }, [continuePlayback, stopPlayback]);
 
+  const retryWithCompatibilityMode = useCallback(async () => {
+    const handler = compatibilityRetryHandlerRef.current;
+    if (!handler) {
+      return;
+    }
+
+    await handler();
+  }, []);
+
+  const canRetryWithCompatibilityMode = canUseVodCompatibilityRetry(resolvedPlayback);
+
   return {
     videoRef,
     playerState,
@@ -5944,6 +6039,9 @@ function useVodPlaybackController({
     continuePlayback,
     stopPlayback,
     togglePlayback,
+    retryWithCompatibilityMode,
+    canRetryWithCompatibilityMode,
+    compatibilityRetrying,
     seekBy,
     isPaused,
     currentTime,
@@ -6075,6 +6173,9 @@ function MoviePlayerSurface({
     continuePlayback,
     stopPlayback,
     togglePlayback,
+    retryWithCompatibilityMode,
+    canRetryWithCompatibilityMode,
+    compatibilityRetrying,
     seekBy,
     isPaused,
     canSeek
@@ -6144,6 +6245,21 @@ function MoviePlayerSurface({
             {playerError ? <span className="movie-player-status-text">{playerError}</span> : null}
             {!playerError && interactionRequired ? (
               <span className="movie-player-status-text">Oynatmayi baslatmak icin dokunun.</span>
+            ) : null}
+            {canRetryWithCompatibilityMode ? (
+              <button
+                type="button"
+                className="vod-compatibility-retry"
+                onClick={() => {
+                  void retryWithCompatibilityMode();
+                }}
+                disabled={controlsLocked || compatibilityRetrying}
+                data-tv-focusable="true"
+                data-tv-region="overlay-player-actions"
+                data-tv-focus-key={`movie-compatibility-retry-${item.id}`}
+              >
+                {compatibilityRetrying ? "Uyumluluk Modu Hazirlaniyor" : "Uyumluluk Modu ile Tekrar Dene"}
+              </button>
             ) : null}
           </div>
         ) : null}
@@ -6226,6 +6342,9 @@ function EpisodePlayerSurface({
     continuePlayback,
     stopPlayback,
     togglePlayback,
+    retryWithCompatibilityMode,
+    canRetryWithCompatibilityMode,
+    compatibilityRetrying,
     seekBy,
     isPaused,
     canSeek
@@ -6379,6 +6498,21 @@ function EpisodePlayerSurface({
             {playerError ? <span className="episode-player-status-text">{playerError}</span> : null}
             {!playerError && interactionRequired ? (
               <span className="episode-player-status-text">Oynatmayi baslatmak icin dokunun.</span>
+            ) : null}
+            {canRetryWithCompatibilityMode ? (
+              <button
+                type="button"
+                className="vod-compatibility-retry"
+                onClick={() => {
+                  void retryWithCompatibilityMode();
+                }}
+                disabled={controlsLocked || compatibilityRetrying}
+                data-tv-focusable="true"
+                data-tv-region="overlay-player-actions"
+                data-tv-focus-key={`episode-compatibility-retry-${item.id}`}
+              >
+                {compatibilityRetrying ? "Uyumluluk Modu Hazirlaniyor" : "Uyumluluk Modu ile Tekrar Dene"}
+              </button>
             ) : null}
             {noNextEpisodeCandidate ? (
               <span className="episode-player-status-text">Oynatilabilir sonraki bolum bulunamadi.</span>

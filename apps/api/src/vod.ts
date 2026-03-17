@@ -340,6 +340,8 @@ type LocalHlsState = {
   mode: "copy" | "transcode" | null;
   lastError: string | null;
   preferTranscodeFirst: boolean;
+  requireFullTranscode: boolean;
+  allowFileProxyFallback: boolean;
 };
 
 type VodPlaybackSession = {
@@ -612,6 +614,53 @@ function getFallbackContentTypeForTransport(transport: VodTransport) {
   return "application/octet-stream";
 }
 
+export type VodTranscodeDecisionInput = {
+  transport: VodTransport;
+  supportsByteRange: boolean;
+  preferTranscode: boolean;
+};
+
+export type VodTranscodeDecision = {
+  forceTranscodeProfile: boolean;
+  requiresFullTranscode: boolean;
+  needsTranscode: boolean;
+  useFileProxy: boolean;
+  requiresFfmpeg: boolean;
+  allowCopyFallback: boolean;
+  deliveryMode: VodDeliveryMode;
+};
+
+export function resolveVodTranscodeDecision(input: VodTranscodeDecisionInput): VodTranscodeDecision {
+  if (input.transport === "hls") {
+    return {
+      forceTranscodeProfile: false,
+      requiresFullTranscode: false,
+      needsTranscode: false,
+      useFileProxy: false,
+      requiresFfmpeg: false,
+      allowCopyFallback: false,
+      deliveryMode: "hls_proxy"
+    };
+  }
+
+  const forceTranscodeProfile = input.preferTranscode && input.transport !== "hls";
+  const isRiskyTransport = input.transport === "mkv" || input.transport === "avi" || input.transport === "unknown";
+  const mp4WithoutRange = input.transport === "mp4" && !input.supportsByteRange;
+  const requiresFullTranscode = isRiskyTransport || forceTranscodeProfile;
+  const needsTranscode = requiresFullTranscode || mp4WithoutRange;
+  const useFileProxy = input.transport === "mp4" && !needsTranscode;
+
+  return {
+    forceTranscodeProfile,
+    requiresFullTranscode,
+    needsTranscode,
+    useFileProxy,
+    requiresFfmpeg: needsTranscode,
+    allowCopyFallback: !requiresFullTranscode,
+    deliveryMode: useFileProxy ? "file_proxy" : "hls_transcoded"
+  };
+}
+
 function createFfmpegArgs(sourceUrl: string, outputDir: string, transcode: boolean) {
   const segmentPattern = path.join(outputDir, "segment-%05d.ts");
   const manifestPath = path.join(outputDir, "index.m3u8");
@@ -654,18 +703,32 @@ function createFfmpegArgs(sourceUrl: string, outputDir: string, transcode: boole
     ? [
         "-c:v",
         "libx264",
+        "-profile:v",
+        "high",
+        "-level:v",
+        "4.1",
         "-preset",
         "veryfast",
         "-crf",
         "22",
         "-pix_fmt",
         "yuv420p",
+        "-g",
+        "96",
+        "-keyint_min",
+        "48",
+        "-sc_threshold",
+        "0",
         "-c:a",
         "aac",
         "-ac",
         "2",
+        "-ar",
+        "48000",
         "-b:a",
-        "128k"
+        "160k",
+        "-af",
+        "aresample=async=1:min_hard_comp=0.100:first_pts=0"
       ]
     : ["-c", "copy"];
 
@@ -813,6 +876,21 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       throw new Error("Local HLS state bulunamadi.");
     }
 
+    if (session.localState.requireFullTranscode) {
+      const transcodeReady = await startFfmpegPipeline(session, true);
+      if (transcodeReady) {
+        return {
+          ok: true,
+          errorMessage: null
+        };
+      }
+
+      return {
+        ok: false,
+        errorMessage: session.localState.lastError ?? "Uyumluluk transcode baslatilamadi."
+      };
+    }
+
     if (session.localState.preferTranscodeFirst) {
       const transcodeReady = await startFfmpegPipeline(session, true);
       if (transcodeReady) {
@@ -887,27 +965,28 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       });
     }
 
-    const forceTranscodeProfile = input.preferTranscode === true && probe.transport !== "hls";
-    const mp4WithoutRange = probe.transport === "mp4" && !probe.supportsByteRange;
-    const requiresTranscode = probe.transport === "mkv" || probe.transport === "avi";
-    const prefersTranscode = probe.transport === "unknown" || mp4WithoutRange || forceTranscodeProfile;
-    const needsTranscodeCapability = requiresTranscode || prefersTranscode;
-    const canUseFfmpeg = needsTranscodeCapability ? await checkFfmpegAvailability() : false;
+    const decision = resolveVodTranscodeDecision({
+      transport: probe.transport,
+      supportsByteRange: probe.supportsByteRange,
+      preferTranscode: input.preferTranscode === true
+    });
+    const canUseFfmpeg = decision.requiresFfmpeg ? await checkFfmpegAvailability() : false;
 
-    if ((requiresTranscode || probe.transport === "unknown") && !canUseFfmpeg) {
+    if (decision.requiresFullTranscode && !canUseFfmpeg) {
       debugLog("unsupported-without-ffmpeg", {
-        transport: probe.transport
+        transport: probe.transport,
+        preferTranscode: input.preferTranscode === true
       });
       return buildDisabledPlaybackRecord({
         itemId: input.itemId,
         kind: input.kind,
         transport: probe.transport,
         deliveryMode: "hls_transcoded",
-        errorMessage: "Kaynak formati tarayicida oynatilamiyor. Sunucuda FFmpeg gerekli."
+        errorMessage: "Uyumluluk modu icin FFmpeg gerekli. Sunucuda FFmpeg bulunamadi."
       });
     }
 
-    const useTranscode = canUseFfmpeg && (requiresTranscode || prefersTranscode);
+    const useTranscode = canUseFfmpeg && decision.needsTranscode;
     const useFileProxy = probe.transport === "mp4" && !useTranscode;
     const deliveryMode: VodDeliveryMode =
       probe.transport === "hls" ? "hls_proxy" : useFileProxy ? "file_proxy" : "hls_transcoded";
@@ -943,7 +1022,9 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
               process: null,
               mode: null,
               lastError: null,
-              preferTranscodeFirst: forceTranscodeProfile
+              preferTranscodeFirst: decision.forceTranscodeProfile,
+              requireFullTranscode: decision.requiresFullTranscode,
+              allowFileProxyFallback: probe.transport === "mp4" && decision.allowCopyFallback
             }
     };
 
@@ -953,14 +1034,16 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       useFileProxy,
       useTranscode,
       canUseFfmpeg,
-      forceTranscodeProfile
+      forceTranscodeProfile: decision.forceTranscodeProfile,
+      requireFullTranscode: decision.requiresFullTranscode,
+      allowCopyFallback: decision.allowCopyFallback
     });
 
     if (session.localState) {
       session.localState.manifestPath = path.join(session.localState.tempDir, "index.m3u8");
       const prepared = await prepareLocalSession(session);
       if (!prepared.ok) {
-        if (probe.transport === "mp4") {
+        if (probe.transport === "mp4" && session.localState.allowFileProxyFallback) {
           debugLog("transcode-fallback-file-proxy", {
             errorMessage: prepared.errorMessage
           });
