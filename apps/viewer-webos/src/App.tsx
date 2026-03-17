@@ -5598,6 +5598,10 @@ function useVodPlaybackController({
       cleanupRef.current = () => {
         detachEvents();
       };
+      media.muted = false;
+      if (media.volume === 0) {
+        media.volume = 1;
+      }
       media.src = url;
       media.preload = "auto";
       media.playsInline = true;
