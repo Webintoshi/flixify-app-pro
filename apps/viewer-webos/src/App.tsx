@@ -4379,6 +4379,10 @@ function LivePlayerSurface({
       cleanupRef.current = () => {
         detachEvents();
       };
+      media.muted = false;
+      if (media.volume === 0) {
+        media.volume = 1;
+      }
       media.src = url;
       media.preload = "auto";
       media.playsInline = true;
@@ -5241,6 +5245,33 @@ function useVodPlaybackController({
       setPausedSafe(media.paused);
     }
 
+    function ensureAudioTrackSelected() {
+      const audioTracks = (
+        media as HTMLVideoElement & {
+          audioTracks?: {
+            length: number;
+            [index: number]: { enabled: boolean } | undefined;
+          };
+        }
+      ).audioTracks;
+
+      if (!audioTracks || typeof audioTracks.length !== "number" || audioTracks.length === 0) {
+        return;
+      }
+
+      let hasEnabledTrack = false;
+      for (let index = 0; index < audioTracks.length; index += 1) {
+        if (audioTracks[index]?.enabled) {
+          hasEnabledTrack = true;
+          break;
+        }
+      }
+
+      if (!hasEnabledTrack && audioTracks[0]) {
+        audioTracks[0].enabled = true;
+      }
+    }
+
     function teardownPlayer() {
       clearSeekGuard();
       clearStallWatchdog();
@@ -5376,10 +5407,12 @@ function useVodPlaybackController({
         syncTimelineState();
       };
       const onLoadedMetadata = () => {
+        ensureAudioTrackSelected();
         syncTimelineState();
         onReady(resumeAt);
       };
       const onCanPlay = () => {
+        ensureAudioTrackSelected();
         setStateSafe("buffering");
         syncTimelineState();
       };
