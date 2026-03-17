@@ -2369,7 +2369,7 @@ button {
 .admin-users-head {
   display: grid;
   gap: 16px;
-  grid-template-columns: 1.1fr 1.4fr 0.9fr 0.8fr 1fr 0.8fr 1.3fr;
+  grid-template-columns: 1.4fr 1fr 0.9fr 1fr 1fr 1.6fr;
   padding: 16px 20px;
   color: rgba(255, 255, 255, 0.4);
   font-size: 0.75rem;
@@ -2382,7 +2382,7 @@ button {
 .admin-user-row {
   display: grid;
   gap: 16px;
-  grid-template-columns: 1.1fr 1.4fr 0.9fr 0.8fr 1fr 0.8fr 1.3fr;
+  grid-template-columns: 1.4fr 1fr 0.9fr 1fr 1fr 1.6fr;
   align-items: center;
   padding: 18px 20px;
   border-radius: 16px;
@@ -2402,7 +2402,7 @@ button {
   white-space: nowrap;
 }
 
-/* Code cell styling */
+/* Code cell styling with tooltip */
 .admin-user-code {
   font-family: "SF Mono", "Segoe UI Mono", "Roboto Mono", monospace;
   font-weight: 700;
@@ -2412,6 +2412,37 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
+  cursor: help;
+  position: relative;
+}
+
+.admin-user-code:hover {
+  color: var(--accent-blue);
+}
+
+/* Show note on hover as subtle hint */
+.admin-user-code:hover::after {
+  content: attr(title);
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 4px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-family: system-ui, sans-serif;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  z-index: 10;
+  opacity: 0;
+  animation: fadeIn 200ms ease forwards;
+}
+
+@keyframes fadeIn {
+  to { opacity: 1; }
 }
 
 .admin-user-code::before {
@@ -2514,54 +2545,55 @@ button {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
 }
 
 .admin-primary-action {
-  min-height: 42px;
-  min-width: 120px;
-  padding: 10px 20px;
-  border-radius: 12px;
+  min-height: 44px;
+  min-width: 110px;
+  padding: 10px 18px;
+  border-radius: 10px;
   font-size: 0.9rem;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   transition: all var(--duration-fast);
+  border: none;
 }
 
 .admin-primary-action:not(.secondary) {
-  background: linear-gradient(180deg, var(--accent), #d8050f);
-  box-shadow: 0 8px 24px rgba(244, 6, 18, 0.25);
+  background: linear-gradient(180deg, #f40612, #c0050e);
+  color: white;
+  box-shadow: 0 6px 20px rgba(244, 6, 18, 0.35);
 }
 
 .admin-primary-action:not(.secondary):hover {
   transform: translateY(-2px);
-  box-shadow: var(--shadow-glow-red);
+  box-shadow: 0 8px 28px rgba(244, 6, 18, 0.45);
 }
 
 .admin-primary-action.secondary {
-  background: rgba(0, 199, 129, 0.12);
-  border: 1px solid rgba(0, 199, 129, 0.25);
-  color: #2ee59e;
-  box-shadow: 0 8px 24px rgba(0, 199, 129, 0.15);
+  background: linear-gradient(180deg, #00c781, #00a368);
+  color: white;
+  box-shadow: 0 6px 20px rgba(0, 199, 129, 0.35);
 }
 
 .admin-primary-action.secondary:hover {
-  background: rgba(0, 199, 129, 0.18);
-  box-shadow: var(--shadow-glow-green);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(0, 199, 129, 0.45);
 }
 
 /* Icon buttons for Edit/Delete */
 .admin-row-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
   color: var(--muted);
-  font-size: 1.1rem;
+  font-size: 1.2rem;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2570,10 +2602,24 @@ button {
 }
 
 .admin-row-icon:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
   color: var(--text);
   transform: scale(1.08);
+}
+
+/* Edit button specific */
+.admin-row-icon[title="Düzenle"]:hover {
+  background: rgba(74, 142, 255, 0.15);
+  border-color: rgba(74, 142, 255, 0.3);
+  color: #4a8eff;
+}
+
+/* Delete button specific */
+.admin-row-icon[title="Sil"]:hover {
+  background: rgba(244, 6, 18, 0.15);
+  border-color: rgba(244, 6, 18, 0.3);
+  color: #f40612;
 }
 
 /* === ENHANCED MODALS === */
@@ -2921,6 +2967,11 @@ button {
     justify-content: flex-end;
   }
   
+  .admin-users-head,
+  .admin-user-row {
+    grid-template-columns: 1.4fr 0.9fr 0.9fr 1fr 1fr 1.6fr;
+  }
+  
   .admin-package-grid {
     grid-template-columns: 1fr;
   }
@@ -2937,6 +2988,31 @@ button {
   
   .admin-expiry-preview strong {
     font-size: 1.6rem;
+  }
+}
+
+@media (max-width: 900px) {
+  .admin-users-head,
+  .admin-user-row {
+    grid-template-columns: 1fr 0.8fr 0.8fr 1fr 1fr 1.4fr;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+  
+  .admin-user-actions {
+    gap: 6px;
+  }
+  
+  .admin-primary-action {
+    min-width: 90px;
+    padding: 8px 12px;
+    font-size: 0.85rem;
+  }
+  
+  .admin-row-icon {
+    width: 38px;
+    height: 38px;
+    font-size: 1rem;
   }
 }
 

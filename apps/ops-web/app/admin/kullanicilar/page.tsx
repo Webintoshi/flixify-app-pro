@@ -331,13 +331,12 @@ export default function AdminUsersPage() {
 
         <div className="admin-users-table">
           <div className="admin-users-head">
-            <span>Kod</span>
-            <span>Not / Ad</span>
-            <span>Bitis</span>
-            <span>Kalan Sure</span>
-            <span>Paket Durumu</span>
-            <span>M3U Durumu</span>
-            <span>Aksiyon</span>
+            <span>🔑 Kod</span>
+            <span>📅 Bitis</span>
+            <span>⏱️ Kalan</span>
+            <span>📦 Paket</span>
+            <span>🔗 M3U</span>
+            <span>⚡ Aksiyonlar</span>
           </div>
 
           {users.length === 0 ? (
@@ -358,8 +357,7 @@ export default function AdminUsersPage() {
             const primaryLabel = user.m3uAssigned || user.hasActiveSubscription ? "Yenile" : "Tanimla";
             return (
               <article className="admin-user-row" key={user.id}>
-                <div className="admin-user-cell admin-user-code">{getCodeLabel(user)}</div>
-                <div className="admin-user-cell admin-user-notes">{user.notes ?? "Anonymous User"}</div>
+                <div className="admin-user-cell admin-user-code" title={user.notes ?? "Anonymous User"}>{getCodeLabel(user)}</div>
                 <div className="admin-user-cell">
                   {user.subscriptionEndsAt ? new Date(user.subscriptionEndsAt).toLocaleDateString("tr-TR") : "-"}
                 </div>
