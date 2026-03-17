@@ -421,7 +421,10 @@ async function getUserContextRow(userId: string, includeDeleted = false): Promis
       left join lateral (
         select
           s.package_id,
-          p.title as package_title,
+          case
+            when s.end_reason = 'trial-24h' then '24 Saat Test'
+            else p.title
+          end as package_title,
           p.duration as package_duration,
           s.ends_at
         from public.subscriptions s
@@ -1292,7 +1295,10 @@ export async function listAdminUsers(
         left join lateral (
           select
             s.package_id,
-            p.title as package_title,
+            case
+              when s.end_reason = 'trial-24h' then '24 Saat Test'
+              else p.title
+            end as package_title,
             p.duration as package_duration,
             s.ends_at
           from public.subscriptions s
@@ -1800,6 +1806,75 @@ export async function activateSubscription(userId: string, packageSlug: string, 
   });
 }
 
+export async function activateTestSubscription24Hours(userId: string, adminId: string) {
+  return withTransaction(async (client) => {
+    await client.query(
+      "update public.users set status = 'active' where id = $1 and status <> 'blocked' and deleted_at is null",
+      [userId]
+    );
+
+    const packageResult = await client.query<{ id: string }>(
+      `
+        select id
+        from public.packages
+        where is_active = true
+        order by
+          case when slug = '1-ay' then 0 else 1 end,
+          duration_months asc
+        limit 1
+      `
+    );
+
+    const pack = packageResult.rows[0];
+    if (!pack) {
+      throw new Error("Active package not found");
+    }
+
+    const startsAt = new Date();
+    const endsAt = new Date(startsAt.getTime() + 24 * 60 * 60 * 1000);
+
+    await client.query(
+      `
+        update public.subscriptions
+        set status = 'cancelled',
+            end_reason = 'replaced-by-admin'
+        where user_id = $1
+          and status = 'active'
+      `,
+      [userId]
+    );
+
+    await client.query(
+      `
+        insert into public.subscriptions (
+          user_id,
+          package_id,
+          status,
+          starts_at,
+          ends_at,
+          activated_by_admin_id,
+          end_reason
+        ) values ($1, $2, 'active', $3, $4, $5, 'trial-24h')
+      `,
+      [userId, pack.id, startsAt.toISOString(), endsAt.toISOString(), adminId]
+    );
+
+    await client.query(
+      `
+        insert into public.admin_audit_logs (admin_id, action, entity_type, entity_id, payload)
+        values (
+          $1,
+          'activate-test-subscription-24h',
+          'user',
+          $2,
+          jsonb_build_object('durationHours', 24)
+        )
+      `,
+      [adminId, userId]
+    );
+  });
+}
+
 export async function listPaymentRequests(userId?: string) {
   const result = await query<{
     id: string;
@@ -2153,7 +2228,10 @@ export async function listSubscriptions(userId?: string) {
         s.status,
         s.starts_at,
         s.ends_at,
-        p.title as package_title
+        case
+          when s.end_reason = 'trial-24h' then '24 Saat Test'
+          else p.title
+        end as package_title
       from public.subscriptions s
       join public.packages p on p.id = s.package_id
       where ($1::uuid is null or s.user_id = $1)

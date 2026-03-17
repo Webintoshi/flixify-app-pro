@@ -203,6 +203,41 @@ export default function AdminUsersPage() {
     }
   }
 
+  async function handleAssign24HourTest() {
+    if (!assigningUser) {
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      await apiRequest(`/admin/users/${assigningUser.summary.id}/m3u-source`, {
+        method: "POST",
+        body: {
+          username: iptvUsername.trim(),
+          password: iptvPassword.trim()
+        },
+        useAdminToken: true
+      });
+
+      await apiRequest(`/admin/users/${assigningUser.summary.id}/subscriptions/test-24h`, {
+        method: "POST",
+        useAdminToken: true
+      });
+
+      setAssigningUser(null);
+      setIptvUsername("");
+      setIptvPassword("");
+      setMessage("Kullaniciya 24 saat test yayini tanimlandi.");
+      await loadUsers();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "24 saat test tanimlanamadi.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function handleEditSave() {
     if (!editingUser) {
       return;
@@ -462,6 +497,9 @@ export default function AdminUsersPage() {
             <div className="admin-modal-actions">
               <button className="button secondary" type="button" onClick={() => setAssigningUser(null)}>
                 Iptal
+              </button>
+              <button className="button secondary" type="button" disabled={submitting} onClick={() => void handleAssign24HourTest()}>
+                {submitting ? "Test Tanimlaniyor..." : "24 Saat Test Ver"}
               </button>
               <button className="button" type="button" disabled={submitting} onClick={() => void handleAssignmentSave()}>
                 {submitting ? "Kaydediliyor..." : "Kaydet"}

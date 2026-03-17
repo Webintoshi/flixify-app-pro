@@ -70,6 +70,10 @@ function plusDays(days: number) {
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
 }
 
+function plusHours(hours: number) {
+  return new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+}
+
 function randomCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return Array.from({ length: 16 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
@@ -959,6 +963,39 @@ export function activateDemoSubscription(userId: string, packageSlug: string) {
   });
 
   addAuditLog("activate-subscription", "user", userId);
+}
+
+export function activateDemoTestSubscription24Hours(userId: string) {
+  const user = getDemoUser(userId);
+  const pack = packages.find((item) => item.slug === "1-ay") ?? packages[0];
+  if (!user || !pack || user.deletedAt) {
+    throw new Error("24 saat test aktivasyonu yapilamadi");
+  }
+
+  const startsAt = now();
+  const endsAt = plusHours(24);
+
+  user.summary.hasActiveSubscription = true;
+  user.summary.activePackage = {
+    id: pack.id,
+    title: "24 Saat Test",
+    duration: pack.duration,
+    endsAt,
+    remainingDays: 1
+  };
+  user.summary.popup = null;
+  user.summary.status = "active";
+
+  subscriptions.unshift({
+    id: randomUUID(),
+    userId,
+    status: "active",
+    startsAt,
+    endsAt,
+    packageTitle: "24 Saat Test"
+  });
+
+  addAuditLog("activate-test-subscription-24h", "user", userId);
 }
 
 export function listDemoPaymentRequests() {

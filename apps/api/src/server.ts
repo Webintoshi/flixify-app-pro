@@ -20,6 +20,7 @@ import {
 import type { LiveTransport } from "@flixify/contracts";
 import {
   activateSubscription,
+  activateTestSubscription24Hours,
   approvePaymentRequest,
   assignM3USource,
   createDeviceSession,
@@ -67,6 +68,7 @@ import {
 } from "./repository.js";
 import {
   activateDemoSubscription,
+  activateDemoTestSubscription24Hours,
   getDemoAdminDashboard,
   getDemoAdminUserDetail,
   assignDemoM3USource,
@@ -1465,6 +1467,24 @@ export function buildServer() {
     } catch (error) {
       request.log.error(error);
       return reply.status(400).send({ message: "Paket aktive edilemedi." });
+    }
+  });
+
+  app.post("/admin/users/:userId/subscriptions/test-24h", async (request, reply) => {
+    try {
+      const admin = await authenticateAdmin(request.headers.authorization);
+      const { userId } = request.params as { userId: string };
+
+      if (isDemoMode) {
+        activateDemoTestSubscription24Hours(userId);
+        return { ok: true };
+      }
+
+      await activateTestSubscription24Hours(userId, admin.adminId);
+      return { ok: true };
+    } catch (error) {
+      request.log.error(error);
+      return reply.status(400).send({ message: "24 saat test yayini aktive edilemedi." });
     }
   });
 
