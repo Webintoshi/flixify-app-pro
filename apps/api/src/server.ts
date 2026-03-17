@@ -270,6 +270,27 @@ function extractUpstreamStatus(errorMessage: string | null | undefined) {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+function shouldAllowDirectVodFallback(errorMessage: string | null | undefined) {
+  if (typeof errorMessage !== "string") {
+    return false;
+  }
+
+  const normalized = errorMessage.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (/^upstream\s+(401|403|404|410|429|5\d\d)$/i.test(normalized)) {
+    return true;
+  }
+
+  return (
+    normalized.includes("html donuyor") ||
+    normalized.includes("akistan veri okunamadi") ||
+    normalized.includes("dogrulanamadi")
+  );
+}
+
 async function resolveLiveSourceUrl(input: {
   baseUrl: string;
   streamPath: string;
@@ -1093,6 +1114,20 @@ export function buildServer() {
       });
 
       if (!resolved.ok || !resolved.sourceUrl) {
+        if (resolved.sourceUrl && shouldAllowDirectVodFallback(resolved.errorMessage)) {
+          return {
+            itemId,
+            kind,
+            url: resolved.sourceUrl,
+            transport: resolved.transport,
+            deliveryMode: "file_proxy",
+            expiresAt: null,
+            canPlay: true,
+            isVerified: false,
+            errorMessage: null
+          };
+        }
+
         return {
           itemId,
           kind,

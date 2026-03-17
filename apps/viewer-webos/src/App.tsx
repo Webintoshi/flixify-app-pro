@@ -5776,8 +5776,11 @@ function useVodPlaybackController({
           }
         }
 
-        // Fallback to HLS engine when transport metadata is ambiguous or native reports unsupported source.
-        if (playback.transport === "unknown" || unsupportedSource) {
+        const shouldTryHlsFallback =
+          playback.transport === "unknown" || (unsupportedSource && shouldUseHlsForVodPlayback(playback));
+
+        // Fallback to HLS engine only for unknown transport or actual HLS sources.
+        if (shouldTryHlsFallback) {
           debugVod("mount-native-fallback-hls", {
             reason: unsupportedSource ? "unsupported-source" : "unknown-transport",
             message: getMediaErrorMessage(error, "native mount hatasi")
