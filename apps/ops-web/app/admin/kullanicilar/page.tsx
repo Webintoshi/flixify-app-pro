@@ -261,23 +261,35 @@ export default function AdminUsersPage() {
 
       <section className="admin-stats-grid">
         <article className="admin-stat-card">
-          <span className="admin-stat-kicker">Toplam Kullanici</span>
+          <span className="admin-stat-kicker">📊 Toplam Kullanici</span>
           <strong>{counters.total}</strong>
+          <div className="admin-stat-progress">
+            <div className="admin-stat-progress-fill" style={{ width: '100%' }} />
+          </div>
           <span className="admin-stat-note">Listelenen hesaplar</span>
         </article>
         <article className="admin-stat-card">
-          <span className="admin-stat-kicker">Aktif</span>
+          <span className="admin-stat-kicker">✅ Aktif</span>
           <strong>{counters.active}</strong>
+          <div className="admin-stat-progress">
+            <div className="admin-stat-progress-fill" style={{ width: `${counters.total > 0 ? (counters.active / counters.total) * 100 : 0}%` }} />
+          </div>
           <span className="admin-stat-note">Paket suresi aktif</span>
         </article>
         <article className="admin-stat-card">
-          <span className="admin-stat-kicker">M3U Bekleyen</span>
+          <span className="admin-stat-kicker">⏳ M3U Bekleyen</span>
           <strong>{counters.waitingM3u}</strong>
+          <div className="admin-stat-progress">
+            <div className="admin-stat-progress-fill" style={{ width: `${counters.total > 0 ? (counters.waitingM3u / counters.total) * 100 : 0}%` }} />
+          </div>
           <span className="admin-stat-note">Link tanimlanmamis</span>
         </article>
         <article className="admin-stat-card">
-          <span className="admin-stat-kicker">Suresi Dolmus</span>
+          <span className="admin-stat-kicker">⚠️ Suresi Dolmus</span>
           <strong>{counters.expired}</strong>
+          <div className="admin-stat-progress">
+            <div className="admin-stat-progress-fill" style={{ width: `${counters.total > 0 ? (counters.expired / counters.total) * 100 : 0}%` }} />
+          </div>
           <span className="admin-stat-note">Yenileme bekleyen hesap</span>
         </article>
       </section>
@@ -328,7 +340,21 @@ export default function AdminUsersPage() {
             <span>Aksiyon</span>
           </div>
 
-          {users.map((user) => {
+          {users.length === 0 ? (
+            <div style={{ 
+              padding: '60px 20px', 
+              textAlign: 'center', 
+              color: 'rgba(255,255,255,0.5)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '16px'
+            }}>
+              <div style={{ fontSize: '3rem', opacity: 0.5 }}>📭</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 600 }}>Kullanici bulunamadi</div>
+              <div style={{ fontSize: '0.95rem' }}>Arama kriterlerinizi degistirin veya filtreleri temizleyin</div>
+            </div>
+          ) : users.map((user) => {
             const primaryLabel = user.m3uAssigned || user.hasActiveSubscription ? "Yenile" : "Tanimla";
             return (
               <article className="admin-user-row" key={user.id}>
@@ -337,7 +363,11 @@ export default function AdminUsersPage() {
                 <div className="admin-user-cell">
                   {user.subscriptionEndsAt ? new Date(user.subscriptionEndsAt).toLocaleDateString("tr-TR") : "-"}
                 </div>
-                <div className="admin-user-cell admin-user-remaining">
+                <div className="admin-user-cell admin-user-remaining" style={{ 
+                  color: user.remainingDays !== null && user.remainingDays < 0 ? '#ff6d76' : 
+                         user.remainingDays !== null && user.remainingDays < 7 ? '#ffc94d' : 
+                         user.remainingDays !== null ? '#2ee59e' : 'inherit'
+                }}>
                   {user.remainingDays !== null ? `${user.remainingDays} gun` : "-"}
                 </div>
                 <div className="admin-user-cell">
@@ -356,11 +386,11 @@ export default function AdminUsersPage() {
                   <button className={`button admin-primary-action ${primaryLabel === "Yenile" ? "secondary" : ""}`} type="button" onClick={() => void openAssignModal(user)}>
                     {primaryLabel}
                   </button>
-                  <button className="icon-button admin-row-icon" type="button" onClick={() => openEditModal(user)}>
-                    E
+                  <button className="icon-button admin-row-icon" type="button" onClick={() => openEditModal(user)} title="Düzenle">
+                    ✏️
                   </button>
-                  <button className="icon-button admin-row-icon" type="button" onClick={() => void handleDelete(user)}>
-                    X
+                  <button className="icon-button admin-row-icon" type="button" onClick={() => void handleDelete(user)} title="Sil">
+                    🗑️
                   </button>
                 </div>
               </article>
@@ -373,8 +403,11 @@ export default function AdminUsersPage() {
         <div className="admin-modal-backdrop" onClick={() => setAssigningUser(null)}>
           <section className="admin-modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="admin-modal-heading">
-              <h2>Kullanici</h2>
-              <strong>{getCodeLabel(assigningUser.summary)}</strong>
+              <div>
+                <h2>IPTV Atama</h2>
+                <strong>{getCodeLabel(assigningUser.summary)}</strong>
+              </div>
+              <button className="admin-modal-close" onClick={() => setAssigningUser(null)}>×</button>
             </div>
 
             <div className="admin-inline-message">
@@ -444,8 +477,11 @@ export default function AdminUsersPage() {
         <div className="admin-modal-backdrop" onClick={() => setEditingUser(null)}>
           <section className="admin-modal-card admin-edit-card" onClick={(event) => event.stopPropagation()}>
             <div className="admin-modal-heading">
-              <h2>Kullaniciyi Duzenle</h2>
-              <strong>{getCodeLabel(editingUser)}</strong>
+              <div>
+                <h2>Kullaniciyi Duzenle</h2>
+                <strong>{getCodeLabel(editingUser)}</strong>
+              </div>
+              <button className="admin-modal-close" onClick={() => setEditingUser(null)}>×</button>
             </div>
 
             <label className="field">
