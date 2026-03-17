@@ -23,6 +23,7 @@ Bu klasor, sistemi Coolify'da `api + worker + ops-web + viewer-webos` olarak can
   - `PUBLIC_API_BASE_URL=https://api.<domain>`
   - `NEXT_PUBLIC_API_BASE_URL=https://api.<domain>`
   - `VITE_API_BASE_URL=https://api.<domain>`
+- VOD transcode icin `FFMPEG_BINARY=ffmpeg` tanimla.
 
 ## 3) Deploy Sirasi
 

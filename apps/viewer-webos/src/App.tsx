@@ -1134,7 +1134,7 @@ function ViewerHeader({
 
         <div className="site-header-actions">
           <NavLink
-            to="/ayarlar"
+            to="/profil"
             className="site-user-chip"
             title={userLabel}
             data-tv-focusable="true"
@@ -6691,6 +6691,14 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                 </div>
               </section>
             }
+          />
+          <Route
+            path="/profil"
+            element={<Navigate to="/ayarlar" replace />}
+          />
+          <Route
+            path="/profile"
+            element={<Navigate to="/profil" replace />}
           />
           <Route
             path="/ayarlar"

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import { config } from "dotenv";
 import ffmpegStatic from "ffmpeg-static";
 import { z } from "zod";
@@ -31,9 +32,40 @@ const envSchema = z.object({
 
 const parsed = envSchema.parse(process.env);
 
+function isExecutableFfmpeg(binary: string) {
+  if (!binary) {
+    return false;
+  }
+
+  try {
+    const result = spawnSync(binary, ["-version"], {
+      stdio: "ignore"
+    });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function resolveFfmpegBinary(explicitBinary: string | undefined) {
+  const candidates = [explicitBinary?.trim(), "ffmpeg", ffmpegStatic ?? undefined]
+    .filter((value): value is string => Boolean(value && value.length > 0));
+  const uniqueCandidates = [...new Set(candidates)];
+
+  for (const candidate of uniqueCandidates) {
+    if (isExecutableFfmpeg(candidate)) {
+      return candidate;
+    }
+  }
+
+  return uniqueCandidates[0] ?? "ffmpeg";
+}
+
+const resolvedFfmpegBinary = resolveFfmpegBinary(parsed.FFMPEG_BINARY);
+
 export const env = {
   ...parsed,
-  FFMPEG_BINARY: parsed.FFMPEG_BINARY?.trim() || ffmpegStatic || "ffmpeg",
+  FFMPEG_BINARY: resolvedFfmpegBinary,
   adminEmails: parsed.ADMIN_EMAILS.split(",")
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean)

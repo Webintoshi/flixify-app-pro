@@ -426,7 +426,9 @@ export function ViewerNativeApp() {
 
         <View style={{ gap: 12, backgroundColor: "#121212", borderRadius: 20, padding: 20 }}>
           <Text style={{ color: "white", fontSize: 20, fontWeight: "600" }}>{screen}</Text>
-          <Text style={{ color: "#b7b7b2" }}>Kod: {core.codeLabel}</Text>
+          <TouchableOpacity onPress={() => setScreen("/ayarlar")}>
+            <Text style={{ color: "#b7b7b2" }}>Kod: {core.codeLabel} (Profil)</Text>
+          </TouchableOpacity>
           {currentItems.map((item) => (
             <Text key={item} style={{ color: "#e8e8e2" }}>
               {item}

@@ -3,7 +3,12 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { Menu, app, BrowserWindow, shell } = require("electron");
 
-app.disableHardwareAcceleration();
+if (
+  process.env.FLIXIFY_DISABLE_HARDWARE_ACCELERATION === "1" ||
+  process.env.FLIXIFY_DISABLE_HARDWARE_ACCELERATION === "true"
+) {
+  app.disableHardwareAcceleration();
+}
 
 function normalizeApiBaseUrl(value) {
   if (typeof value !== "string") {

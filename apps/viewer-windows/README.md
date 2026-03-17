@@ -54,6 +54,9 @@ Oncelik sirasi:
 2. `%APPDATA%\\Flixify Pro\\app-config.json`
 3. Paket icindeki `web-dist/app-config.json`
 
+Video decode sorunu yasarsan opsiyonel olarak donanim hizlandirma kapatilabilir:
+- `FLIXIFY_DISABLE_HARDWARE_ACCELERATION=1`
+
 ## Uygulama Guncelleme Davranisi
 
 - Masaustu uygulama menude `Guncelle` aksiyonu sunar (`CmdOrCtrl+Shift+R`).
