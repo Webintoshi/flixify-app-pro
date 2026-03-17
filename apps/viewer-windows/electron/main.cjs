@@ -3,11 +3,31 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { Menu, app, BrowserWindow, shell } = require("electron");
 
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+
 if (
   process.env.FLIXIFY_DISABLE_HARDWARE_ACCELERATION === "1" ||
   process.env.FLIXIFY_DISABLE_HARDWARE_ACCELERATION === "true"
 ) {
   app.disableHardwareAcceleration();
+}
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+function canOpenExternalUrl(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(value);
+    return ["https:", "http:", "mailto:", "tel:"].includes(parsed.protocol);
+  } catch {
+    return false;
+  }
 }
 
 function normalizeApiBaseUrl(value) {
@@ -97,6 +117,34 @@ async function hardReload(mainWindow) {
   mainWindow.webContents.reloadIgnoringCache();
 }
 
+async function ensureVersionedCache(mainWindow) {
+  const markerPath = path.join(app.getPath("userData"), "cache-marker.txt");
+  const markerValue = `${app.getVersion()}::${process.platform}`;
+  let previousMarker = null;
+
+  try {
+    previousMarker = fs.readFileSync(markerPath, "utf8").trim() || null;
+  } catch {
+    previousMarker = null;
+  }
+
+  if (previousMarker === markerValue) {
+    return;
+  }
+
+  try {
+    await mainWindow.webContents.session.clearCache();
+  } catch {
+    // noop
+  }
+
+  try {
+    fs.writeFileSync(markerPath, `${markerValue}\n`, "utf8");
+  } catch {
+    // noop
+  }
+}
+
 function createAppMenu(mainWindow) {
   const template = [
     {
@@ -145,17 +193,24 @@ function createAppMenu(mainWindow) {
 }
 
 async function createMainWindow() {
+  if (BrowserWindow.getAllWindows().length > 0) {
+    return BrowserWindow.getAllWindows()[0];
+  }
+
   const mainWindow = new BrowserWindow({
     width: 1366,
     height: 820,
     minWidth: 1024,
     minHeight: 640,
+    show: false,
     autoHideMenuBar: true,
     backgroundColor: "#05070B",
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      backgroundThrottling: false,
+      spellcheck: false
     }
   });
 
@@ -173,19 +228,95 @@ async function createMainWindow() {
   }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (canOpenExternalUrl(url)) {
+      void shell.openExternal(url);
+    }
     return { action: "deny" };
   });
 
-  // Prevent stale hashed CSS/JS from previous installs causing broken layouts.
-  await mainWindow.webContents.session.clearCache().catch(() => undefined);
   const entryUrl = runtime.webAppUrl ? new URL(runtime.webAppUrl) : pathToFileURL(indexPath);
+  const entryOrigin = entryUrl.protocol === "file:" ? null : entryUrl.origin;
   if (runtime.apiBaseUrl) {
     entryUrl.searchParams.set("apiBaseUrl", runtime.apiBaseUrl);
   }
 
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    try {
+      const nextUrl = new URL(url);
+      const isFileNavigation = nextUrl.protocol === "file:";
+      const isAppOriginNavigation = entryOrigin ? nextUrl.origin === entryOrigin : false;
+      if (isFileNavigation || isAppOriginNavigation) {
+        return;
+      }
+    } catch {
+      // Invalid URL should not navigate.
+    }
+
+    event.preventDefault();
+    if (canOpenExternalUrl(url)) {
+      void shell.openExternal(url);
+    }
+  });
+
+  let failedMainFrameRetryCount = 0;
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    if (errorCode === -3) {
+      return;
+    }
+
+    const isTransientNetworkError = new Set([-2, -7, -21, -105, -106, -118, -137]).has(errorCode);
+    if (isTransientNetworkError && failedMainFrameRetryCount < 2) {
+      failedMainFrameRetryCount += 1;
+      const delayMs = 1000 * failedMainFrameRetryCount;
+      setTimeout(() => {
+        if (!mainWindow.isDestroyed()) {
+          void mainWindow.loadURL(entryUrl.toString());
+        }
+      }, delayMs);
+      return;
+    }
+
+    void mainWindow.loadURL(
+      "data:text/html;charset=UTF-8," +
+        encodeURIComponent(
+          `<h2>Flixify Pro baglanti sorunu</h2><p>Sayfa yuklenemedi (${errorCode}).</p><p>${errorDescription || validatedURL || ""}</p><p>CmdOrCtrl+R ile yeniden deneyin.</p>`
+        )
+    );
+  });
+  mainWindow.webContents.on("did-finish-load", () => {
+    failedMainFrameRetryCount = 0;
+  });
+
+  mainWindow.webContents.on("render-process-gone", () => {
+    if (!mainWindow.isDestroyed()) {
+      setTimeout(() => {
+        if (!mainWindow.isDestroyed()) {
+          void hardReload(mainWindow);
+        }
+      }, 800);
+    }
+  });
+
+  mainWindow.on("unresponsive", () => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.reload();
+    }
+  });
+
+  await ensureVersionedCache(mainWindow);
   void mainWindow.loadURL(entryUrl.toString());
+  mainWindow.once("ready-to-show", () => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
   createAppMenu(mainWindow);
+  return mainWindow;
 }
 
 app.whenReady().then(() => {
@@ -196,6 +327,20 @@ app.whenReady().then(() => {
       void createMainWindow();
     }
   });
+});
+
+app.on("second-instance", () => {
+  const [mainWindow] = BrowserWindow.getAllWindows();
+  if (!mainWindow) {
+    void createMainWindow();
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
 });
 
 app.on("window-all-closed", () => {

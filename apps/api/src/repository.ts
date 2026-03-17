@@ -530,6 +530,28 @@ function buildGroupClause(group?: string) {
   return group ? group.toLowerCase() : null;
 }
 
+export function isTurkiyeLiveGroupFilter(group?: string | null) {
+  return (group ?? "").trim().toLowerCase() === "turkiye";
+}
+
+export function buildLiveCatalogOrderByClause(isTurkiyeGroup: boolean) {
+  if (isTurkiyeGroup) {
+    return "c.order_index asc, c.title asc";
+  }
+
+  return `
+    case coalesce(h.health_status, 'unknown')
+      when 'healthy' then 0
+      when 'unknown' then 1
+      when 'degraded' then 2
+      when 'broken' then 3
+      else 4
+    end asc,
+    c.order_index asc,
+    c.title asc
+  `;
+}
+
 type PlaybackContext = {
   baseUrl: string | null;
   credentials: { username: string; password: string } | null;
@@ -610,49 +632,80 @@ export async function listLiveCatalog(
 ) {
   const offset = (page - 1) * pageSize;
   const searchValue = buildSearchClause(search);
-  const groupValue = buildGroupClause(group);
-  const where = `
-    where c.snapshot_version = $1
-      and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
-      and ($3::text is null or lower(coalesce(c.group_title, 'diger')) = $3)
-  `;
-  const [itemsResult, totalResult, groups] = await Promise.all([
-    query<SharedLiveChannelRow>(
-      `
-        select
-          c.id,
-          c.title,
-          c.group_title,
-          c.logo_url,
-          c.stream_path,
-          c.transport,
-          h.health_status,
-          h.last_checked_at,
-          h.failure_count,
-          h.last_error
-        from public.shared_live_channels c
-        left join public.shared_live_channel_health h on h.channel_id = c.id
-        ${where}
-        order by
-          case coalesce(h.health_status, 'unknown')
-            when 'healthy' then 0
-            when 'unknown' then 1
-            when 'degraded' then 2
-            when 'broken' then 3
-            else 4
-          end asc,
-          c.order_index asc,
-          c.title asc
-        limit $4 offset $5
-      `,
-      [snapshotVersion, searchValue, groupValue, pageSize, offset]
-    ),
-    query<{ count: string }>(
-      `select count(*)::text as count from public.shared_live_channels c ${where}`,
-      [snapshotVersion, searchValue, groupValue]
-    ),
-    listCatalogGroupsForTable("shared_live_channels", "live", snapshotVersion, search)
-  ]);
+  const isTurkiyeGroup = isTurkiyeLiveGroupFilter(group);
+  const [itemsResult, totalResult, groups] = isTurkiyeGroup
+    ? await Promise.all([
+        query<SharedLiveChannelRow>(
+          `
+            select
+              c.id,
+              c.title,
+              c.group_title,
+              c.logo_url,
+              c.stream_path,
+              c.transport,
+              h.health_status,
+              h.last_checked_at,
+              h.failure_count,
+              h.last_error
+            from public.shared_live_channels c
+            left join public.shared_live_channel_health h on h.channel_id = c.id
+            where c.snapshot_version = $1
+              and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
+              and lower(coalesce(c.group_title, '')) like 'tr:%'
+            order by ${buildLiveCatalogOrderByClause(true)}
+            limit $3 offset $4
+          `,
+          [snapshotVersion, searchValue, pageSize, offset]
+        ),
+        query<{ count: string }>(
+          `
+            select count(*)::text as count
+            from public.shared_live_channels c
+            where c.snapshot_version = $1
+              and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
+              and lower(coalesce(c.group_title, '')) like 'tr:%'
+          `,
+          [snapshotVersion, searchValue]
+        ),
+        listCatalogGroupsForTable("shared_live_channels", "live", snapshotVersion, search)
+      ])
+    : await Promise.all([
+        query<SharedLiveChannelRow>(
+          `
+            select
+              c.id,
+              c.title,
+              c.group_title,
+              c.logo_url,
+              c.stream_path,
+              c.transport,
+              h.health_status,
+              h.last_checked_at,
+              h.failure_count,
+              h.last_error
+            from public.shared_live_channels c
+            left join public.shared_live_channel_health h on h.channel_id = c.id
+            where c.snapshot_version = $1
+              and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
+              and ($3::text is null or lower(coalesce(c.group_title, 'diger')) = $3)
+            order by ${buildLiveCatalogOrderByClause(false)}
+            limit $4 offset $5
+          `,
+          [snapshotVersion, searchValue, buildGroupClause(group), pageSize, offset]
+        ),
+        query<{ count: string }>(
+          `
+            select count(*)::text as count
+            from public.shared_live_channels c
+            where c.snapshot_version = $1
+              and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
+              and ($3::text is null or lower(coalesce(c.group_title, 'diger')) = $3)
+          `,
+          [snapshotVersion, searchValue, buildGroupClause(group)]
+        ),
+        listCatalogGroupsForTable("shared_live_channels", "live", snapshotVersion, search)
+      ]);
 
   return {
     items: itemsResult.rows.map((row) => mapLiveChannel(row, playback)),

@@ -273,6 +273,20 @@ function collectGroups(
     .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title));
 }
 
+export function matchesCatalogGroupFilter(groupTitle: string | null | undefined, group?: string) {
+  const normalizedGroup = group?.trim().toLowerCase();
+  if (!normalizedGroup) {
+    return true;
+  }
+
+  const groupLabel = (groupTitle ?? "Diger").trim().toLowerCase();
+  if (normalizedGroup === "turkiye") {
+    return groupLabel.startsWith("tr:");
+  }
+
+  return groupLabel === normalizedGroup;
+}
+
 function paginate<T extends { title?: string; groupTitle?: string | null }>(
   items: T[],
   page: number,
@@ -281,13 +295,11 @@ function paginate<T extends { title?: string; groupTitle?: string | null }>(
   group?: string
 ) {
   const normalizedSearch = search?.toLowerCase();
-  const normalizedGroup = group?.toLowerCase();
   const filtered = items.filter((item) => {
     const matchesSearch = normalizedSearch
       ? (item.title ?? "").toLowerCase().includes(normalizedSearch)
       : true;
-    const groupLabel = (item.groupTitle ?? "Diger").toLowerCase();
-    const matchesGroup = normalizedGroup ? groupLabel === normalizedGroup : true;
+    const matchesGroup = matchesCatalogGroupFilter(item.groupTitle, group);
     return matchesSearch && matchesGroup;
   });
   const start = (page - 1) * pageSize;

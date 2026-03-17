@@ -71,6 +71,11 @@ export type CatalogState = {
   liveGroups: CatalogGroup[];
   movieGroups: CatalogGroup[];
   seriesGroups: CatalogGroup[];
+  livePagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+  };
   moviePagination: {
     page: number;
     pageSize: number;
@@ -90,6 +95,11 @@ const emptyCatalogState: CatalogState = {
   liveGroups: [],
   movieGroups: [],
   seriesGroups: [],
+  livePagination: {
+    page: 1,
+    pageSize: 100,
+    total: 0
+  },
   moviePagination: {
     page: 1,
     pageSize: 18,
@@ -329,7 +339,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
     liveCatalogRequestIdRef.current = requestId;
 
     const live = await runAuthenticatedRequest(() =>
-      clientRef.current.liveCatalog(buildCatalogSuffix(1, 300, params))
+      clientRef.current.liveCatalog(buildCatalogSuffix(1, 100, params))
     );
 
     if (liveCatalogRequestIdRef.current !== requestId || sessionRef.current?.accessToken !== accessToken) {
@@ -340,7 +350,53 @@ export function useViewerCore(options: ViewerCoreOptions) {
       const nextCatalogs: CatalogState = {
         ...current,
         live: live.items,
-        liveGroups: live.groups
+        liveGroups: live.groups,
+        livePagination: {
+          page: live.page,
+          pageSize: live.pageSize,
+          total: live.total
+        }
+      };
+      catalogsRef.current = nextCatalogs;
+      return nextCatalogs;
+    });
+  }
+
+  async function loadMoreLive(params?: { search?: string; group?: string }) {
+    if (!sessionRef.current) {
+      return;
+    }
+
+    const currentCatalogs = catalogsRef.current;
+    const { page, pageSize, total } = currentCatalogs.livePagination;
+    if (currentCatalogs.live.length >= total && total > 0) {
+      return;
+    }
+
+    const requestId = liveCatalogRequestIdRef.current + 1;
+    const accessToken = sessionRef.current.accessToken;
+    liveCatalogRequestIdRef.current = requestId;
+
+    const live = await runAuthenticatedRequest(() =>
+      clientRef.current.liveCatalog(buildCatalogSuffix(page + 1, pageSize || 100, params))
+    );
+
+    if (liveCatalogRequestIdRef.current !== requestId || sessionRef.current?.accessToken !== accessToken) {
+      return;
+    }
+
+    setCatalogs((current) => {
+      const existingIds = new Set(current.live.map((item) => item.id));
+      const mergedLive = [...current.live, ...live.items.filter((item) => !existingIds.has(item.id))];
+      const nextCatalogs: CatalogState = {
+        ...current,
+        live: mergedLive,
+        liveGroups: live.groups,
+        livePagination: {
+          page: live.page,
+          pageSize: live.pageSize,
+          total: live.total
+        }
       };
       catalogsRef.current = nextCatalogs;
       return nextCatalogs;
@@ -732,6 +788,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
     bootstrap,
     loadCatalogs,
     loadLiveCatalog,
+    loadMoreLive,
     loadMoviesCatalog,
     loadSeriesCatalog,
     loadMoreMovies,

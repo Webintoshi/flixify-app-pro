@@ -26,6 +26,7 @@ const DEV_API_BASE_URL = "http://localhost:4000";
 const API_HEALTH_PATH = "/health";
 const DEFAULT_RUNTIME_CONFIG_PATH = "/app-config.json";
 const LIVE_PLAYER_POSTER_URL = "/live-brand-poster.svg";
+const LIVE_TURKIYE_GROUP_FILTER = "turkiye";
 const TV_FOCUSABLE_SELECTOR = '[data-tv-focusable="true"]';
 const AUTH_PREFILL_CODE_KEY = "flixify-auth-prefill-code";
 const AUTH_DEVICE_NAME = "LG webOS TV";
@@ -1180,26 +1181,8 @@ function normalizeText(value: string | null | undefined) {
   return (value ?? "").toLocaleLowerCase("tr-TR");
 }
 
-function getTurkiyeGroupPriority(title: string | null | undefined) {
-  const text = normalizeText(title);
-  if (!text) {
-    return 0;
-  }
-
-  let priority = 0;
-  if (/\btr\b/.test(text)) {
-    priority += 220;
-  }
-  if (text.includes("turkiye") || text.includes("turk") || text.includes("turkish") || text.includes("turkce")) {
-    priority += 180;
-  }
-  if (text.includes("ulusal")) {
-    priority += 120;
-  }
-  if (text.startsWith("tr:") || text.startsWith("tr ") || text.startsWith("tur")) {
-    priority += 60;
-  }
-  return priority;
+function isTurkiyeGroupTitle(title: string | null | undefined) {
+  return normalizeText(title).startsWith("tr:");
 }
 
 function countKeywordMatches(text: string, keywords: string[]) {
@@ -2601,29 +2584,47 @@ function LiveTvPage({
   items,
   groups,
   onApplyFilters,
+  onLoadMore,
+  hasMoreItems,
   resolveLivePlayback,
   reportLivePlayback
 }: {
   items: PlaybackItem[];
   groups: CatalogGroup[];
   onApplyFilters: (search: string, group?: string) => Promise<void>;
+  onLoadMore: (search: string, group?: string) => Promise<void>;
+  hasMoreItems: boolean;
   resolveLivePlayback: ViewerCoreHandle["resolveLivePlayback"];
   reportLivePlayback: ViewerCoreHandle["reportLivePlayback"];
 }) {
   const [search, setSearch] = useState("");
-  const [activeGroup, setActiveGroup] = useState("");
+  const [activeGroup, setActiveGroup] = useState(LIVE_TURKIYE_GROUP_FILTER);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
-  const [isFiltering, setIsFiltering] = useState(false);
+  const [isFiltering, setIsFiltering] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   const applyFiltersRef = useRef(onApplyFilters);
+  const loadMoreRef = useRef(onLoadMore);
   const debounceTimerRef = useRef<number | null>(null);
   const requestIdRef = useRef(0);
   const skipInitialFilterRef = useRef(true);
-  const preferredGroupAppliedRef = useRef(false);
+  const activeGroupRef = useRef(LIVE_TURKIYE_GROUP_FILTER);
+  const loadingMoreInFlightRef = useRef(false);
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  const channelListRef = useRef<HTMLDivElement | null>(null);
+  const autoFillLengthRef = useRef(-1);
 
   useEffect(() => {
     applyFiltersRef.current = onApplyFilters;
   }, [onApplyFilters]);
+
+  useEffect(() => {
+    loadMoreRef.current = onLoadMore;
+  }, [onLoadMore]);
+
+  useEffect(() => {
+    activeGroupRef.current = activeGroup;
+  }, [activeGroup]);
 
   useEffect(() => {
     return () => {
@@ -2633,21 +2634,16 @@ function LiveTvPage({
     };
   }, []);
 
-  const sortedGroups = [...groups].sort((left, right) => {
-    const priorityDiff = getTurkiyeGroupPriority(right.title) - getTurkiyeGroupPriority(left.title);
-    if (priorityDiff !== 0) {
-      return priorityDiff;
-    }
-
-    if (right.count !== left.count) {
-      return right.count - left.count;
-    }
-
-    return left.title.localeCompare(right.title, "tr-TR");
-  });
-  const preferredTurkiyeGroup = sortedGroups.find((group) => getTurkiyeGroupPriority(group.title) > 0)?.title ?? "";
-  const groupChips = sortedGroups.slice(0, 12);
-  const totalChannelCount = sortedGroups.reduce((total, group) => total + group.count, 0) || items.length;
+  const sortedGroups = [...groups]
+    .filter((group) => !isTurkiyeGroupTitle(group.title))
+    .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title, "tr-TR"));
+  const groupChips =
+    activeGroup && activeGroup !== LIVE_TURKIYE_GROUP_FILTER && !sortedGroups.some((group) => group.title === activeGroup)
+      ? [{ title: activeGroup, count: 0, kind: "live" as const }, ...sortedGroups]
+      : sortedGroups;
+  const turkiyeChannelCount = groups
+    .filter((group) => isTurkiyeGroupTitle(group.title))
+    .reduce((total, group) => total + group.count, 0);
 
   async function runLiveFilters(nextSearch: string, nextGroup: string) {
     const requestId = requestIdRef.current + 1;
@@ -2664,16 +2660,7 @@ function LiveTvPage({
   }
 
   useEffect(() => {
-    if (preferredGroupAppliedRef.current || !preferredTurkiyeGroup) {
-      return;
-    }
-
-    preferredGroupAppliedRef.current = true;
-    setActiveGroup(preferredTurkiyeGroup);
-  }, [preferredTurkiyeGroup]);
-
-  useEffect(() => {
-    void runLiveFilters("", "");
+    void runLiveFilters("", LIVE_TURKIYE_GROUP_FILTER);
   }, []);
 
   useEffect(() => {
@@ -2697,6 +2684,78 @@ function LiveTvPage({
     };
   }, [search, activeGroup]);
 
+  async function loadNextLivePage() {
+    if (loadingMoreInFlightRef.current || isFiltering || !hasMoreItems) {
+      return;
+    }
+
+    loadingMoreInFlightRef.current = true;
+    setIsLoadingMore(true);
+
+    try {
+      await loadMoreRef.current(search.trim(), activeGroupRef.current || undefined);
+    } catch {
+      // Errors are reflected by the shared core error state.
+    } finally {
+      loadingMoreInFlightRef.current = false;
+      setIsLoadingMore(false);
+    }
+  }
+
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    const channelList = channelListRef.current;
+    if (!sentinel || !channelList || !items.length || !hasMoreItems) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          void loadNextLivePage();
+        }
+      },
+      {
+        root: channelList,
+        rootMargin: "220px 0px"
+      }
+    );
+
+    observer.observe(sentinel);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [items.length, hasMoreItems, isFiltering, search, activeGroup]);
+
+  useEffect(() => {
+    autoFillLengthRef.current = -1;
+  }, [search, activeGroup]);
+
+  useEffect(() => {
+    const channelList = channelListRef.current;
+    if (!channelList || !items.length || !hasMoreItems || isFiltering || isLoadingMore) {
+      return;
+    }
+
+    if (autoFillLengthRef.current === items.length) {
+      return;
+    }
+    autoFillLengthRef.current = items.length;
+
+    const frame = window.requestAnimationFrame(() => {
+      const currentList = channelListRef.current;
+      if (!currentList || currentList.scrollHeight > currentList.clientHeight + 8) {
+        return;
+      }
+      void loadNextLivePage();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [items.length, hasMoreItems, isFiltering, isLoadingMore, search, activeGroup]);
+
   const preferredChannel = getPreferredLiveItem(items, { preferSports: true });
 
   useEffect(() => {
@@ -2718,17 +2777,17 @@ function LiveTvPage({
       <div className="live-tv-pill-row" aria-label="Canli TV kategorileri" data-tv-scroll="horizontal">
         <button
           type="button"
-          className={`live-tv-pill${activeGroup === "" ? " is-active" : ""}`}
+          className={`live-tv-pill${activeGroup === LIVE_TURKIYE_GROUP_FILTER ? " is-active" : ""}`}
           onClick={() => {
-            setActiveGroup("");
+            setActiveGroup(LIVE_TURKIYE_GROUP_FILTER);
           }}
           data-tv-focusable="true"
           data-tv-region="live-pills"
-          data-tv-focus-key="live-pill-all"
+          data-tv-focus-key="live-pill-turkiye"
           data-tv-initial="true"
         >
-          <span>Tumu</span>
-          <strong>{totalChannelCount}</strong>
+          <span>Turkiye</span>
+          <strong>{turkiyeChannelCount}</strong>
         </button>
 
         {groupChips.map((group) => (
@@ -2785,7 +2844,7 @@ function LiveTvPage({
                 type="button"
                 className="live-tv-search-trigger"
                 aria-label="Kanal ara"
-                onClick={() => void runLiveFilters(search, activeGroup)}
+                onClick={() => void runLiveFilters(search, activeGroupRef.current)}
               >
                 <SearchGlyph />
               </button>
@@ -2796,7 +2855,7 @@ function LiveTvPage({
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
-                    void runLiveFilters(search, activeGroup);
+                    void runLiveFilters(search, activeGroupRef.current);
                   }
                 }}
                 placeholder="Kanal ara..."
@@ -2820,12 +2879,12 @@ function LiveTvPage({
 
           <div className="live-tv-sidebar-bar">
             <strong>Kanallar</strong>
-            {isFiltering ? <span className="muted">Yukleniyor</span> : null}
+            {isFiltering || isLoadingMore ? <span className="muted">{isFiltering ? "Yukleniyor" : "Daha fazla yukleniyor"}</span> : null}
           </div>
         </div>
 
           {items.length > 0 ? (
-            <div className="live-tv-channel-list">
+            <div ref={channelListRef} className="live-tv-channel-list">
               {items.map((channel, index) => {
                 const isActive = activeChannel?.id === channel.id;
 
@@ -2848,6 +2907,12 @@ function LiveTvPage({
                   </button>
                 );
               })}
+
+              {hasMoreItems || isLoadingMore ? (
+                <div ref={loadMoreSentinelRef} className="movies-load-more-anchor" aria-hidden="true">
+                  {isLoadingMore ? <span className="movies-load-more-indicator" /> : null}
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="live-tv-sidebar-empty">
@@ -6786,6 +6851,8 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                 items={liveItems}
                 groups={core.catalogs.liveGroups}
                 onApplyFilters={(search, group) => core.loadLiveCatalog({ search, group })}
+                onLoadMore={(search, group) => core.loadMoreLive({ search, group })}
+                hasMoreItems={core.catalogs.live.length < core.catalogs.livePagination.total}
                 resolveLivePlayback={core.resolveLivePlayback}
                 reportLivePlayback={core.reportLivePlayback}
               />

@@ -43,8 +43,9 @@ Son kullanici tarafinda ekstra ayar gerekmez. API adresi EXE icine gomulu gelir.
 
 Sadece destek/operasyon icin, kurulu uygulamada API adresi yeniden paketlemeden degistirilebilir:
 
-1. Windows'ta su dosyayi olusturun/guncelleyin:
-   - `%APPDATA%\\Flixify Pro\\app-config.json`
+1. Config dosyasini olusturun/guncelleyin:
+   - Windows: `%APPDATA%\\Flixify Pro\\app-config.json`
+   - macOS: `~/Library/Application Support/Flixify Pro/app-config.json`
 2. Icerik:
    - `{ "apiBaseUrl": "https://api.example.com" }`
 3. Uygulamayi tamamen kapatip tekrar acin.
@@ -56,6 +57,13 @@ Oncelik sirasi:
 
 Video decode sorunu yasarsan opsiyonel olarak donanim hizlandirma kapatilabilir:
 - `FLIXIFY_DISABLE_HARDWARE_ACCELERATION=1`
+
+## Desktop Stabilite Notlari
+
+- Uygulama tek instance calisir; ikinci acilis denemesi mevcut pencereyi one getirir.
+- Main-frame yukleme hatalarinda (gecici ag kesintisi gibi) otomatik yeniden deneme yapilir.
+- Renderer kilitlenmesi/cokmesi durumunda uygulama otomatik yenilenir.
+- Cache temizligi her acilista degil, versiyon degisiminde bir kez yapilir.
 
 ## Uygulama Guncelleme Davranisi
 
