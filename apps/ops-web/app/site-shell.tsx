@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { clearAdminToken } from "../lib/api";
 
 const publicNavigation = [
@@ -58,13 +58,17 @@ function PublicHeader({ pathname }: { pathname: string }) {
 
 function AdminShell({ pathname, children }: { pathname: string; children: ReactNode }) {
   const router = useRouter();
+  const [todayLabel, setTodayLabel] = useState("");
 
-  const todayLabel = new Intl.DateTimeFormat("tr-TR", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    weekday: "long"
-  }).format(new Date());
+  useEffect(() => {
+    const label = new Intl.DateTimeFormat("tr-TR", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      weekday: "long"
+    }).format(new Date());
+    setTodayLabel(label);
+  }, []);
 
   return (
     <div className="admin-shell">
@@ -98,7 +102,9 @@ function AdminShell({ pathname, children }: { pathname: string; children: ReactN
             Siteyi Görüntüle
           </Link>
           <div className="admin-topbar-actions">
-            <span className="admin-date">{todayLabel}</span>
+            <span className="admin-date" suppressHydrationWarning>
+              {todayLabel}
+            </span>
             <button
               className="button secondary admin-logout"
               type="button"
