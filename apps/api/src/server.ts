@@ -115,6 +115,7 @@ import { buildStreamUrl } from "./iptv.js";
 import { probeLiveStream } from "./live.js";
 import { createLivePlaybackManager } from "./live-playback.js";
 import { createVodPlaybackManager, probeVodStream } from "./vod.js";
+import { API_CORS_CONFIG } from "./cors-config.js";
 
 type UserRequest = {
   userId: string;
@@ -472,9 +473,7 @@ export function buildServer() {
     logger: true
   });
 
-  app.register(cors, {
-    origin: true
-  });
+  app.register(cors, API_CORS_CONFIG);
 
   app.addHook("onClose", async () => {
     await livePlaybackManager.dispose();
