@@ -1133,12 +1133,19 @@ function ViewerHeader({
         </nav>
 
         <div className="site-header-actions">
-          <div className="site-user-chip" title={userLabel}>
+          <NavLink
+            to="/ayarlar"
+            className="site-user-chip"
+            title={userLabel}
+            data-tv-focusable="true"
+            data-tv-region="header-nav"
+            data-tv-focus-key="nav-settings"
+          >
             <span className="site-user-icon">
               <ProfileGlyph />
             </span>
             <span className="site-user-label">{userLabel}</span>
-          </div>
+          </NavLink>
 
           <button
             type="button"
@@ -1159,6 +1166,28 @@ function ViewerHeader({
 
 function normalizeText(value: string | null | undefined) {
   return (value ?? "").toLocaleLowerCase("tr-TR");
+}
+
+function getTurkiyeGroupPriority(title: string | null | undefined) {
+  const text = normalizeText(title);
+  if (!text) {
+    return 0;
+  }
+
+  let priority = 0;
+  if (/\btr\b/.test(text)) {
+    priority += 220;
+  }
+  if (text.includes("turkiye") || text.includes("turk") || text.includes("turkish") || text.includes("turkce")) {
+    priority += 180;
+  }
+  if (text.includes("ulusal")) {
+    priority += 120;
+  }
+  if (text.startsWith("tr:") || text.startsWith("tr ") || text.startsWith("tur")) {
+    priority += 60;
+  }
+  return priority;
 }
 
 function countKeywordMatches(text: string, keywords: string[]) {
@@ -2314,6 +2343,10 @@ function MoviesPage({
     }
   }
 
+  useEffect(() => {
+    void runMovieFilters("", "");
+  }, []);
+
   function submitMovieSearch() {
     clearMovieDebounce();
     void runMovieFilters(search, activeGroupRef.current);
@@ -2574,6 +2607,7 @@ function LiveTvPage({
   const debounceTimerRef = useRef<number | null>(null);
   const requestIdRef = useRef(0);
   const skipInitialFilterRef = useRef(true);
+  const preferredGroupAppliedRef = useRef(false);
 
   useEffect(() => {
     applyFiltersRef.current = onApplyFilters;
@@ -2587,7 +2621,19 @@ function LiveTvPage({
     };
   }, []);
 
-  const sortedGroups = [...groups].sort((left, right) => right.count - left.count);
+  const sortedGroups = [...groups].sort((left, right) => {
+    const priorityDiff = getTurkiyeGroupPriority(right.title) - getTurkiyeGroupPriority(left.title);
+    if (priorityDiff !== 0) {
+      return priorityDiff;
+    }
+
+    if (right.count !== left.count) {
+      return right.count - left.count;
+    }
+
+    return left.title.localeCompare(right.title, "tr-TR");
+  });
+  const preferredTurkiyeGroup = sortedGroups.find((group) => getTurkiyeGroupPriority(group.title) > 0)?.title ?? "";
   const groupChips = sortedGroups.slice(0, 12);
   const totalChannelCount = sortedGroups.reduce((total, group) => total + group.count, 0) || items.length;
 
@@ -2604,6 +2650,19 @@ function LiveTvPage({
       }
     }
   }
+
+  useEffect(() => {
+    if (preferredGroupAppliedRef.current || !preferredTurkiyeGroup) {
+      return;
+    }
+
+    preferredGroupAppliedRef.current = true;
+    setActiveGroup(preferredTurkiyeGroup);
+  }, [preferredTurkiyeGroup]);
+
+  useEffect(() => {
+    void runLiveFilters("", "");
+  }, []);
 
   useEffect(() => {
     if (skipInitialFilterRef.current) {
@@ -2897,6 +2956,10 @@ function SeriesGridPage({
       }
     }
   }
+
+  useEffect(() => {
+    void runSeriesFilters("", "");
+  }, []);
 
   function submitSeriesSearch() {
     clearSeriesDebounce();
@@ -6548,7 +6611,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
               <LiveTvPage
                 items={liveItems}
                 groups={core.catalogs.liveGroups}
-                onApplyFilters={(search, group) => core.loadCatalogs({ search, group })}
+                onApplyFilters={(search, group) => core.loadLiveCatalog({ search, group })}
                 resolveLivePlayback={core.resolveLivePlayback}
                 reportLivePlayback={core.reportLivePlayback}
               />
@@ -6561,7 +6624,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                 title="Filmler"
                 items={movieItems}
                 groups={core.catalogs.movieGroups}
-                onApplyFilters={(search, group) => core.loadCatalogs({ search, group })}
+                onApplyFilters={(search, group) => core.loadMoviesCatalog({ search, group })}
                 onLoadMore={(search, group) => core.loadMoreMovies({ search, group })}
                 hasMoreItems={core.catalogs.movies.length < core.catalogs.moviePagination.total}
                 onPlay={setPlayingItem}
@@ -6575,7 +6638,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                 title="Diziler"
                 items={core.catalogs.series}
                 groups={core.catalogs.seriesGroups}
-                onApplyFilters={(search, group) => core.loadCatalogs({ search, group })}
+                onApplyFilters={(search, group) => core.loadSeriesCatalog({ search, group })}
                 onLoadMore={(search, group) => core.loadMoreSeries({ search, group })}
                 hasMoreItems={core.catalogs.series.length < core.catalogs.seriesPagination.total}
                 onOpenSeries={(seriesId) => navigate(`/diziler/${seriesId}`)}

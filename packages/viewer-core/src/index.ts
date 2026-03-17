@@ -184,7 +184,9 @@ export function useViewerCore(options: ViewerCoreOptions) {
   const [lastIssuedCode, setLastIssuedCode] = useState<string | null>(null);
   const catalogsRef = useRef<CatalogState>(emptyCatalogState);
   const sessionRef = useRef<ViewerSession | null>(null);
-  const catalogRequestIdRef = useRef(0);
+  const liveCatalogRequestIdRef = useRef(0);
+  const movieCatalogRequestIdRef = useRef(0);
+  const seriesCatalogRequestIdRef = useRef(0);
   const refreshPromiseRef = useRef<Promise<boolean> | null>(null);
   const sessionKey = options.sessionStorageKey ?? "flixify-viewer-session";
 
@@ -300,59 +302,127 @@ export function useViewerCore(options: ViewerCoreOptions) {
     setPaymentRequests(response.items);
   }
 
-  async function loadCatalogs(params?: { search?: string; group?: string }) {
-    if (!sessionRef.current) {
-      return;
-    }
-
-    const requestId = catalogRequestIdRef.current + 1;
-    const accessToken = sessionRef.current.accessToken;
-    catalogRequestIdRef.current = requestId;
-
+  function buildCatalogSuffix(
+    page: number,
+    pageSize: number,
+    params?: { search?: string; group?: string }
+  ) {
     const query = new URLSearchParams();
-    query.set("page", "1");
-    query.set("pageSize", "18");
+    query.set("page", String(Math.max(1, page)));
+    query.set("pageSize", String(Math.max(1, pageSize)));
     if (params?.search) {
       query.set("search", params.search);
     }
     if (params?.group) {
       query.set("group", params.group);
     }
+    return `?${query.toString()}`;
+  }
 
-    const suffix = `?${query.toString()}`;
-    const [live, movies, series] = await runAuthenticatedRequest(() =>
-      Promise.all([
-        clientRef.current.liveCatalog(suffix),
-        clientRef.current.movieCatalog(suffix),
-        clientRef.current.seriesCatalog(suffix)
-      ])
-    );
-
-    if (catalogRequestIdRef.current !== requestId || sessionRef.current?.accessToken !== accessToken) {
+  async function loadLiveCatalog(params?: { search?: string; group?: string }) {
+    if (!sessionRef.current) {
       return;
     }
 
-    const nextCatalogs: CatalogState = {
-      live: live.items,
-      movies: movies.items,
-      series: series.items,
-      liveGroups: live.groups,
-      movieGroups: movies.groups,
-      seriesGroups: series.groups,
-      moviePagination: {
-        page: movies.page,
-        pageSize: movies.pageSize,
-        total: movies.total
-      },
-      seriesPagination: {
-        page: series.page,
-        pageSize: series.pageSize,
-        total: series.total
-      }
-    };
+    const requestId = liveCatalogRequestIdRef.current + 1;
+    const accessToken = sessionRef.current.accessToken;
+    liveCatalogRequestIdRef.current = requestId;
 
-    catalogsRef.current = nextCatalogs;
-    setCatalogs(nextCatalogs);
+    const live = await runAuthenticatedRequest(() =>
+      clientRef.current.liveCatalog(buildCatalogSuffix(1, 300, params))
+    );
+
+    if (liveCatalogRequestIdRef.current !== requestId || sessionRef.current?.accessToken !== accessToken) {
+      return;
+    }
+
+    setCatalogs((current) => {
+      const nextCatalogs: CatalogState = {
+        ...current,
+        live: live.items,
+        liveGroups: live.groups
+      };
+      catalogsRef.current = nextCatalogs;
+      return nextCatalogs;
+    });
+  }
+
+  async function loadMoviesCatalog(params?: { search?: string; group?: string }) {
+    if (!sessionRef.current) {
+      return;
+    }
+
+    const requestId = movieCatalogRequestIdRef.current + 1;
+    const accessToken = sessionRef.current.accessToken;
+    movieCatalogRequestIdRef.current = requestId;
+
+    const movies = await runAuthenticatedRequest(() =>
+      clientRef.current.movieCatalog(buildCatalogSuffix(1, 18, params))
+    );
+
+    if (movieCatalogRequestIdRef.current !== requestId || sessionRef.current?.accessToken !== accessToken) {
+      return;
+    }
+
+    setCatalogs((current) => {
+      const nextCatalogs: CatalogState = {
+        ...current,
+        movies: movies.items,
+        movieGroups: movies.groups,
+        moviePagination: {
+          page: movies.page,
+          pageSize: movies.pageSize,
+          total: movies.total
+        }
+      };
+      catalogsRef.current = nextCatalogs;
+      return nextCatalogs;
+    });
+  }
+
+  async function loadSeriesCatalog(params?: { search?: string; group?: string }) {
+    if (!sessionRef.current) {
+      return;
+    }
+
+    const requestId = seriesCatalogRequestIdRef.current + 1;
+    const accessToken = sessionRef.current.accessToken;
+    seriesCatalogRequestIdRef.current = requestId;
+
+    const series = await runAuthenticatedRequest(() =>
+      clientRef.current.seriesCatalog(buildCatalogSuffix(1, 18, params))
+    );
+
+    if (seriesCatalogRequestIdRef.current !== requestId || sessionRef.current?.accessToken !== accessToken) {
+      return;
+    }
+
+    setCatalogs((current) => {
+      const nextCatalogs: CatalogState = {
+        ...current,
+        series: series.items,
+        seriesGroups: series.groups,
+        seriesPagination: {
+          page: series.page,
+          pageSize: series.pageSize,
+          total: series.total
+        }
+      };
+      catalogsRef.current = nextCatalogs;
+      return nextCatalogs;
+    });
+  }
+
+  async function loadCatalogs(params?: { search?: string; group?: string }) {
+    if (!sessionRef.current) {
+      return;
+    }
+
+    await Promise.all([
+      loadLiveCatalog(params),
+      loadMoviesCatalog(params),
+      loadSeriesCatalog(params)
+    ]);
   }
 
   async function loadMoreMovies(params?: { search?: string; group?: string }) {
@@ -366,23 +436,15 @@ export function useViewerCore(options: ViewerCoreOptions) {
       return;
     }
 
-    const requestId = catalogRequestIdRef.current + 1;
+    const requestId = movieCatalogRequestIdRef.current + 1;
     const accessToken = sessionRef.current.accessToken;
-    catalogRequestIdRef.current = requestId;
+    movieCatalogRequestIdRef.current = requestId;
 
-    const query = new URLSearchParams();
-    query.set("page", String(page + 1));
-    query.set("pageSize", String(pageSize || 18));
-    if (params?.search) {
-      query.set("search", params.search);
-    }
-    if (params?.group) {
-      query.set("group", params.group);
-    }
+    const movies = await runAuthenticatedRequest(() =>
+      clientRef.current.movieCatalog(buildCatalogSuffix(page + 1, pageSize || 18, params))
+    );
 
-    const movies = await runAuthenticatedRequest(() => clientRef.current.movieCatalog(`?${query.toString()}`));
-
-    if (catalogRequestIdRef.current !== requestId || sessionRef.current?.accessToken !== accessToken) {
+    if (movieCatalogRequestIdRef.current !== requestId || sessionRef.current?.accessToken !== accessToken) {
       return;
     }
 
@@ -416,23 +478,15 @@ export function useViewerCore(options: ViewerCoreOptions) {
       return;
     }
 
-    const requestId = catalogRequestIdRef.current + 1;
+    const requestId = seriesCatalogRequestIdRef.current + 1;
     const accessToken = sessionRef.current.accessToken;
-    catalogRequestIdRef.current = requestId;
+    seriesCatalogRequestIdRef.current = requestId;
 
-    const query = new URLSearchParams();
-    query.set("page", String(page + 1));
-    query.set("pageSize", String(pageSize || 18));
-    if (params?.search) {
-      query.set("search", params.search);
-    }
-    if (params?.group) {
-      query.set("group", params.group);
-    }
+    const series = await runAuthenticatedRequest(() =>
+      clientRef.current.seriesCatalog(buildCatalogSuffix(page + 1, pageSize || 18, params))
+    );
 
-    const series = await runAuthenticatedRequest(() => clientRef.current.seriesCatalog(`?${query.toString()}`));
-
-    if (catalogRequestIdRef.current !== requestId || sessionRef.current?.accessToken !== accessToken) {
+    if (seriesCatalogRequestIdRef.current !== requestId || sessionRef.current?.accessToken !== accessToken) {
       return;
     }
 
@@ -677,6 +731,9 @@ export function useViewerCore(options: ViewerCoreOptions) {
     viewState: loading ? ("loading" as const) : deriveViewerViewState(me?.user),
     bootstrap,
     loadCatalogs,
+    loadLiveCatalog,
+    loadMoviesCatalog,
+    loadSeriesCatalog,
     loadMoreMovies,
     loadMoreSeries,
     loadPackages,
