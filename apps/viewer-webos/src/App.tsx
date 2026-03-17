@@ -3458,6 +3458,8 @@ function LivePlayerSurface({
   const lastVolumeBeforeMuteRef = useRef(1);
   const playbackStartedAtRef = useRef(0);
   const mediaErrorStreakRef = useRef(0);
+  const videoTrackMissingSinceRef = useRef(0);
+  const videoTrackMissingRecoveryCountRef = useRef(0);
   const relayFallbackAttemptCountRef = useRef(0);
   const lastRelayFallbackAttemptAtRef = useRef(0);
   const lastRelayFallbackResultRef = useRef<"none" | "success" | "fallback-direct" | "failed">("none");
@@ -3868,6 +3870,10 @@ function LivePlayerSurface({
       if (typeof nextPosition === "number" && Number.isFinite(nextPosition)) {
         lastPlaybackPositionRef.current = nextPosition;
       }
+      if (media.videoWidth > 0 && media.videoHeight > 0) {
+        videoTrackMissingSinceRef.current = 0;
+        videoTrackMissingRecoveryCountRef.current = 0;
+      }
 
       const shouldReportInitialPlay = !playbackReportedRef.current;
       const shouldReportRecovery = pendingRecoveryReportRef.current && playbackReportedRef.current;
@@ -3933,6 +3939,9 @@ function LivePlayerSurface({
         mediaErrorStreakRef.current += 1;
       } else {
         mediaErrorStreakRef.current = 0;
+      }
+      if (errorCode === "video-track-missing") {
+        videoTrackMissingRecoveryCountRef.current += 1;
       }
 
       const nextStallCount = stallCountRef.current + 1;
@@ -4035,7 +4044,10 @@ function LivePlayerSurface({
         const relayEligible =
           activeDeliveryMode === "file_proxy" &&
           sourceTransport === "ts" &&
-          (errorCode === "watchdog-timeout" || mediaErrorStreakRef.current >= 2);
+          (errorCode === "watchdog-timeout" ||
+            errorCode === "video-track-missing" ||
+            mediaErrorStreakRef.current >= 2);
+        const shouldForceTranscode = sourceTransport === "ts" && errorCode === "video-track-missing";
         const stickWithRelay = activeDeliveryMode !== "file_proxy" && sourceTransport === "ts";
         const relayWithinLimit = relayFallbackAttemptCountRef.current < relayFallbackMaxAttempts;
         const relayCooldownElapsed = Date.now() - lastRelayFallbackAttemptAtRef.current >= relayFallbackCooldownMs;
@@ -4047,7 +4059,11 @@ function LivePlayerSurface({
           lastRelayFallbackAttemptAtRef.current = Date.now();
           lastRelayFallbackResultRef.current = "failed";
           try {
-            const relayPlayback = await resolveLivePlayback(item.id, { preferRelay: true });
+            const relayPlayback = await resolveLivePlayback(item.id, {
+              preferRelay: true,
+              forceRelayRestart: shouldForceTranscode,
+              preferTranscode: shouldForceTranscode
+            });
             if (
               relayPlayback.canPlay &&
               relayPlayback.url &&
@@ -4065,7 +4081,11 @@ function LivePlayerSurface({
           }
         } else if (stickWithRelay) {
           try {
-            const relayPlayback = await resolveLivePlayback(item.id, { preferRelay: true });
+            const relayPlayback = await resolveLivePlayback(item.id, {
+              preferRelay: true,
+              forceRelayRestart: shouldForceTranscode,
+              preferTranscode: shouldForceTranscode
+            });
             if (relayPlayback.canPlay && relayPlayback.url) {
               playback = relayPlayback;
               lastRelayFallbackResultRef.current = "success";
@@ -4109,6 +4129,29 @@ function LivePlayerSurface({
       };
       const onTimeUpdate = () => {
         if (Number.isFinite(media.currentTime) && media.currentTime > lastPlaybackPositionRef.current + 0.02) {
+          if (media.videoWidth <= 0 || media.videoHeight <= 0) {
+            const now = Date.now();
+            if (videoTrackMissingSinceRef.current === 0) {
+              videoTrackMissingSinceRef.current = now;
+            }
+
+            const missingForMs = now - videoTrackMissingSinceRef.current;
+            if (
+              startedPlayingRef.current &&
+              !recoveryInFlightRef.current &&
+              missingForMs >= 7_000 &&
+              now - lastRecoverAtRef.current > 10_000
+            ) {
+              void recoverPlayback(
+                "Canli yayinda ses var ancak goruntu olusmadi. Transcode fallback denenecek.",
+                "video-track-missing"
+              );
+              return;
+            }
+          } else {
+            videoTrackMissingSinceRef.current = 0;
+            videoTrackMissingRecoveryCountRef.current = 0;
+          }
           markPlaybackHealthy(media.currentTime);
           return;
         }
@@ -4673,6 +4716,8 @@ function LivePlayerSurface({
       stallCountRef.current = 0;
       recoveryTierRef.current = 0;
       mediaErrorStreakRef.current = 0;
+      videoTrackMissingSinceRef.current = 0;
+      videoTrackMissingRecoveryCountRef.current = 0;
       relayFallbackAttemptCountRef.current = 0;
       lastRelayFallbackAttemptAtRef.current = 0;
       lastRelayFallbackResultRef.current = "none";

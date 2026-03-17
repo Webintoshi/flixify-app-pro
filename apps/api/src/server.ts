@@ -746,6 +746,10 @@ export function buildServer() {
         rawQuery?.preferRelay === true ||
         rawQuery?.preferRelay === "true" ||
         rawQuery?.preferRelay === "1";
+      const preferTranscode =
+        rawQuery?.preferTranscode === true ||
+        rawQuery?.preferTranscode === "true" ||
+        rawQuery?.preferTranscode === "1";
 
       if (isDemoMode) {
         const me = getDemoMe(auth.userId);
@@ -770,7 +774,8 @@ export function buildServer() {
           errorMessage: null,
           forceRelayRestart,
           allowFileProxyFallback: debugFileProxy,
-          preferDirectProxy: !preferRelay
+          preferDirectProxy: !preferRelay,
+          preferTranscode
         });
       }
 
@@ -887,7 +892,8 @@ export function buildServer() {
         errorMessage: canPlay ? null : errorMessage ?? "Canli yayin gecici olarak kullanilamiyor.",
         forceRelayRestart,
         allowFileProxyFallback: debugFileProxy,
-        preferDirectProxy: !preferRelay
+        preferDirectProxy: !preferRelay,
+        preferTranscode
       });
 
       if (!playback.canPlay) {

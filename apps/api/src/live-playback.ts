@@ -66,6 +66,7 @@ type LocalHlsState = {
   manifestPath: string;
   process: ChildProcessWithoutNullStreams | null;
   mode: "copy" | "transcode" | null;
+  preferTranscode: boolean;
   lastError: string | null;
   restartPromise: Promise<{ ok: boolean; errorMessage: string | null }> | null;
   restartCount: number;
@@ -133,6 +134,7 @@ type CreateLivePlaybackInput = {
   forceRelayRestart?: boolean;
   allowFileProxyFallback?: boolean;
   preferDirectProxy?: boolean;
+  preferTranscode?: boolean;
 };
 
 type FetchUpstreamOptions = {
@@ -857,7 +859,9 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
     }
 
     const shouldPreferTranscode =
-      (session.localState?.restartCount ?? 0) >= 2 || session.localState?.mode === "transcode";
+      session.localState?.preferTranscode === true ||
+      (session.localState?.restartCount ?? 0) >= 2 ||
+      session.localState?.mode === "transcode";
     const attempts = shouldPreferTranscode ? [true, false] : [false, true];
     let lastFailure = {
       ok: false,
@@ -954,6 +958,9 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
       session.sourceTransport !== input.sourceTransport ||
       (wantsRelay && session.localState === null && input.sourceTransport !== "hls") ||
       (!wantsRelay && session.localState !== null) ||
+      (session.localState !== null &&
+        input.preferTranscode === true &&
+        session.localState.mode !== "transcode") ||
       (session.localState !== null && session.localState.process === null && session.localState.lastError !== null);
 
     if ((input.forceRelayRestart || needsFreshSession) && session) {
@@ -1010,6 +1017,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
                 manifestPath: path.join(os.tmpdir(), "flixify-live-placeholder.m3u8"),
                 process: null,
                 mode: null,
+                preferTranscode: input.preferTranscode === true,
                 lastError: null,
                 restartPromise: null,
                 restartCount: 0,

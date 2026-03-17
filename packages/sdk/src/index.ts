@@ -42,6 +42,7 @@ export type ResolveLivePlaybackOptions = {
   forceRelayRestart?: boolean;
   debugFileProxy?: boolean;
   preferRelay?: boolean;
+  preferTranscode?: boolean;
 };
 
 export type ResolveVodPlaybackOptions = {
@@ -134,6 +135,9 @@ export class FlixifyClient {
     }
     if (typeof options.preferRelay === "boolean") {
       query.set("preferRelay", options.preferRelay ? "true" : "false");
+    }
+    if (typeof options.preferTranscode === "boolean") {
+      query.set("preferTranscode", options.preferTranscode ? "true" : "false");
     }
 
     const suffix = query.size > 0 ? `?${query.toString()}` : "";
