@@ -1,6 +1,6 @@
 # viewer-windows
 
-Bu paket `apps/viewer-webos` istemcisini masaustu kabugunda (Electron) paketleyerek Windows `.exe` uretir.
+Bu paket `apps/viewer-webos` istemcisini masaustu kabugunda (Electron) paketler.
 
 ## Komutlar
 
@@ -10,6 +10,8 @@ Bu paket `apps/viewer-webos` istemcisini masaustu kabugunda (Electron) paketleye
   NSIS installer `.exe` uretir.
 - `npm run dist:win -w @flixify/viewer-windows`
   Her ikisini birden uretir.
+- `npm run dist:mac:dmg -w @flixify/viewer-windows`
+  macOS icin `.dmg` (ve zip) uretir.
 
 Mimariye ozel:
 
@@ -17,12 +19,15 @@ Mimariye ozel:
 - `npm run dist:win:installer:arm64 -w @flixify/viewer-windows`
 - `npm run dist:win:portable:x64 -w @flixify/viewer-windows`
 - `npm run dist:win:portable:arm64 -w @flixify/viewer-windows`
+- `npm run dist:mac:dmg:x64 -w @flixify/viewer-windows`
+- `npm run dist:mac:dmg:arm64 -w @flixify/viewer-windows`
 
 ## Cikti
 
 Uretilen dosyalar:
 
 - `apps/viewer-windows/dist-electron/*.exe`
+- `apps/viewer-windows/dist-electron/*.dmg`
 
 Not: build once `apps/viewer-webos` derlenir ve `dist` icerigi otomatik olarak bu pakete kopyalanir.
 
@@ -48,3 +53,17 @@ Oncelik sirasi:
 1. `FLIXIFY_API_BASE_URL` (process env)
 2. `%APPDATA%\\Flixify Pro\\app-config.json`
 3. Paket icindeki `web-dist/app-config.json`
+
+## Uygulama Guncelleme Davranisi
+
+- Masaustu uygulama menude `Guncelle` aksiyonu sunar (`CmdOrCtrl+Shift+R`).
+- `Guncelle`, Electron cache'ini temizler ve uygulamayi yeniden yukler.
+
+Canli commitleri yeniden kurulum olmadan almak icin:
+
+1. Paketleme sirasinda `FLIXIFY_WEB_APP_URL=https://app.flixify.pro` verin.
+2. veya kurulu istemcide `app-config.json` icine `webAppUrl` ekleyin:
+   - `{ "apiBaseUrl": "https://api.flixify.pro", "webAppUrl": "https://app.flixify.pro" }`
+
+Bu ayarda desktop shell uzaktaki web uygulamasini acar ve `app.flixify.pro` deploylari guncellemeleri aninda yansitir.
+Not: Electron shell kodu degisirse yine yeni `.exe/.dmg` paket yayinlamak gerekir.

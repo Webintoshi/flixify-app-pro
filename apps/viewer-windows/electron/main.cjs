@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { app, BrowserWindow, shell } = require("electron");
+const { Menu, app, BrowserWindow, shell } = require("electron");
 
 app.disableHardwareAcceleration();
 
@@ -38,19 +38,105 @@ function readExternalRuntimeConfig() {
       return null;
     }
 
-    return normalizeApiBaseUrl(parsed.apiBaseUrl);
+    const apiBaseUrl = normalizeApiBaseUrl(parsed.apiBaseUrl);
+    const webAppUrl = normalizeWebAppUrl(parsed.webAppUrl);
+    return {
+      apiBaseUrl,
+      webAppUrl
+    };
   } catch {
     return null;
   }
 }
 
-function resolveApiBaseUrlOverride() {
-  const fromEnv = normalizeApiBaseUrl(process.env.FLIXIFY_API_BASE_URL);
-  if (fromEnv) {
-    return fromEnv;
+function normalizeWebAppUrl(value) {
+  if (typeof value !== "string") {
+    return null;
   }
 
-  return readExternalRuntimeConfig();
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function resolveRuntimeOverrides() {
+  const fromEnv = normalizeApiBaseUrl(process.env.FLIXIFY_API_BASE_URL);
+  const fromWebEnv = normalizeWebAppUrl(process.env.FLIXIFY_WEB_APP_URL);
+  const fromPublicWebEnv = normalizeWebAppUrl(process.env.PUBLIC_APP_BASE_URL);
+  const fromViewerWebosEnv = normalizeWebAppUrl(process.env.VITE_WEB_APP_URL);
+  const fromConfig = readExternalRuntimeConfig();
+
+  return {
+    apiBaseUrl: fromEnv ?? fromConfig?.apiBaseUrl ?? null,
+    webAppUrl: fromWebEnv ?? fromPublicWebEnv ?? fromViewerWebosEnv ?? fromConfig?.webAppUrl ?? null
+  };
+}
+
+async function hardReload(mainWindow) {
+  try {
+    await mainWindow.webContents.session.clearCache();
+  } catch {
+    // noop
+  }
+  mainWindow.webContents.reloadIgnoringCache();
+}
+
+function createAppMenu(mainWindow) {
+  const template = [
+    {
+      label: "Flixify Pro",
+      submenu: [
+        {
+          label: "Guncelle",
+          accelerator: "CmdOrCtrl+Shift+R",
+          click: () => {
+            void hardReload(mainWindow);
+          }
+        },
+        { type: "separator" },
+        { role: process.platform === "darwin" ? "close" : "quit" }
+      ]
+    },
+    {
+      label: "View",
+      submenu: [
+        {
+          label: "Yeniden Yukle",
+          accelerator: "CmdOrCtrl+R",
+          click: () => {
+            mainWindow.webContents.reload();
+          }
+        },
+        {
+          label: "Onbelleksiz Yeniden Yukle",
+          accelerator: "CmdOrCtrl+Alt+R",
+          click: () => {
+            void hardReload(mainWindow);
+          }
+        },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+        { role: "toggleDevTools" }
+      ]
+    },
+    {
+      label: "Window",
+      submenu: [{ role: "minimize" }, { role: "zoom" }, { role: "front" }]
+    }
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 async function createMainWindow() {
@@ -69,11 +155,13 @@ async function createMainWindow() {
   });
 
   const indexPath = path.join(__dirname, "..", "web-dist", "index.html");
-  if (!fs.existsSync(indexPath)) {
+  const runtime = resolveRuntimeOverrides();
+
+  if (!runtime.webAppUrl && !fs.existsSync(indexPath)) {
     mainWindow.loadURL(
       "data:text/html;charset=UTF-8," +
         encodeURIComponent(
-          "<h2>Flixify Pro paketi hazir degil.</h2><p>Calistirmadan once `npm run prepare:win` komutunu calistirin.</p>"
+          "<h2>Flixify Pro paketi hazir degil.</h2><p>Calistirmadan once `npm run prepare:desktop` komutunu calistirin.</p>"
         )
     );
     return;
@@ -86,13 +174,13 @@ async function createMainWindow() {
 
   // Prevent stale hashed CSS/JS from previous installs causing broken layouts.
   await mainWindow.webContents.session.clearCache().catch(() => undefined);
-  const entryUrl = pathToFileURL(indexPath);
-  const apiBaseUrlOverride = resolveApiBaseUrlOverride();
-  if (apiBaseUrlOverride) {
-    entryUrl.searchParams.set("apiBaseUrl", apiBaseUrlOverride);
+  const entryUrl = runtime.webAppUrl ? new URL(runtime.webAppUrl) : pathToFileURL(indexPath);
+  if (runtime.apiBaseUrl) {
+    entryUrl.searchParams.set("apiBaseUrl", runtime.apiBaseUrl);
   }
 
   void mainWindow.loadURL(entryUrl.toString());
+  createAppMenu(mainWindow);
 }
 
 app.whenReady().then(() => {

@@ -35,6 +35,27 @@ function normalizeApiBaseUrl(value) {
   }
 }
 
+function normalizeWebAppUrl(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
 function parseEnvValue(raw) {
   const trimmed = raw.trim();
   if (!trimmed) {
@@ -118,11 +139,36 @@ async function resolveApiBaseUrl() {
   return null;
 }
 
+async function resolveWebAppUrl() {
+  const envFiles = await readEnvFiles();
+  const candidates = [
+    { source: "FLIXIFY_WEB_APP_URL (process env)", value: process.env.FLIXIFY_WEB_APP_URL },
+    { source: "PUBLIC_APP_BASE_URL (process env)", value: process.env.PUBLIC_APP_BASE_URL },
+    { source: "VITE_WEB_APP_URL (process env)", value: process.env.VITE_WEB_APP_URL },
+    { source: "FLIXIFY_WEB_APP_URL (.env*)", value: envFiles.FLIXIFY_WEB_APP_URL },
+    { source: "PUBLIC_APP_BASE_URL (.env*)", value: envFiles.PUBLIC_APP_BASE_URL },
+    { source: "VITE_WEB_APP_URL (.env*)", value: envFiles.VITE_WEB_APP_URL }
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeWebAppUrl(candidate.value);
+    if (normalized) {
+      return {
+        value: normalized,
+        source: candidate.source
+      };
+    }
+  }
+
+  return null;
+}
+
 await mkdir(appRoot, { recursive: true });
 await rm(targetDist, { recursive: true, force: true });
 await cp(sourceDist, targetDist, { recursive: true });
 
 const resolvedApiBase = await resolveApiBaseUrl();
+const resolvedWebAppUrl = await resolveWebAppUrl();
 if (requireApiBaseUrl && !resolvedApiBase?.value) {
   throw new Error(
     "Production packaging icin FLIXIFY_API_BASE_URL veya PUBLIC_API_BASE_URL zorunludur. Ornek: https://api.example.com"
@@ -137,9 +183,15 @@ if (requireApiBaseUrl && resolvedApiBase?.value && isLocalApiBaseUrl(resolvedApi
 
 const runtimeApiBaseUrl = resolvedApiBase?.value ?? "http://localhost:4000";
 const runtimeConfigPath = path.join(targetDist, "app-config.json");
+const runtimeConfig = {
+  apiBaseUrl: runtimeApiBaseUrl
+};
+if (resolvedWebAppUrl?.value) {
+  runtimeConfig.webAppUrl = resolvedWebAppUrl.value;
+}
 await writeFile(
   runtimeConfigPath,
-  `${JSON.stringify({ apiBaseUrl: runtimeApiBaseUrl }, null, 2)}\n`,
+  `${JSON.stringify(runtimeConfig, null, 2)}\n`,
   "utf8"
 );
 
@@ -148,3 +200,9 @@ console.log(
   `Runtime API config written to ${runtimeConfigPath}: ${runtimeApiBaseUrl}` +
     (resolvedApiBase?.source ? ` (${resolvedApiBase.source})` : " (default dev fallback)")
 );
+if (resolvedWebAppUrl?.value) {
+  console.log(
+    `Runtime Web App URL enabled: ${resolvedWebAppUrl.value}` +
+      (resolvedWebAppUrl.source ? ` (${resolvedWebAppUrl.source})` : "")
+  );
+}
