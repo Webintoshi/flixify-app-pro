@@ -272,7 +272,7 @@ function mapLiveChannel(
   playback?: PlaybackContext
 ): LiveChannel {
   const healthStatus = normalizeLiveHealthStatus(row.health_status);
-  const canPlay = Boolean(playback?.canPlay) && healthStatus !== "broken";
+  const canPlay = Boolean(playback?.canPlay);
 
   return {
     id: row.id,
@@ -450,7 +450,12 @@ async function getUserContextRow(userId: string, includeDeleted = false): Promis
 export async function getUserContext(userId: string): Promise<UserContext> {
   const row = await getUserContextRow(userId);
   const hasAssignedLink = hasAssignedSource(row);
-  const sourceReady = row.source_status === "ready" && Boolean(row.current_snapshot_version);
+  const hasSnapshot = Boolean(row.current_snapshot_version && row.current_snapshot_version > 0);
+  const sourceReady =
+    hasSnapshot &&
+    (row.source_status === "ready" ||
+      row.source_status === "syncing" ||
+      row.source_status === "error");
   const playbackBaseUrl = row.source_base_url ?? null;
 
   return {
@@ -694,6 +699,7 @@ export async function updateLiveChannelHealth(
     resetFailureCount?: boolean;
     markSuccess?: boolean;
     touchPlaybackRequest?: boolean;
+    skipFailureCountIncrement?: boolean;
   }
 ) {
   await query(
@@ -711,7 +717,11 @@ export async function updateLiveChannelHealth(
         $1,
         $2,
         $3,
-        case when $4::boolean then 0 else case when $3 = 'healthy' then 0 else 1 end end,
+        case
+          when $4::boolean then 0
+          when $8::boolean then 0
+          else case when $3 = 'healthy' then 0 else 1 end
+        end,
         timezone('utc', now()),
         case when $5::boolean then timezone('utc', now()) else null end,
         case when $6::boolean then timezone('utc', now()) else null end,
@@ -722,12 +732,14 @@ export async function updateLiveChannelHealth(
         snapshot_version = excluded.snapshot_version,
         health_status = case
           when excluded.health_status = 'healthy' then 'healthy'
+          when $8::boolean then public.shared_live_channel_health.health_status
           when public.shared_live_channel_health.failure_count + 1 >= 5 then 'broken'
           when public.shared_live_channel_health.failure_count + 1 >= 2 then 'degraded'
           else excluded.health_status
         end,
         failure_count = case
           when $4::boolean or excluded.health_status = 'healthy' then 0
+          when $8::boolean then public.shared_live_channel_health.failure_count
           else public.shared_live_channel_health.failure_count + 1
         end,
         last_checked_at = timezone('utc', now()),
@@ -748,7 +760,8 @@ export async function updateLiveChannelHealth(
       input.resetFailureCount ?? false,
       input.touchPlaybackRequest ?? false,
       input.markSuccess ?? false,
-      input.errorMessage ?? null
+      input.errorMessage ?? null,
+      input.skipFailureCountIncrement ?? false
     ]
   );
 }
@@ -1557,6 +1570,11 @@ export async function assignM3USource(
         `
           insert into public.app_settings (
             id,
+            support_whatsapp_url,
+            support_telegram_url,
+            sales_portal_url,
+            hero_title,
+            hero_subtitle,
             shared_source_base_url,
             shared_source_playlist_path,
             shared_source_playlist_suffix,
@@ -1564,7 +1582,21 @@ export async function assignM3USource(
             shared_source_reference_password,
             shared_source_status,
             shared_source_last_error
-          ) values (true, $1, $2, $3, $4, $5, 'pending', null)
+          ) values (
+            true,
+            coalesce((select support_whatsapp_url from public.app_settings where id = true), 'https://wa.me/900000000000'),
+            coalesce((select support_telegram_url from public.app_settings where id = true), 'https://t.me/yourchannel'),
+            (select sales_portal_url from public.app_settings where id = true),
+            coalesce((select hero_title from public.app_settings where id = true), 'Canli TV, film ve diziler tek uygulamada'),
+            coalesce((select hero_subtitle from public.app_settings where id = true), 'Kriptonit kod ile hizli giris, size ozel baglanti ve manuel onayli paket yonetimi.'),
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            'pending',
+            null
+          )
           on conflict (id) do update
           set
             shared_source_base_url = coalesce(public.app_settings.shared_source_base_url, excluded.shared_source_base_url),

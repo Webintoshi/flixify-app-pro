@@ -151,10 +151,13 @@ const livePlaybackManager = createLivePlaybackManager({
     }
 
     if (input.event === "relay-error" || input.event === "upstream-error") {
+      const upstreamStatus = input.upstreamStatus ?? null;
       await updateLiveChannelHealth(input.channelId, input.snapshotVersion, {
         status: "degraded",
         errorMessage: input.errorMessage ?? "Canli relay gecici olarak hata verdi.",
-        touchPlaybackRequest: true
+        touchPlaybackRequest: true,
+        skipFailureCountIncrement:
+          typeof upstreamStatus === "number" && upstreamStatus >= 400 && upstreamStatus < 500
       });
     }
   }
@@ -251,6 +254,20 @@ function buildStreamCandidates(
     credentials,
     url: buildStreamUrl(baseUrl, credentials.username, credentials.password, streamPath)
   }));
+}
+
+function extractUpstreamStatus(errorMessage: string | null | undefined) {
+  if (typeof errorMessage !== "string") {
+    return null;
+  }
+
+  const match = /^upstream\s+(\d{3})$/i.exec(errorMessage.trim());
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(match[1] ?? "", 10);
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 async function resolveLiveSourceUrl(input: {
@@ -803,25 +820,40 @@ export function buildServer() {
           };
 
       const checkedAt = new Date().toISOString();
-      const nextFailureCount = resolved.ok ? 0 : (channel.failure_count ?? 0) + 1;
-      const healthStatus = resolved.ok ? "healthy" : nextFailureCount >= 5 ? "broken" : "degraded";
       const transport = resolved.transport;
       const errorMessage = resolved.errorMessage;
+      const upstreamStatus = extractUpstreamStatus(errorMessage);
+      const skipFailureCountIncrement =
+        typeof upstreamStatus === "number" && upstreamStatus >= 400 && upstreamStatus < 500;
+      const currentFailureCount = channel.failure_count ?? 0;
+      const nextFailureCount =
+        resolved.ok || skipFailureCountIncrement ? currentFailureCount : currentFailureCount + 1;
+      const healthStatus = resolved.ok
+        ? "healthy"
+        : skipFailureCountIncrement
+          ? channel.health_status ?? "unknown"
+          : nextFailureCount >= 5
+            ? "broken"
+            : "degraded";
 
       const canAttemptPlayback = Boolean(userContext.canPlay) && Boolean(resolved.sourceUrl);
       const optimisticProbeFallback =
         canAttemptPlayback &&
         !resolved.ok &&
-        typeof errorMessage === "string" &&
-        /^upstream\\s+4\\d\\d$/i.test(errorMessage.trim());
+        typeof upstreamStatus === "number" &&
+        upstreamStatus >= 400 &&
+        upstreamStatus < 500;
 
-      await updateLiveChannelHealth(channel.id, channel.snapshot_version, {
-        status: healthStatus,
-        errorMessage,
-        resetFailureCount: resolved.ok,
-        markSuccess: resolved.ok,
-        touchPlaybackRequest: true
-      });
+      if (userContext.canPlay) {
+        await updateLiveChannelHealth(channel.id, channel.snapshot_version, {
+          status: healthStatus,
+          errorMessage,
+          resetFailureCount: resolved.ok,
+          markSuccess: resolved.ok,
+          touchPlaybackRequest: true,
+          skipFailureCountIncrement
+        });
+      }
 
       const canPlay = Boolean(userContext.canPlay) && (resolved.ok || optimisticProbeFallback);
 

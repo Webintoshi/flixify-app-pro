@@ -189,7 +189,10 @@ async function markJobFailed(jobId: string, message: string) {
   await pool.query(
     `
       update public.app_settings
-      set shared_source_status = 'error',
+      set shared_source_status = case
+            when coalesce(shared_source_snapshot_version, 0) > 0 then 'ready'
+            else 'error'
+          end,
           shared_source_last_error = $1
       where id = true
     `,
