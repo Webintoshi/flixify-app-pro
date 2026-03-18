@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiRequest } from "../../lib/api";
 
 type LoginResponse = {
@@ -20,8 +20,16 @@ type LoginResponse = {
   };
 };
 
+type PublicSettingsResponse = {
+  supportWhatsappUrl: string;
+};
+
 const storageKey = "flixify-public-session";
 const authPrefillCodeKey = "flixify-auth-prefill-code";
+const fallbackWhatsappUrl =
+  process.env.NEXT_PUBLIC_SUPPORT_WHATSAPP ??
+  process.env.PUBLIC_SUPPORT_WHATSAPP ??
+  "https://wa.me/900000000000";
 
 function getErrorMessage(error: unknown) {
   if (!(error instanceof Error)) {
@@ -130,14 +138,24 @@ export default function LoginPage() {
   const [premiumDismissed, setPremiumDismissed] = useState(false);
   const [trialLoading, setTrialLoading] = useState(false);
   const [trialMessage, setTrialMessage] = useState<string | null>(null);
+  const [whatsappUrl, setWhatsappUrl] = useState(fallbackWhatsappUrl);
 
-  const whatsappUrl = useMemo(
-    () =>
-      process.env.NEXT_PUBLIC_SUPPORT_WHATSAPP ??
-      process.env.PUBLIC_SUPPORT_WHATSAPP ??
-      "https://wa.me/900000000000",
-    []
-  );
+  useEffect(() => {
+    let cancelled = false;
+
+    apiRequest<PublicSettingsResponse>("/settings/public")
+      .then((settings) => {
+        if (cancelled || !settings.supportWhatsappUrl) {
+          return;
+        }
+        setWhatsappUrl(settings.supportWhatsappUrl);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {

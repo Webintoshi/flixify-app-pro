@@ -1,12 +1,49 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { apiRequest } from "../../lib/api";
+
+type PublicSettingsResponse = {
+  supportWhatsappUrl: string;
+  supportTelegramUrl: string;
+};
+
+const FALLBACK_WHATSAPP_URL =
+  process.env.NEXT_PUBLIC_SUPPORT_WHATSAPP ??
+  process.env.PUBLIC_SUPPORT_WHATSAPP ??
+  "https://wa.me/900000000000";
+const FALLBACK_TELEGRAM_URL =
+  process.env.NEXT_PUBLIC_SUPPORT_TELEGRAM ??
+  process.env.PUBLIC_SUPPORT_TELEGRAM ??
+  "https://t.me/yourchannel";
+
 export default function ContactPage() {
-  const whatsapp =
-    process.env.NEXT_PUBLIC_SUPPORT_WHATSAPP ??
-    process.env.PUBLIC_SUPPORT_WHATSAPP ??
-    "https://wa.me/900000000000";
-  const telegram =
-    process.env.NEXT_PUBLIC_SUPPORT_TELEGRAM ??
-    process.env.PUBLIC_SUPPORT_TELEGRAM ??
-    "https://t.me/yourchannel";
+  const [whatsappUrl, setWhatsappUrl] = useState(FALLBACK_WHATSAPP_URL);
+  const [telegramUrl, setTelegramUrl] = useState(FALLBACK_TELEGRAM_URL);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    apiRequest<PublicSettingsResponse>("/settings/public")
+      .then((settings) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (settings.supportWhatsappUrl) {
+          setWhatsappUrl(settings.supportWhatsappUrl);
+        }
+
+        if (settings.supportTelegramUrl) {
+          setTelegramUrl(settings.supportTelegramUrl);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <main className="page-grid">
@@ -18,10 +55,10 @@ export default function ContactPage() {
           gecilebilir. Link atamasi ve manuel dogrulama burada yonetilir.
         </p>
         <div className="hero-actions">
-          <a className="button button-hero" href={whatsapp} target="_blank" rel="noreferrer">
+          <a className="button button-hero" href={whatsappUrl} target="_blank" rel="noreferrer">
             WhatsApp
           </a>
-          <a className="icon-button" href={telegram} target="_blank" rel="noreferrer">
+          <a className="icon-button" href={telegramUrl} target="_blank" rel="noreferrer">
             +
           </a>
         </div>

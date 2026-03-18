@@ -578,6 +578,17 @@ export function useViewerCore(options: ViewerCoreOptions) {
     ]);
   }
 
+  async function refreshMe() {
+    if (!sessionRef.current) {
+      setMe(null);
+      return null;
+    }
+
+    const response = await runAuthenticatedRequest(() => clientRef.current.me());
+    setMe(response);
+    return response;
+  }
+
   async function attemptRefresh(storedSession: ViewerSession) {
     try {
       await refreshSessionOnly(storedSession);
@@ -810,6 +821,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
     loadPackages,
     loadDeviceSessions,
     loadPaymentRequests,
+    refreshMe,
     registerAnon,
     issueAnonCode,
     loginByCode,

@@ -118,6 +118,14 @@ export function ViewerNativeApp() {
     }
   }, [core.me?.user.hasActiveSubscription]);
 
+  useEffect(() => {
+    if (screen !== "/iletisim") {
+      return;
+    }
+
+    void core.refreshMe().catch(() => undefined);
+  }, [screen]);
+
   const animatedCode = issuedCode
     ? issuedCode
         .split("")

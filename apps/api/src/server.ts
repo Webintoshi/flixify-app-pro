@@ -561,6 +561,22 @@ export function buildServer() {
     }
   });
 
+  app.get("/settings/public", async (request, reply) => {
+    try {
+      const settings = isDemoMode ? getDemoSettings() : await getAppSettings();
+      return {
+        supportWhatsappUrl: settings.supportWhatsappUrl,
+        supportTelegramUrl: settings.supportTelegramUrl,
+        salesPortalUrl: settings.salesPortalUrl,
+        heroTitle: settings.heroTitle,
+        heroSubtitle: settings.heroSubtitle
+      };
+    } catch (error) {
+      request.log.error(error);
+      return reply.status(500).send({ message: "Ayarlar alinamadi." });
+    }
+  });
+
   app.post("/auth/register-anon", async (request, reply) => {
     const payload = registerAnonInputSchema.parse(request.body);
     const requestIp = request.ip || "unknown";

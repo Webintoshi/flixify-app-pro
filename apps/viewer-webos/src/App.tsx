@@ -6600,9 +6600,6 @@ function MoviePlayerSurface({
     continuePlayback,
     stopPlayback,
     togglePlayback,
-    retryWithCompatibilityMode,
-    canRetryWithCompatibilityMode,
-    compatibilityRetrying,
     seekBy,
     isPaused,
     canSeek,
@@ -6614,9 +6611,7 @@ function MoviePlayerSurface({
     resolveVodPlayback,
     reportVodPlayback
   });
-  const currentStateTone =
-    playerState === "failed" ? "danger" : playerState === "recovering" ? "warning" : "info";
-  const showStatusBar = playerState !== "playing" || Boolean(playerError) || interactionRequired;
+  const showStatusBar = Boolean(playerError) || interactionRequired || audioTracks.length > 1;
   const controlsLocked = playerState === "resolving" || playerState === "connecting";
 
   useVodMediaShortcuts({
@@ -6672,25 +6667,9 @@ function MoviePlayerSurface({
 
         {showStatusBar ? (
           <div className="movie-player-status">
-            <span className={`status-pill is-${currentStateTone}`}>{playerStateLabels[playerState]}</span>
             {playerError ? <span className="movie-player-status-text">{playerError}</span> : null}
             {!playerError && interactionRequired ? (
               <span className="movie-player-status-text">Oynatmayi baslatmak icin dokunun.</span>
-            ) : null}
-            {canRetryWithCompatibilityMode ? (
-              <button
-                type="button"
-                className="vod-compatibility-retry"
-                onClick={() => {
-                  void retryWithCompatibilityMode();
-                }}
-                disabled={controlsLocked || compatibilityRetrying}
-                data-tv-focusable="true"
-                data-tv-region="overlay-player-actions"
-                data-tv-focus-key={`movie-compatibility-retry-${item.id}`}
-              >
-                {compatibilityRetrying ? "Uyumluluk Modu Hazirlaniyor" : "Uyumluluk Modu ile Tekrar Dene"}
-              </button>
             ) : null}
             {audioTracks.length > 1 ? (
               <label className="movie-player-status-text">
@@ -6795,9 +6774,6 @@ function EpisodePlayerSurface({
     continuePlayback,
     stopPlayback,
     togglePlayback,
-    retryWithCompatibilityMode,
-    canRetryWithCompatibilityMode,
-    compatibilityRetrying,
     seekBy,
     isPaused,
     canSeek,
@@ -6812,13 +6788,16 @@ function EpisodePlayerSurface({
       startNextCountdown("ended");
     }
   });
-  const currentStateTone =
-    playerState === "failed" ? "danger" : playerState === "recovering" ? "warning" : "info";
-  const showStatusBar = playerState !== "playing" || Boolean(playerError) || interactionRequired;
   const autoSkipLimitReached =
     playerState === "failed" && autoSkipDepth >= autoSkipLimit && Boolean(nextPlayableItem);
   const noNextEpisodeCandidate =
     playerState === "failed" && !nextPlayableItem;
+  const showStatusBar =
+    Boolean(playerError) ||
+    interactionRequired ||
+    audioTracks.length > 1 ||
+    noNextEpisodeCandidate ||
+    autoSkipLimitReached;
   const controlsLocked = playerState === "resolving" || playerState === "connecting";
 
   useVodMediaShortcuts({
@@ -6951,25 +6930,9 @@ function EpisodePlayerSurface({
 
         {showStatusBar ? (
           <div className="episode-player-status">
-            <span className={`status-pill is-${currentStateTone}`}>{playerStateLabels[playerState]}</span>
             {playerError ? <span className="episode-player-status-text">{playerError}</span> : null}
             {!playerError && interactionRequired ? (
               <span className="episode-player-status-text">Oynatmayi baslatmak icin dokunun.</span>
-            ) : null}
-            {canRetryWithCompatibilityMode ? (
-              <button
-                type="button"
-                className="vod-compatibility-retry"
-                onClick={() => {
-                  void retryWithCompatibilityMode();
-                }}
-                disabled={controlsLocked || compatibilityRetrying}
-                data-tv-focusable="true"
-                data-tv-region="overlay-player-actions"
-                data-tv-focus-key={`episode-compatibility-retry-${item.id}`}
-              >
-                {compatibilityRetrying ? "Uyumluluk Modu Hazirlaniyor" : "Uyumluluk Modu ile Tekrar Dene"}
-              </button>
             ) : null}
             {audioTracks.length > 1 ? (
               <label className="episode-player-status-text">
@@ -7083,6 +7046,14 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
     }
 
     setPlayingItem(null);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (location.pathname !== "/iletisim") {
+      return;
+    }
+
+    void core.refreshMe().catch(() => undefined);
   }, [location.pathname]);
 
   useEffect(() => {

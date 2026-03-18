@@ -19,6 +19,17 @@ type UserSettings = {
   remainingDays: number;
 };
 
+type MeResponse = {
+  user: {
+    kryptoniteCode: string;
+    activePackage?: {
+      title: string;
+      endsAt: string;
+      remainingDays: number;
+    };
+  };
+};
+
 const initialState: UserSettings = {
   username: "",
   code: "",
@@ -36,13 +47,8 @@ export default function UserSettingsPage() {
 
   useEffect(() => {
     // Fetch user settings from API
-    apiRequest("/me", {})
-      .then((response: { 
-        user: { 
-          kryptoniteCode: string; 
-          activePackage?: { title: string; endsAt: string; remainingDays: number };
-        } 
-      }) => {
+    apiRequest<MeResponse>("/me", {})
+      .then((response) => {
         setSettings({
           username: response.user.kryptoniteCode || "",
           code: response.user.kryptoniteCode || "",
