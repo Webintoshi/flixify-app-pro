@@ -107,11 +107,7 @@ const playerStateLabels: Record<PlayerState, string> = {
   failed: "Yayin acilamadi"
 };
 
-const paymentMethodFallbackDetails: Record<PaymentMethodId, string> = {
-  "bank-transfer-eft": "Havale/EFT icin alici bilgileri admin panelinden paylasilir.",
-  crypto: "Kripto odeme icin cuzdan bilgileri admin panelinden paylasilir.",
-  "bank-card": "Banka karti odemesi icin link veya POS bilgisi admin panelinden paylasilir."
-};
+const paymentMethodApprovalText = "Ortalama 30 Dakika Icerisinde Onay";
 
 const paymentMethodLabelById: Record<PaymentMethodId, string> = {
   "bank-transfer-eft": "Banka Havale / EFT",
@@ -7195,7 +7191,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
   const [premiumPopupDismissed, setPremiumPopupDismissed] = useState(false);
   const [pendingPaymentPackage, setPendingPaymentPackage] = useState<PackageRecord | null>(null);
   const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<PaymentMethodId | null>(null);
-  const [selectedCryptoAssetId, setSelectedCryptoAssetId] = useState<CryptoAssetId>("usdt-trc20");
+  const [selectedCryptoAssetId, setSelectedCryptoAssetId] = useState<CryptoAssetId | null>(null);
   const [paymentModalNotice, setPaymentModalNotice] = useState<string | null>(null);
   const paymentMethods = core.paymentMethods.filter((method) => method.enabled);
   const isPaymentModalOpen = Boolean(pendingPaymentPackage);
@@ -7207,13 +7203,14 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
   const selectedCryptoAssets = buildCryptoAssets(
     selectedPaymentMethod?.id === "crypto" ? selectedPaymentMethod : null
   );
-  const selectedCryptoAsset =
-    selectedCryptoAssets.find((asset) => asset.id === selectedCryptoAssetId) ?? selectedCryptoAssets[0];
+  const selectedCryptoAsset = selectedCryptoAssetId
+    ? selectedCryptoAssets.find((asset) => asset.id === selectedCryptoAssetId) ?? null
+    : null;
 
   function closePaymentMethodModal() {
     setPendingPaymentPackage(null);
     setSelectedPaymentMethodId(null);
-    setSelectedCryptoAssetId("usdt-trc20");
+    setSelectedCryptoAssetId(null);
     setPaymentModalNotice(null);
   }
 
@@ -7293,21 +7290,6 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
   }, [me?.user.hasActiveSubscription]);
 
   useEffect(() => {
-    if (!isPaymentModalOpen) {
-      return;
-    }
-
-    if (paymentMethods.length === 0) {
-      setSelectedPaymentMethodId(null);
-      return;
-    }
-
-    if (!selectedPaymentMethodId || !paymentMethods.some((method) => method.id === selectedPaymentMethodId)) {
-      setSelectedPaymentMethodId(paymentMethods[0]?.id ?? null);
-    }
-  }, [isPaymentModalOpen, paymentMethods, selectedPaymentMethodId]);
-
-  useEffect(() => {
     if (!paymentModalNotice) {
       return;
     }
@@ -7325,8 +7307,8 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
   }
 
   function openPaymentMethodModal(pkg: PackageRecord) {
-    setSelectedPaymentMethodId(paymentMethods[0]?.id ?? null);
-    setSelectedCryptoAssetId("usdt-trc20");
+    setSelectedPaymentMethodId(null);
+    setSelectedCryptoAssetId(null);
     setPaymentModalNotice(null);
     setPendingPaymentPackage(pkg);
   }
@@ -7741,7 +7723,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
               </button>
               <span className="pill">Odeme Yontemi</span>
               <h2>{pendingPaymentPackage.title} paketi icin odeme yontemi secin</h2>
-              <p className="muted">Yontem seciminden sonra odeme talebiniz admin paneline iletilecek.</p>
+              <p className="muted">Odeme bildiriminiz onay surecine alinacaktir.</p>
               {paymentMethods.length > 0 ? (
                 <>
                   <div className="payment-method-grid">
@@ -7759,10 +7741,14 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                         data-tv-active={selectedPaymentMethod?.id === method.id ? "true" : undefined}
                       >
                         <strong>{method.label || paymentMethodLabelById[method.id]}</strong>
-                        <span>{method.details?.trim() || paymentMethodFallbackDetails[method.id]}</span>
+                        <span>{paymentMethodApprovalText}</span>
                       </button>
                     ))}
                   </div>
+
+                  {!selectedPaymentMethod ? (
+                    <div className="notice-card subtle">Devam etmek icin bir odeme yontemi secin.</div>
+                  ) : null}
 
                   {selectedPaymentMethod ? (
                     <div className="payment-method-details">
@@ -7851,7 +7837,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                                 data-tv-focusable="true"
                                 data-tv-region="overlay-actions"
                                 data-tv-focus-key={`payment-crypto-${asset.id}`}
-                                data-tv-active={selectedCryptoAsset?.id === asset.id ? "true" : undefined}
+                                data-tv-active={selectedCryptoAssetId === asset.id ? "true" : undefined}
                                 data-tv-overlay-initial={
                                   selectedPaymentMethod.id === "crypto" && index === 0 ? "true" : undefined
                                 }
@@ -7865,12 +7851,16 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                           </div>
                           <div className="payment-detail-row">
                             <div>
-                              <small>Cuzdan Adresi ({selectedCryptoAsset?.symbol ?? "-"})</small>
+                              <small>
+                                Cuzdan Adresi
+                                {selectedCryptoAsset?.symbol ? ` (${selectedCryptoAsset.symbol})` : ""}
+                              </small>
                               <strong>{toTextOrNull(selectedCryptoAsset?.walletAddress) ?? "-"}</strong>
                             </div>
                             <button
                               type="button"
                               className="button secondary payment-copy-button"
+                              disabled={!selectedCryptoAsset}
                               onClick={() =>
                                 void handleCopyPaymentValue(
                                   selectedCryptoAsset?.walletAddress,
@@ -7889,7 +7879,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
 
                       {selectedPaymentMethod.id === "bank-card" ? (
                         <div className="notice-card subtle">
-                          {selectedPaymentMethod.details?.trim() || paymentMethodFallbackDetails["bank-card"]}
+                          {selectedPaymentMethod.details?.trim() || paymentMethodApprovalText}
                         </div>
                       ) : null}
                     </div>
@@ -7908,7 +7898,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                     data-tv-region="overlay-actions"
                     data-tv-focus-key="payment-submit-request"
                   >
-                    Odeme Talebi Olustur
+                    Odeme Bildir
                   </button>
                 </>
               ) : (
