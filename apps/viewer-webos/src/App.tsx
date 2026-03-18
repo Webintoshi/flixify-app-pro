@@ -179,6 +179,44 @@ async function copyText(text: string) {
   }
 }
 
+function buildWhatsAppComposeUrl(baseUrl: string, message: string) {
+  const encodedMessage = encodeURIComponent(message);
+
+  try {
+    const url = new URL(baseUrl);
+    const host = url.hostname.toLowerCase();
+
+    if (host.includes("wa.me")) {
+      const phone = url.pathname.replace(/\//g, "").trim();
+      if (phone.length > 0) {
+        return `https://wa.me/${phone}?text=${encodedMessage}`;
+      }
+    }
+
+    if (host.includes("api.whatsapp.com") || host.includes("web.whatsapp.com")) {
+      url.searchParams.set("text", message);
+      return url.toString();
+    }
+
+    url.searchParams.set("text", message);
+    return url.toString();
+  } catch {
+    const separator = baseUrl.includes("?") ? "&" : "?";
+    return `${baseUrl}${separator}text=${encodedMessage}`;
+  }
+}
+
+function openExternalUrl(targetUrl: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const popup = window.open(targetUrl, "_blank", "noopener,noreferrer");
+  if (!popup) {
+    window.location.assign(targetUrl);
+  }
+}
+
 const liveCountryLabelByCode: Record<string, string> = {
   TR: "Turkiye"
 };
@@ -7307,6 +7345,8 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
     return <BlockedScreen whatsapp={me.contact.whatsapp} telegram={me.contact.telegram} />;
   }
 
+  const supportWhatsappUrl = me.contact.whatsapp;
+
   function openPaymentMethodModal(pkg: PackageRecord) {
     setSelectedPaymentMethodId(null);
     setSelectedCryptoAssetId(null);
@@ -7314,14 +7354,28 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
     setPendingPaymentPackage(pkg);
   }
 
-  async function submitPaymentRequestWithMethod(_paymentMethodId: PaymentMethodId) {
+  async function submitPaymentRequestWithMethod(paymentMethodId: PaymentMethodId) {
     if (!pendingPaymentPackage) {
       return;
     }
 
+    const paymentAmountLabel = toTextOrNull(pendingPaymentPackage.priceLabel) ?? "Belirlenmedi";
+    const userCodeLabel = toTextOrNull(headerUserLabel) ?? "Belirlenmedi";
+    const paymentMethodLabel = paymentMethodLabelById[paymentMethodId] ?? "Odeme yontemi";
+    const paymentMessage = [
+      "FLIXIFY PREMIUM ODEME BILDIRIMI",
+      `${pendingPaymentPackage.durationMonths} Aylik Paket Aldim.`,
+      `Kullanici Kodum: ${userCodeLabel}`,
+      `Odenen Tutar: ${paymentAmountLabel}`,
+      `Odeme Yontemi: ${paymentMethodLabel}`,
+      "Odememi yaptim, aktivasyon surecimi baslatmanizi rica ederim."
+    ].join("\n");
+    const whatsappComposeUrl = buildWhatsAppComposeUrl(supportWhatsappUrl, paymentMessage);
+
     const packageSlug = pendingPaymentPackage.slug;
     closePaymentMethodModal();
     await core.requestPayment(packageSlug);
+    openExternalUrl(whatsappComposeUrl);
   }
 
   async function handleCopyPaymentValue(value: string | null | undefined, label: string) {
