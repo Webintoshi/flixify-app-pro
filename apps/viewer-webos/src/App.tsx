@@ -491,6 +491,75 @@ function normalizeApiBaseUrl(value: string | null | undefined) {
   }
 }
 
+function isIpv4Host(hostname: string) {
+  const parts = hostname.split(".");
+  if (parts.length !== 4) {
+    return false;
+  }
+
+  return parts.every((part) => {
+    if (!/^\d+$/.test(part)) {
+      return false;
+    }
+    const parsed = Number.parseInt(part, 10);
+    return parsed >= 0 && parsed <= 255;
+  });
+}
+
+function isIpOrLocalhostHost(hostname: string) {
+  const normalizedHost =
+    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1).toLowerCase() : hostname.toLowerCase();
+
+  if (normalizedHost === "localhost") {
+    return true;
+  }
+
+  if (isIpv4Host(normalizedHost)) {
+    return true;
+  }
+
+  if (normalizedHost.includes(":")) {
+    return /^[0-9a-f:.]+$/i.test(normalizedHost);
+  }
+
+  return false;
+}
+
+function normalizeArtworkUrlForRuntime(value: string | null | undefined) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const hasExplicitScheme = /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed);
+  if (!hasExplicitScheme) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return null;
+    }
+
+    if (typeof window !== "undefined" && window.location.protocol === "https:" && parsed.protocol === "http:") {
+      if (isIpOrLocalhostHost(parsed.hostname)) {
+        return null;
+      }
+      parsed.protocol = "https:";
+      return parsed.toString();
+    }
+
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
 function resolveApiBaseUrlFromLocation() {
   if (typeof window === "undefined") {
     return null;
@@ -1035,7 +1104,7 @@ function createSeriesArtworkItem(series: SeriesArtworkItem): PlaybackQueueItem {
     kind: "episode",
     title: series.title,
     subtitle: null,
-    imageUrl: series.posterUrl,
+    imageUrl: normalizeArtworkUrlForRuntime(series.posterUrl),
     artworkMode: "poster",
     streamUrl: null,
     playbackAllowed: true
@@ -1063,6 +1132,7 @@ function getSeriesPlaybackAllowed(series: SeriesRecord) {
 
 function buildSeriesPlaybackItems(series: SeriesRecord) {
   const orderedEpisodes: Array<{ season: SeriesSeasonRecord; episode: EpisodeRecord }> = [];
+  const normalizedPosterUrl = normalizeArtworkUrlForRuntime(series.posterUrl);
 
   for (const season of series.seasons) {
     for (const episode of season.episodes) {
@@ -1084,7 +1154,7 @@ function buildSeriesPlaybackItems(series: SeriesRecord) {
       kind: "episode",
       title: current.episode.title,
       subtitle: buildEpisodeSubtitle(series.title, current.episode),
-      imageUrl: series.posterUrl,
+      imageUrl: normalizedPosterUrl,
       artworkMode: "poster",
       streamUrl: current.episode.streamUrl,
       playbackAllowed: current.episode.playbackAllowed,
@@ -7598,7 +7668,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
     kind: "live",
     title: channel.title,
     subtitle: channel.groupTitle,
-    imageUrl: channel.logoUrl,
+    imageUrl: normalizeArtworkUrlForRuntime(channel.logoUrl),
     artworkMode: "logo",
     streamUrl: channel.streamUrl,
     playbackAllowed: channel.playbackAllowed,
@@ -7614,7 +7684,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
     kind: "movie",
     title: movie.title,
     subtitle: movie.groupTitle,
-    imageUrl: movie.posterUrl,
+    imageUrl: normalizeArtworkUrlForRuntime(movie.posterUrl),
     artworkMode: "poster",
     streamUrl: movie.streamUrl,
     playbackAllowed: movie.playbackAllowed,
