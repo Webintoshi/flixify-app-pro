@@ -1,4 +1,4 @@
-import { type ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import type {
   CatalogGroup,
@@ -25,6 +25,10 @@ import {
 } from "@flixify/viewer-core";
 
 const ENV_API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined;
+const ENV_DOWNLOAD_ANDROID_URL = import.meta.env.VITE_DOWNLOAD_ANDROID_URL as string | undefined;
+const ENV_DOWNLOAD_ANDROID_TV_URL = import.meta.env.VITE_DOWNLOAD_ANDROID_TV_URL as string | undefined;
+const ENV_DOWNLOAD_WINDOWS_URL = import.meta.env.VITE_DOWNLOAD_WINDOWS_URL as string | undefined;
+const ENV_DOWNLOAD_MACOS_URL = import.meta.env.VITE_DOWNLOAD_MACOS_URL as string | undefined;
 const DEV_API_BASE_URL = "http://localhost:4000";
 const API_HEALTH_PATH = "/health";
 const DEFAULT_RUNTIME_CONFIG_PATH = "/app-config.json";
@@ -42,6 +46,10 @@ const AUTH_ROUTE_PATHS = new Set<string>([
   registerRoute,
   ...Object.keys(legacyAuthRedirects)
 ]);
+const DEFAULT_DOWNLOAD_ANDROID_URL = "https://app.flixify.pro/downloads/flixify-android.apk";
+const DEFAULT_DOWNLOAD_ANDROID_TV_URL = "https://app.flixify.pro/downloads/flixify-android-tv.apk";
+const DEFAULT_DOWNLOAD_WINDOWS_URL = "https://app.flixify.pro/downloads/flixify-windows.exe";
+const DEFAULT_DOWNLOAD_MACOS_URL = "https://app.flixify.pro/downloads/flixify-macos.dmg";
 
 type RuntimeAppConfig = {
   apiBaseUrl?: string | null;
@@ -88,6 +96,12 @@ type SeriesArtworkItem = {
 };
 
 type TvDirection = "left" | "right" | "up" | "down";
+type AuthDownloadCard = {
+  id: string;
+  label: string;
+  href: string;
+  icon: ReactNode;
+};
 
 const primaryNavigationItems = [
   { href: "/", label: "Ana Sayfa" },
@@ -417,6 +431,16 @@ function isVodDebugEnabled() {
 
   return false;
 }
+
+function resolveDownloadUrl(rawValue: string | undefined, fallback: string) {
+  const trimmed = rawValue?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : fallback;
+}
+
+const DOWNLOAD_ANDROID_URL = resolveDownloadUrl(ENV_DOWNLOAD_ANDROID_URL, DEFAULT_DOWNLOAD_ANDROID_URL);
+const DOWNLOAD_ANDROID_TV_URL = resolveDownloadUrl(ENV_DOWNLOAD_ANDROID_TV_URL, DEFAULT_DOWNLOAD_ANDROID_TV_URL);
+const DOWNLOAD_WINDOWS_URL = resolveDownloadUrl(ENV_DOWNLOAD_WINDOWS_URL, DEFAULT_DOWNLOAD_WINDOWS_URL);
+const DOWNLOAD_MACOS_URL = resolveDownloadUrl(ENV_DOWNLOAD_MACOS_URL, DEFAULT_DOWNLOAD_MACOS_URL);
 
 function getRuntimeConfigPath() {
   if (typeof window !== "undefined" && window.location.protocol === "file:") {
@@ -1859,6 +1883,105 @@ function SmartphoneIcon() {
       <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
       <path d="M12 18h.01" />
     </svg>
+  );
+}
+
+function AndroidPlatformIcon() {
+  return (
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 9h8a2 2 0 0 1 2 2v5.5A2.5 2.5 0 0 1 15.5 19h-7A2.5 2.5 0 0 1 6 16.5V11a2 2 0 0 1 2-2Z" />
+      <path d="m9.5 5 1 2" />
+      <path d="m14.5 5-1 2" />
+      <path d="M9 4.5h6" />
+      <circle cx="9.75" cy="12.25" r="0.5" fill="currentColor" />
+      <circle cx="14.25" cy="12.25" r="0.5" fill="currentColor" />
+      <path d="M7 11H5.5" />
+      <path d="M18.5 11H17" />
+    </svg>
+  );
+}
+
+function AndroidTvPlatformIcon() {
+  return (
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="5" width="18" height="12" rx="2.5" />
+      <path d="M8 20h8" />
+      <path d="M12 17v3" />
+      <path d="M9.5 11h5" />
+      <path d="M10.5 8.5h3" />
+    </svg>
+  );
+}
+
+function WindowsPlatformIcon() {
+  return (
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M2.8 4.4 10.9 3.2V11H2.8V4.4ZM12.1 3l9.1-1.3V11h-9.1V3ZM2.8 13h8.1v7.8l-8.1-1.1V13ZM12.1 13h9.1v9.2L12.1 21V13Z" />
+    </svg>
+  );
+}
+
+function MacPlatformIcon() {
+  return (
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M15.67 2.94c-.82.98-1.33 2.27-1.2 3.58 1.24.05 2.65-.72 3.41-1.74.79-1.03 1.27-2.3 1.15-3.53-1.2.06-2.55.83-3.36 1.69Z" />
+      <path d="M20.96 16.57c-.56 1.23-.83 1.78-1.55 2.89-1 1.53-2.4 3.44-4.14 3.45-1.56.02-1.96-1.03-4.08-1.02-2.12.01-2.57 1.04-4.14 1.03-1.75-.02-3.08-1.74-4.08-3.28-2.8-4.3-3.1-9.34-1.37-12.02 1.23-1.9 3.17-3.03 5-3.03 1.89 0 3.08 1.04 4.64 1.04 1.51 0 2.44-1.04 4.63-1.04 1.62 0 3.35.88 4.57 2.41-4.03 2.21-3.37 7.99.52 9.57Z" />
+    </svg>
+  );
+}
+
+function AuthDownloadPanel() {
+  const cards: AuthDownloadCard[] = [
+    {
+      id: "android",
+      label: "Android",
+      href: DOWNLOAD_ANDROID_URL,
+      icon: <AndroidPlatformIcon />
+    },
+    {
+      id: "android-tv",
+      label: "Android TV",
+      href: DOWNLOAD_ANDROID_TV_URL,
+      icon: <AndroidTvPlatformIcon />
+    },
+    {
+      id: "windows",
+      label: "Windows",
+      href: DOWNLOAD_WINDOWS_URL,
+      icon: <WindowsPlatformIcon />
+    },
+    {
+      id: "macos",
+      label: "macOS",
+      href: DOWNLOAD_MACOS_URL,
+      icon: <MacPlatformIcon />
+    }
+  ];
+
+  return (
+    <section className="auth-downloads" aria-label="Platform indirme baglantilari">
+      <p className="auth-downloads-title">Uygulamayi Indir</p>
+      <div className="auth-download-grid">
+        {cards.map((card) => (
+          <a
+            key={card.id}
+            className="auth-download-card"
+            href={card.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-tv-focusable="true"
+            data-tv-region="auth-downloads"
+            data-tv-focus-key={`auth-download-${card.id}`}
+          >
+            <span className="auth-download-icon" aria-hidden="true">
+              {card.icon}
+            </span>
+            <span className="auth-download-label">{card.label}</span>
+            <span className="auth-download-cta">Uygulamayi indir</span>
+          </a>
+        ))}
+      </div>
+    </section>
   );
 }
 

@@ -278,6 +278,80 @@
   color: rgba(255, 255, 255, 0.8);
 }
 
+/* Download Panel */
+.auth-downloads {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.auth-downloads-title {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.auth-download-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.auth-download-card {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 6px;
+  min-height: 118px;
+  padding: 14px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  text-decoration: none;
+  color: #ffffff;
+  transition: transform 200ms ease, border-color 200ms ease, background 200ms ease, box-shadow 200ms ease;
+}
+
+.auth-download-card:hover,
+.auth-download-card[data-tv-active="true"] {
+  transform: translateY(-2px);
+  border-color: rgba(244, 6, 18, 0.45);
+  background: rgba(244, 6, 18, 0.1);
+  box-shadow: 0 12px 24px rgba(244, 6, 18, 0.2);
+}
+
+.auth-download-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  color: #ffffff;
+}
+
+.auth-download-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.auth-download-label {
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.auth-download-cta {
+  color: rgba(244, 6, 18, 0.95);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 /* Error Message */
 .auth-error {
   width: 100%;
@@ -698,6 +772,31 @@
   .auth-warning-icon {
     width: 40px;
     height: 40px;
+  }
+
+  .auth-download-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-download-card {
+    min-height: 94px;
+    justify-items: start;
+    align-content: center;
+    grid-template-columns: 40px minmax(0, 1fr);
+    grid-template-rows: repeat(2, auto);
+    column-gap: 12px;
+    row-gap: 4px;
+  }
+
+  .auth-download-icon {
+    grid-row: 1 / span 2;
+    width: 40px;
+    height: 40px;
+  }
+
+  .auth-download-label,
+  .auth-download-cta {
+    text-align: left;
   }
 }
 
