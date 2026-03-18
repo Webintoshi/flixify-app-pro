@@ -7360,11 +7360,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                 <h2>Ayarlar</h2>
                 <div className="settings-grid">
                   <div className="list-card">
-                    <strong>Kullanici ID</strong>
-                    <div className="muted">{me.user.id}</div>
-                  </div>
-                  <div className="list-card">
-                    <strong>Kod</strong>
+                    <strong>Kullanici Adi</strong>
                     <div className="muted">{me.user.kryptoniteCode ?? core.codeLabel}</div>
                   </div>
                   <div className="list-card">
@@ -7375,27 +7371,6 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                     <strong>Link Durumu</strong>
                     <div className="muted">{me.user.hasAssignedLink ? "Bagli" : "Admin atamasi bekleniyor"}</div>
                   </div>
-                </div>
-                <strong>Cihaz Oturumlari</strong>
-                <div className="list">
-                  {core.deviceSessions.map((session) => (
-                    <article key={session.id} className="list-card">
-                      <div className="section-header">
-                        <div>
-                          <strong>{session.deviceName ?? "Bilinmeyen Cihaz"}</strong>
-                          <div className="muted">{session.platform ?? "platform yok"}</div>
-                        </div>
-                        {!session.isCurrent ? (
-                          <button className="button secondary" onClick={() => void core.revokeDeviceSession(session.id)}>
-                            Kapat
-                          </button>
-                        ) : (
-                          <span className="pill">Bu cihaz</span>
-                        )}
-                      </div>
-                      <div className="muted">Son gorulme: {new Date(session.lastSeenAt).toLocaleString("tr-TR")}</div>
-                    </article>
-                  ))}
                 </div>
               </section>
             }
