@@ -2869,22 +2869,24 @@ function LiveTvPage({
   return (
     <section className="live-tv-page">
       <div className="live-tv-pill-row" aria-label="Canli TV kategorileri" data-tv-scroll="horizontal">
-        <button
-          type="button"
-          className={`live-tv-pill${activeGroup === LIVE_TURKIYE_GROUP_FILTER ? " is-active" : ""}`}
-          onClick={() => {
-            const nextGroup = LIVE_TURKIYE_GROUP_FILTER;
-            setActiveGroup(nextGroup);
-            void runLiveFilters(search, nextGroup);
-          }}
-          data-tv-focusable="true"
-          data-tv-region="live-pills"
-          data-tv-focus-key="live-pill-turkiye"
-          data-tv-initial="true"
-        >
-          <span>Turkiye</span>
-          <strong>{turkiyeChannelCount}</strong>
-        </button>
+        {countryChipsWithFallback.map((country, index) => (
+          <button
+            key={`country-${country.code}`}
+            type="button"
+            className={`live-tv-pill${activeCountryCode === country.code ? " is-active" : ""}`}
+            onClick={() => {
+              setActiveGroup(country.filter);
+              void runLiveFilters(search, country.filter);
+            }}
+            data-tv-focusable="true"
+            data-tv-region="live-pills"
+            data-tv-focus-key={`live-pill-country-${country.code}`}
+            data-tv-initial={index === 0 ? "true" : undefined}
+          >
+            <span>{country.label}</span>
+            <strong>{country.count}</strong>
+          </button>
+        ))}
 
         {groupChips.map((group) => (
           <button
@@ -2897,7 +2899,7 @@ function LiveTvPage({
             }}
             data-tv-focusable="true"
             data-tv-region="live-pills"
-            data-tv-focus-key={`live-pill-${group.title}`}
+            data-tv-focus-key={`live-pill-group-${group.title}`}
           >
             <span>{group.title}</span>
             <strong>{group.count}</strong>
