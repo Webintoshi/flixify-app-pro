@@ -12,6 +12,7 @@ import {
   livePlaybackEventInputSchema,
   loginByCodeInputSchema,
   paginationQuerySchema,
+  paymentMethodSettingsSchema,
   paymentRequestInputSchema,
   refreshInputSchema,
   registerAnonInputSchema,
@@ -35,6 +36,7 @@ import {
   getAppSettings,
   getLiveChannelForPlayback,
   getMovieForPlayback,
+  getPaymentMethodSettings,
   getSessionById,
   getUserContext,
   getUserStatus,
@@ -45,6 +47,7 @@ import {
   listMoviesCatalog,
   listM3USources,
   listMyPaymentRequests,
+  listPublicPaymentMethods,
   listPackages,
   listPaymentRequests,
   listSeriesCatalog,
@@ -63,6 +66,7 @@ import {
   touchDeviceSession,
   updateLiveChannelHealth,
   updateAppSettings,
+  updatePaymentMethodSettings,
   updateAdminUser,
   updatePackageStatus,
   updateUserLogin,
@@ -76,6 +80,7 @@ import {
   assignDemoM3USource,
   createDemoPaymentRequest,
   createDemoTrialRequest,
+  getDemoPaymentMethodSettings,
   getDemoMe,
   getDemoSession,
   getDemoSettings,
@@ -86,6 +91,7 @@ import {
   listDemoMovieCatalog,
   listDemoM3USources,
   listDemoMyPaymentRequests,
+  listDemoPublicPaymentMethods,
   listDemoPackages,
   listDemoPaymentRequests,
   listDemoSeriesCatalog,
@@ -98,6 +104,7 @@ import {
   registerDemoUser,
   revokeDemoDeviceSession,
   softDeleteDemoUser,
+  updateDemoPaymentMethodSettings,
   updateDemoSettings,
   updateDemoPackageStatus,
   updateDemoUser,
@@ -574,6 +581,23 @@ export function buildServer() {
     } catch (error) {
       request.log.error(error);
       return reply.status(500).send({ message: "Ayarlar alinamadi." });
+    }
+  });
+
+  app.get("/payment-methods/public", async (request, reply) => {
+    try {
+      if (isDemoMode) {
+        return {
+          items: listDemoPublicPaymentMethods()
+        };
+      }
+
+      return {
+        items: await listPublicPaymentMethods()
+      };
+    } catch (error) {
+      request.log.error(error);
+      return reply.status(500).send({ message: "Odeme yontemleri alinamadi." });
     }
   });
 
@@ -1790,6 +1814,35 @@ export function buildServer() {
     } catch (error) {
       request.log.error(error);
       return reply.status(400).send({ message: "Talep reddedilemedi." });
+    }
+  });
+
+  app.get("/admin/payment-methods", async (request, reply) => {
+    try {
+      await authenticateAdmin(request.headers.authorization);
+      if (isDemoMode) {
+        return getDemoPaymentMethodSettings();
+      }
+      return getPaymentMethodSettings();
+    } catch (error) {
+      request.log.error(error);
+      return reply.status(401).send({ message: "Admin yetkisi gerekli." });
+    }
+  });
+
+  app.put("/admin/payment-methods", async (request, reply) => {
+    try {
+      const admin = await authenticateAdmin(request.headers.authorization);
+      const payload = paymentMethodSettingsSchema.parse(request.body);
+      if (isDemoMode) {
+        updateDemoPaymentMethodSettings(payload);
+        return { ok: true };
+      }
+      await updatePaymentMethodSettings(payload, admin.adminId);
+      return { ok: true };
+    } catch (error) {
+      request.log.error(error);
+      return reply.status(400).send({ message: "Odeme yontemleri kaydedilemedi." });
     }
   });
 

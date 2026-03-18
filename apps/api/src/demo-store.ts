@@ -7,6 +7,7 @@ import type {
   MeResponse,
   M3USyncJobRecord,
   MovieRecord,
+  PaymentMethodOption,
   PackageRecord,
   SeriesRecord,
   SubscriptionRecord,
@@ -62,6 +63,15 @@ type DemoSource = {
   currentSnapshotVersion: number;
   lastSuccessfulSyncAt: string | null;
   lastError: string | null;
+};
+
+type DemoPaymentMethodSettings = {
+  bankTransferEftEnabled: boolean;
+  bankTransferEftDetails: string | null;
+  cryptoEnabled: boolean;
+  cryptoDetails: string | null;
+  bankCardEnabled: boolean;
+  bankCardDetails: string | null;
 };
 
 const now = () => new Date().toISOString();
@@ -121,6 +131,15 @@ const settings = {
   salesPortalUrl: "https://flixify.pro/paketler",
   heroTitle: "Flixify IPTV Platformu",
   heroSubtitle: "Demo modunda calisiyor. Baglantilar hazir oldugunda ayni arayuz gercek veriyle devam edecek."
+};
+
+const paymentMethodSettings: DemoPaymentMethodSettings = {
+  bankTransferEftEnabled: true,
+  bankTransferEftDetails: "Havale/EFT detaylarini buraya girin.",
+  cryptoEnabled: true,
+  cryptoDetails: "Kripto odeme agi ve cuzdan bilgisini buraya girin.",
+  bankCardEnabled: true,
+  bankCardDetails: "Banka karti odeme linkini buraya girin."
 };
 
 const demoCatalog = {
@@ -262,6 +281,29 @@ function addAuditLog(action: string, entityType: string, entityId: string) {
   });
 }
 
+function mapDemoPaymentMethods(settingsValue: DemoPaymentMethodSettings): PaymentMethodOption[] {
+  return [
+    {
+      id: "bank-transfer-eft",
+      label: "Banka Havale / EFT",
+      enabled: settingsValue.bankTransferEftEnabled,
+      details: settingsValue.bankTransferEftDetails
+    },
+    {
+      id: "crypto",
+      label: "Kripto",
+      enabled: settingsValue.cryptoEnabled,
+      details: settingsValue.cryptoDetails
+    },
+    {
+      id: "bank-card",
+      label: "Banka Karti",
+      enabled: settingsValue.bankCardEnabled,
+      details: settingsValue.bankCardDetails
+    }
+  ];
+}
+
 function collectGroups(
   items: Array<{ groupTitle: string | null | undefined }>,
   kind: CatalogGroup["kind"]
@@ -277,15 +319,57 @@ function collectGroups(
     .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title));
 }
 
+function normalizeGroupFilterValue(value: string | null | undefined) {
+  return (value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeCountryFilterCode(value: string) {
+  const sanitized = value.replace(/[^a-z]/gi, "").toLowerCase();
+  if (sanitized.length < 2 || sanitized.length > 3) {
+    return null;
+  }
+  return sanitized;
+}
+
+function resolveCountryFilterCode(group?: string) {
+  const normalized = normalizeGroupFilterValue(group);
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "turkiye") {
+    return "tr";
+  }
+
+  const prefixes = ["country:", "ulke:"];
+  for (const prefix of prefixes) {
+    if (!normalized.startsWith(prefix)) {
+      continue;
+    }
+    return normalizeCountryFilterCode(normalized.slice(prefix.length).trim());
+  }
+
+  return null;
+}
+
+function normalizeCatalogGroupLabel(value: string | null | undefined) {
+  return normalizeGroupFilterValue(value ?? "Diger").replace(/\s*:\s*/g, ":");
+}
+
 export function matchesCatalogGroupFilter(groupTitle: string | null | undefined, group?: string) {
-  const normalizedGroup = group?.trim().toLowerCase();
+  const normalizedGroup = normalizeGroupFilterValue(group);
   if (!normalizedGroup) {
     return true;
   }
 
-  const groupLabel = (groupTitle ?? "Diger").trim().toLowerCase();
-  if (normalizedGroup === "turkiye") {
-    return groupLabel.startsWith("tr:");
+  const groupLabel = normalizeCatalogGroupLabel(groupTitle ?? "Diger");
+  const countryFilterCode = resolveCountryFilterCode(group);
+  if (countryFilterCode) {
+    return groupLabel.startsWith(`${countryFilterCode}:`);
   }
 
   return groupLabel === normalizedGroup;
@@ -1069,4 +1153,22 @@ export function updateDemoSettings(input: typeof settings) {
   settings.heroTitle = input.heroTitle;
   settings.heroSubtitle = input.heroSubtitle;
   addAuditLog("update-settings", "app_settings", "true");
+}
+
+export function listDemoPublicPaymentMethods() {
+  return mapDemoPaymentMethods(paymentMethodSettings);
+}
+
+export function getDemoPaymentMethodSettings() {
+  return clone(paymentMethodSettings);
+}
+
+export function updateDemoPaymentMethodSettings(input: DemoPaymentMethodSettings) {
+  paymentMethodSettings.bankTransferEftEnabled = input.bankTransferEftEnabled;
+  paymentMethodSettings.bankTransferEftDetails = input.bankTransferEftDetails;
+  paymentMethodSettings.cryptoEnabled = input.cryptoEnabled;
+  paymentMethodSettings.cryptoDetails = input.cryptoDetails;
+  paymentMethodSettings.bankCardEnabled = input.bankCardEnabled;
+  paymentMethodSettings.bankCardDetails = input.bankCardDetails;
+  addAuditLog("update-payment-method-settings", "app_settings", "true");
 }

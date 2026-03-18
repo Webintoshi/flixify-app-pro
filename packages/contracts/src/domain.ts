@@ -9,6 +9,9 @@ export type SubscriptionStatus = z.infer<typeof subscriptionStatusSchema>;
 export const paymentRequestStatusSchema = z.enum(["pending-review", "approved", "rejected"]);
 export type PaymentRequestStatus = z.infer<typeof paymentRequestStatusSchema>;
 
+export const paymentMethodIdSchema = z.enum(["bank-transfer-eft", "crypto", "bank-card"]);
+export type PaymentMethodId = z.infer<typeof paymentMethodIdSchema>;
+
 export const trialRequestStatusSchema = z.enum(["pending", "approved", "rejected"]);
 export type TrialRequestStatus = z.infer<typeof trialRequestStatusSchema>;
 
@@ -85,6 +88,14 @@ export const packageSchema = z.object({
   createdAt: z.string()
 });
 export type PackageRecord = z.infer<typeof packageSchema>;
+
+export const paymentMethodOptionSchema = z.object({
+  id: paymentMethodIdSchema,
+  label: z.string().min(2),
+  enabled: z.boolean(),
+  details: z.string().trim().max(2000).nullable()
+});
+export type PaymentMethodOption = z.infer<typeof paymentMethodOptionSchema>;
 
 export const liveChannelSchema = z.object({
   id: z.string().uuid(),

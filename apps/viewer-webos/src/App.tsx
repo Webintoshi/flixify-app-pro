@@ -8,6 +8,8 @@ import type {
   LivePlaybackRecord,
   LiveTransport,
   MovieRecord,
+  PaymentMethodId,
+  PackageRecord,
   SeriesRecord,
   SeriesSeasonRecord,
   VodPlaybackRecord
@@ -26,7 +28,9 @@ const DEV_API_BASE_URL = "http://localhost:4000";
 const API_HEALTH_PATH = "/health";
 const DEFAULT_RUNTIME_CONFIG_PATH = "/app-config.json";
 const LIVE_PLAYER_POSTER_URL = "/live-brand-poster.svg";
-const LIVE_TURKIYE_GROUP_FILTER = "turkiye";
+const LIVE_COUNTRY_FILTER_PREFIX = "country:";
+const LIVE_DEFAULT_COUNTRY_CODE = "TR";
+const LIVE_DEFAULT_COUNTRY_FILTER = `${LIVE_COUNTRY_FILTER_PREFIX}${LIVE_DEFAULT_COUNTRY_CODE}`;
 const TV_FOCUSABLE_SELECTOR = '[data-tv-focusable="true"]';
 const AUTH_PREFILL_CODE_KEY = "flixify-auth-prefill-code";
 const AUTH_DEVICE_NAME = "LG webOS TV";
@@ -100,6 +104,22 @@ const playerStateLabels: Record<PlayerState, string> = {
   recovering: "Toparlaniyor",
   ended: "Tamamlandi",
   failed: "Yayin acilamadi"
+};
+
+const paymentMethodFallbackDetails: Record<PaymentMethodId, string> = {
+  "bank-transfer-eft": "Havale/EFT icin alici bilgileri admin panelinden paylasilir.",
+  crypto: "Kripto odeme icin cuzdan bilgileri admin panelinden paylasilir.",
+  "bank-card": "Banka karti odemesi icin link veya POS bilgisi admin panelinden paylasilir."
+};
+
+const paymentMethodLabelById: Record<PaymentMethodId, string> = {
+  "bank-transfer-eft": "Banka Havale / EFT",
+  crypto: "Kripto",
+  "bank-card": "Banka Karti"
+};
+
+const liveCountryLabelByCode: Record<string, string> = {
+  TR: "Turkiye"
 };
 
 function describeHealth(healthStatus: LiveHealthStatus | undefined, isVerified: boolean | undefined) {
@@ -979,13 +999,7 @@ function MediaArtwork({ item, className = "" }: { item: PlaybackQueueItem; class
 }
 
 function BrandGlyph() {
-  return (
-    <svg viewBox="0 0 40 40" className="brand-glyph" aria-hidden="true">
-      <rect x="6" y="10" width="28" height="20" rx="4" />
-      <path d="M15 6l5 5 5-5" />
-      <path d="M20 30v4" />
-    </svg>
-  );
+  return <img src="/favicon.svg" className="brand-glyph" alt="" aria-hidden="true" />;
 }
 
 function ProfileGlyph() {
@@ -1181,8 +1195,64 @@ function normalizeText(value: string | null | undefined) {
   return (value ?? "").toLocaleLowerCase("tr-TR");
 }
 
-function isTurkiyeGroupTitle(title: string | null | undefined) {
-  return normalizeText(title).startsWith("tr:");
+function normalizeAsciiText(value: string | null | undefined) {
+  return (value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeLiveCountryCode(value: string | null | undefined) {
+  const sanitized = (value ?? "").replace(/[^a-z]/gi, "").toUpperCase();
+  if (sanitized.length < 2 || sanitized.length > 3) {
+    return null;
+  }
+  return sanitized;
+}
+
+function buildLiveCountryFilter(code: string) {
+  const normalizedCode = normalizeLiveCountryCode(code);
+  return normalizedCode
+    ? `${LIVE_COUNTRY_FILTER_PREFIX}${normalizedCode}`
+    : LIVE_DEFAULT_COUNTRY_FILTER;
+}
+
+function parseLiveCountryCodeFromFilter(group: string | null | undefined) {
+  const normalized = normalizeAsciiText(group);
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "turkiye") {
+    return "TR";
+  }
+
+  for (const prefix of ["country:", "ulke:"]) {
+    if (!normalized.startsWith(prefix)) {
+      continue;
+    }
+    return normalizeLiveCountryCode(normalized.slice(prefix.length).trim());
+  }
+
+  return null;
+}
+
+function parseLiveCountryCodeFromGroupTitle(title: string | null | undefined) {
+  const normalizedTitle = normalizeAsciiText(title);
+  const match = normalizedTitle.match(/^([a-z]{2,3})\s*:/);
+  if (!match?.[1]) {
+    return null;
+  }
+  return normalizeLiveCountryCode(match[1]);
+}
+
+function getLiveCountryLabel(code: string) {
+  const normalizedCode = normalizeLiveCountryCode(code);
+  if (!normalizedCode) {
+    return code;
+  }
+  return liveCountryLabelByCode[normalizedCode] ?? normalizedCode;
 }
 
 function countKeywordMatches(text: string, keywords: string[]) {
@@ -1721,10 +1791,7 @@ function LoginAuthPage({
         {/* Logo */}
         <div className="auth-logo">
           <div className="auth-logo-icon">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect width="20" height="15" x="2" y="7" rx="2" ry="2" />
-              <polyline points="17 2 12 7 7 2" />
-            </svg>
+            <BrandGlyph />
           </div>
           <span className="auth-logo-text">FLIXIFY</span>
           <span className="auth-logo-badge">PRO</span>
@@ -2018,10 +2085,7 @@ function RegisterAuthPage({
         {/* Logo */}
         <div className="auth-logo">
           <div className="auth-logo-icon">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect width="20" height="15" x="2" y="7" rx="2" ry="2" />
-              <polyline points="17 2 12 7 7 2" />
-            </svg>
+            <BrandGlyph />
           </div>
           <span className="auth-logo-text">FLIXIFY</span>
           <span className="auth-logo-badge">PRO</span>
@@ -2598,9 +2662,9 @@ function LiveTvPage({
   reportLivePlayback: ViewerCoreHandle["reportLivePlayback"];
 }) {
   const [search, setSearch] = useState("");
-  const [activeGroup, setActiveGroup] = useState(LIVE_TURKIYE_GROUP_FILTER);
+  const [activeGroup, setActiveGroup] = useState(LIVE_DEFAULT_COUNTRY_FILTER);
   const [appliedSearch, setAppliedSearch] = useState("");
-  const [appliedGroup, setAppliedGroup] = useState(LIVE_TURKIYE_GROUP_FILTER);
+  const [appliedGroup, setAppliedGroup] = useState(LIVE_DEFAULT_COUNTRY_FILTER);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   const [isFiltering, setIsFiltering] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -2608,9 +2672,9 @@ function LiveTvPage({
   const applyFiltersRef = useRef(onApplyFilters);
   const loadMoreRef = useRef(onLoadMore);
   const requestIdRef = useRef(0);
-  const activeGroupRef = useRef(LIVE_TURKIYE_GROUP_FILTER);
+  const activeGroupRef = useRef(LIVE_DEFAULT_COUNTRY_FILTER);
   const appliedSearchRef = useRef("");
-  const appliedGroupRef = useRef(LIVE_TURKIYE_GROUP_FILTER);
+  const appliedGroupRef = useRef(LIVE_DEFAULT_COUNTRY_FILTER);
   const loadingMoreInFlightRef = useRef(false);
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
   const channelListRef = useRef<HTMLDivElement | null>(null);
@@ -2629,20 +2693,64 @@ function LiveTvPage({
     activeGroupRef.current = activeGroup;
   }, [activeGroup]);
 
-  const sortedGroups = [...groups]
-    .filter((group) => !isTurkiyeGroupTitle(group.title))
-    .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title, "tr-TR"));
+  const countryCounts = new Map<string, number>();
+  const nonCountryGroups: CatalogGroup[] = [];
+  for (const group of groups) {
+    const countryCode = parseLiveCountryCodeFromGroupTitle(group.title);
+    if (!countryCode) {
+      nonCountryGroups.push(group);
+      continue;
+    }
+    countryCounts.set(countryCode, (countryCounts.get(countryCode) ?? 0) + group.count);
+  }
+
+  const countryChips = Array.from(countryCounts.entries())
+    .map(([code, count]) => ({
+      code,
+      count,
+      filter: buildLiveCountryFilter(code),
+      label: getLiveCountryLabel(code)
+    }))
+    .sort((left, right) => {
+      if (left.code === LIVE_DEFAULT_COUNTRY_CODE && right.code !== LIVE_DEFAULT_COUNTRY_CODE) {
+        return -1;
+      }
+      if (right.code === LIVE_DEFAULT_COUNTRY_CODE && left.code !== LIVE_DEFAULT_COUNTRY_CODE) {
+        return 1;
+      }
+      if (right.count !== left.count) {
+        return right.count - left.count;
+      }
+      return left.label.localeCompare(right.label, "tr-TR");
+    });
+
+  const activeCountryCode = parseLiveCountryCodeFromFilter(activeGroup);
+  const countryChipsWithFallback =
+    activeCountryCode && !countryChips.some((chip) => chip.code === activeCountryCode)
+      ? [
+          {
+            code: activeCountryCode,
+            count: 0,
+            filter: buildLiveCountryFilter(activeCountryCode),
+            label: getLiveCountryLabel(activeCountryCode)
+          },
+          ...countryChips
+        ]
+      : countryChips;
+
+  const sortedGroups = [...nonCountryGroups].sort(
+    (left, right) => right.count - left.count || left.title.localeCompare(right.title, "tr-TR")
+  );
   const groupChips =
-    activeGroup && activeGroup !== LIVE_TURKIYE_GROUP_FILTER && !sortedGroups.some((group) => group.title === activeGroup)
+    activeGroup &&
+    !activeCountryCode &&
+    !sortedGroups.some((group) => group.title === activeGroup)
       ? [{ title: activeGroup, count: 0, kind: "live" as const }, ...sortedGroups]
       : sortedGroups;
-  const turkiyeChannelCount = groups
-    .filter((group) => isTurkiyeGroupTitle(group.title))
-    .reduce((total, group) => total + group.count, 0);
 
   async function runLiveFilters(nextSearch: string, nextGroup: string) {
     const normalizedSearch = nextSearch.trim();
-    const normalizedGroup = nextGroup || LIVE_TURKIYE_GROUP_FILTER;
+    const normalizedGroup = nextGroup.trim().length > 0 ? nextGroup.trim() : LIVE_DEFAULT_COUNTRY_FILTER;
     appliedSearchRef.current = normalizedSearch;
     appliedGroupRef.current = normalizedGroup;
     setAppliedSearch(normalizedSearch);
@@ -2661,7 +2769,7 @@ function LiveTvPage({
   }
 
   useEffect(() => {
-    void runLiveFilters("", LIVE_TURKIYE_GROUP_FILTER);
+    void runLiveFilters("", LIVE_DEFAULT_COUNTRY_FILTER);
   }, []);
 
   async function loadNextLivePage() {
@@ -7018,13 +7126,16 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [playingItem, setPlayingItem] = useState<PlaybackItem | null>(null);
   const [premiumPopupDismissed, setPremiumPopupDismissed] = useState(false);
-  const tvRouteKey = `${location.pathname}${playingItem ? "::overlay" : ""}`;
+  const [pendingPaymentPackage, setPendingPaymentPackage] = useState<PackageRecord | null>(null);
+  const paymentMethods = core.paymentMethods.filter((method) => method.enabled);
+  const isPaymentModalOpen = Boolean(pendingPaymentPackage);
+  const tvRouteKey = `${location.pathname}${playingItem ? "::overlay" : ""}${isPaymentModalOpen ? "::payment-modal" : ""}`;
   const me = core.me;
 
   useTvNavigation({
     scopeRef: shellRef,
     routeKey: tvRouteKey,
-    overlayOpen: Boolean(playingItem),
+    overlayOpen: Boolean(playingItem || isPaymentModalOpen),
     onBack: () => {
       if (document.fullscreenElement) {
         void document.exitFullscreen().catch(() => undefined);
@@ -7036,16 +7147,22 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
         return true;
       }
 
+      if (isPaymentModalOpen) {
+        setPendingPaymentPackage(null);
+        return true;
+      }
+
       return false;
     }
   });
 
   useEffect(() => {
-    if (!playingItem) {
+    if (!playingItem && !isPaymentModalOpen) {
       return;
     }
 
     setPlayingItem(null);
+    setPendingPaymentPackage(null);
   }, [location.pathname]);
 
   useEffect(() => {
@@ -7057,6 +7174,14 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
   }, [location.pathname]);
 
   useEffect(() => {
+    if (location.pathname !== "/paketler") {
+      return;
+    }
+
+    void core.loadPaymentMethods().catch(() => undefined);
+  }, [location.pathname]);
+
+  useEffect(() => {
     if (typeof document === "undefined") {
       return;
     }
@@ -7065,7 +7190,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
     const previousBodyOverflow = body.style.overflow;
     const previousHtmlOverflow = documentElement.style.overflow;
 
-    if (playingItem) {
+    if (playingItem || isPaymentModalOpen) {
       body.style.overflow = "hidden";
       documentElement.style.overflow = "hidden";
     }
@@ -7074,7 +7199,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
       body.style.overflow = previousBodyOverflow;
       documentElement.style.overflow = previousHtmlOverflow;
     };
-  }, [playingItem]);
+  }, [isPaymentModalOpen, playingItem]);
 
   useEffect(() => {
     if (me?.user.hasActiveSubscription) {
@@ -7088,6 +7213,20 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
 
   if (core.viewState === "blocked") {
     return <BlockedScreen whatsapp={me.contact.whatsapp} telegram={me.contact.telegram} />;
+  }
+
+  function openPaymentMethodModal(pkg: PackageRecord) {
+    setPendingPaymentPackage(pkg);
+  }
+
+  async function submitPaymentRequestWithMethod(_paymentMethodId: PaymentMethodId) {
+    if (!pendingPaymentPackage) {
+      return;
+    }
+
+    const packageSlug = pendingPaymentPackage.slug;
+    setPendingPaymentPackage(null);
+    await core.requestPayment(packageSlug);
   }
 
   const liveItems = core.catalogs.live.map<PlaybackItem>((channel: LiveChannel) => ({
@@ -7302,7 +7441,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                       <span className="pill">{pkg.durationMonths} ay</span>
                       <h2>{pkg.title}</h2>
                       <p className="muted">Paket onayi admin tarafinda baslatilir.</p>
-                      <button className="button" onClick={() => void core.requestPayment(pkg.slug)}>
+                      <button className="button" onClick={() => openPaymentMethodModal(pkg)}>
                         Paket Al
                       </button>
                     </article>
@@ -7458,7 +7597,63 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
           />
         </Routes>
 
-        {!me.user.hasActiveSubscription && !premiumPopupDismissed ? (
+        {pendingPaymentPackage ? (
+          <div className="modal">
+            <div className="modal-card payment-method-modal-card">
+              <button
+                type="button"
+                className="premium-modal-close payment-method-modal-close"
+                onClick={() => setPendingPaymentPackage(null)}
+                aria-label="Kapat"
+                data-tv-focusable="true"
+                data-tv-region="overlay-actions"
+                data-tv-focus-key="payment-modal-close"
+                data-tv-overlay-initial={paymentMethods.length === 0 ? "true" : undefined}
+              >
+                ×
+              </button>
+              <span className="pill">Odeme Yontemi</span>
+              <h2>{pendingPaymentPackage.title} paketi icin odeme yontemi secin</h2>
+              <p className="muted">Yontem seciminden sonra odeme talebiniz admin paneline iletilecek.</p>
+              {paymentMethods.length > 0 ? (
+                <div className="payment-method-grid">
+                  {paymentMethods.map((method, index) => (
+                    <button
+                      key={method.id}
+                      type="button"
+                      className="payment-method-option"
+                      onClick={() => void submitPaymentRequestWithMethod(method.id)}
+                      disabled={core.busy}
+                      data-tv-focusable="true"
+                      data-tv-region="overlay-actions"
+                      data-tv-focus-key={`payment-method-${method.id}`}
+                      data-tv-overlay-initial={index === 0 ? "true" : undefined}
+                    >
+                      <strong>{method.label || paymentMethodLabelById[method.id]}</strong>
+                      <span>{method.details?.trim() || paymentMethodFallbackDetails[method.id]}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="notice-card danger">
+                  Aktif odeme yontemi bulunamadi. Lutfen destek ekibiyle iletisime gecin.
+                </div>
+              )}
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setPendingPaymentPackage(null)}
+                data-tv-focusable="true"
+                data-tv-region="overlay-actions"
+                data-tv-focus-key="payment-modal-cancel"
+              >
+                Vazgec
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {!pendingPaymentPackage && !me.user.hasActiveSubscription && !premiumPopupDismissed ? (
           <div className="modal">
             <div className="modal-card premium-modal-card">
               <button

@@ -7,6 +7,7 @@ import {
   liveCatalogResponseSchema,
   meResponseSchema,
   movieCatalogResponseSchema,
+  paymentMethodsResponseSchema,
   packagesResponseSchema,
   paymentRequestInputSchema,
   refreshInputSchema,
@@ -26,6 +27,7 @@ export type VodPlaybackResponse = z.infer<typeof vodPlaybackResponseSchema>;
 export type MovieCatalogResponse = z.infer<typeof movieCatalogResponseSchema>;
 export type SeriesCatalogResponse = z.infer<typeof seriesCatalogResponseSchema>;
 export type PackagesResponse = z.infer<typeof packagesResponseSchema>;
+export type PaymentMethodsResponse = z.infer<typeof paymentMethodsResponseSchema>;
 export type DeviceSessionsResponse = z.infer<typeof deviceSessionsResponseSchema>;
 
 type ClientOptions = {
@@ -121,6 +123,10 @@ export class FlixifyClient {
 
   packages() {
     return this.request<PackagesResponse>("/admin/packages/public");
+  }
+
+  paymentMethodsPublic() {
+    return this.request<PaymentMethodsResponse>("/payment-methods/public");
   }
 
   liveCatalog(query = "") {

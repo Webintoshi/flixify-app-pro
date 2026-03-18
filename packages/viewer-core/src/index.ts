@@ -6,6 +6,7 @@ import {
   type DeviceSessionRecord,
   type LiveChannel,
   type MovieRecord,
+  type PaymentMethodOption,
   type PackageRecord,
   type SeriesRecord,
   type UserSummary
@@ -120,6 +121,8 @@ export type ViewerPaymentRequest = {
   createdAt: string;
 };
 
+export type ViewerPaymentMethod = PaymentMethodOption;
+
 export function createBrowserStorageAdapter(storage: Storage): ViewerStorageAdapter {
   return {
     getItem(key) {
@@ -192,6 +195,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
   const [catalogs, setCatalogs] = useState<CatalogState>(emptyCatalogState);
   const [deviceSessions, setDeviceSessions] = useState<DeviceSessionRecord[]>([]);
   const [paymentRequests, setPaymentRequests] = useState<ViewerPaymentRequest[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<ViewerPaymentMethod[]>([]);
   const [lastIssuedCode, setLastIssuedCode] = useState<string | null>(null);
   const catalogsRef = useRef<CatalogState>(emptyCatalogState);
   const sessionRef = useRef<ViewerSession | null>(null);
@@ -222,6 +226,11 @@ export function useViewerCore(options: ViewerCoreOptions) {
   async function loadPackages() {
     const response = await clientRef.current.packages();
     setPackages(response.items);
+  }
+
+  async function loadPaymentMethods() {
+    const response = await clientRef.current.paymentMethodsPublic();
+    setPaymentMethods(response.items);
   }
 
   function isUnauthorizedError(error: unknown) {
@@ -572,6 +581,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
 
     await Promise.all([
       loadPackages(),
+      loadPaymentMethods(),
       loadDeviceSessions(),
       loadPaymentRequests(),
       response.user.hasAssignedLink ? loadCatalogs(params) : Promise.resolve()
@@ -607,6 +617,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
       const raw = await Promise.resolve(options.storage.getItem(sessionKey));
       if (!raw) {
         await loadPackages();
+        await loadPaymentMethods();
         setMe(null);
         setDeviceSessions([]);
         return;
@@ -624,7 +635,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
           setMe(null);
           setDeviceSessions([]);
           setPaymentRequests([]);
-          await loadPackages();
+          await Promise.all([loadPackages(), loadPaymentMethods()]);
         }
       }
     } catch (nextError) {
@@ -716,7 +727,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
     setNotice(null);
     setError(null);
     setLastIssuedCode(null);
-    await loadPackages();
+    await Promise.all([loadPackages(), loadPaymentMethods()]);
   }
 
   async function requestTrial(note?: string) {
@@ -806,6 +817,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
     catalogs,
     deviceSessions,
     paymentRequests,
+    paymentMethods,
     lastIssuedCode,
     codeLabel: getCodeLabel(me?.user.kryptoniteCode, me?.user.codeSuffix),
     maskedCodeLabel: getCodeLabel(me?.user.kryptoniteCode, me?.user.codeSuffix),
@@ -819,6 +831,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
     loadMoreMovies,
     loadMoreSeries,
     loadPackages,
+    loadPaymentMethods,
     loadDeviceSessions,
     loadPaymentRequests,
     refreshMe,

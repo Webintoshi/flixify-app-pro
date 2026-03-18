@@ -8,6 +8,7 @@ import {
   m3uSyncJobRecordSchema,
   movieSchema,
   packageSchema,
+  paymentMethodOptionSchema,
   pagedResponseSchema,
   seriesSchema,
   subscriptionRecordSchema,
@@ -37,6 +38,15 @@ export const authResponseSchema = z.object({
 
 export const paymentRequestInputSchema = z.object({
   packageSlug: z.string().min(2)
+});
+
+export const paymentMethodSettingsSchema = z.object({
+  bankTransferEftEnabled: z.boolean(),
+  bankTransferEftDetails: z.string().trim().max(2000).nullable(),
+  cryptoEnabled: z.boolean(),
+  cryptoDetails: z.string().trim().max(2000).nullable(),
+  bankCardEnabled: z.boolean(),
+  bankCardDetails: z.string().trim().max(2000).nullable()
 });
 
 export const trialRequestInputSchema = z.object({
@@ -171,6 +181,10 @@ export const seriesCatalogResponseSchema = pagedResponseSchema(seriesSchema).ext
 });
 export const packagesResponseSchema = z.object({
   items: z.array(packageSchema)
+});
+
+export const paymentMethodsResponseSchema = z.object({
+  items: z.array(paymentMethodOptionSchema)
 });
 
 export const adminUserListItemSchema = userSummarySchema.extend({

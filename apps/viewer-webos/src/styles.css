@@ -45,6 +45,7 @@
   color: #f40612;
 }
 
+.auth-logo-icon img,
 .auth-logo-icon svg {
   width: 40px;
   height: 40px;
@@ -886,4 +887,58 @@
     width: auto;
     max-width: 100%;
   }
+}
+
+.payment-method-modal-card {
+  width: min(680px, 100%);
+  gap: 14px;
+}
+
+.payment-method-modal-close {
+  justify-self: end;
+}
+
+.payment-method-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.payment-method-option {
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04)),
+    rgba(255, 255, 255, 0.06);
+  color: #fff;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.payment-method-option strong {
+  font-size: 1.04rem;
+}
+
+.payment-method-option span {
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.5;
+}
+
+.payment-method-option:hover,
+.payment-method-option:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.34);
+  outline: none;
+}
+
+.payment-method-option[data-tv-active="true"] {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.14), 0 0 0 6px rgba(229, 9, 20, 0.2);
+}
+
+.payment-method-option:disabled {
+  opacity: 0.6;
+  cursor: default;
+  transform: none;
 }

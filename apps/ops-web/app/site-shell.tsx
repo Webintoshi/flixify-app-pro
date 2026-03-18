@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
@@ -16,13 +17,16 @@ const adminNavigation = [
   { href: "/admin/dashboard", label: "Dashboard" },
   { href: "/admin/kullanicilar", label: "Kullanıcılar" },
   { href: "/admin/paketler", label: "Paketler" },
+  { href: "/admin/odeme-yontemleri", label: "Odeme Yontemleri" },
   { href: "/admin/ayarlar", label: "Ayarlar" }
 ];
 
 function BrandLockup() {
   return (
     <Link href="/" className="brand-lockup">
-      <span className="brand-mark">TV</span>
+      <span className="brand-mark" aria-hidden="true">
+        <Image src="/logo/flixify-icon-only.svg" alt="" width={42} height={42} className="brand-mark-image" />
+      </span>
       <span className="brand-word">FLIXIFY</span>
       <span className="brand-badge">PRO</span>
     </Link>
@@ -74,7 +78,15 @@ function AdminShell({ pathname, children }: { pathname: string; children: ReactN
     <div className="admin-shell">
       <aside className="admin-sidebar">
         <div className="admin-brand">
-          <span className="admin-brand-icon">A</span>
+          <span className="admin-brand-icon" aria-hidden="true">
+            <Image
+              src="/logo/flixify-icon-only.svg"
+              alt=""
+              width={48}
+              height={48}
+              className="admin-brand-icon-image"
+            />
+          </span>
           <div>
             <strong>Admin Panel</strong>
           </div>

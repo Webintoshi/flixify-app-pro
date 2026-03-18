@@ -9,6 +9,7 @@ import type {
   LiveTransport,
   LiveChannel,
   MovieRecord,
+  PaymentMethodOption,
   PackageDuration,
   PackageRecord,
   SeriesSeasonRecord,
@@ -71,6 +72,12 @@ type AppSettingsRow = QueryResultRow & {
   sales_portal_url: string | null;
   hero_title: string | null;
   hero_subtitle: string | null;
+  bank_transfer_eft_enabled: boolean | null;
+  bank_transfer_eft_details: string | null;
+  crypto_enabled: boolean | null;
+  crypto_details: string | null;
+  bank_card_enabled: boolean | null;
+  bank_card_details: string | null;
   shared_source_base_url: string | null;
   shared_source_playlist_path: string | null;
   shared_source_playlist_suffix: string | null;
@@ -94,6 +101,15 @@ type SharedLiveChannelRow = QueryResultRow & {
   last_checked_at: string | null;
   failure_count: number | null;
   last_error: string | null;
+};
+
+type PaymentMethodSettings = {
+  bankTransferEftEnabled: boolean;
+  bankTransferEftDetails: string | null;
+  cryptoEnabled: boolean;
+  cryptoDetails: string | null;
+  bankCardEnabled: boolean;
+  bankCardDetails: string | null;
 };
 
 export type UserContext = {
@@ -177,6 +193,40 @@ function getSharedPlaylistConfig(
     username,
     password
   } satisfies PlaylistConfig;
+}
+
+function mapPaymentMethodSettings(row: AppSettingsRow | null | undefined): PaymentMethodSettings {
+  return {
+    bankTransferEftEnabled: row?.bank_transfer_eft_enabled ?? true,
+    bankTransferEftDetails: row?.bank_transfer_eft_details ?? null,
+    cryptoEnabled: row?.crypto_enabled ?? true,
+    cryptoDetails: row?.crypto_details ?? null,
+    bankCardEnabled: row?.bank_card_enabled ?? true,
+    bankCardDetails: row?.bank_card_details ?? null
+  };
+}
+
+function mapPaymentMethodsForViewer(settings: PaymentMethodSettings): PaymentMethodOption[] {
+  return [
+    {
+      id: "bank-transfer-eft",
+      label: "Banka Havale / EFT",
+      enabled: settings.bankTransferEftEnabled,
+      details: settings.bankTransferEftDetails
+    },
+    {
+      id: "crypto",
+      label: "Kripto",
+      enabled: settings.cryptoEnabled,
+      details: settings.cryptoDetails
+    },
+    {
+      id: "bank-card",
+      label: "Banka Karti",
+      enabled: settings.bankCardEnabled,
+      details: settings.bankCardDetails
+    }
+  ];
 }
 
 function hasAssignedSource(row: Pick<UserContextRow, "iptv_username" | "iptv_password" | "source_base_url">) {
@@ -534,8 +584,51 @@ function buildGroupClause(group?: string) {
   return group ? group.toLowerCase() : null;
 }
 
+function normalizeGroupFilterValue(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeLiveCountryCode(value: string) {
+  const sanitized = value.replace(/[^a-z]/gi, "").toUpperCase();
+  if (sanitized.length < 2 || sanitized.length > 3) {
+    return null;
+  }
+  return sanitized;
+}
+
+export function resolveLiveCountryFilter(group?: string | null) {
+  const normalized = normalizeGroupFilterValue(group ?? "");
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "turkiye") {
+    return "TR";
+  }
+
+  const prefixedFilters = ["country:", "ulke:"];
+  for (const prefix of prefixedFilters) {
+    if (!normalized.startsWith(prefix)) {
+      continue;
+    }
+
+    const rawCode = normalized.slice(prefix.length).trim();
+    return normalizeLiveCountryCode(rawCode);
+  }
+
+  return null;
+}
+
+export function isCountryWideLiveGroupFilter(group?: string | null) {
+  return resolveLiveCountryFilter(group) !== null;
+}
+
 export function isTurkiyeLiveGroupFilter(group?: string | null) {
-  return (group ?? "").trim().toLowerCase() === "turkiye";
+  return resolveLiveCountryFilter(group) === "TR";
 }
 
 function buildLive4kPriorityClause() {
@@ -676,8 +769,9 @@ export async function listLiveCatalog(
 ) {
   const offset = (page - 1) * pageSize;
   const searchValue = buildSearchClause(search);
-  const isTurkiyeGroup = isTurkiyeLiveGroupFilter(group);
-  const [itemsResult, totalResult, groups] = isTurkiyeGroup
+  const countryCodeFilter = resolveLiveCountryFilter(group);
+  const countryGroupPrefix = countryCodeFilter ? `${countryCodeFilter.toLowerCase()}:%` : null;
+  const [itemsResult, totalResult, groups] = countryCodeFilter
     ? await Promise.all([
         query<SharedLiveChannelRow>(
           `
@@ -697,11 +791,11 @@ export async function listLiveCatalog(
             where c.snapshot_version = $1
               and coalesce(h.health_status, 'unknown') <> 'broken'
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
-              and lower(coalesce(c.group_title, '')) like 'tr:%'
+              and lower(coalesce(c.group_title, '')) like $3
             order by ${buildLiveCatalogOrderByClause(true)}
-            limit $3 offset $4
+            limit $4 offset $5
           `,
-          [snapshotVersion, searchValue, pageSize, offset]
+          [snapshotVersion, searchValue, countryGroupPrefix, pageSize, offset]
         ),
         query<{ count: string }>(
           `
@@ -711,9 +805,9 @@ export async function listLiveCatalog(
             where c.snapshot_version = $1
               and coalesce(h.health_status, 'unknown') <> 'broken'
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
-              and lower(coalesce(c.group_title, '')) like 'tr:%'
+              and lower(coalesce(c.group_title, '')) like $3
           `,
-          [snapshotVersion, searchValue]
+          [snapshotVersion, searchValue, countryGroupPrefix]
         ),
         listLiveCatalogGroups(snapshotVersion, search)
       ])
@@ -2231,6 +2325,12 @@ export async function listM3USources(userId?: string) {
         sales_portal_url,
         hero_title,
         hero_subtitle,
+        bank_transfer_eft_enabled,
+        bank_transfer_eft_details,
+        crypto_enabled,
+        crypto_details,
+        bank_card_enabled,
+        bank_card_details,
         shared_source_base_url,
         shared_source_playlist_path,
         shared_source_playlist_suffix,
@@ -2429,6 +2529,100 @@ export async function getAppSettings() {
     sharedSourceLastSuccessfulSyncAt: row?.shared_source_last_successful_sync_at ?? null,
     sharedSourceLastError: row?.shared_source_last_error ?? null
   };
+}
+
+export async function getPaymentMethodSettings() {
+  const result = await query<AppSettingsRow>(
+    `
+      select
+        bank_transfer_eft_enabled,
+        bank_transfer_eft_details,
+        crypto_enabled,
+        crypto_details,
+        bank_card_enabled,
+        bank_card_details
+      from public.app_settings
+      where id = true
+      limit 1
+    `
+  );
+
+  return mapPaymentMethodSettings(result.rows[0]);
+}
+
+export async function listPublicPaymentMethods() {
+  const settings = await getPaymentMethodSettings();
+  return mapPaymentMethodsForViewer(settings);
+}
+
+export async function updatePaymentMethodSettings(input: PaymentMethodSettings, adminId: string) {
+  return withTransaction(async (client) => {
+    await client.query(
+      `
+        insert into public.app_settings (
+          id,
+          support_whatsapp_url,
+          support_telegram_url,
+          sales_portal_url,
+          hero_title,
+          hero_subtitle,
+          bank_transfer_eft_enabled,
+          bank_transfer_eft_details,
+          crypto_enabled,
+          crypto_details,
+          bank_card_enabled,
+          bank_card_details
+        ) values (
+          true,
+          coalesce((select support_whatsapp_url from public.app_settings where id = true), 'https://wa.me/900000000000'),
+          coalesce((select support_telegram_url from public.app_settings where id = true), 'https://t.me/yourchannel'),
+          (select sales_portal_url from public.app_settings where id = true),
+          coalesce((select hero_title from public.app_settings where id = true), 'Canli TV, film ve diziler tek uygulamada'),
+          coalesce((select hero_subtitle from public.app_settings where id = true), 'Kriptonit kod ile hizli giris, size ozel baglanti ve manuel onayli paket yonetimi.'),
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6
+        )
+        on conflict (id) do update
+        set
+          bank_transfer_eft_enabled = excluded.bank_transfer_eft_enabled,
+          bank_transfer_eft_details = excluded.bank_transfer_eft_details,
+          crypto_enabled = excluded.crypto_enabled,
+          crypto_details = excluded.crypto_details,
+          bank_card_enabled = excluded.bank_card_enabled,
+          bank_card_details = excluded.bank_card_details
+      `,
+      [
+        input.bankTransferEftEnabled,
+        input.bankTransferEftDetails,
+        input.cryptoEnabled,
+        input.cryptoDetails,
+        input.bankCardEnabled,
+        input.bankCardDetails
+      ]
+    );
+
+    await client.query(
+      `
+        insert into public.admin_audit_logs (admin_id, action, entity_type, entity_id, payload)
+        values (
+          $1,
+          'update-payment-method-settings',
+          'app_settings',
+          'true',
+          jsonb_build_object(
+            'bankTransferEftEnabled', $2::boolean,
+            'cryptoEnabled', $3::boolean,
+            'bankCardEnabled', $4::boolean
+          )
+        )
+      `,
+      [adminId, input.bankTransferEftEnabled, input.cryptoEnabled, input.bankCardEnabled]
+    );
+  });
 }
 
 export async function updatePackageStatus(packageId: string, isActive: boolean, adminId: string) {
