@@ -10,16 +10,21 @@
     "build:web": "npm run build -w @flixify/viewer-webos",
     "sync:web": "node ./scripts/sync-web-dist.mjs",
     "sync:web:prod": "node ./scripts/sync-web-dist.mjs --require-api-base-url",
+    "prepare:desktop": "npm run build:web && npm run sync:web:prod",
     "prepare:win": "npm run build:web && npm run sync:web",
-    "prepare:win:prod": "npm run build:web && npm run sync:web:prod",
+    "prepare:win:prod": "npm run prepare:desktop",
     "start": "npm run prepare:win && electron .",
-    "dist:win:portable": "npm run prepare:win:prod && electron-builder --win portable",
-    "dist:win:portable:x64": "npm run prepare:win:prod && electron-builder --win portable --x64",
-    "dist:win:portable:arm64": "npm run prepare:win:prod && electron-builder --win portable --arm64",
-    "dist:win:installer": "npm run prepare:win:prod && electron-builder --win nsis",
-    "dist:win:installer:x64": "npm run prepare:win:prod && electron-builder --win nsis --x64",
-    "dist:win:installer:arm64": "npm run prepare:win:prod && electron-builder --win nsis --arm64",
-    "dist:win": "npm run prepare:win:prod && electron-builder --win portable nsis --x64 --arm64"
+    "dist:win:portable": "npm run prepare:desktop && electron-builder --win portable",
+    "dist:win:portable:x64": "npm run prepare:desktop && electron-builder --win portable --x64",
+    "dist:win:portable:arm64": "npm run prepare:desktop && electron-builder --win portable --arm64",
+    "dist:win:installer": "npm run prepare:desktop && electron-builder --win nsis",
+    "dist:win:installer:x64": "npm run prepare:desktop && electron-builder --win nsis --x64",
+    "dist:win:installer:arm64": "npm run prepare:desktop && electron-builder --win nsis --arm64",
+    "dist:win": "npm run prepare:desktop && electron-builder --win portable nsis --x64 --arm64",
+    "dist:mac:dmg": "npm run prepare:desktop && electron-builder --mac dmg",
+    "dist:mac:dmg:x64": "npm run prepare:desktop && electron-builder --mac dmg --x64",
+    "dist:mac:dmg:arm64": "npm run prepare:desktop && electron-builder --mac dmg --arm64",
+    "dist:mac": "npm run prepare:desktop && electron-builder --mac dmg zip"
   },
   "dependencies": {
     "@flixify/sdk": "*",
@@ -48,6 +53,14 @@
         "portable",
         "nsis"
       ]
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "Flixify-Pro-${version}-${arch}.${ext}",
+      "category": "public.app-category.entertainment"
     },
     "portable": {
       "artifactName": "Flixify-Pro-Portable-${version}-${arch}.${ext}"

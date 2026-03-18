@@ -23,3 +23,5 @@ apps/viewer-webos/tsconfig.tsbuildinfo
 tmp
 output
 supabase/.temp
+
+coolify/.env.production
