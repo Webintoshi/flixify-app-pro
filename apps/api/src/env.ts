@@ -24,6 +24,7 @@ const envSchema = z.object({
   FFMPEG_BINARY: z.string().trim().min(1).optional(),
   VOD_PLAYBACK_TTL_SECONDS: z.coerce.number().int().positive().optional().default(900),
   VOD_PLAYBACK_TEMP_DIR: z.string().trim().min(1).optional(),
+  VOD_TRANSCODE_MAX_CONCURRENT: z.coerce.number().int().positive().optional().default(2),
   SUPABASE_URL: z.string().url(),
   SUPABASE_JWKS_URL: z.string().url(),
   PUBLIC_SUPPORT_WHATSAPP: z.string().url().default("https://wa.me/900000000000"),

@@ -13,6 +13,7 @@ import {
   registerAnonInputSchema,
   seriesCatalogResponseSchema,
   trialRequestInputSchema,
+  vodPlaybackEventInputSchema,
   vodPlaybackResponseSchema
 } from "@flixify/contracts";
 import type { z } from "zod";
@@ -48,6 +49,7 @@ export type ResolveLivePlaybackOptions = {
 export type ResolveVodPlaybackOptions = {
   debugVod?: boolean;
   preferTranscode?: boolean;
+  audioTrackId?: string;
 };
 
 export class ApiError extends Error {
@@ -152,8 +154,23 @@ export class FlixifyClient {
     if (options.preferTranscode) {
       query.set("preferTranscode", "true");
     }
+    if (options.audioTrackId) {
+      query.set("audioTrackId", options.audioTrackId);
+    }
     const suffix = query.size > 0 ? `?${query.toString()}` : "";
     return this.request<VodPlaybackResponse>(`/me/vod/${kind}/${itemId}/playback${suffix}`);
+  }
+
+  reportVodPlayback(
+    kind: "movie" | "episode",
+    itemId: string,
+    input: z.input<typeof vodPlaybackEventInputSchema>
+  ) {
+    const payload = vodPlaybackEventInputSchema.parse(input);
+    return this.request<{ ok: true }>(`/me/vod/${kind}/${itemId}/health`, {
+      method: "POST",
+      body: payload
+    });
   }
 
   reportLivePlayback(

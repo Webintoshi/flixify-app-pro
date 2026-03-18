@@ -7,6 +7,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable } from "node:stream";
 import type { FastifyReply } from "fastify";
 import type {
+  VodAudioTrack,
   VodDeliveryMode,
   VodPlaybackKind,
   VodPlaybackRecord,
@@ -35,6 +36,8 @@ const DEFAULT_FETCH_POLICY = {
   initialBackoffMs: 300,
   maxBackoffMs: 2_000
 };
+const VOD_AUDIO_NORMALIZE_FILTER = "aresample=async=1:min_hard_comp=0.100:first_pts=0,dynaudnorm=f=200:g=15";
+const MAX_FFPROBE_TIMEOUT_MS = 12_000;
 
 function normalizeContentType(value: string | undefined) {
   return value?.split(";")[0]?.trim().toLowerCase() ?? "";
@@ -333,15 +336,25 @@ type ProxyAssetState = {
   rootUrl: string;
 };
 
+type SourceAudioTrack = {
+  id: string;
+  sourceStreamIndex: number;
+  language: string | null;
+  title: string | null;
+  channels: number | null;
+  sourceDefault: boolean;
+};
+
 type LocalHlsState = {
   tempDir: string;
   manifestPath: string;
   process: ChildProcessWithoutNullStreams | null;
-  mode: "copy" | "transcode" | null;
+  mode: "transcode" | null;
   lastError: string | null;
-  preferTranscodeFirst: boolean;
-  requireFullTranscode: boolean;
-  allowFileProxyFallback: boolean;
+  startupFailed: boolean;
+  sourceAudioTracks: SourceAudioTrack[];
+  injectSilentAudioTrack: boolean;
+  ownsTranscodeSlot: boolean;
 };
 
 type VodPlaybackSession = {
@@ -356,6 +369,9 @@ type VodPlaybackSession = {
   deliveryMode: VodDeliveryMode;
   expiresAt: number;
   isVerified: boolean;
+  audioTracks: VodAudioTrack[];
+  defaultAudioTrackId: string | null;
+  selectedAudioTrackId: string | null;
   proxyState: ProxyAssetState | null;
   localState: LocalHlsState | null;
 };
@@ -368,13 +384,38 @@ type CreateVodPlaybackInput = {
   baseOrigin: string;
   debug?: boolean;
   preferTranscode?: boolean;
+  selectedAudioTrackId?: string | null;
 };
 
 type VodPlaybackManagerOptions = {
   ffmpegBinary: string;
   sessionTtlMs: number;
   tempRoot?: string;
+  maxConcurrentTranscodes?: number;
+  onDiagnostic?: (input: {
+    itemId: string;
+    kind: VodPlaybackKind;
+    event: string;
+    deliveryMode?: VodDeliveryMode | null;
+    sourceTransport?: VodTransport | null;
+    playerEngine?: string | null;
+    audioTrackId?: string | null;
+    errorCode?: string | null;
+    upstreamStatus?: number | null;
+    errorMessage?: string | null;
+    detail?: Record<string, unknown> | null;
+  }) => Promise<void> | void;
 };
+
+export class VodPlaybackUnavailableError extends Error {
+  readonly statusCode: number;
+
+  constructor(message: string, statusCode = 503) {
+    super(message);
+    this.name = "VodPlaybackUnavailableError";
+    this.statusCode = statusCode;
+  }
+}
 
 type FetchUpstreamOptions = {
   rangeHeader?: string | null;
@@ -450,6 +491,224 @@ function isAuthorizedToken(expected: string, provided: string | undefined | null
   }
 }
 
+function normalizeAudioLanguage(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.length > 32) {
+    return normalized.slice(0, 32);
+  }
+
+  return normalized;
+}
+
+function normalizeAudioTitle(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.length > 80) {
+    return normalized.slice(0, 80);
+  }
+
+  return normalized;
+}
+
+function isTurkishLanguageTag(value: string | null | undefined) {
+  const normalized = normalizeAudioLanguage(value);
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    normalized === "tr" ||
+    normalized === "tur" ||
+    normalized === "tr-tr" ||
+    normalized.startsWith("tr-")
+  );
+}
+
+function mapSourceTracksToVodAudioTracks(sourceTracks: SourceAudioTrack[], selectedTrackId: string | null): VodAudioTrack[] {
+  if (sourceTracks.length === 0) {
+    return [
+      {
+        id: "fallback-silence-0",
+        language: "und",
+        title: "Fallback Stereo",
+        channels: 2,
+        isDefault: true
+      }
+    ];
+  }
+
+  return sourceTracks.map((track) => ({
+    id: track.id,
+    language: normalizeAudioLanguage(track.language),
+    title: normalizeAudioTitle(track.title),
+    channels: track.channels,
+    isDefault: track.id === selectedTrackId
+  }));
+}
+
+export function selectVodAudioTrackId(
+  sourceTracks: SourceAudioTrack[],
+  requestedTrackId?: string | null
+) {
+  if (sourceTracks.length === 0) {
+    return {
+      selectedTrackId: "fallback-silence-0",
+      defaultTrackId: "fallback-silence-0"
+    };
+  }
+
+  if (requestedTrackId && sourceTracks.some((track) => track.id === requestedTrackId)) {
+    return {
+      selectedTrackId: requestedTrackId,
+      defaultTrackId: requestedTrackId
+    };
+  }
+
+  const turkishTrack = sourceTracks.find((track) => isTurkishLanguageTag(track.language));
+  if (turkishTrack) {
+    return {
+      selectedTrackId: turkishTrack.id,
+      defaultTrackId: turkishTrack.id
+    };
+  }
+
+  const sourceDefaultTrack = sourceTracks.find((track) => track.sourceDefault);
+  if (sourceDefaultTrack) {
+    return {
+      selectedTrackId: sourceDefaultTrack.id,
+      defaultTrackId: sourceDefaultTrack.id
+    };
+  }
+
+  const firstTrack = sourceTracks[0];
+  return {
+    selectedTrackId: firstTrack.id,
+    defaultTrackId: firstTrack.id
+  };
+}
+
+function resolveFfprobeBinary(ffmpegBinary: string) {
+  if (process.env.FFPROBE_BINARY?.trim()) {
+    return process.env.FFPROBE_BINARY.trim();
+  }
+
+  if (ffmpegBinary.endsWith("ffmpeg")) {
+    return `${ffmpegBinary.slice(0, -6)}ffprobe`;
+  }
+
+  if (ffmpegBinary.endsWith("ffmpeg.exe")) {
+    return `${ffmpegBinary.slice(0, -10)}ffprobe.exe`;
+  }
+
+  return "ffprobe";
+}
+
+type FfprobeStream = {
+  index?: number;
+  channels?: number;
+  disposition?: {
+    default?: number;
+  };
+  tags?: {
+    language?: string;
+    title?: string;
+  };
+};
+
+async function probeSourceAudioTracks(ffmpegBinary: string, sourceUrl: string) {
+  const ffprobeBinary = resolveFfprobeBinary(ffmpegBinary);
+  const args = [
+    "-v",
+    "error",
+    "-select_streams",
+    "a",
+    "-show_streams",
+    "-show_entries",
+    "stream=index,channels:stream_tags=language,title:stream_disposition=default",
+    "-of",
+    "json",
+    sourceUrl
+  ];
+
+  return new Promise<SourceAudioTrack[]>((resolve) => {
+    let stdoutOutput = "";
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const child = spawn(ffprobeBinary, args, {
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+
+    const finish = (tracks: SourceAudioTrack[]) => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      resolve(tracks);
+    };
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutOutput = `${stdoutOutput}${chunk.toString("utf8")}`.slice(-512_000);
+    });
+
+    child.once("error", () => finish([]));
+
+    child.once("close", (code) => {
+      if (code !== 0) {
+        finish([]);
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(stdoutOutput) as { streams?: FfprobeStream[] };
+        const streams = Array.isArray(parsed.streams) ? parsed.streams : [];
+        const tracks = streams
+          .map((stream, outputIndex) => {
+            const streamIndex =
+              typeof stream.index === "number" && Number.isFinite(stream.index)
+                ? stream.index
+                : outputIndex;
+            return {
+              id: `a${streamIndex}`,
+              sourceStreamIndex: streamIndex,
+              language: normalizeAudioLanguage(stream.tags?.language),
+              title: normalizeAudioTitle(stream.tags?.title),
+              channels:
+                typeof stream.channels === "number" && Number.isFinite(stream.channels) && stream.channels > 0
+                  ? Math.floor(stream.channels)
+                  : null,
+              sourceDefault: stream.disposition?.default === 1
+            } satisfies SourceAudioTrack;
+          })
+          .sort((left, right) => left.sourceStreamIndex - right.sourceStreamIndex);
+        finish(tracks);
+      } catch {
+        finish([]);
+      }
+    });
+
+    timer = setTimeout(() => {
+      if (!child.killed) {
+        child.kill("SIGKILL");
+      }
+      finish([]);
+    }, MAX_FFPROBE_TIMEOUT_MS);
+  });
+}
+
 function buildDisabledPlaybackRecord(input: {
   itemId: string;
   kind: VodPlaybackKind;
@@ -463,6 +722,9 @@ function buildDisabledPlaybackRecord(input: {
     url: null,
     transport: input.transport,
     deliveryMode: input.deliveryMode,
+    audioTracks: [],
+    defaultAudioTrackId: null,
+    selectedAudioTrackId: null,
     expiresAt: null,
     canPlay: false,
     isVerified: false,
@@ -477,6 +739,9 @@ function buildReadyPlaybackRecord(session: VodPlaybackSession): VodPlaybackRecor
     url: createSessionUrl(session.baseOrigin, session),
     transport: session.deliveryMode === "file_proxy" ? session.sourceTransport : "hls",
     deliveryMode: session.deliveryMode,
+    audioTracks: session.audioTracks,
+    defaultAudioTrackId: session.defaultAudioTrackId,
+    selectedAudioTrackId: session.selectedAudioTrackId,
     expiresAt: new Date(session.expiresAt).toISOString(),
     canPlay: true,
     isVerified: session.isVerified,
@@ -618,53 +883,58 @@ export type VodTranscodeDecisionInput = {
   transport: VodTransport;
   supportsByteRange: boolean;
   preferTranscode: boolean;
+  debugPassthrough?: boolean;
 };
 
 export type VodTranscodeDecision = {
-  forceTranscodeProfile: boolean;
-  requiresFullTranscode: boolean;
   needsTranscode: boolean;
   useFileProxy: boolean;
   requiresFfmpeg: boolean;
-  allowCopyFallback: boolean;
   deliveryMode: VodDeliveryMode;
 };
 
 export function resolveVodTranscodeDecision(input: VodTranscodeDecisionInput): VodTranscodeDecision {
-  if (input.transport === "hls") {
+  const debugPassthrough = input.debugPassthrough === true;
+  if (debugPassthrough && input.transport === "hls") {
     return {
-      forceTranscodeProfile: false,
-      requiresFullTranscode: false,
       needsTranscode: false,
       useFileProxy: false,
       requiresFfmpeg: false,
-      allowCopyFallback: false,
       deliveryMode: "hls_proxy"
     };
   }
 
-  const forceTranscodeProfile = input.preferTranscode && input.transport !== "hls";
-  const isRiskyTransport = input.transport === "mkv" || input.transport === "avi" || input.transport === "unknown";
-  const mp4WithoutRange = input.transport === "mp4" && !input.supportsByteRange;
-  const requiresFullTranscode = isRiskyTransport || forceTranscodeProfile;
-  const needsTranscode = requiresFullTranscode || mp4WithoutRange;
-  const useFileProxy = input.transport === "mp4" && !needsTranscode;
-
   return {
-    forceTranscodeProfile,
-    requiresFullTranscode,
-    needsTranscode,
-    useFileProxy,
-    requiresFfmpeg: needsTranscode,
-    allowCopyFallback: !requiresFullTranscode,
-    deliveryMode: useFileProxy ? "file_proxy" : "hls_transcoded"
+    needsTranscode: true,
+    useFileProxy: false,
+    requiresFfmpeg: true,
+    deliveryMode: "hls_transcoded"
   };
 }
 
-function createFfmpegArgs(sourceUrl: string, outputDir: string, transcode: boolean) {
-  const segmentPattern = path.join(outputDir, "segment-%05d.ts");
-  const manifestPath = path.join(outputDir, "index.m3u8");
-  const baseArgs = [
+export function createFfmpegArgs(input: {
+  sourceUrl: string;
+  outputDir: string;
+  sourceAudioTracks: SourceAudioTrack[];
+  selectedAudioTrackId: string | null;
+  injectSilentAudioTrack: boolean;
+}) {
+  const segmentPattern = path.join(input.outputDir, "segment-%05d.ts");
+  const manifestPath = path.join(input.outputDir, "index.m3u8");
+  const effectiveAudioTracks = input.injectSilentAudioTrack
+    ? [
+        {
+          id: "fallback-silence-0",
+          sourceStreamIndex: 0,
+          language: "und",
+          title: "Fallback Stereo",
+          channels: 2,
+          sourceDefault: true
+        } satisfies SourceAudioTrack
+      ]
+    : input.sourceAudioTracks;
+
+  const args = [
     "-hide_banner",
     "-loglevel",
     "error",
@@ -690,53 +960,76 @@ function createFfmpegArgs(sourceUrl: string, outputDir: string, transcode: boole
     "-rw_timeout",
     "15000000",
     "-i",
-    sourceUrl,
-    "-map",
-    "0:v:0?",
-    "-map",
-    "0:a:0?",
-    "-dn",
-    "-sn"
+    input.sourceUrl
   ];
 
-  const codecArgs = transcode
-    ? [
-        "-c:v",
-        "libx264",
-        "-profile:v",
-        "high",
-        "-level:v",
-        "4.1",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "22",
-        "-pix_fmt",
-        "yuv420p",
-        "-g",
-        "96",
-        "-keyint_min",
-        "48",
-        "-sc_threshold",
-        "0",
-        "-c:a",
-        "aac",
-        "-ac",
-        "2",
-        "-ar",
-        "48000",
-        "-b:a",
-        "160k",
-        "-af",
-        "aresample=async=1:min_hard_comp=0.100:first_pts=0"
-      ]
-    : ["-c", "copy"];
+  if (input.injectSilentAudioTrack) {
+    args.push(
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=r=48000:cl=stereo"
+    );
+  }
 
-  return [
-    ...baseArgs,
-    ...codecArgs,
+  args.push("-map", "0:v:0?");
+  if (input.injectSilentAudioTrack) {
+    args.push("-map", "1:a:0");
+  } else {
+    args.push("-map", "0:a?");
+  }
+
+  args.push(
+    "-dn",
+    "-sn",
+    "-c:v",
+    "libx264",
+    "-profile:v",
+    "high",
+    "-level:v",
+    "4.1",
+    "-preset",
+    "veryfast",
+    "-crf",
+    "22",
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    "96",
+    "-keyint_min",
+    "48",
+    "-sc_threshold",
+    "0",
+    "-c:a",
+    "aac",
+    "-profile:a",
+    "aac_low",
+    "-ac",
+    "2",
+    "-ar",
+    "48000",
+    "-b:a",
+    "160k",
+    "-filter:a",
+    VOD_AUDIO_NORMALIZE_FILTER
+  );
+
+  for (let index = 0; index < effectiveAudioTracks.length; index += 1) {
+    const track = effectiveAudioTracks[index];
+    const normalizedLanguage = normalizeAudioLanguage(track.language) ?? "und";
+    const normalizedTitle = normalizeAudioTitle(track.title);
+    const isDefaultTrack = track.id === input.selectedAudioTrackId || (!input.selectedAudioTrackId && index === 0);
+
+    args.push("-metadata:s:a:" + index, `language=${normalizedLanguage}`);
+    if (normalizedTitle) {
+      args.push("-metadata:s:a:" + index, `title=${normalizedTitle}`);
+    }
+    args.push("-disposition:a:" + index, isDefaultTrack ? "default" : "0");
+  }
+
+  args.push(
     "-max_muxing_queue_size",
-    "2048",
+    "4096",
     "-start_number",
     "0",
     "-hls_time",
@@ -754,7 +1047,9 @@ function createFfmpegArgs(sourceUrl: string, outputDir: string, transcode: boole
     "-f",
     "hls",
     manifestPath
-  ];
+  );
+
+  return args;
 }
 
 function trimErrorMessage(value: string | null | undefined, fallback: string) {
@@ -766,7 +1061,29 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
   const sessions = new Map<string, VodPlaybackSession>();
   const sessionTtlMs = Math.max(options.sessionTtlMs, 60_000);
   const tempRoot = options.tempRoot ?? path.join(os.tmpdir(), "flixify-vod");
+  const maxConcurrentTranscodes = Math.max(1, options.maxConcurrentTranscodes ?? 2);
   let ffmpegAvailablePromise: Promise<boolean> | null = null;
+  let activeTranscodeCount = 0;
+
+  async function emitDiagnostic(input: {
+    itemId: string;
+    kind: VodPlaybackKind;
+    event: string;
+    deliveryMode?: VodDeliveryMode | null;
+    sourceTransport?: VodTransport | null;
+    playerEngine?: string | null;
+    audioTrackId?: string | null;
+    errorCode?: string | null;
+    upstreamStatus?: number | null;
+    errorMessage?: string | null;
+    detail?: Record<string, unknown> | null;
+  }) {
+    try {
+      await options.onDiagnostic?.(input);
+    } catch {
+      // Diagnostics should never block playback startup.
+    }
+  }
 
   function checkFfmpegAvailability() {
     if (!ffmpegAvailablePromise) {
@@ -777,10 +1094,24 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
 
         child.once("error", () => resolve(false));
         child.once("close", (code) => resolve(code === 0));
+      }).then((available) => {
+        if (!available) {
+          console.warn(`[vod-playback] FFmpeg kullanilamadi: ${options.ffmpegBinary}`);
+        }
+        return available;
       });
     }
 
     return ffmpegAvailablePromise;
+  }
+
+  function releaseTranscodeSlot(localState: LocalHlsState | null | undefined) {
+    if (!localState || !localState.ownsTranscodeSlot) {
+      return;
+    }
+
+    localState.ownsTranscodeSlot = false;
+    activeTranscodeCount = Math.max(0, activeTranscodeCount - 1);
   }
 
   async function destroySession(session: VodPlaybackSession) {
@@ -788,6 +1119,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     if (session.localState?.process && !session.localState.process.killed) {
       session.localState.process.kill("SIGKILL");
     }
+    releaseTranscodeSlot(session.localState);
     if (session.localState?.tempDir) {
       await removeDirectory(session.localState.tempDir);
     }
@@ -809,16 +1141,52 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     session.expiresAt = Date.now() + sessionTtlMs;
   }
 
-  async function startFfmpegPipeline(session: VodPlaybackSession, transcode: boolean) {
+  async function startFfmpegPipeline(session: VodPlaybackSession) {
     if (!session.localState) {
       throw new Error("Local HLS state bulunamadi.");
     }
 
-    await removeDirectory(session.localState.tempDir);
-    await fsp.mkdir(session.localState.tempDir, { recursive: true });
+    if (activeTranscodeCount >= maxConcurrentTranscodes) {
+      throw new VodPlaybackUnavailableError(
+        `VOD transcode kapasitesi dolu (aktif: ${activeTranscodeCount}/${maxConcurrentTranscodes}). Lutfen 10-20 sn sonra tekrar deneyin.`,
+        503
+      );
+    }
 
-    const args = createFfmpegArgs(session.sourceUrl, session.localState.tempDir, transcode);
+    activeTranscodeCount += 1;
+    session.localState.ownsTranscodeSlot = true;
+    try {
+      await removeDirectory(session.localState.tempDir);
+      await fsp.mkdir(session.localState.tempDir, { recursive: true });
+    } catch (error) {
+      releaseTranscodeSlot(session.localState);
+      throw error;
+    }
+
+    const args = createFfmpegArgs({
+      sourceUrl: session.sourceUrl,
+      outputDir: session.localState.tempDir,
+      sourceAudioTracks: session.localState.sourceAudioTracks,
+      selectedAudioTrackId: session.selectedAudioTrackId,
+      injectSilentAudioTrack: session.localState.injectSilentAudioTrack
+    });
     let stderrOutput = "";
+
+    await emitDiagnostic({
+      itemId: session.itemId,
+      kind: session.kind,
+      event: "transcode-started",
+      deliveryMode: session.deliveryMode,
+      sourceTransport: session.sourceTransport,
+      playerEngine: "relay",
+      audioTrackId: session.selectedAudioTrackId,
+      detail: {
+        activeTranscodeCount,
+        maxConcurrentTranscodes,
+        audioTrackCount: session.audioTracks.length,
+        injectSilentAudioTrack: session.localState.injectSilentAudioTrack
+      }
+    });
 
     const child = spawn(options.ffmpegBinary, args, {
       stdio: ["ignore", "ignore", "pipe"]
@@ -829,8 +1197,9 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     });
 
     session.localState.process = child;
-    session.localState.mode = transcode ? "transcode" : "copy";
+    session.localState.mode = "transcode";
     session.localState.lastError = null;
+    session.localState.startupFailed = false;
 
     const ready = await Promise.race([
       waitForFile(session.localState.manifestPath, 15_000, manifestLineExists),
@@ -845,10 +1214,26 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
         child.kill("SIGKILL");
       }
       session.localState.process = null;
+      session.localState.startupFailed = true;
       session.localState.lastError = trimErrorMessage(
         stderrOutput,
-        transcode ? "FFmpeg transcode baslatilamadi." : "FFmpeg copy modu baslatilamadi."
+        "FFmpeg transcode baslatilamadi."
       );
+      releaseTranscodeSlot(session.localState);
+      await emitDiagnostic({
+        itemId: session.itemId,
+        kind: session.kind,
+        event: "transcode-failed",
+        deliveryMode: session.deliveryMode,
+        sourceTransport: session.sourceTransport,
+        playerEngine: "relay",
+        audioTrackId: session.selectedAudioTrackId,
+        errorCode: "ffmpeg-startup-failed",
+        errorMessage: session.localState.lastError,
+        detail: {
+          stderr: stderrOutput.slice(-2_000)
+        }
+      });
       return false;
     }
 
@@ -856,9 +1241,24 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       if (session.localState?.process === child) {
         session.localState.process = null;
       }
-      if (code && session.localState) {
+      if (code && session.localState && !session.localState.startupFailed) {
         session.localState.lastError = trimErrorMessage(stderrOutput, `FFmpeg cikis kodu ${code}`);
+        void emitDiagnostic({
+          itemId: session.itemId,
+          kind: session.kind,
+          event: "transcode-failed",
+          deliveryMode: session.deliveryMode,
+          sourceTransport: session.sourceTransport,
+          playerEngine: "relay",
+          audioTrackId: session.selectedAudioTrackId,
+          errorCode: "ffmpeg-exit",
+          errorMessage: session.localState.lastError,
+          detail: {
+            exitCode: code
+          }
+        });
       }
+      releaseTranscodeSlot(session.localState);
     });
 
     child.on("error", (error) => {
@@ -866,6 +1266,18 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
         session.localState.lastError = error.message;
         session.localState.process = null;
       }
+      releaseTranscodeSlot(session.localState);
+      void emitDiagnostic({
+        itemId: session.itemId,
+        kind: session.kind,
+        event: "transcode-failed",
+        deliveryMode: session.deliveryMode,
+        sourceTransport: session.sourceTransport,
+        playerEngine: "relay",
+        audioTrackId: session.selectedAudioTrackId,
+        errorCode: "ffmpeg-spawn-error",
+        errorMessage: error.message
+      });
     });
 
     return true;
@@ -876,53 +1288,12 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       throw new Error("Local HLS state bulunamadi.");
     }
 
-    if (session.localState.requireFullTranscode) {
-      const transcodeReady = await startFfmpegPipeline(session, true);
-      if (transcodeReady) {
-        return {
-          ok: true,
-          errorMessage: null
-        };
-      }
-
+    const transcodeReady = await startFfmpegPipeline(session);
+    if (transcodeReady) {
       return {
-        ok: false,
-        errorMessage: session.localState.lastError ?? "Uyumluluk transcode baslatilamadi."
+        ok: true,
+        errorMessage: null
       };
-    }
-
-    if (session.localState.preferTranscodeFirst) {
-      const transcodeReady = await startFfmpegPipeline(session, true);
-      if (transcodeReady) {
-        return {
-          ok: true,
-          errorMessage: null
-        };
-      }
-
-      const copyReady = await startFfmpegPipeline(session, false);
-      if (copyReady) {
-        return {
-          ok: true,
-          errorMessage: null
-        };
-      }
-    } else {
-      const copyReady = await startFfmpegPipeline(session, false);
-      if (copyReady) {
-        return {
-          ok: true,
-          errorMessage: null
-        };
-      }
-
-      const transcodeReady = await startFfmpegPipeline(session, true);
-      if (transcodeReady) {
-        return {
-          ok: true,
-          errorMessage: null
-        };
-      }
     }
 
     return {
@@ -960,7 +1331,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
         itemId: input.itemId,
         kind: input.kind,
         transport: probe.transport,
-        deliveryMode: "file_proxy",
+        deliveryMode: "hls_transcoded",
         errorMessage: probe.errorMessage ?? "VOD kaynagi dogrulanamadi."
       });
     }
@@ -968,11 +1339,12 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     const decision = resolveVodTranscodeDecision({
       transport: probe.transport,
       supportsByteRange: probe.supportsByteRange,
-      preferTranscode: input.preferTranscode === true
+      preferTranscode: input.preferTranscode === true,
+      debugPassthrough: debugEnabled
     });
-    const canUseFfmpeg = decision.requiresFfmpeg ? await checkFfmpegAvailability() : false;
+    const canUseFfmpeg = decision.requiresFfmpeg ? await checkFfmpegAvailability() : true;
 
-    if (decision.requiresFullTranscode && !canUseFfmpeg) {
+    if (decision.requiresFfmpeg && !canUseFfmpeg) {
       debugLog("unsupported-without-ffmpeg", {
         transport: probe.transport,
         preferTranscode: input.preferTranscode === true
@@ -986,10 +1358,18 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       });
     }
 
-    const useTranscode = canUseFfmpeg && decision.needsTranscode;
-    const useFileProxy = probe.transport === "mp4" && !useTranscode;
-    const deliveryMode: VodDeliveryMode =
-      probe.transport === "hls" ? "hls_proxy" : useFileProxy ? "file_proxy" : "hls_transcoded";
+    const deliveryMode: VodDeliveryMode = decision.deliveryMode;
+    const shouldTranscode = deliveryMode === "hls_transcoded";
+    const sourceAudioTracks = shouldTranscode
+      ? await probeSourceAudioTracks(options.ffmpegBinary, probe.finalUrl)
+      : [];
+    const injectSilentAudioTrack = shouldTranscode && sourceAudioTracks.length === 0;
+    const audioSelection = shouldTranscode
+      ? selectVodAudioTrackId(sourceAudioTracks, input.selectedAudioTrackId)
+      : { selectedTrackId: null, defaultTrackId: null };
+    const audioTracks = shouldTranscode
+      ? mapSourceTracksToVodAudioTracks(sourceAudioTracks, audioSelection.selectedTrackId)
+      : [];
 
     await ensureDirectory(tempRoot);
 
@@ -1005,8 +1385,11 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       deliveryMode,
       expiresAt: Date.now() + sessionTtlMs,
       isVerified: probe.ok,
+      audioTracks,
+      defaultAudioTrackId: audioSelection.defaultTrackId,
+      selectedAudioTrackId: audioSelection.selectedTrackId,
       proxyState:
-        probe.transport === "hls"
+        deliveryMode === "hls_proxy"
           ? {
               rootUrl: probe.finalUrl,
               assetToUrl: new Map(),
@@ -1022,38 +1405,69 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
               process: null,
               mode: null,
               lastError: null,
-              preferTranscodeFirst: decision.forceTranscodeProfile,
-              requireFullTranscode: decision.requiresFullTranscode,
-              allowFileProxyFallback: probe.transport === "mp4" && decision.allowCopyFallback
+              startupFailed: false,
+              sourceAudioTracks,
+              injectSilentAudioTrack,
+              ownsTranscodeSlot: false
             }
     };
 
     debugLog("session-created", {
       sourceTransport: session.sourceTransport,
       deliveryMode: session.deliveryMode,
-      useFileProxy,
-      useTranscode,
       canUseFfmpeg,
-      forceTranscodeProfile: decision.forceTranscodeProfile,
-      requireFullTranscode: decision.requiresFullTranscode,
-      allowCopyFallback: decision.allowCopyFallback
+      audioTrackCount: audioTracks.length,
+      selectedAudioTrackId: session.selectedAudioTrackId,
+      defaultAudioTrackId: session.defaultAudioTrackId,
+      injectSilentAudioTrack
     });
+
+    await emitDiagnostic({
+      itemId: session.itemId,
+      kind: session.kind,
+      event: "session-created",
+      deliveryMode: session.deliveryMode,
+      sourceTransport: session.sourceTransport,
+      audioTrackId: session.selectedAudioTrackId,
+      detail: {
+        audioTrackCount: session.audioTracks.length,
+        defaultAudioTrackId: session.defaultAudioTrackId,
+        selectedAudioTrackId: session.selectedAudioTrackId
+      }
+    });
+
+    if (injectSilentAudioTrack) {
+      await emitDiagnostic({
+        itemId: session.itemId,
+        kind: session.kind,
+        event: "no-audio-detected",
+        deliveryMode: session.deliveryMode,
+        sourceTransport: session.sourceTransport,
+        audioTrackId: session.selectedAudioTrackId
+      });
+    }
 
     if (session.localState) {
       session.localState.manifestPath = path.join(session.localState.tempDir, "index.m3u8");
-      const prepared = await prepareLocalSession(session);
-      if (!prepared.ok) {
-        if (probe.transport === "mp4" && session.localState.allowFileProxyFallback) {
-          debugLog("transcode-fallback-file-proxy", {
-            errorMessage: prepared.errorMessage
-          });
-          await removeDirectory(session.localState.tempDir);
-          session.localState = null;
-          session.deliveryMode = "file_proxy";
-          sessions.set(session.id, session);
-          return buildReadyPlaybackRecord(session);
+      let prepared: { ok: boolean; errorMessage: string | null };
+      try {
+        prepared = await prepareLocalSession(session);
+      } catch (error) {
+        if (error instanceof VodPlaybackUnavailableError) {
+          await destroySession(session);
+          throw error;
         }
-
+        const message = getUpstreamErrorMessage(error, "VOD transcode baslatilamadi.");
+        await destroySession(session);
+        return buildDisabledPlaybackRecord({
+          itemId: input.itemId,
+          kind: input.kind,
+          transport: probe.transport,
+          deliveryMode: "hls_transcoded",
+          errorMessage: message
+        });
+      }
+      if (!prepared.ok) {
         await destroySession(session);
         return buildDisabledPlaybackRecord({
           itemId: input.itemId,

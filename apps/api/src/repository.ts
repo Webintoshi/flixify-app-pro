@@ -14,7 +14,8 @@ import type {
   SeriesSeasonRecord,
   SeriesRecord,
   SubscriptionRecord,
-  UserSummary
+  UserSummary,
+  VodPlaybackKind
 } from "@flixify/contracts";
 import { dedupeMovieCatalogEntries } from "@flixify/contracts";
 import { buildPlaylistUrl, buildStreamUrl, parsePlaylistUrl, type PlaylistConfig } from "./iptv.js";
@@ -916,6 +917,97 @@ export async function reportLivePlaybackEvent(
       input?.readyState ?? null,
       input?.networkState ?? null,
       input?.stallReason ?? null,
+      input?.errorCode ?? null,
+      input?.upstreamStatus ?? null,
+      input?.errorMessage ?? null,
+      input?.detail ? JSON.stringify(input.detail) : null
+    ]
+  );
+}
+
+export async function reportVodPlaybackEvent(
+  itemId: string,
+  kind: VodPlaybackKind,
+  event:
+    | "session-created"
+    | "audio-track-selected"
+    | "audio-track-switch-failed"
+    | "no-audio-detected"
+    | "transcode-started"
+    | "transcode-failed"
+    | "playback-failed"
+    | "recovered",
+  input?: {
+    diagnosticsSessionId?: string | null;
+    deliveryMode?: string | null;
+    sourceTransport?: string | null;
+    playerEngine?: string | null;
+    uptimeMs?: number | null;
+    bufferedSeconds?: number | null;
+    currentTime?: number | null;
+    readyState?: number | null;
+    networkState?: number | null;
+    audioTrackId?: string | null;
+    errorCode?: string | null;
+    upstreamStatus?: number | null;
+    detail?: Record<string, unknown> | null;
+    errorMessage?: string | null;
+  }
+) {
+  await query(
+    `
+      insert into public.vod_playback_diagnostics (
+        item_id,
+        kind,
+        diagnostics_session_id,
+        event,
+        delivery_mode,
+        source_transport,
+        player_engine,
+        uptime_ms,
+        buffered_seconds,
+        current_time_seconds,
+        ready_state,
+        network_state,
+        audio_track_id,
+        error_code,
+        upstream_status,
+        error_message,
+        detail
+      ) values (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8,
+        $9,
+        $10,
+        $11,
+        $12,
+        $13,
+        $14,
+        $15,
+        $16,
+        $17::jsonb
+      )
+    `,
+    [
+      itemId,
+      kind,
+      input?.diagnosticsSessionId ?? null,
+      event,
+      input?.deliveryMode ?? null,
+      input?.sourceTransport ?? null,
+      input?.playerEngine ?? null,
+      input?.uptimeMs ?? null,
+      input?.bufferedSeconds ?? null,
+      input?.currentTime ?? null,
+      input?.readyState ?? null,
+      input?.networkState ?? null,
+      input?.audioTrackId ?? null,
       input?.errorCode ?? null,
       input?.upstreamStatus ?? null,
       input?.errorMessage ?? null,

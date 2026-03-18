@@ -3466,13 +3466,15 @@ function PlayerOverlay({
   onClose,
   resolveLivePlayback,
   resolveVodPlayback,
-  reportLivePlayback
+  reportLivePlayback,
+  reportVodPlayback
 }: {
   item: PlaybackItem | null;
   onClose: () => void;
   resolveLivePlayback: ViewerCoreHandle["resolveLivePlayback"];
   resolveVodPlayback: ViewerCoreHandle["resolveVodPlayback"];
   reportLivePlayback: ViewerCoreHandle["reportLivePlayback"];
+  reportVodPlayback: ViewerCoreHandle["reportVodPlayback"];
 }) {
   const [activeItem, setActiveItem] = useState<PlaybackItem | null>(item);
   const overlayToneClass =
@@ -3537,6 +3539,7 @@ function PlayerOverlay({
               key={activeItem.id}
               item={activeItem}
               resolveVodPlayback={resolveVodPlayback}
+              reportVodPlayback={reportVodPlayback}
               onClose={onClose}
             />
           ) : (
@@ -3544,6 +3547,7 @@ function PlayerOverlay({
               key={activeItem.id}
               item={activeItem}
               resolveVodPlayback={resolveVodPlayback}
+              reportVodPlayback={reportVodPlayback}
               onClose={onClose}
               onRequestNext={(nextItem, options) => {
                 const currentDepth = activeItem?.autoSkipDepth ?? 0;
@@ -3612,6 +3616,7 @@ function LivePlayerSurface({
   const hlsControllerRef = useRef<{
     startLoad?: (startPosition?: number) => void;
     recoverMediaError?: () => void;
+    setAudioTrack?: (trackIndex: number) => void;
     destroy?: () => void;
   } | null>(null);
 
@@ -4588,11 +4593,17 @@ function LivePlayerSurface({
         on: (event: string, handler: (...args: unknown[]) => void) => void;
         startLoad?: (startPosition?: number) => void;
         recoverMediaError?: () => void;
+        audioTrack?: number;
         destroy: () => void;
       };
       hlsControllerRef.current = {
         startLoad: (startPosition?: number) => hls.startLoad?.(startPosition),
         recoverMediaError: () => hls.recoverMediaError?.(),
+        setAudioTrack: (trackIndex: number) => {
+          if (typeof hls.audioTrack === "number") {
+            hls.audioTrack = trackIndex;
+          }
+        },
         destroy: () => hls.destroy()
       };
 
@@ -5119,10 +5130,12 @@ function LivePlayerSurface({
 function useVodPlaybackController({
   item,
   resolveVodPlayback,
+  reportVodPlayback,
   onEnded
 }: {
   item: PlaybackItem;
   resolveVodPlayback: ViewerCoreHandle["resolveVodPlayback"];
+  reportVodPlayback: ViewerCoreHandle["reportVodPlayback"];
   onEnded?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -5136,10 +5149,12 @@ function useVodPlaybackController({
   const lastPlaybackPositionRef = useRef(0);
   const waitingSinceRef = useRef(0);
   const lastRecoverAtRef = useRef(0);
+  const playbackStartedAtRef = useRef(0);
   const resolvedPlaybackRef = useRef<VodPlaybackRecord | null>(null);
   const hlsControllerRef = useRef<{
     startLoad?: (startPosition?: number) => void;
     recoverMediaError?: () => void;
+    setAudioTrack?: (trackIndex: number) => void;
     destroy?: () => void;
   } | null>(null);
   const lastHlsNetworkRecoveryAtRef = useRef(0);
@@ -5151,6 +5166,9 @@ function useVodPlaybackController({
   const vodDebugEnabledRef = useRef(false);
   const vodDebugCounterRef = useRef(0);
   const onEndedRef = useRef(onEnded);
+  const preferredAudioTrackIdRef = useRef<string | null>(null);
+  const activeAudioTrackIdRef = useRef<string | null>(null);
+  const audioTracksRef = useRef<VodPlaybackRecord["audioTracks"]>([]);
 
   const [playerState, setPlayerState] = useState<PlayerState>("idle");
   const [playerError, setPlayerError] = useState<string | null>(null);
@@ -5161,6 +5179,8 @@ function useVodPlaybackController({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [canSeek, setCanSeek] = useState(false);
+  const [audioTracks, setAudioTracks] = useState<VodPlaybackRecord["audioTracks"]>([]);
+  const [selectedAudioTrackId, setSelectedAudioTrackId] = useState<string | null>(null);
 
   useEffect(() => {
     onEndedRef.current = onEnded;
@@ -5177,10 +5197,14 @@ function useVodPlaybackController({
     compatibilityRetryHandlerRef.current = null;
     compatibilityRetryingRef.current = false;
     autoCompatibilityEscalatedRef.current = false;
+    preferredAudioTrackIdRef.current = null;
+    activeAudioTrackIdRef.current = null;
+    audioTracksRef.current = [];
     lastProgressAtRef.current = Date.now();
     lastPlaybackPositionRef.current = 0;
     waitingSinceRef.current = 0;
     lastRecoverAtRef.current = 0;
+    playbackStartedAtRef.current = 0;
     setResolvedPlayback(null);
     setInteractionRequired(false);
     setCompatibilityRetrying(false);
@@ -5188,6 +5212,8 @@ function useVodPlaybackController({
     setCurrentTime(0);
     setDuration(0);
     setCanSeek(false);
+    setAudioTracks([]);
+    setSelectedAudioTrackId(null);
   }, [item.id]);
 
   useEffect(() => {
@@ -5264,6 +5290,18 @@ function useVodPlaybackController({
       if (!disposed && sessionRef.current === sessionId) {
         resolvedPlaybackRef.current = nextPlayback;
         setResolvedPlayback(nextPlayback);
+        const nextTracks = nextPlayback?.audioTracks ?? [];
+        const nextSelectedTrackId =
+          nextPlayback?.selectedAudioTrackId ??
+          nextPlayback?.defaultAudioTrackId ??
+          nextTracks.find((track) => track.isDefault)?.id ??
+          nextTracks[0]?.id ??
+          null;
+        audioTracksRef.current = nextTracks;
+        activeAudioTrackIdRef.current = nextSelectedTrackId;
+        preferredAudioTrackIdRef.current = nextSelectedTrackId;
+        setAudioTracks(nextTracks);
+        setSelectedAudioTrackId(nextSelectedTrackId);
       }
     }
 
@@ -5324,6 +5362,57 @@ function useVodPlaybackController({
       });
     }
 
+    function getVodPlayerEngine() {
+      if (hlsControllerRef.current) {
+        return "hls.js" as const;
+      }
+      return "native" as const;
+    }
+
+    async function reportVodEvent(
+      event:
+        | "session-created"
+        | "audio-track-selected"
+        | "audio-track-switch-failed"
+        | "no-audio-detected"
+        | "transcode-started"
+        | "transcode-failed"
+        | "playback-failed"
+        | "recovered",
+      input?: {
+        audioTrackId?: string | null;
+        errorCode?: string | null;
+        upstreamStatus?: number | null;
+        detail?: Record<string, unknown> | null;
+        errorMessage?: string | null;
+      }
+    ) {
+      try {
+        const playback = resolvedPlaybackRef.current;
+        await reportVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
+          event,
+          deliveryMode: playback?.deliveryMode ?? null,
+          sourceTransport: playback?.transport ?? null,
+          playerEngine: getVodPlayerEngine(),
+          uptimeMs:
+            playbackStartedAtRef.current > 0
+              ? Math.max(0, Date.now() - playbackStartedAtRef.current)
+              : null,
+          bufferedSeconds: Number(getBufferRemaining().toFixed(2)),
+          currentTime: Number.isFinite(media.currentTime) ? media.currentTime : null,
+          readyState: media.readyState,
+          networkState: media.networkState,
+          audioTrackId: input?.audioTrackId ?? activeAudioTrackIdRef.current ?? null,
+          errorCode: input?.errorCode ?? null,
+          upstreamStatus: input?.upstreamStatus ?? null,
+          detail: input?.detail ?? null,
+          errorMessage: input?.errorMessage ?? null
+        });
+      } catch {
+        // Diagnostics should not block playback flow.
+      }
+    }
+
     function syncTimelineState() {
       const rawDuration = Number.isFinite(media.duration) ? media.duration : 0;
       const normalizedDuration = rawDuration > 0 ? rawDuration : 0;
@@ -5347,7 +5436,7 @@ function useVodPlaybackController({
       ).audioTracks;
 
       if (!audioTracks || typeof audioTracks.length !== "number" || audioTracks.length === 0) {
-        return;
+        return false;
       }
 
       let hasEnabledTrack = false;
@@ -5361,6 +5450,8 @@ function useVodPlaybackController({
       if (!hasEnabledTrack && audioTracks[0]) {
         audioTracks[0].enabled = true;
       }
+
+      return true;
     }
 
     function teardownPlayer() {
@@ -5397,15 +5488,21 @@ function useVodPlaybackController({
       setStateSafe("failed");
       setErrorSafe(message);
       setInteractionRequiredSafe(false);
+      await reportVodEvent("playback-failed", {
+        errorCode: "playback-failed",
+        errorMessage: message
+      });
     }
 
     async function resolvePlayback(options: { preferTranscode?: boolean } = {}) {
       setStateSafe("resolving");
       setErrorSafe(null);
       setInteractionRequiredSafe(false);
+      const requestedAudioTrackId = preferredAudioTrackIdRef.current;
       const playback = await resolveVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
         debugVod: vodDebugEnabledRef.current,
-        preferTranscode: options.preferTranscode === true
+        preferTranscode: options.preferTranscode === true,
+        audioTrackId: requestedAudioTrackId ?? undefined
       });
       debugVod("resolve-playback", {
         canPlay: playback.canPlay,
@@ -5413,12 +5510,25 @@ function useVodPlaybackController({
         deliveryMode: playback.deliveryMode,
         transport: playback.transport,
         errorMessage: playback.errorMessage,
-        preferTranscode: options.preferTranscode === true
+        preferTranscode: options.preferTranscode === true,
+        requestedAudioTrackId
       });
       setResolvedPlaybackSafe(playback);
       if (!playback.canPlay || !playback.url) {
         await failPlayback(playback.errorMessage ?? "VOD akisi hazirlanamadi.");
         return null;
+      }
+
+      await reportVodEvent("session-created", {
+        audioTrackId: playback.selectedAudioTrackId ?? playback.defaultAudioTrackId,
+        detail: {
+          audioTrackCount: playback.audioTracks.length
+        }
+      });
+      if (playback.audioTracks.length === 0) {
+        await reportVodEvent("no-audio-detected", {
+          audioTrackId: null
+        });
       }
 
       return playback;
@@ -5542,7 +5652,12 @@ function useVodPlaybackController({
         syncTimelineState();
       };
       const onLoadedMetadata = () => {
-        ensureAudioTrackSelected();
+        const hasAudioTrack = ensureAudioTrackSelected();
+        if (!hasAudioTrack) {
+          void reportVodEvent("no-audio-detected", {
+            audioTrackId: activeAudioTrackIdRef.current
+          });
+        }
         syncTimelineState();
         onReady(resumeAt);
       };
@@ -5552,14 +5667,23 @@ function useVodPlaybackController({
         syncTimelineState();
       };
       const onPlaying = () => {
+        const recoveredFromFailure = recoverAttemptsRef.current > 0 || playerState === "recovering";
         clearSeekGuard();
         desiredSeekTimeRef.current = null;
         recoverAttemptsRef.current = 0;
+        if (playbackStartedAtRef.current === 0) {
+          playbackStartedAtRef.current = Date.now();
+        }
         setStateSafe("playing");
         setErrorSafe(null);
         setPausedSafe(false);
         markPlaybackProgress(media.currentTime);
         syncTimelineState();
+        if (recoveredFromFailure) {
+          void reportVodEvent("recovered", {
+            audioTrackId: activeAudioTrackIdRef.current
+          });
+        }
       };
       const onPlay = () => {
         setPausedSafe(false);
@@ -5850,11 +5974,17 @@ function useVodPlaybackController({
         on: (event: string, handler: (...args: unknown[]) => void) => void;
         startLoad?: (startPosition?: number) => void;
         recoverMediaError?: () => void;
+        audioTrack?: number;
         destroy: () => void;
       };
       hlsControllerRef.current = {
         startLoad: (startPosition?: number) => hls.startLoad?.(startPosition),
         recoverMediaError: () => hls.recoverMediaError?.(),
+        setAudioTrack: (trackIndex: number) => {
+          if (typeof hls.audioTrack === "number") {
+            hls.audioTrack = trackIndex;
+          }
+        },
         destroy: () => hls.destroy()
       };
 
@@ -5868,12 +5998,84 @@ function useVodPlaybackController({
         });
       });
 
+      if (typeof hlsEvents.AUDIO_TRACKS_UPDATED === "string") {
+        hls.on(hlsEvents.AUDIO_TRACKS_UPDATED, (_event, data) => {
+          const knownTracks = resolvedPlaybackRef.current?.audioTracks ?? [];
+          const nextTracks =
+            knownTracks.length > 0
+              ? knownTracks
+              : ((data as { audioTracks?: Array<{ lang?: string; name?: string; default?: boolean }> } | undefined)
+                  ?.audioTracks ?? []
+                ).map((track, index) => ({
+                  id: `hls-track-${index}`,
+                  language: track.lang ?? null,
+                  title: track.name ?? null,
+                  channels: null,
+                  isDefault: track.default === true
+                }));
+
+          audioTracksRef.current = nextTracks;
+          setAudioTracks(nextTracks);
+
+          if (nextTracks.length === 0) {
+            return;
+          }
+
+          const preferredTrackId =
+            preferredAudioTrackIdRef.current ??
+            resolvedPlaybackRef.current?.selectedAudioTrackId ??
+            resolvedPlaybackRef.current?.defaultAudioTrackId ??
+            nextTracks.find((track) => track.isDefault)?.id ??
+            nextTracks[0]?.id ??
+            null;
+          if (!preferredTrackId) {
+            return;
+          }
+
+          const preferredIndex = nextTracks.findIndex((track) => track.id === preferredTrackId);
+          if (preferredIndex < 0) {
+            return;
+          }
+
+          preferredAudioTrackIdRef.current = preferredTrackId;
+          activeAudioTrackIdRef.current = preferredTrackId;
+          setSelectedAudioTrackId(preferredTrackId);
+          if (typeof hls.audioTrack === "number" && hls.audioTrack !== preferredIndex) {
+            hls.audioTrack = preferredIndex;
+          }
+        });
+      }
+
+      if (typeof hlsEvents.AUDIO_TRACK_SWITCHED === "string") {
+        hls.on(hlsEvents.AUDIO_TRACK_SWITCHED, (_event, data) => {
+          const switchedIndex = (data as { id?: number } | undefined)?.id;
+          if (typeof switchedIndex !== "number" || switchedIndex < 0) {
+            return;
+          }
+          const nextTrack = audioTracksRef.current[switchedIndex];
+          if (!nextTrack) {
+            return;
+          }
+          preferredAudioTrackIdRef.current = nextTrack.id;
+          activeAudioTrackIdRef.current = nextTrack.id;
+          setSelectedAudioTrackId(nextTrack.id);
+          void reportVodEvent("audio-track-selected", {
+            audioTrackId: nextTrack.id
+          });
+        });
+      }
+
       hls.on(hlsEvents.ERROR, (_event, data) => {
         const errorData = data as { fatal?: boolean; details?: string; type?: string } | undefined;
         const normalizedType = `${errorData?.type ?? ""}`.toLowerCase();
         const normalizedDetail = `${errorData?.details ?? ""}`.toLowerCase();
         const isBufferStall =
           normalizedDetail.includes("bufferstalled") || normalizedDetail.includes("buffer_stalled");
+        const isAudioCodecFailure =
+          normalizedDetail.includes("manifestincompatiblecodecserror") ||
+          normalizedDetail.includes("bufferincompatiblecodecserror") ||
+          normalizedDetail.includes("bufferaddcodecerror") ||
+          normalizedDetail.includes("audiotrackloaderror");
 
         if (!errorData?.fatal) {
           if (isBufferStall && getBufferRemaining() < 0.6) {
@@ -5898,6 +6100,34 @@ function useVodPlaybackController({
             hlsControllerRef.current.recoverMediaError();
             void requestPlay().catch(() => undefined);
             return;
+          }
+        }
+
+        if (isAudioCodecFailure) {
+          const trackList = audioTracksRef.current;
+          const currentIndex = typeof hls.audioTrack === "number" ? hls.audioTrack : -1;
+          const fallbackIndex = trackList.length > 1 ? (currentIndex + 1 + trackList.length) % trackList.length : -1;
+          if (fallbackIndex >= 0 && trackList[fallbackIndex]) {
+            const fallbackTrack = trackList[fallbackIndex];
+            preferredAudioTrackIdRef.current = fallbackTrack.id;
+            activeAudioTrackIdRef.current = fallbackTrack.id;
+            setSelectedAudioTrackId(fallbackTrack.id);
+            if (typeof hls.audioTrack === "number") {
+              hls.audioTrack = fallbackIndex;
+            }
+            void reportVodEvent("audio-track-switch-failed", {
+              audioTrackId: fallbackTrack.id,
+              errorCode: errorData.details ?? "audio-track-load-error",
+              detail: {
+                fromIndex: currentIndex,
+                toIndex: fallbackIndex
+              }
+            });
+          } else {
+            void reportVodEvent("audio-track-switch-failed", {
+              audioTrackId: activeAudioTrackIdRef.current,
+              errorCode: errorData.details ?? "audio-track-load-error"
+            });
           }
         }
 
@@ -5995,7 +6225,7 @@ function useVodPlaybackController({
       compatibilityRetryingRef.current = false;
       teardownPlayer();
     };
-  }, [item.id, item.kind, item.playbackAllowed, resolveVodPlayback]);
+  }, [item.id, item.kind, item.playbackAllowed, reportVodPlayback, resolveVodPlayback]);
 
   const continuePlayback = useCallback(async () => {
     const mediaElement = videoRef.current;
@@ -6093,6 +6323,138 @@ function useVodPlaybackController({
     await handler();
   }, []);
 
+  const selectAudioTrack = useCallback(
+    async (trackId: string) => {
+      const normalizedTrackId = trackId.trim();
+      if (!normalizedTrackId || normalizedTrackId === selectedAudioTrackId) {
+        return;
+      }
+
+      preferredAudioTrackIdRef.current = normalizedTrackId;
+      activeAudioTrackIdRef.current = normalizedTrackId;
+      setSelectedAudioTrackId(normalizedTrackId);
+
+      const selectedIndex = audioTracksRef.current.findIndex((track) => track.id === normalizedTrackId);
+      if (selectedIndex >= 0 && hlsControllerRef.current?.setAudioTrack) {
+        hlsControllerRef.current.setAudioTrack(selectedIndex);
+        try {
+          await reportVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
+            event: "audio-track-selected",
+            audioTrackId: normalizedTrackId,
+            deliveryMode: resolvedPlaybackRef.current?.deliveryMode ?? null,
+            sourceTransport: resolvedPlaybackRef.current?.transport ?? null,
+            playerEngine: "hls.js",
+            errorMessage: null
+          });
+        } catch {
+          // noop
+        }
+        return;
+      }
+
+      const media = videoRef.current;
+      const nativeAudioTracks = (
+        media as
+          | (HTMLVideoElement & {
+              audioTracks?: {
+                length: number;
+                [index: number]: { enabled: boolean } | undefined;
+              };
+            })
+          | null
+      )?.audioTracks;
+      if (
+        selectedIndex >= 0 &&
+        nativeAudioTracks &&
+        typeof nativeAudioTracks.length === "number" &&
+        nativeAudioTracks.length > selectedIndex
+      ) {
+        for (let index = 0; index < nativeAudioTracks.length; index += 1) {
+          const nativeTrack = nativeAudioTracks[index];
+          if (nativeTrack) {
+            nativeTrack.enabled = index === selectedIndex;
+          }
+        }
+        try {
+          await reportVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
+            event: "audio-track-selected",
+            audioTrackId: normalizedTrackId,
+            deliveryMode: resolvedPlaybackRef.current?.deliveryMode ?? null,
+            sourceTransport: resolvedPlaybackRef.current?.transport ?? null,
+            playerEngine: "native",
+            errorMessage: null
+          });
+        } catch {
+          // noop
+        }
+        return;
+      }
+
+      const resumeAt = media && Number.isFinite(media.currentTime) ? media.currentTime : 0;
+
+      try {
+        const refreshedPlayback = await resolveVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
+          debugVod: vodDebugEnabledRef.current,
+          audioTrackId: normalizedTrackId
+        });
+
+        if (!refreshedPlayback.canPlay || !refreshedPlayback.url) {
+          throw new Error(refreshedPlayback.errorMessage ?? "Ses track degistirilemedi.");
+        }
+
+        resolvedPlaybackRef.current = refreshedPlayback;
+        setResolvedPlayback(refreshedPlayback);
+        const nextTracks = refreshedPlayback.audioTracks ?? [];
+        audioTracksRef.current = nextTracks;
+        setAudioTracks(nextTracks);
+        setSelectedAudioTrackId(
+          refreshedPlayback.selectedAudioTrackId ??
+            refreshedPlayback.defaultAudioTrackId ??
+            nextTracks.find((track) => track.isDefault)?.id ??
+            nextTracks[0]?.id ??
+            normalizedTrackId
+        );
+
+        if (media) {
+          media.src = refreshedPlayback.url;
+          media.load();
+          if (resumeAt > 0 && Number.isFinite(media.duration) && media.duration > resumeAt + 0.1) {
+            media.currentTime = resumeAt;
+          }
+          await media.play().catch(() => undefined);
+        }
+
+        await reportVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
+          event: "audio-track-selected",
+          audioTrackId: normalizedTrackId,
+          deliveryMode: refreshedPlayback.deliveryMode,
+          sourceTransport: refreshedPlayback.transport,
+          playerEngine: hlsControllerRef.current ? "hls.js" : "native",
+          errorMessage: null
+        });
+      } catch (error) {
+        setPlayerError("Ses kanali degistirilemedi.");
+        try {
+          await reportVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
+            event: "audio-track-switch-failed",
+            audioTrackId: normalizedTrackId,
+            deliveryMode: resolvedPlaybackRef.current?.deliveryMode ?? null,
+            sourceTransport: resolvedPlaybackRef.current?.transport ?? null,
+            playerEngine: hlsControllerRef.current ? "hls.js" : "native",
+            errorCode: "manual-switch-failed",
+            detail: {
+              message: getMediaErrorMessage(error, "Ses track degistirilemedi.")
+            },
+            errorMessage: getMediaErrorMessage(error, "Ses track degistirilemedi.")
+          });
+        } catch {
+          // noop
+        }
+      }
+    },
+    [item.id, item.kind, reportVodPlayback, resolveVodPlayback, selectedAudioTrackId]
+  );
+
   const canRetryWithCompatibilityMode = canUseVodCompatibilityRetry(resolvedPlayback);
 
   return {
@@ -6111,7 +6473,10 @@ function useVodPlaybackController({
     isPaused,
     currentTime,
     duration,
-    canSeek
+    canSeek,
+    audioTracks,
+    selectedAudioTrackId,
+    selectAudioTrack
   };
 }
 
@@ -6224,10 +6589,12 @@ function VodMiniControls({
 function MoviePlayerSurface({
   item,
   resolveVodPlayback,
+  reportVodPlayback,
   onClose
 }: {
   item: PlaybackItem;
   resolveVodPlayback: ViewerCoreHandle["resolveVodPlayback"];
+  reportVodPlayback: ViewerCoreHandle["reportVodPlayback"];
   onClose: () => void;
 }) {
   const {
@@ -6243,10 +6610,14 @@ function MoviePlayerSurface({
     compatibilityRetrying,
     seekBy,
     isPaused,
-    canSeek
+    canSeek,
+    audioTracks,
+    selectedAudioTrackId,
+    selectAudioTrack
   } = useVodPlaybackController({
     item,
-    resolveVodPlayback
+    resolveVodPlayback,
+    reportVodPlayback
   });
   const currentStateTone =
     playerState === "failed" ? "danger" : playerState === "recovering" ? "warning" : "info";
@@ -6326,6 +6697,26 @@ function MoviePlayerSurface({
                 {compatibilityRetrying ? "Uyumluluk Modu Hazirlaniyor" : "Uyumluluk Modu ile Tekrar Dene"}
               </button>
             ) : null}
+            {audioTracks.length > 1 ? (
+              <label className="movie-player-status-text">
+                Ses:
+                <select
+                  value={selectedAudioTrackId ?? ""}
+                  onChange={(event) => {
+                    void selectAudioTrack(event.target.value);
+                  }}
+                  data-tv-focusable="true"
+                  data-tv-region="overlay-player-actions"
+                  data-tv-focus-key={`movie-audio-track-${item.id}`}
+                >
+                  {audioTracks.map((track) => (
+                    <option key={track.id} value={track.id}>
+                      {track.title ?? track.language ?? track.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
           </div>
         ) : null}
 
@@ -6349,11 +6740,13 @@ function MoviePlayerSurface({
 function EpisodePlayerSurface({
   item,
   resolveVodPlayback,
+  reportVodPlayback,
   onClose,
   onRequestNext
 }: {
   item: PlaybackItem;
   resolveVodPlayback: ViewerCoreHandle["resolveVodPlayback"];
+  reportVodPlayback: ViewerCoreHandle["reportVodPlayback"];
   onClose: () => void;
   onRequestNext: (nextItem: PlaybackItem, options?: { reason: "ended" | "failed" }) => void;
 }) {
@@ -6412,10 +6805,14 @@ function EpisodePlayerSurface({
     compatibilityRetrying,
     seekBy,
     isPaused,
-    canSeek
+    canSeek,
+    audioTracks,
+    selectedAudioTrackId,
+    selectAudioTrack
   } = useVodPlaybackController({
     item,
     resolveVodPlayback,
+    reportVodPlayback,
     onEnded: () => {
       startNextCountdown("ended");
     }
@@ -6578,6 +6975,26 @@ function EpisodePlayerSurface({
               >
                 {compatibilityRetrying ? "Uyumluluk Modu Hazirlaniyor" : "Uyumluluk Modu ile Tekrar Dene"}
               </button>
+            ) : null}
+            {audioTracks.length > 1 ? (
+              <label className="episode-player-status-text">
+                Ses:
+                <select
+                  value={selectedAudioTrackId ?? ""}
+                  onChange={(event) => {
+                    void selectAudioTrack(event.target.value);
+                  }}
+                  data-tv-focusable="true"
+                  data-tv-region="overlay-player-actions"
+                  data-tv-focus-key={`episode-audio-track-${item.id}`}
+                >
+                  {audioTracks.map((track) => (
+                    <option key={track.id} value={track.id}>
+                      {track.title ?? track.language ?? track.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
             ) : null}
             {noNextEpisodeCandidate ? (
               <span className="episode-player-status-text">Oynatilabilir sonraki bolum bulunamadi.</span>
@@ -7046,6 +7463,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
         resolveLivePlayback={core.resolveLivePlayback}
         resolveVodPlayback={core.resolveVodPlayback}
         reportLivePlayback={core.reportLivePlayback}
+        reportVodPlayback={core.reportVodPlayback}
       />
     </div>
   );

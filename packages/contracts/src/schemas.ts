@@ -61,6 +61,33 @@ export const livePlaybackEventInputSchema = z.object({
   errorMessage: z.string().trim().max(500).nullable().optional()
 });
 
+export const vodPlaybackEventInputSchema = z.object({
+  event: z.enum([
+    "session-created",
+    "audio-track-selected",
+    "audio-track-switch-failed",
+    "no-audio-detected",
+    "transcode-started",
+    "transcode-failed",
+    "playback-failed",
+    "recovered"
+  ]),
+  diagnosticsSessionId: z.string().uuid().nullable().optional(),
+  deliveryMode: z.enum(["hls_proxy", "file_proxy", "hls_transcoded"]).nullable().optional(),
+  sourceTransport: z.enum(["hls", "mp4", "mkv", "avi", "unknown"]).nullable().optional(),
+  playerEngine: z.enum(["native", "hls.js", "mpegts.js", "relay", "unknown"]).nullable().optional(),
+  uptimeMs: z.number().int().nonnegative().nullable().optional(),
+  bufferedSeconds: z.number().nonnegative().nullable().optional(),
+  currentTime: z.number().nonnegative().nullable().optional(),
+  readyState: z.number().int().min(0).max(4).nullable().optional(),
+  networkState: z.number().int().min(0).max(3).nullable().optional(),
+  audioTrackId: z.string().trim().max(120).nullable().optional(),
+  errorCode: z.string().trim().max(120).nullable().optional(),
+  upstreamStatus: z.number().int().min(100).max(599).nullable().optional(),
+  detail: z.record(z.string(), z.unknown()).nullable().optional(),
+  errorMessage: z.string().trim().max(500).nullable().optional()
+});
+
 export const paginationQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(20),

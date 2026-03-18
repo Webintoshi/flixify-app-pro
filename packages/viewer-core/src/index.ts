@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   livePlaybackEventInputSchema,
+  vodPlaybackEventInputSchema,
   type CatalogGroup,
   type DeviceSessionRecord,
   type LiveChannel,
@@ -770,6 +771,19 @@ export function useViewerCore(options: ViewerCoreOptions) {
     );
   }
 
+  async function reportVodPlayback(
+    kind: "movie" | "episode",
+    itemId: string,
+    input: z.input<typeof vodPlaybackEventInputSchema>
+  ) {
+    return runAuthenticatedRequest(() =>
+      clientRef.current.reportVodPlayback(kind, itemId, {
+        ...input,
+        errorMessage: input.errorMessage ?? null
+      })
+    );
+  }
+
   return {
     loading,
     busy,
@@ -806,6 +820,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
     resolveLivePlayback,
     resolveVodPlayback,
     reportLivePlayback,
+    reportVodPlayback,
     clearNotice() {
       setNotice(null);
     },

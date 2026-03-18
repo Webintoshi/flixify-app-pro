@@ -15,7 +15,8 @@ import {
   paymentRequestInputSchema,
   refreshInputSchema,
   registerAnonInputSchema,
-  trialRequestInputSchema
+  trialRequestInputSchema,
+  vodPlaybackEventInputSchema
 } from "@flixify/contracts";
 import type { LiveTransport } from "@flixify/contracts";
 import {
@@ -55,6 +56,7 @@ import {
   reviewTrialRequest,
   insertLivePlaybackDiagnostic,
   reportLivePlaybackEvent,
+  reportVodPlaybackEvent,
   revokeSession,
   storePlainKryptoniteCode,
   softDeleteUser,
@@ -116,7 +118,7 @@ import { pool } from "./db.js";
 import { buildStreamUrl } from "./iptv.js";
 import { probeLiveStream } from "./live.js";
 import { createLivePlaybackManager } from "./live-playback.js";
-import { createVodPlaybackManager, probeVodStream } from "./vod.js";
+import { createVodPlaybackManager, probeVodStream, VodPlaybackUnavailableError } from "./vod.js";
 import { API_CORS_CONFIG } from "./cors-config.js";
 import { stripEmptyJsonContentType } from "./http-headers.js";
 
@@ -169,7 +171,25 @@ const livePlaybackManager = createLivePlaybackManager({
 const vodPlaybackManager = createVodPlaybackManager({
   ffmpegBinary: env.FFMPEG_BINARY,
   sessionTtlMs: env.VOD_PLAYBACK_TTL_SECONDS * 1000,
-  tempRoot: env.VOD_PLAYBACK_TEMP_DIR
+  tempRoot: env.VOD_PLAYBACK_TEMP_DIR,
+  maxConcurrentTranscodes: env.VOD_TRANSCODE_MAX_CONCURRENT,
+  onDiagnostic: async (input) => {
+    const parsedEvent = vodPlaybackEventInputSchema.shape.event.safeParse(input.event);
+    if (!parsedEvent.success) {
+      return;
+    }
+
+    await reportVodPlaybackEvent(input.itemId, input.kind, parsedEvent.data, {
+      deliveryMode: input.deliveryMode ?? null,
+      sourceTransport: input.sourceTransport ?? null,
+      playerEngine: input.playerEngine ?? null,
+      audioTrackId: input.audioTrackId ?? null,
+      errorCode: input.errorCode ?? null,
+      upstreamStatus: input.upstreamStatus ?? null,
+      detail: input.detail ?? null,
+      errorMessage: input.errorMessage ?? null
+    });
+  }
 });
 
 function createRateLimitKey(scope: string, value: string) {
@@ -272,27 +292,6 @@ function extractUpstreamStatus(errorMessage: string | null | undefined) {
 
   const parsed = Number.parseInt(match[1] ?? "", 10);
   return Number.isNaN(parsed) ? null : parsed;
-}
-
-function shouldAllowDirectVodFallback(errorMessage: string | null | undefined) {
-  if (typeof errorMessage !== "string") {
-    return false;
-  }
-
-  const normalized = errorMessage.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-
-  if (/^upstream\s+(401|403|404|410|429|5\d\d)$/i.test(normalized)) {
-    return true;
-  }
-
-  return (
-    normalized.includes("html donuyor") ||
-    normalized.includes("akistan veri okunamadi") ||
-    normalized.includes("dogrulanamadi")
-  );
 }
 
 async function resolveLiveSourceUrl(input: {
@@ -777,6 +776,10 @@ export function buildServer() {
         rawQuery?.preferTranscode === true ||
         rawQuery?.preferTranscode === "true" ||
         rawQuery?.preferTranscode === "1";
+      const audioTrackId =
+        typeof rawQuery?.audioTrackId === "string" && rawQuery.audioTrackId.trim().length > 0
+          ? rawQuery.audioTrackId.trim().slice(0, 120)
+          : null;
 
       if (isDemoMode) {
         const me = getDemoMe(auth.userId);
@@ -1087,7 +1090,10 @@ export function buildServer() {
           kind,
           url: null,
           transport: "unknown",
-          deliveryMode: "file_proxy",
+          deliveryMode: "hls_transcoded",
+          audioTracks: [],
+          defaultAudioTrackId: null,
+          selectedAudioTrackId: null,
           expiresAt: null,
           canPlay: false,
           isVerified: false,
@@ -1104,7 +1110,10 @@ export function buildServer() {
           kind,
           url: null,
           transport: "unknown",
-          deliveryMode: "file_proxy",
+          deliveryMode: "hls_transcoded",
+          audioTracks: [],
+          defaultAudioTrackId: null,
+          selectedAudioTrackId: null,
           expiresAt: null,
           canPlay: false,
           isVerified: false,
@@ -1120,26 +1129,15 @@ export function buildServer() {
       });
 
       if (!resolved.ok || !resolved.sourceUrl) {
-        if (resolved.sourceUrl && shouldAllowDirectVodFallback(resolved.errorMessage)) {
-          return {
-            itemId,
-            kind,
-            url: resolved.sourceUrl,
-            transport: resolved.transport,
-            deliveryMode: "file_proxy",
-            expiresAt: null,
-            canPlay: true,
-            isVerified: false,
-            errorMessage: null
-          };
-        }
-
         return {
           itemId,
           kind,
           url: null,
           transport: resolved.transport,
-          deliveryMode: "file_proxy",
+          deliveryMode: "hls_transcoded",
+          audioTracks: [],
+          defaultAudioTrackId: null,
+          selectedAudioTrackId: null,
           expiresAt: null,
           canPlay: false,
           isVerified: false,
@@ -1147,15 +1145,61 @@ export function buildServer() {
         };
       }
 
-      return vodPlaybackManager.createPlayback({
-        userId: auth.userId,
-        itemId,
-        kind,
-        sourceUrl: resolved.sourceUrl,
-        baseOrigin,
-        debug: debugVod,
-        preferTranscode
-      });
+      try {
+        return await vodPlaybackManager.createPlayback({
+          userId: auth.userId,
+          itemId,
+          kind,
+          sourceUrl: resolved.sourceUrl,
+          baseOrigin,
+          debug: debugVod,
+          preferTranscode,
+          selectedAudioTrackId: audioTrackId
+        });
+      } catch (error) {
+        if (error instanceof VodPlaybackUnavailableError) {
+          return reply.status(error.statusCode).send({
+            message: error.message
+          });
+        }
+        throw error;
+      }
+    } catch (error) {
+      request.log.error(error);
+      return sendUserAuthError(reply, error);
+    }
+  });
+
+  app.post("/me/vod/:kind/:itemId/health", async (request, reply) => {
+    try {
+      const auth = await authenticateUser(request.headers.authorization);
+      const { kind, itemId } = request.params as { kind: string; itemId: string };
+      const payload = vodPlaybackEventInputSchema.parse(request.body);
+
+      if (kind !== "movie" && kind !== "episode") {
+        return reply.status(400).send({ message: "VOD turu gecersiz." });
+      }
+
+      if (isDemoMode) {
+        return { ok: true };
+      }
+
+      const userContext = await getUserContext(auth.userId);
+      if (!userContext.canViewCatalog) {
+        return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
+      }
+
+      const existingItem =
+        kind === "movie"
+          ? await getMovieForPlayback(userContext.snapshotVersion, itemId)
+          : await getEpisodeForPlayback(userContext.snapshotVersion, itemId);
+
+      if (!existingItem) {
+        return reply.status(404).send({ message: kind === "movie" ? "Film bulunamadi." : "Bolum bulunamadi." });
+      }
+
+      await reportVodPlaybackEvent(itemId, kind, payload.event, payload);
+      return { ok: true };
     } catch (error) {
       request.log.error(error);
       return sendUserAuthError(reply, error);

@@ -36,6 +36,15 @@ export type VodTransport = z.infer<typeof vodTransportSchema>;
 export const vodDeliveryModeSchema = z.enum(["hls_proxy", "file_proxy", "hls_transcoded"]);
 export type VodDeliveryMode = z.infer<typeof vodDeliveryModeSchema>;
 
+export const vodAudioTrackSchema = z.object({
+  id: z.string().trim().min(1),
+  language: z.string().trim().min(1).nullable(),
+  title: z.string().trim().min(1).nullable(),
+  channels: z.number().int().positive().nullable(),
+  isDefault: z.boolean()
+});
+export type VodAudioTrack = z.infer<typeof vodAudioTrackSchema>;
+
 export const liveHealthStatusSchema = z.enum(["unknown", "healthy", "degraded", "broken"]);
 export type LiveHealthStatus = z.infer<typeof liveHealthStatusSchema>;
 
@@ -113,6 +122,9 @@ export const vodPlaybackSchema = z.object({
   url: z.string().url().nullable(),
   transport: vodTransportSchema,
   deliveryMode: vodDeliveryModeSchema,
+  audioTracks: z.array(vodAudioTrackSchema),
+  defaultAudioTrackId: z.string().nullable(),
+  selectedAudioTrackId: z.string().nullable(),
   expiresAt: z.string().nullable(),
   canPlay: z.boolean(),
   isVerified: z.boolean(),
