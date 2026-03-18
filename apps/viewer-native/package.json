@@ -4,6 +4,11 @@
   "private": true,
   "main": "index.js",
   "scripts": {
+    "android": "react-native run-android",
+    "android:tv": "react-native run-android",
+    "apk:clean": "cd android && ./gradlew clean",
+    "apk:debug": "cd android && ./gradlew assembleDebug",
+    "apk:release": "cd android && ./gradlew assembleRelease",
     "start": "react-native start",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -14,6 +19,10 @@
     "react-native": "npm:react-native-tvos@0.84.1-0"
   },
   "devDependencies": {
+    "@react-native/babel-preset": "0.84.1",
+    "@react-native/metro-config": "0.84.1",
+    "@react-native-community/cli": "20.0.0",
+    "@react-native-community/cli-platform-android": "20.0.0",
     "@types/react": "^19.0.11",
     "typescript": "^5.8.2"
   }

@@ -1,16 +1,28 @@
 # viewer-native
 
-Bu paket `react-native-tvos` tabanli ortak istemci kaynaklarini icerir.
+Bu paket `react-native-tvos` tabanli native istemciyi icerir.
 
-## Hedefler
+## Desteklenen Platformlar
 
-- iOS
 - Android
-- Apple TV
 - Android TV
+- Apple TV (kod tabani)
+- iOS (kod tabani)
 
-## Not
+## APK Build
 
-Bu repoda ortak ekranlar ve durum yonetimi hazirdir. Native shell olusturma ve ilgili SDK kurulumlari
-gelistirme makinesinde `react-native init` / platform toolchain adimlari ile tamamlanmalidir.
+Android SDK/JDK kuruluysa asagidaki komutlarla APK uretebilirsin:
 
+1. `npm ci`
+2. `npm run apk:debug -w @flixify/viewer-native`
+3. `npm run apk:release -w @flixify/viewer-native`
+
+Uretilen dosyalar:
+
+- Debug APK: `apps/viewer-native/android/app/build/outputs/apk/debug/app-debug.apk`
+- Release APK: `apps/viewer-native/android/app/build/outputs/apk/release/app-release.apk`
+
+## Notlar
+
+- Manifest hem `LAUNCHER` hem `LEANBACK_LAUNCHER` icerir, ayni APK Android telefon/tablet ve Android TV'de calisir.
+- Monorepo icin Metro ve Gradle yollari root `node_modules` konumuna gore ayarlanmistir.

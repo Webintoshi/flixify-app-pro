@@ -17,6 +17,8 @@ apps/*/android
 apps/*/ios
 apps/*/windows
 apps/*/webos-service
+!apps/viewer-native/android
+!apps/viewer-native/android/**
 apps/viewer-windows/dist-electron
 apps/viewer-windows/web-dist
 apps/viewer-webos/tsconfig.tsbuildinfo
