@@ -37,6 +37,33 @@ function formatCodeBlocks(value: string) {
   return groups ? groups.join(" ") : normalized;
 }
 
+function buildWhatsAppComposeUrl(baseUrl: string, message: string) {
+  const encodedMessage = encodeURIComponent(message);
+
+  try {
+    const url = new URL(baseUrl);
+    const host = url.hostname.toLowerCase();
+
+    if (host.includes("wa.me")) {
+      const phone = url.pathname.replace(/\//g, "").trim();
+      if (phone.length > 0) {
+        return `https://wa.me/${phone}?text=${encodedMessage}`;
+      }
+    }
+
+    if (host.includes("api.whatsapp.com") || host.includes("web.whatsapp.com")) {
+      url.searchParams.set("text", message);
+      return url.toString();
+    }
+
+    url.searchParams.set("text", message);
+    return url.toString();
+  } catch {
+    const separator = baseUrl.includes("?") ? "&" : "?";
+    return `${baseUrl}${separator}text=${encodedMessage}`;
+  }
+}
+
 function ActionButton({
   label,
   onPress,
@@ -85,6 +112,8 @@ export function ViewerNativeApp() {
     defaultDeviceName: "Apple TV"
   });
   const me = core.me;
+  const supportWhatsappUrl = me?.contact.whatsapp ?? null;
+  const userCodeLabel = me?.user.kryptoniteCode ?? core.codeLabel;
 
   useEffect(() => {
     if (!issuedCode) {
@@ -176,6 +205,31 @@ export function ViewerNativeApp() {
 
     setCode(issuedCode);
     setAuthScreen(loginRoute);
+  }
+
+  async function openPaymentNoticeInWhatsApp(packageDurationMonths: number) {
+    if (!supportWhatsappUrl) {
+      return;
+    }
+
+    const message = [
+      "FLIXIFY PREMIUM ODEME BILDIRIMI",
+      `${packageDurationMonths} Aylik Paket Aldim.`,
+      `Kullanici Kodum: ${userCodeLabel}`,
+      "Odememi yaptim, aktivasyon surecimi baslatmanizi rica ederim."
+    ].join("\n");
+    const composeUrl = buildWhatsAppComposeUrl(supportWhatsappUrl, message);
+
+    try {
+      await Linking.openURL(composeUrl);
+    } catch {
+      await Linking.openURL(supportWhatsappUrl);
+    }
+  }
+
+  async function handlePackagePaymentNotice(packageSlug: string, packageDurationMonths: number) {
+    await core.requestPayment(packageSlug);
+    await openPaymentNoticeInWhatsApp(packageDurationMonths);
   }
 
   if (!core.session || !me) {
@@ -442,11 +496,41 @@ export function ViewerNativeApp() {
           <TouchableOpacity onPress={() => setScreen("/ayarlar")}>
             <Text style={{ color: "#b7b7b2" }}>Kod: {core.codeLabel} (Profil)</Text>
           </TouchableOpacity>
-          {currentItems.map((item) => (
-            <Text key={item} style={{ color: "#e8e8e2" }}>
-              {item}
-            </Text>
-          ))}
+          {screen === "/paketler" ? (
+            <View style={{ gap: 12 }}>
+              {core.packages.length > 0 ? (
+                core.packages.map((item) => (
+                  <View
+                    key={item.id}
+                    style={{
+                      borderRadius: 16,
+                      borderWidth: 1,
+                      borderColor: "rgba(255,255,255,0.12)",
+                      backgroundColor: "#0f1218",
+                      padding: 14,
+                      gap: 10
+                    }}
+                  >
+                    <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>{item.title}</Text>
+                    <Text style={{ color: "#b7b7b2" }}>{item.durationMonths} aylik paket</Text>
+                    <ActionButton
+                      label={core.busy ? "Isleniyor..." : "Odeme Bildir"}
+                      onPress={() => void handlePackagePaymentNotice(item.slug, item.durationMonths)}
+                      disabled={core.busy}
+                    />
+                  </View>
+                ))
+              ) : (
+                <Text style={{ color: "#b7b7b2" }}>Aktif paket bulunamadi.</Text>
+              )}
+            </View>
+          ) : (
+            currentItems.map((item) => (
+              <Text key={item} style={{ color: "#e8e8e2" }}>
+                {item}
+              </Text>
+            ))
+          )}
         </View>
 
         {core.notice ? <Text style={{ color: "#7de3b4" }}>{core.notice}</Text> : null}
