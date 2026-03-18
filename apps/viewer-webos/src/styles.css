@@ -890,8 +890,22 @@
 }
 
 .payment-method-modal-card {
-  width: min(680px, 100%);
-  gap: 14px;
+  width: min(1100px, calc(100vw - 36px));
+  max-height: calc(100dvh - 36px);
+  padding: clamp(18px, 2.2vw, 30px);
+  gap: clamp(12px, 1.5vw, 18px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.payment-method-modal-card::-webkit-scrollbar {
+  width: 8px;
+}
+
+.payment-method-modal-card::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.24);
 }
 
 .payment-method-modal-close {
@@ -901,11 +915,13 @@
 .payment-method-grid {
   display: grid;
   gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .payment-method-option {
   display: grid;
   gap: 8px;
+  align-content: start;
   text-align: left;
   padding: 16px 18px;
   border-radius: 20px;
@@ -978,7 +994,7 @@
 }
 
 .payment-copy-button {
-  min-width: 104px;
+  min-width: 116px;
 }
 
 .crypto-asset-grid {
@@ -1033,8 +1049,72 @@
   box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.24);
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
+  .payment-method-modal-card {
+    width: min(920px, calc(100vw - 28px));
+    max-height: calc(100dvh - 24px);
+  }
+
+  .payment-method-grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+}
+
+@media (max-width: 780px) {
+  .payment-method-modal-card {
+    width: calc(100vw - 18px);
+    max-height: calc(100dvh - 14px);
+    padding: 16px;
+    border-radius: 22px;
+  }
+
+  .payment-method-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .payment-method-option {
+    padding: 14px 14px;
+    border-radius: 16px;
+  }
+
+  .payment-method-details {
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .payment-detail-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .payment-copy-button {
+    width: 100%;
+    min-width: 0;
+  }
+
   .crypto-asset-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .crypto-asset-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .crypto-asset-chip {
+    padding: 10px 6px;
+  }
+
+  .crypto-asset-symbol {
+    width: 42px;
+    height: 42px;
+  }
+
+  .crypto-asset-logo {
+    width: 26px;
+    height: 26px;
   }
 }
