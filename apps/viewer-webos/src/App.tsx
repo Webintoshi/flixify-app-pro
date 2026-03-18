@@ -7206,6 +7206,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
   const selectedCryptoAsset = selectedCryptoAssetId
     ? selectedCryptoAssets.find((asset) => asset.id === selectedCryptoAssetId) ?? null
     : null;
+  const paymentAmountLabel = toTextOrNull(pendingPaymentPackage?.priceLabel) ?? "Fiyat belirlenmedi";
 
   function closePaymentMethodModal() {
     setPendingPaymentPackage(null);
@@ -7795,18 +7796,16 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                           </div>
                           <div className="payment-detail-row">
                             <div>
-                              <small>Banka</small>
-                              <strong>{toTextOrNull(selectedPaymentMethod.bankTransfer?.bankName) ?? "-"}</strong>
+                              <small>Odenmesi Gereken Tutar</small>
+                              <strong>{paymentAmountLabel}</strong>
                             </div>
                             <button
                               type="button"
                               className="button secondary payment-copy-button"
-                              onClick={() =>
-                                void handleCopyPaymentValue(selectedPaymentMethod.bankTransfer?.bankName, "Banka adi")
-                              }
+                              onClick={() => void handleCopyPaymentValue(pendingPaymentPackage?.priceLabel, "Odeme tutari")}
                               data-tv-focusable="true"
                               data-tv-region="overlay-actions"
-                              data-tv-focus-key="payment-copy-bank-name"
+                              data-tv-focus-key="payment-copy-amount"
                             >
                               Kopyala
                             </button>
