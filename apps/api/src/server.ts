@@ -128,6 +128,12 @@ import { createLivePlaybackManager } from "./live-playback.js";
 import { createVodPlaybackManager, probeVodStream, VodPlaybackUnavailableError } from "./vod.js";
 import { API_CORS_CONFIG } from "./cors-config.js";
 import { stripEmptyJsonContentType } from "./http-headers.js";
+import {
+  BlockedUserRouteError,
+  classifyUserRouteError,
+  isUserRouteAuthError,
+  UnauthorizedUserRouteError
+} from "./user-route-error.js";
 
 type UserRequest = {
   userId: string;
@@ -220,16 +226,54 @@ function checkRateLimit(key: string, limit: number, windowMs: number) {
   return true;
 }
 
-function isBlockedError(error: unknown) {
-  return error instanceof Error && error.message === "Blocked";
-}
-
-function sendUserAuthError(reply: FastifyReply, error: unknown) {
-  if (isBlockedError(error)) {
-    return reply.status(403).send({ message: "Kullanici engellendi. Destek ekibi ile iletisim kurun." });
+async function resolveRequestUserId(request: FastifyRequest) {
+  const token = getBearerToken(request.headers.authorization);
+  if (!token) {
+    return null;
   }
 
-  return reply.status(401).send({ message: "Yetkisiz." });
+  try {
+    const payload = await verifyAccessToken(token);
+    return payload.sub ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function sendUserRouteError(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  error: unknown,
+  userId: string | null = null
+) {
+  const classifiedError = classifyUserRouteError(error);
+  const resolvedUserId = userId ?? (await resolveRequestUserId(request));
+  const route = request.routeOptions.url ?? request.url;
+
+  if (classifiedError.statusClass === "runtime-error") {
+    request.log.error(
+      {
+        err: error,
+        route,
+        requestId: request.id,
+        userId: resolvedUserId,
+        statusClass: classifiedError.statusClass
+      },
+      "User route runtime error"
+    );
+  } else {
+    request.log.warn(
+      {
+        route,
+        requestId: request.id,
+        userId: resolvedUserId,
+        statusClass: classifiedError.statusClass
+      },
+      "User route auth error"
+    );
+  }
+
+  return reply.status(classifiedError.statusCode).send({ message: classifiedError.message });
 }
 
 function getRequestBaseOrigin(request: FastifyRequest) {
@@ -472,23 +516,23 @@ async function issueSession(userId: string, input: { deviceName?: string; platfo
 async function authenticateUser(authorization?: string): Promise<UserRequest> {
   const token = getBearerToken(authorization);
   if (!token) {
-    throw new Error("Unauthorized");
+    throw new UnauthorizedUserRouteError();
   }
 
   const payload = await verifyAccessToken(token);
   if (!payload.sub || !payload.sid) {
-    throw new Error("Unauthorized");
+    throw new UnauthorizedUserRouteError();
   }
 
   if (isDemoMode) {
     const me = getDemoMe(payload.sub);
     if (!me || me.user.status === "blocked") {
-      throw new Error("Blocked");
+      throw new BlockedUserRouteError();
     }
 
     const session = getDemoSession(payload.sid, payload.sub);
     if (!session) {
-      throw new Error("Unauthorized");
+      throw new UnauthorizedUserRouteError();
     }
 
     return {
@@ -498,13 +542,16 @@ async function authenticateUser(authorization?: string): Promise<UserRequest> {
   }
 
   const userStatus = await getUserStatus(payload.sub);
-  if (!userStatus || userStatus === "blocked") {
-    throw new Error("Blocked");
+  if (!userStatus) {
+    throw new UnauthorizedUserRouteError();
+  }
+  if (userStatus === "blocked") {
+    throw new BlockedUserRouteError();
   }
 
   const session = await getSessionById(payload.sid);
   if (!session || session.revoked_at || session.user_id !== payload.sub) {
-    throw new Error("Unauthorized");
+    throw new UnauthorizedUserRouteError();
   }
 
   await touchDeviceSession(session.id);
@@ -765,8 +812,7 @@ export function buildServer() {
         }
       };
     } catch (error) {
-      request.log.error(error);
-      return sendUserAuthError(reply, error);
+      return sendUserRouteError(request, reply, error);
     }
   });
 
@@ -783,8 +829,7 @@ export function buildServer() {
         items: await listDeviceSessionsForUser(auth.userId, auth.sessionId)
       };
     } catch (error) {
-      request.log.error(error);
-      return sendUserAuthError(reply, error);
+      return sendUserRouteError(request, reply, error);
     }
   });
 
@@ -801,8 +846,7 @@ export function buildServer() {
       await revokeDeviceSessionForUser(auth.userId, sessionId);
       return { ok: true };
     } catch (error) {
-      request.log.error(error);
-      return sendUserAuthError(reply, error);
+      return sendUserRouteError(request, reply, error);
     }
   });
 
@@ -837,8 +881,7 @@ export function buildServer() {
         }
       );
     } catch (error) {
-      request.log.error(error);
-      return sendUserAuthError(reply, error);
+      return sendUserRouteError(request, reply, error);
     }
   });
 
@@ -981,23 +1024,6 @@ export function buildServer() {
 
       const canPlay = Boolean(userContext.canPlay) && (resolved.ok || optimisticProbeFallback);
 
-      if (optimisticProbeFallback && resolved.sourceUrl) {
-        return {
-          channelId,
-          url: resolved.sourceUrl,
-          transport,
-          sourceTransport: transport,
-          deliveryMode: transport === "hls" ? "hls_proxy" : "file_proxy",
-          diagnosticsSessionId: null,
-          healthStatus,
-          lastCheckedAt: checkedAt,
-          expiresAt: null,
-          canPlay: true,
-          isVerified: false,
-          errorMessage: null
-        };
-      }
-
       const playback = await livePlaybackManager.createPlayback({
         channelId,
         snapshotVersion: channel.snapshot_version,
@@ -1010,7 +1036,7 @@ export function buildServer() {
         isVerified: resolved.ok,
         errorMessage: canPlay ? null : errorMessage ?? "Canli yayin gecici olarak kullanilamiyor.",
         forceRelayRestart,
-        allowFileProxyFallback: debugFileProxy,
+        allowFileProxyFallback: debugFileProxy || optimisticProbeFallback,
         preferDirectProxy: !preferRelay,
         preferTranscode
       });
@@ -1025,8 +1051,7 @@ export function buildServer() {
 
       return playback;
     } catch (error) {
-      request.log.error(error);
-      return sendUserAuthError(reply, error);
+      return sendUserRouteError(request, reply, error);
     }
   });
 
@@ -1053,8 +1078,7 @@ export function buildServer() {
       await reportLivePlaybackEvent(channel.id, channel.snapshot_version, payload.event, payload);
       return { ok: true };
     } catch (error) {
-      request.log.error(error);
-      return sendUserAuthError(reply, error);
+      return sendUserRouteError(request, reply, error);
     }
   });
 
@@ -1089,8 +1113,7 @@ export function buildServer() {
         }
       );
     } catch (error) {
-      request.log.error(error);
-      return sendUserAuthError(reply, error);
+      return sendUserRouteError(request, reply, error);
     }
   });
 
@@ -1125,8 +1148,7 @@ export function buildServer() {
         }
       );
     } catch (error) {
-      request.log.error(error);
-      return sendUserAuthError(reply, error);
+      return sendUserRouteError(request, reply, error);
     }
   });
 
@@ -1140,9 +1162,11 @@ export function buildServer() {
         rawQuery?.debugVod === "true" ||
         rawQuery?.debugVod === "1";
       const preferTranscode =
-        rawQuery?.preferTranscode === true ||
-        rawQuery?.preferTranscode === "true" ||
-        rawQuery?.preferTranscode === "1";
+        rawQuery?.preferTranscode === undefined
+          ? true
+          : rawQuery?.preferTranscode === true ||
+            rawQuery?.preferTranscode === "true" ||
+            rawQuery?.preferTranscode === "1";
       const audioTrackId =
         typeof rawQuery?.audioTrackId === "string" && rawQuery.audioTrackId.trim().length > 0
           ? rawQuery.audioTrackId.trim().slice(0, 120)
@@ -1238,16 +1262,6 @@ export function buildServer() {
         };
       }
 
-      if (!resolved.ok && !preferTranscode) {
-        return buildDirectVodPlaybackFallback({
-          itemId,
-          kind,
-          sourceUrl: resolved.sourceUrl,
-          transport: resolved.transport,
-          isVerified: false
-        });
-      }
-
       try {
         const playback = await vodPlaybackManager.createPlayback({
           userId: auth.userId,
@@ -1262,7 +1276,7 @@ export function buildServer() {
           selectedAudioTrackId: audioTrackId
         });
 
-        if (!playback.canPlay && !preferTranscode) {
+        if (!playback.canPlay) {
           return buildDirectVodPlaybackFallback({
             itemId,
             kind,
@@ -1275,24 +1289,25 @@ export function buildServer() {
         return playback;
       } catch (error) {
         if (error instanceof VodPlaybackUnavailableError) {
-          if (!preferTranscode) {
-            return buildDirectVodPlaybackFallback({
-              itemId,
-              kind,
-              sourceUrl: resolved.sourceUrl,
-              transport: resolved.transport,
-              isVerified: false
-            });
-          }
-          return reply.status(error.statusCode).send({
-            message: error.message
+          return buildDirectVodPlaybackFallback({
+            itemId,
+            kind,
+            sourceUrl: resolved.sourceUrl,
+            transport: resolved.transport,
+            isVerified: false
           });
         }
-        throw error;
+
+        return buildDirectVodPlaybackFallback({
+          itemId,
+          kind,
+          sourceUrl: resolved.sourceUrl,
+          transport: resolved.transport,
+          isVerified: false
+        });
       }
     } catch (error) {
-      request.log.error(error);
-      return sendUserAuthError(reply, error);
+      return sendUserRouteError(request, reply, error);
     }
   });
 
@@ -1327,8 +1342,7 @@ export function buildServer() {
       await reportVodPlaybackEvent(itemId, kind, payload.event, payload);
       return { ok: true };
     } catch (error) {
-      request.log.error(error);
-      return sendUserAuthError(reply, error);
+      return sendUserRouteError(request, reply, error);
     }
   });
 
@@ -1395,10 +1409,10 @@ export function buildServer() {
       await createPaymentRequest(auth.userId, payload.packageSlug);
       return { ok: true };
     } catch (error) {
-      request.log.error(error);
-      if (error instanceof Error && (error.message === "Unauthorized" || error.message === "Blocked")) {
-        return sendUserAuthError(reply, error);
+      if (isUserRouteAuthError(error)) {
+        return sendUserRouteError(request, reply, error);
       }
+      request.log.error(error);
       return reply.status(400).send({ message: "Odeme talebi olusturulamadi." });
     }
   });
@@ -1415,8 +1429,7 @@ export function buildServer() {
         items: await listMyPaymentRequests(auth.userId)
       };
     } catch (error) {
-      request.log.error(error);
-      return sendUserAuthError(reply, error);
+      return sendUserRouteError(request, reply, error);
     }
   });
 
@@ -1433,10 +1446,10 @@ export function buildServer() {
       await createTrialRequest(auth.userId, payload.note);
       return { ok: true };
     } catch (error) {
-      request.log.error(error);
-      if (error instanceof Error && (error.message === "Unauthorized" || error.message === "Blocked")) {
-        return sendUserAuthError(reply, error);
+      if (isUserRouteAuthError(error)) {
+        return sendUserRouteError(request, reply, error);
       }
+      request.log.error(error);
       return reply.status(400).send({ message: "Deneme talebi olusturulamadi." });
     }
   });

@@ -205,6 +205,36 @@ function getCodeLabel(kryptoniteCode: string | null | undefined, codeSuffix: str
   return "Kod hazir degil";
 }
 
+class ViewerAuthInvalidatedError extends Error {
+  constructor(message = "Oturum suresi doldu.") {
+    super(message);
+    this.name = "ViewerAuthInvalidatedError";
+  }
+}
+
+function isViewerAuthInvalidatedError(error: unknown) {
+  return error instanceof ViewerAuthInvalidatedError;
+}
+
+function resolveApiErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof ApiError) {
+    try {
+      const parsed = JSON.parse(error.body) as { message?: unknown };
+      if (typeof parsed.message === "string" && parsed.message.trim().length > 0) {
+        return parsed.message.trim();
+      }
+    } catch {
+      // Body may not be JSON.
+    }
+  }
+
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message.trim();
+  }
+
+  return fallback;
+}
+
 export function useViewerCore(options: ViewerCoreOptions) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -223,7 +253,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
   const liveCatalogRequestIdRef = useRef(0);
   const movieCatalogRequestIdRef = useRef(0);
   const seriesCatalogRequestIdRef = useRef(0);
-  const refreshPromiseRef = useRef<Promise<boolean> | null>(null);
+  const refreshPromiseRef = useRef<Promise<"refreshed" | "auth-invalid"> | null>(null);
   const sessionKey = options.sessionStorageKey ?? "flixify-viewer-session";
 
   const clientRef = useRef(
@@ -263,6 +293,27 @@ export function useViewerCore(options: ViewerCoreOptions) {
     return error instanceof ApiError && error.status === 401;
   }
 
+  function findFirstRejected(results: PromiseSettledResult<unknown>[]) {
+    return results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected"
+    );
+  }
+
+  function findAuthInvalidation(results: PromiseSettledResult<unknown>[]) {
+    return results.find(
+      (result): result is PromiseRejectedResult =>
+        result.status === "rejected" && isViewerAuthInvalidatedError(result.reason)
+    );
+  }
+
+  async function loadPublicBootstrapData() {
+    const results = await Promise.allSettled([loadPackages(), loadPaymentMethods()]);
+    const rejected = findFirstRejected(results);
+    if (rejected) {
+      setError((current) => current ?? resolveApiErrorMessage(rejected.reason, "Baslangic verileri yuklenemedi."));
+    }
+  }
+
   async function clearAuthenticatedState() {
     await persistSession(null);
     setMe(null);
@@ -293,16 +344,21 @@ export function useViewerCore(options: ViewerCoreOptions) {
 
     const currentSession = sessionRef.current;
     if (!currentSession) {
-      return false;
+      return "auth-invalid" as const;
     }
 
     refreshPromiseRef.current = (async () => {
       try {
-        return await refreshSessionOnly(currentSession);
-      } catch {
-        await clearAuthenticatedState();
-        await loadPackages().catch(() => undefined);
-        return false;
+        await refreshSessionOnly(currentSession);
+        return "refreshed" as const;
+      } catch (error) {
+        if (isUnauthorizedError(error)) {
+          await clearAuthenticatedState();
+          await loadPublicBootstrapData();
+          return "auth-invalid" as const;
+        }
+
+        throw error;
       } finally {
         refreshPromiseRef.current = null;
       }
@@ -319,12 +375,22 @@ export function useViewerCore(options: ViewerCoreOptions) {
         throw error;
       }
 
-      const refreshed = await ensureFreshSession();
-      if (!refreshed) {
-        throw new Error("Oturum suresi doldu.");
+      const refreshOutcome = await ensureFreshSession();
+      if (refreshOutcome !== "refreshed") {
+        throw new ViewerAuthInvalidatedError();
       }
 
-      return operation();
+      try {
+        return await operation();
+      } catch (retryError) {
+        if (!isUnauthorizedError(retryError)) {
+          throw retryError;
+        }
+
+        await clearAuthenticatedState();
+        await loadPublicBootstrapData();
+        throw new ViewerAuthInvalidatedError();
+      }
     }
   }
 
@@ -510,11 +576,23 @@ export function useViewerCore(options: ViewerCoreOptions) {
       return;
     }
 
-    await Promise.all([
+    const results = await Promise.allSettled([
       loadLiveCatalog(params),
       loadMoviesCatalog(params),
       loadSeriesCatalog(params)
     ]);
+
+    const authFailure = findAuthInvalidation(results);
+    if (authFailure) {
+      throw authFailure.reason;
+    }
+
+    const rejected = findFirstRejected(results);
+    if (rejected) {
+      setError((current) =>
+        current ?? resolveApiErrorMessage(rejected.reason, "Bazi kataloglar su an yuklenemedi.")
+      );
+    }
   }
 
   async function loadMoreMovies(params?: { search?: string; group?: string }) {
@@ -605,13 +683,27 @@ export function useViewerCore(options: ViewerCoreOptions) {
     const response = await runAuthenticatedRequest(() => clientRef.current.me());
     setMe(response);
 
-    await Promise.all([
+    const results = await Promise.allSettled([
       loadPackages(),
       loadPaymentMethods(),
       loadDeviceSessions(),
       loadPaymentRequests(),
       response.user.hasAssignedLink ? loadCatalogs(params) : Promise.resolve()
     ]);
+
+    const authFailure = findAuthInvalidation(results);
+    if (authFailure) {
+      throw authFailure.reason;
+    }
+
+    const rejected = findFirstRejected(results);
+    if (rejected) {
+      setError((current) =>
+        current ?? resolveApiErrorMessage(rejected.reason, "Bazi hesap verileri yuklenemedi.")
+      );
+    }
+
+    return response;
   }
 
   async function refreshMe() {
@@ -625,16 +717,6 @@ export function useViewerCore(options: ViewerCoreOptions) {
     return response;
   }
 
-  async function attemptRefresh(storedSession: ViewerSession) {
-    try {
-      await refreshSessionOnly(storedSession);
-      await loadMeAndData();
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   async function bootstrap() {
     setLoading(true);
     setError(null);
@@ -642,10 +724,10 @@ export function useViewerCore(options: ViewerCoreOptions) {
     try {
       const raw = await Promise.resolve(options.storage.getItem(sessionKey));
       if (!raw) {
-        await loadPackages();
-        await loadPaymentMethods();
+        await loadPublicBootstrapData();
         setMe(null);
         setDeviceSessions([]);
+        setPaymentRequests([]);
         return;
       }
 
@@ -654,18 +736,20 @@ export function useViewerCore(options: ViewerCoreOptions) {
 
       try {
         await loadMeAndData();
-      } catch {
-        const refreshed = await attemptRefresh(storedSession);
-        if (!refreshed) {
-          await persistSession(null);
-          setMe(null);
-          setDeviceSessions([]);
-          setPaymentRequests([]);
-          await Promise.all([loadPackages(), loadPaymentMethods()]);
+      } catch (authError) {
+        if (isViewerAuthInvalidatedError(authError)) {
+          await clearAuthenticatedState();
+          await loadPublicBootstrapData();
+          return;
         }
+
+        setError(resolveApiErrorMessage(authError, "Oturum dogrulandi ancak veriler yuklenemedi."));
+        await loadPublicBootstrapData();
       }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Viewer bootstrap basarisiz");
+      await clearAuthenticatedState();
+      await loadPublicBootstrapData();
+      setError(resolveApiErrorMessage(nextError, "Viewer bootstrap basarisiz"));
     } finally {
       setLoading(false);
     }
