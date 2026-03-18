@@ -112,6 +112,16 @@ type PaymentMethodSettings = {
   bankCardDetails: string | null;
 };
 
+const PAYMENT_METHOD_COLUMNS_SQL = `
+  alter table public.app_settings
+  add column if not exists bank_transfer_eft_enabled boolean not null default true,
+  add column if not exists bank_transfer_eft_details text,
+  add column if not exists crypto_enabled boolean not null default true,
+  add column if not exists crypto_details text,
+  add column if not exists bank_card_enabled boolean not null default true,
+  add column if not exists bank_card_details text;
+`;
+
 export type UserContext = {
   summary: UserSummary;
   snapshotVersion: number;
@@ -227,6 +237,27 @@ function mapPaymentMethodsForViewer(settings: PaymentMethodSettings): PaymentMet
       details: settings.bankCardDetails
     }
   ];
+}
+
+function isMissingPaymentMethodColumnsError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const maybeError = error as { code?: string; message?: string };
+  if (maybeError.code === "42703") {
+    return true;
+  }
+
+  const message = typeof maybeError.message === "string" ? maybeError.message : "";
+  return (
+    message.includes("bank_transfer_eft_enabled") ||
+    message.includes("bank_transfer_eft_details") ||
+    message.includes("crypto_enabled") ||
+    message.includes("crypto_details") ||
+    message.includes("bank_card_enabled") ||
+    message.includes("bank_card_details")
+  );
 }
 
 function hasAssignedSource(row: Pick<UserContextRow, "iptv_username" | "iptv_password" | "source_base_url">) {
@@ -2532,22 +2563,47 @@ export async function getAppSettings() {
 }
 
 export async function getPaymentMethodSettings() {
-  const result = await query<AppSettingsRow>(
-    `
-      select
-        bank_transfer_eft_enabled,
-        bank_transfer_eft_details,
-        crypto_enabled,
-        crypto_details,
-        bank_card_enabled,
-        bank_card_details
-      from public.app_settings
-      where id = true
-      limit 1
-    `
-  );
+  try {
+    const result = await query<AppSettingsRow>(
+      `
+        select
+          bank_transfer_eft_enabled,
+          bank_transfer_eft_details,
+          crypto_enabled,
+          crypto_details,
+          bank_card_enabled,
+          bank_card_details
+        from public.app_settings
+        where id = true
+        limit 1
+      `
+    );
 
-  return mapPaymentMethodSettings(result.rows[0]);
+    return mapPaymentMethodSettings(result.rows[0]);
+  } catch (error) {
+    if (!isMissingPaymentMethodColumnsError(error)) {
+      throw error;
+    }
+
+    await query(PAYMENT_METHOD_COLUMNS_SQL);
+
+    const result = await query<AppSettingsRow>(
+      `
+        select
+          bank_transfer_eft_enabled,
+          bank_transfer_eft_details,
+          crypto_enabled,
+          crypto_details,
+          bank_card_enabled,
+          bank_card_details
+        from public.app_settings
+        where id = true
+        limit 1
+      `
+    );
+
+    return mapPaymentMethodSettings(result.rows[0]);
+  }
 }
 
 export async function listPublicPaymentMethods() {
@@ -2557,6 +2613,8 @@ export async function listPublicPaymentMethods() {
 
 export async function updatePaymentMethodSettings(input: PaymentMethodSettings, adminId: string) {
   return withTransaction(async (client) => {
+    await client.query(PAYMENT_METHOD_COLUMNS_SQL);
+
     await client.query(
       `
         insert into public.app_settings (

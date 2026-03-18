@@ -123,6 +123,27 @@ export type ViewerPaymentRequest = {
 
 export type ViewerPaymentMethod = PaymentMethodOption;
 
+const defaultViewerPaymentMethods: ViewerPaymentMethod[] = [
+  {
+    id: "bank-transfer-eft",
+    label: "Banka Havale / EFT",
+    enabled: true,
+    details: null
+  },
+  {
+    id: "crypto",
+    label: "Kripto",
+    enabled: true,
+    details: null
+  },
+  {
+    id: "bank-card",
+    label: "Banka Karti",
+    enabled: true,
+    details: null
+  }
+];
+
 export function createBrowserStorageAdapter(storage: Storage): ViewerStorageAdapter {
   return {
     getItem(key) {
@@ -229,8 +250,13 @@ export function useViewerCore(options: ViewerCoreOptions) {
   }
 
   async function loadPaymentMethods() {
-    const response = await clientRef.current.paymentMethodsPublic();
-    setPaymentMethods(response.items);
+    try {
+      const response = await clientRef.current.paymentMethodsPublic();
+      const nextItems = response.items.length > 0 ? response.items : defaultViewerPaymentMethods;
+      setPaymentMethods(nextItems);
+    } catch {
+      setPaymentMethods(defaultViewerPaymentMethods);
+    }
   }
 
   function isUnauthorizedError(error: unknown) {
