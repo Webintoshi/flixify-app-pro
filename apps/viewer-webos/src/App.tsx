@@ -2936,7 +2936,6 @@ function LiveTvPage({
   const applyFiltersRef = useRef(onApplyFilters);
   const loadMoreRef = useRef(onLoadMore);
   const requestIdRef = useRef(0);
-  const activeGroupRef = useRef(LIVE_DEFAULT_COUNTRY_FILTER);
   const appliedSearchRef = useRef("");
   const appliedGroupRef = useRef(LIVE_DEFAULT_COUNTRY_FILTER);
   const loadingMoreInFlightRef = useRef(false);
@@ -2952,10 +2951,6 @@ function LiveTvPage({
   useEffect(() => {
     loadMoreRef.current = onLoadMore;
   }, [onLoadMore]);
-
-  useEffect(() => {
-    activeGroupRef.current = activeGroup;
-  }, [activeGroup]);
 
   const countryCounts = new Map<string, number>();
   const prefixFallbackCountryBuckets: Array<{ code: string; count: number }> = [];
@@ -3060,6 +3055,10 @@ function LiveTvPage({
         setIsFiltering(false);
       }
     }
+  }
+
+  function submitLiveSearch() {
+    void runLiveFilters(search, activeGroup);
   }
 
   useEffect(() => {
@@ -3237,12 +3236,20 @@ function LiveTvPage({
 
         <aside className="live-tv-sidebar">
           <div className="live-tv-sidebar-head">
-            <div className="live-tv-search">
+            <form
+              className="live-tv-search"
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitLiveSearch();
+              }}
+            >
               <button
-                type="button"
+                type="submit"
                 className="live-tv-search-trigger"
                 aria-label="Kanal ara"
-                onClick={() => void runLiveFilters(search, activeGroupRef.current)}
+                data-tv-focusable="true"
+                data-tv-region="live-search"
+                data-tv-focus-key="live-search-submit"
               >
                 <SearchGlyph />
               </button>
@@ -3250,11 +3257,6 @@ function LiveTvPage({
                 value={search}
                 onChange={(event) => {
                   setSearch(event.target.value);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    void runLiveFilters(search, activeGroupRef.current);
-                  }
                 }}
                 placeholder="Kanal ara..."
                 className="live-tv-search-input"
@@ -3268,13 +3270,16 @@ function LiveTvPage({
                   className="live-tv-search-clear"
                   onClick={() => {
                     setSearch("");
-                    void runLiveFilters("", activeGroupRef.current);
+                    void runLiveFilters("", activeGroup);
                   }}
+                  data-tv-focusable="true"
+                  data-tv-region="live-search"
+                  data-tv-focus-key="live-search-clear"
                 >
                   Temizle
                 </button>
               ) : null}
-            </div>
+            </form>
 
             <div className="live-tv-sidebar-bar">
               <strong>Kanallar</strong>
