@@ -381,6 +381,8 @@ type CreateVodPlaybackInput = {
   itemId: string;
   kind: VodPlaybackKind;
   sourceUrl: string;
+  allowUnverifiedSource?: boolean;
+  sourceTransportHint?: VodTransport;
   baseOrigin: string;
   debug?: boolean;
   preferTranscode?: boolean;
@@ -959,6 +961,10 @@ export function createFfmpegArgs(input: {
     "45",
     "-rw_timeout",
     "15000000",
+    "-user_agent",
+    DEFAULT_REQUEST_HEADERS["user-agent"],
+    "-headers",
+    "Accept: */*\r\n",
     "-i",
     input.sourceUrl
   ];
@@ -1326,7 +1332,8 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       supportsByteRange: probe.supportsByteRange,
       errorMessage: probe.errorMessage
     });
-    if (!probe.ok || !probe.finalUrl) {
+    const allowUnverifiedSource = input.allowUnverifiedSource === true;
+    if ((!probe.ok || !probe.finalUrl) && !allowUnverifiedSource) {
       return buildDisabledPlaybackRecord({
         itemId: input.itemId,
         kind: input.kind,
@@ -1336,9 +1343,23 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       });
     }
 
+    const effectiveSourceUrl = probe.finalUrl ?? input.sourceUrl;
+    const effectiveTransport =
+      probe.transport !== "unknown" ? probe.transport : (input.sourceTransportHint ?? "unknown");
+    const isVerified = probe.ok && Boolean(probe.finalUrl);
+    const supportsByteRange = isVerified ? probe.supportsByteRange : false;
+
+    if (!isVerified && allowUnverifiedSource) {
+      debugLog("probe-bypassed", {
+        sourceUrl: input.sourceUrl,
+        transportHint: input.sourceTransportHint ?? "unknown",
+        probeError: probe.errorMessage
+      });
+    }
+
     const decision = resolveVodTranscodeDecision({
-      transport: probe.transport,
-      supportsByteRange: probe.supportsByteRange,
+      transport: effectiveTransport,
+      supportsByteRange,
       preferTranscode: input.preferTranscode === true,
       debugPassthrough: debugEnabled
     });
@@ -1346,13 +1367,13 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
 
     if (decision.requiresFfmpeg && !canUseFfmpeg) {
       debugLog("unsupported-without-ffmpeg", {
-        transport: probe.transport,
+        transport: effectiveTransport,
         preferTranscode: input.preferTranscode === true
       });
       return buildDisabledPlaybackRecord({
         itemId: input.itemId,
         kind: input.kind,
-        transport: probe.transport,
+        transport: effectiveTransport,
         deliveryMode: "hls_transcoded",
         errorMessage: "Uyumluluk modu icin FFmpeg gerekli. Sunucuda FFmpeg bulunamadi."
       });
@@ -1361,7 +1382,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     const deliveryMode: VodDeliveryMode = decision.deliveryMode;
     const shouldTranscode = deliveryMode === "hls_transcoded";
     const sourceAudioTracks = shouldTranscode
-      ? await probeSourceAudioTracks(options.ffmpegBinary, probe.finalUrl)
+      ? await probeSourceAudioTracks(options.ffmpegBinary, effectiveSourceUrl)
       : [];
     const injectSilentAudioTrack = shouldTranscode && sourceAudioTracks.length === 0;
     const audioSelection = shouldTranscode
@@ -1380,18 +1401,18 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       itemId: input.itemId,
       kind: input.kind,
       baseOrigin: input.baseOrigin,
-      sourceUrl: probe.finalUrl,
-      sourceTransport: probe.transport,
+      sourceUrl: effectiveSourceUrl,
+      sourceTransport: effectiveTransport,
       deliveryMode,
       expiresAt: Date.now() + sessionTtlMs,
-      isVerified: probe.ok,
+      isVerified,
       audioTracks,
       defaultAudioTrackId: audioSelection.defaultTrackId,
       selectedAudioTrackId: audioSelection.selectedTrackId,
       proxyState:
         deliveryMode === "hls_proxy"
           ? {
-              rootUrl: probe.finalUrl,
+              rootUrl: effectiveSourceUrl,
               assetToUrl: new Map(),
               urlToAsset: new Map()
             }
@@ -1462,7 +1483,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
         return buildDisabledPlaybackRecord({
           itemId: input.itemId,
           kind: input.kind,
-          transport: probe.transport,
+          transport: effectiveTransport,
           deliveryMode: "hls_transcoded",
           errorMessage: message
         });
@@ -1472,7 +1493,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
         return buildDisabledPlaybackRecord({
           itemId: input.itemId,
           kind: input.kind,
-          transport: probe.transport,
+          transport: effectiveTransport,
           deliveryMode: "hls_transcoded",
           errorMessage: prepared.errorMessage ?? "VOD akisi HLS formatina donusturulemedi."
         });

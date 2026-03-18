@@ -362,12 +362,16 @@ async function resolveVodSourceUrl(input: {
       ok: false,
       sourceUrl: null,
       transport: "unknown" as const,
-      errorMessage: "VOD kimlik bilgileri eksik."
+      errorMessage: "VOD kimlik bilgileri eksik.",
+      isVerified: false
     };
   }
 
   let lastError = "VOD kaynagi dogrulanamadi.";
-  let lastTransport = "unknown" as const;
+  let lastTransport: "hls" | "mp4" | "mkv" | "avi" | "unknown" = "unknown";
+  let sawNetworkLikeFailure = false;
+  let sawClientHttpFailure = false;
+  let firstCandidateUrl: string | null = candidates[0]?.url ?? null;
 
   for (const candidate of candidates) {
     const probe = await probeVodStream(candidate.url);
@@ -377,17 +381,36 @@ async function resolveVodSourceUrl(input: {
         ok: true,
         sourceUrl: candidate.url,
         transport: probe.transport,
-        errorMessage: null
+        errorMessage: null,
+        isVerified: true
       };
+    }
+    if (probe.statusCode === 0) {
+      sawNetworkLikeFailure = true;
+    }
+    if (probe.statusCode >= 400 && probe.statusCode < 500) {
+      sawClientHttpFailure = true;
     }
     lastError = probe.errorMessage ?? lastError;
   }
 
+  const allowOptimisticSourceAttempt = Boolean(firstCandidateUrl) && (sawNetworkLikeFailure || sawClientHttpFailure);
+  if (allowOptimisticSourceAttempt) {
+    return {
+      ok: true,
+      sourceUrl: firstCandidateUrl,
+      transport: lastTransport,
+      errorMessage: lastError,
+      isVerified: false
+    };
+  }
+
   return {
     ok: false,
-    sourceUrl: candidates[0]?.url ?? null,
+    sourceUrl: firstCandidateUrl,
     transport: lastTransport,
-    errorMessage: lastError
+    errorMessage: lastError,
+    isVerified: false
   };
 }
 
@@ -1056,6 +1079,10 @@ export function buildServer() {
         rawQuery?.preferTranscode === true ||
         rawQuery?.preferTranscode === "true" ||
         rawQuery?.preferTranscode === "1";
+      const audioTrackId =
+        typeof rawQuery?.audioTrackId === "string" && rawQuery.audioTrackId.trim().length > 0
+          ? rawQuery.audioTrackId.trim().slice(0, 120)
+          : null;
 
       if (kind !== "movie" && kind !== "episode") {
         return reply.status(400).send({ message: "VOD turu gecersiz." });
@@ -1156,6 +1183,8 @@ export function buildServer() {
           baseOrigin,
           debug: debugVod,
           preferTranscode,
+          allowUnverifiedSource: resolved.isVerified === false,
+          sourceTransportHint: resolved.transport,
           selectedAudioTrackId: audioTrackId
         });
       } catch (error) {
