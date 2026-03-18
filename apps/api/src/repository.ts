@@ -146,6 +146,11 @@ const PAYMENT_METHOD_COLUMNS_SQL = `
   add column if not exists bank_card_details text;
 `;
 
+const PACKAGE_PRICE_COLUMN_SQL = `
+  alter table public.packages
+  add column if not exists price_label text;
+`;
+
 export type UserContext = {
   summary: UserSummary;
   snapshotVersion: number;
@@ -335,6 +340,20 @@ function isMissingPaymentMethodColumnsError(error: unknown) {
     message.includes("bank_card_enabled") ||
     message.includes("bank_card_details")
   );
+}
+
+function isMissingPackagePriceColumnError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const maybeError = error as { code?: string; message?: string };
+  if (maybeError.code === "42703") {
+    return true;
+  }
+
+  const message = typeof maybeError.message === "string" ? maybeError.message : "";
+  return message.includes("price_label");
 }
 
 function hasAssignedSource(row: Pick<UserContextRow, "iptv_username" | "iptv_password" | "source_base_url">) {
@@ -661,27 +680,57 @@ export async function touchDeviceSession(sessionId: string) {
 
 export async function listPackages({ onlyActive = false } = {}) {
   const clauses = onlyActive ? "where is_active = true" : "";
-  const result = await query<{
-    id: string;
-    slug: string;
-    title: string;
-    duration: PackageDuration;
-    duration_months: number;
-    is_active: boolean;
-    created_at: string;
-  }>(
-    `select id, slug, title, duration, duration_months, is_active, created_at from public.packages ${clauses} order by duration_months asc`
-  );
+  const sql = `select id, slug, title, duration, duration_months, price_label, is_active, created_at from public.packages ${clauses} order by duration_months asc`;
+  try {
+    const result = await query<{
+      id: string;
+      slug: string;
+      title: string;
+      duration: PackageDuration;
+      duration_months: number;
+      price_label: string | null;
+      is_active: boolean;
+      created_at: string;
+    }>(sql);
 
-  return result.rows.map<PackageRecord>((row) => ({
-    id: row.id,
-    slug: row.slug,
-    title: row.title,
-    duration: row.duration,
-    durationMonths: row.duration_months,
-    isActive: row.is_active,
-    createdAt: row.created_at
-  }));
+    return result.rows.map<PackageRecord>((row) => ({
+      id: row.id,
+      slug: row.slug,
+      title: row.title,
+      duration: row.duration,
+      durationMonths: row.duration_months,
+      priceLabel: row.price_label ?? null,
+      isActive: row.is_active,
+      createdAt: row.created_at
+    }));
+  } catch (error) {
+    if (!isMissingPackagePriceColumnError(error)) {
+      throw error;
+    }
+
+    await query(PACKAGE_PRICE_COLUMN_SQL);
+    const result = await query<{
+      id: string;
+      slug: string;
+      title: string;
+      duration: PackageDuration;
+      duration_months: number;
+      price_label: string | null;
+      is_active: boolean;
+      created_at: string;
+    }>(sql);
+
+    return result.rows.map<PackageRecord>((row) => ({
+      id: row.id,
+      slug: row.slug,
+      title: row.title,
+      duration: row.duration,
+      durationMonths: row.duration_months,
+      priceLabel: row.price_label ?? null,
+      isActive: row.is_active,
+      createdAt: row.created_at
+    }));
+  }
 }
 
 function buildSearchClause(search?: string) {
@@ -2823,15 +2872,28 @@ export async function updatePaymentMethodSettings(input: PaymentMethodSettings, 
   });
 }
 
-export async function updatePackageStatus(packageId: string, isActive: boolean, adminId: string) {
+export async function updatePackageStatus(
+  packageId: string,
+  input: {
+    isActive?: boolean;
+    priceLabel?: string | null;
+  },
+  adminId: string
+) {
   return withTransaction(async (client) => {
+    await client.query(PACKAGE_PRICE_COLUMN_SQL);
+
+    const hasIsActive = input.isActive !== undefined;
+    const hasPriceLabel = input.priceLabel !== undefined;
     const result = await client.query(
       `
         update public.packages
-        set is_active = $2
+        set
+          is_active = case when $2::boolean then $3::boolean else is_active end,
+          price_label = case when $4::boolean then $5::text else price_label end
         where id = $1
       `,
-      [packageId, isActive]
+      [packageId, hasIsActive, input.isActive ?? false, hasPriceLabel, input.priceLabel ?? null]
     );
 
     if (result.rowCount === 0) {
@@ -2841,9 +2903,20 @@ export async function updatePackageStatus(packageId: string, isActive: boolean, 
     await client.query(
       `
         insert into public.admin_audit_logs (admin_id, action, entity_type, entity_id, payload)
-        values ($1, 'update-package-status', 'package', $2, jsonb_build_object('isActive', $3::boolean))
+        values (
+          $1,
+          'update-package-status',
+          'package',
+          $2,
+          jsonb_strip_nulls(
+            jsonb_build_object(
+              'isActive', case when $3::boolean then $4::boolean else null end,
+              'priceLabel', case when $5::boolean then $6::text else null end
+            )
+          )
+        )
       `,
-      [adminId, packageId, isActive]
+      [adminId, packageId, hasIsActive, input.isActive ?? false, hasPriceLabel, input.priceLabel ?? null]
     );
   });
 }

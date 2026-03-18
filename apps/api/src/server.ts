@@ -1590,15 +1590,15 @@ export function buildServer() {
       const payload = adminUpdatePackageStatusInputSchema.parse(request.body);
 
       if (isDemoMode) {
-        updateDemoPackageStatus(packageId, payload.isActive);
+        updateDemoPackageStatus(packageId, payload);
         return { ok: true };
       }
 
-      await updatePackageStatus(packageId, payload.isActive, admin.adminId);
+      await updatePackageStatus(packageId, payload, admin.adminId);
       return { ok: true };
     } catch (error) {
       request.log.error(error);
-      return reply.status(400).send({ message: "Paket durumu guncellenemedi." });
+      return reply.status(400).send({ message: "Paket bilgisi guncellenemedi." });
     }
   });
 

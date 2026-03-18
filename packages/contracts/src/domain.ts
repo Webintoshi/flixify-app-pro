@@ -84,6 +84,7 @@ export const packageSchema = z.object({
   title: z.string(),
   duration: packageDurationSchema,
   durationMonths: z.number().int().positive(),
+  priceLabel: z.string().trim().max(120).nullable(),
   isActive: z.boolean(),
   createdAt: z.string()
 });

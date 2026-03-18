@@ -127,10 +127,46 @@ function makeSummary(input: {
 }
 
 const packages: PackageRecord[] = [
-  { id: randomUUID(), slug: "1-ay", title: "1 Ay", duration: "1m", durationMonths: 1, isActive: true, createdAt: now() },
-  { id: randomUUID(), slug: "3-ay", title: "3 Ay", duration: "3m", durationMonths: 3, isActive: true, createdAt: now() },
-  { id: randomUUID(), slug: "6-ay", title: "6 Ay", duration: "6m", durationMonths: 6, isActive: true, createdAt: now() },
-  { id: randomUUID(), slug: "12-ay", title: "12 Ay", duration: "12m", durationMonths: 12, isActive: true, createdAt: now() }
+  {
+    id: randomUUID(),
+    slug: "1-ay",
+    title: "1 Ay",
+    duration: "1m",
+    durationMonths: 1,
+    priceLabel: "199 TL",
+    isActive: true,
+    createdAt: now()
+  },
+  {
+    id: randomUUID(),
+    slug: "3-ay",
+    title: "3 Ay",
+    duration: "3m",
+    durationMonths: 3,
+    priceLabel: "499 TL",
+    isActive: true,
+    createdAt: now()
+  },
+  {
+    id: randomUUID(),
+    slug: "6-ay",
+    title: "6 Ay",
+    duration: "6m",
+    durationMonths: 6,
+    priceLabel: "899 TL",
+    isActive: true,
+    createdAt: now()
+  },
+  {
+    id: randomUUID(),
+    slug: "12-ay",
+    title: "12 Ay",
+    duration: "12m",
+    durationMonths: 12,
+    priceLabel: "1499 TL",
+    isActive: true,
+    createdAt: now()
+  }
 ];
 
 const settings = {
@@ -691,12 +727,20 @@ export function listDemoPackages() {
   return packages.map((item) => ({ ...item }));
 }
 
-export function updateDemoPackageStatus(packageId: string, isActive: boolean) {
+export function updateDemoPackageStatus(
+  packageId: string,
+  input: { isActive?: boolean; priceLabel?: string | null }
+) {
   const item = packages.find((entry) => entry.id === packageId);
   if (!item) {
     throw new Error("Paket bulunamadi");
   }
-  item.isActive = isActive;
+  if (input.isActive !== undefined) {
+    item.isActive = input.isActive;
+  }
+  if (input.priceLabel !== undefined) {
+    item.priceLabel = input.priceLabel;
+  }
   addAuditLog("update-package-status", "package", packageId);
 }
 

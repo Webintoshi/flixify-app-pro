@@ -154,7 +154,10 @@ export const adminUpdateUserInputSchema = z
   });
 
 export const adminUpdatePackageStatusInputSchema = z.object({
-  isActive: z.boolean()
+  isActive: z.boolean().optional(),
+  priceLabel: z.string().trim().max(120).nullable().optional()
+}).refine((value) => value.isActive !== undefined || value.priceLabel !== undefined, {
+  message: "En az bir alan gonderilmeli."
 });
 
 export const appSettingsSchema = z.object({

@@ -42,6 +42,11 @@ export default function PackagesPage() {
             <span className="teaser-label">{item.durationMonths} ay</span>
             <h2>{item.title}</h2>
             <p>
+              {item.priceLabel && item.priceLabel.trim().length > 0
+                ? `Fiyat: ${item.priceLabel}`
+                : "Fiyat bilgisi destek ekibi tarafindan iletilir."}
+            </p>
+            <p>
               Paket seciminden sonra kullanici uygulama icinde odeme talebi olusturur, ekip manuel
               onay verir.
             </p>

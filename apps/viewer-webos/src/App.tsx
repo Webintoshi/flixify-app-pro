@@ -7549,6 +7549,11 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                     <article key={pkg.id} className="panel-card panel-stack">
                       <span className="pill">{pkg.durationMonths} ay</span>
                       <h2>{pkg.title}</h2>
+                      <p className="muted">
+                        {pkg.priceLabel && pkg.priceLabel.trim().length > 0
+                          ? `Fiyat: ${pkg.priceLabel}`
+                          : "Fiyat bilgisi destek ekibinden alinir."}
+                      </p>
                       <p className="muted">Paket onayi admin tarafinda baslatilir.</p>
                       <button className="button" onClick={() => openPaymentMethodModal(pkg)}>
                         Paket Al
