@@ -1994,6 +1994,54 @@ function formatCodeDisplay(value: string) {
   return parts.join(" ");
 }
 
+function AuthDownloadPanel() {
+  const cards = [
+    {
+      id: "android",
+      label: "Android",
+      href: "https://app.flixify.pro/downloads/flixify-android.apk"
+    },
+    {
+      id: "android-tv",
+      label: "Android TV",
+      href: "https://app.flixify.pro/downloads/flixify-android-tv.apk"
+    },
+    {
+      id: "windows",
+      label: "Windows",
+      href: "https://app.flixify.pro/downloads/flixify-windows.exe"
+    },
+    {
+      id: "macos",
+      label: "macOS",
+      href: "https://app.flixify.pro/downloads/flixify-macos.dmg"
+    }
+  ] as const;
+
+  return (
+    <section className="auth-downloads" aria-label="Platform indirme baglantilari">
+      <p className="auth-downloads-title">Uygulamayi Indir</p>
+      <div className="auth-download-grid">
+        {cards.map((card) => (
+          <a
+            key={card.id}
+            className="auth-download-card"
+            href={card.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-tv-focusable="true"
+            data-tv-region="auth-downloads"
+            data-tv-focus-key={`auth-download-${card.id}`}
+          >
+            <span className="auth-download-label">{card.label}</span>
+            <span className="auth-download-cta">Uygulamayi indir</span>
+          </a>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function LoginAuthPage({
   onLogin,
   busy,
