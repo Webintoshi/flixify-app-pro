@@ -105,6 +105,9 @@ type SharedLiveChannelRow = QueryResultRow & {
   logo_url: string | null;
   stream_path: string;
   transport: LiveTransport;
+  country_code: string | null;
+  country_confidence: "high" | "medium" | "unknown" | null;
+  country_match_reason: "prefix" | "tr_strong_group" | "tr_balanced_multi_signal" | "none" | null;
   health_status: LiveHealthStatus | null;
   last_checked_at: string | null;
   failure_count: number | null;
@@ -741,6 +744,10 @@ function buildGroupClause(group?: string) {
   return group ? group.toLowerCase() : null;
 }
 
+function buildLiveCountryGroupPrefix(countryCode: string) {
+  return `${countryCode.toLowerCase()}:%`;
+}
+
 function normalizeGroupFilterValue(value: string) {
   return value
     .normalize("NFKD")
@@ -786,6 +793,15 @@ export function isCountryWideLiveGroupFilter(group?: string | null) {
 
 export function isTurkiyeLiveGroupFilter(group?: string | null) {
   return resolveLiveCountryFilter(group) === "TR";
+}
+
+export function buildLiveCountryFilterWhereClause() {
+  return `
+    (
+      c.country_code = $3
+      or (c.country_code is null and lower(coalesce(c.group_title, '')) like $4)
+    )
+  `;
 }
 
 function buildLive4kPriorityClause() {
@@ -855,18 +871,33 @@ async function listCatalogGroupsForTable(
   }));
 }
 
-async function listLiveCatalogGroups(snapshotVersion: number, search?: string) {
+async function listLiveCountryGroups(snapshotVersion: number, search?: string) {
   const searchValue = buildSearchClause(search);
   const result = await query<{ title: string; count: string }>(
     `
-      select coalesce(nullif(c.group_title, ''), 'Diger') as title, count(*)::text as count
-      from public.shared_live_channels c
-      left join public.shared_live_channel_health h on h.channel_id = c.id
-      where c.snapshot_version = $1
-        and coalesce(h.health_status, 'unknown') <> 'broken'
-        and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
-      group by 1
-      order by count(*) desc, title asc
+      with scoped_channels as (
+        select
+          c.country_code,
+          lower(coalesce(c.group_title, '')) as normalized_group_title
+        from public.shared_live_channels c
+        left join public.shared_live_channel_health h on h.channel_id = c.id
+        where c.snapshot_version = $1
+          and coalesce(h.health_status, 'unknown') <> 'broken'
+          and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
+      ),
+      normalized_country as (
+        select
+          coalesce(
+            nullif(upper(country_code), ''),
+            upper((regexp_match(normalized_group_title, '^\\s*([a-z]{2,3})\\s*[:\\-]'))[1])
+          ) as country_code
+        from scoped_channels
+      )
+      select country_code as title, count(*)::text as count
+      from normalized_country
+      where country_code is not null
+      group by country_code
+      order by count(*) desc, country_code asc
     `,
     [snapshotVersion, searchValue]
   );
@@ -876,6 +907,37 @@ async function listLiveCatalogGroups(snapshotVersion: number, search?: string) {
     count: Number(row.count),
     kind: "live"
   }));
+}
+
+async function listLiveCatalogGroups(snapshotVersion: number, search?: string) {
+  const searchValue = buildSearchClause(search);
+  const [countryGroups, result] = await Promise.all([
+    listLiveCountryGroups(snapshotVersion, search),
+    query<{ title: string; count: string }>(
+      `
+        select coalesce(nullif(c.group_title, ''), 'Diger') as title, count(*)::text as count
+        from public.shared_live_channels c
+        left join public.shared_live_channel_health h on h.channel_id = c.id
+        where c.snapshot_version = $1
+          and coalesce(h.health_status, 'unknown') <> 'broken'
+          and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
+        group by 1
+        order by count(*) desc, title asc
+      `,
+      [snapshotVersion, searchValue]
+    )
+  ]);
+  const countryCodeTitles = new Set(countryGroups.map((group) => group.title.toUpperCase()));
+  const groupTitleGroups = result.rows.map<CatalogGroup>((row) => ({
+    title: row.title,
+    count: Number(row.count),
+    kind: "live"
+  }));
+
+  return [
+    ...countryGroups,
+    ...groupTitleGroups.filter((group) => !countryCodeTitles.has(group.title.trim().toUpperCase()))
+  ];
 }
 
 async function listSeriesGroups(snapshotVersion: number, search?: string) {
@@ -927,7 +989,9 @@ export async function listLiveCatalog(
   const offset = (page - 1) * pageSize;
   const searchValue = buildSearchClause(search);
   const countryCodeFilter = resolveLiveCountryFilter(group);
-  const countryGroupPrefix = countryCodeFilter ? `${countryCodeFilter.toLowerCase()}:%` : null;
+  const countryGroupPrefix = countryCodeFilter
+    ? buildLiveCountryGroupPrefix(countryCodeFilter)
+    : null;
   const [itemsResult, totalResult, groups] = countryCodeFilter
     ? await Promise.all([
         query<SharedLiveChannelRow>(
@@ -948,11 +1012,11 @@ export async function listLiveCatalog(
             where c.snapshot_version = $1
               and coalesce(h.health_status, 'unknown') <> 'broken'
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
-              and lower(coalesce(c.group_title, '')) like $3
+              and ${buildLiveCountryFilterWhereClause()}
             order by ${buildLiveCatalogOrderByClause(true)}
-            limit $4 offset $5
+            limit $5 offset $6
           `,
-          [snapshotVersion, searchValue, countryGroupPrefix, pageSize, offset]
+          [snapshotVersion, searchValue, countryCodeFilter, countryGroupPrefix, pageSize, offset]
         ),
         query<{ count: string }>(
           `
@@ -962,9 +1026,9 @@ export async function listLiveCatalog(
             where c.snapshot_version = $1
               and coalesce(h.health_status, 'unknown') <> 'broken'
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
-              and lower(coalesce(c.group_title, '')) like $3
+              and ${buildLiveCountryFilterWhereClause()}
           `,
-          [snapshotVersion, searchValue, countryGroupPrefix]
+          [snapshotVersion, searchValue, countryCodeFilter, countryGroupPrefix]
         ),
         listLiveCatalogGroups(snapshotVersion, search)
       ])

@@ -1338,13 +1338,21 @@ function parseLiveCountryCodeFromFilter(group: string | null | undefined) {
   return null;
 }
 
-function parseLiveCountryCodeFromGroupTitle(title: string | null | undefined) {
+function parseLiveCountryCodeFromGroupPrefix(title: string | null | undefined) {
   const normalizedTitle = normalizeAsciiText(title);
-  const match = normalizedTitle.match(/^([a-z]{2,3})\s*:/);
+  const match = normalizedTitle.match(/^([a-z]{2,3})\s*[:\-]/);
   if (!match?.[1]) {
     return null;
   }
   return normalizeLiveCountryCode(match[1]);
+}
+
+function parseLiveCountryCodeFromExplicitGroupTitle(title: string | null | undefined) {
+  const normalizedTitle = normalizeAsciiText(title);
+  if (!/^[a-z]{2,3}$/.test(normalizedTitle)) {
+    return null;
+  }
+  return normalizeLiveCountryCode(normalizedTitle);
 }
 
 function getLiveCountryLabel(code: string) {
@@ -1981,6 +1989,8 @@ function LoginAuthPage({
           </NavLink>
         </div>
 
+        <AuthDownloadPanel />
+
         {/* Feature cards */}
         <div className="auth-features">
           <div className="auth-feature-card">
@@ -2340,6 +2350,8 @@ function RegisterAuthPage({
             Ana Sayfaya Dön
           </NavLink>
         </div>
+
+        <AuthDownloadPanel />
 
         {/* Feature Cards */}
         <div className="auth-features">
@@ -2794,14 +2806,44 @@ function LiveTvPage({
   }, [activeGroup]);
 
   const countryCounts = new Map<string, number>();
+  const prefixFallbackCountryBuckets: Array<{ code: string; count: number }> = [];
   const nonCountryGroups: CatalogGroup[] = [];
+
   for (const group of groups) {
-    const countryCode = parseLiveCountryCodeFromGroupTitle(group.title);
-    if (!countryCode) {
-      nonCountryGroups.push(group);
+    const explicitCountryCode = parseLiveCountryCodeFromExplicitGroupTitle(group.title);
+    if (explicitCountryCode) {
+      countryCounts.set(
+        explicitCountryCode,
+        (countryCounts.get(explicitCountryCode) ?? 0) + group.count
+      );
+    }
+  }
+
+  for (const group of groups) {
+    if (parseLiveCountryCodeFromExplicitGroupTitle(group.title)) {
       continue;
     }
-    countryCounts.set(countryCode, (countryCounts.get(countryCode) ?? 0) + group.count);
+
+    const countryCodeFromPrefix = parseLiveCountryCodeFromGroupPrefix(group.title);
+    if (countryCodeFromPrefix) {
+      prefixFallbackCountryBuckets.push({
+        code: countryCodeFromPrefix,
+        count: group.count
+      });
+      continue;
+    }
+
+    nonCountryGroups.push(group);
+  }
+
+  for (const fallbackBucket of prefixFallbackCountryBuckets) {
+    if (countryCounts.has(fallbackBucket.code)) {
+      continue;
+    }
+    countryCounts.set(
+      fallbackBucket.code,
+      (countryCounts.get(fallbackBucket.code) ?? 0) + fallbackBucket.count
+    );
   }
 
   const countryChips = Array.from(countryCounts.entries())

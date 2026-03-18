@@ -4,6 +4,7 @@ import { env } from "./env.js";
 import { pool } from "./db.js";
 import { buildPlaylistUrl, buildStreamUrl, extractStreamPath, type PlaylistConfig } from "./iptv.js";
 import { classifyLiveProbeHealth, detectLiveTransport, probeLiveStream } from "./live.js";
+import { classifyLiveChannelCountry } from "./live-country.js";
 import { parseM3U, type ParsedCatalog } from "./m3u.js";
 
 let pausedUntil = 0;
@@ -214,15 +215,43 @@ async function insertSharedLiveChannels(
     stream_path: string;
     transport: "ts" | "hls" | "mp4" | "mkv" | "unknown";
     tvg_id: string | null;
+    country_code: string | null;
+    country_confidence: "high" | "medium" | "unknown";
+    country_match_reason: "prefix" | "tr_strong_group" | "tr_balanced_multi_signal" | "none";
     order_index: number;
   }> = [];
   let skippedCount = 0;
+  const countryStats = {
+    total: 0,
+    matched: 0,
+    byReason: {
+      prefix: 0,
+      tr_strong_group: 0,
+      tr_balanced_multi_signal: 0,
+      none: 0
+    },
+    byConfidence: {
+      high: 0,
+      medium: 0,
+      unknown: 0
+    }
+  };
 
   for (const channel of catalog) {
     const streamPath = tryExtractStreamPath(channel.streamUrl, config, `canli:${channel.title}`);
     if (!streamPath) {
       skippedCount += 1;
       continue;
+    }
+    const country = classifyLiveChannelCountry({
+      title: channel.title,
+      groupTitle: channel.groupTitle
+    });
+    countryStats.total += 1;
+    countryStats.byReason[country.reason] += 1;
+    countryStats.byConfidence[country.confidence] += 1;
+    if (country.countryCode) {
+      countryStats.matched += 1;
     }
 
     records.push({
@@ -232,6 +261,9 @@ async function insertSharedLiveChannels(
       stream_path: streamPath,
       transport: detectLiveTransport(channel.streamUrl),
       tvg_id: channel.tvgId,
+      country_code: country.countryCode,
+      country_confidence: country.confidence,
+      country_match_reason: country.reason,
       order_index: records.length
     });
   }
@@ -239,6 +271,12 @@ async function insertSharedLiveChannels(
   if (skippedCount > 0) {
     console.warn(`[worker] Canli katalogda ${skippedCount} kayit gecersiz stream nedeniyle atlandi.`);
   }
+  console.info(
+    `[worker] Canli ulke siniflandirma: toplam=${countryStats.total} eslesen=${countryStats.matched} ` +
+      `high=${countryStats.byConfidence.high} medium=${countryStats.byConfidence.medium} unknown=${countryStats.byConfidence.unknown} ` +
+      `prefix=${countryStats.byReason.prefix} tr_strong=${countryStats.byReason.tr_strong_group} ` +
+      `tr_medium=${countryStats.byReason.tr_balanced_multi_signal} none=${countryStats.byReason.none}`
+  );
 
   for (const batch of chunkArray(records)) {
     await client.query(
@@ -251,6 +289,9 @@ async function insertSharedLiveChannels(
           stream_path,
           transport,
           tvg_id,
+          country_code,
+          country_confidence,
+          country_match_reason,
           order_index
         )
         select
@@ -261,6 +302,9 @@ async function insertSharedLiveChannels(
           item.stream_path,
           item.transport,
           item.tvg_id,
+          item.country_code,
+          item.country_confidence,
+          item.country_match_reason,
           item.order_index
         from jsonb_to_recordset($2::jsonb) as item(
           title text,
@@ -269,6 +313,9 @@ async function insertSharedLiveChannels(
           stream_path text,
           transport text,
           tvg_id text,
+          country_code text,
+          country_confidence text,
+          country_match_reason text,
           order_index integer
         )
       `,

@@ -395,7 +395,10 @@ function mapDemoPaymentMethods(settingsValue: DemoPaymentMethodSettings): Paymen
 
 function collectGroups(
   items: Array<{ groupTitle: string | null | undefined }>,
-  kind: CatalogGroup["kind"]
+  kind: CatalogGroup["kind"],
+  options?: {
+    includeCountryBuckets?: boolean;
+  }
 ) {
   const counts = new Map<string, number>();
   for (const item of items) {
@@ -403,9 +406,33 @@ function collectGroups(
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  return Array.from(counts.entries())
+  const groups = Array.from(counts.entries())
     .map<CatalogGroup>(([title, count]) => ({ title, count, kind }))
     .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title));
+
+  if (!options?.includeCountryBuckets || kind !== "live") {
+    return groups;
+  }
+
+  const countryCounts = new Map<string, number>();
+  for (const item of items) {
+    const code = parseCountryCodeFromGroupTitle(item.groupTitle);
+    if (!code) {
+      continue;
+    }
+    const normalizedCode = code.toUpperCase();
+    countryCounts.set(normalizedCode, (countryCounts.get(normalizedCode) ?? 0) + 1);
+  }
+
+  const countryGroups = Array.from(countryCounts.entries())
+    .map<CatalogGroup>(([title, count]) => ({ title, count, kind: "live" }))
+    .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title));
+
+  const countryTitles = new Set(countryGroups.map((group) => group.title.toUpperCase()));
+  return [
+    ...countryGroups,
+    ...groups.filter((group) => !countryTitles.has(group.title.trim().toUpperCase()))
+  ];
 }
 
 function normalizeGroupFilterValue(value: string | null | undefined) {
@@ -422,6 +449,15 @@ function normalizeCountryFilterCode(value: string) {
     return null;
   }
   return sanitized;
+}
+
+function parseCountryCodeFromGroupTitle(groupTitle: string | null | undefined) {
+  const normalized = normalizeGroupFilterValue(groupTitle);
+  const match = normalized.match(/^([a-z]{2,3})\s*[:\-]/);
+  if (!match?.[1]) {
+    return null;
+  }
+  return normalizeCountryFilterCode(match[1]);
 }
 
 function resolveCountryFilterCode(group?: string) {
@@ -754,7 +790,7 @@ export function listDemoLiveCatalog(
   const state = getPlaybackState(userId);
   return {
     ...paginate(withPlayback(demoCatalog.live, state.canPlay), page, pageSize, search, group),
-    groups: collectGroups(demoCatalog.live, "live")
+    groups: collectGroups(demoCatalog.live, "live", { includeCountryBuckets: true })
   };
 }
 
