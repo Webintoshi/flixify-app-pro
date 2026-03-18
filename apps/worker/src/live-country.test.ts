@@ -15,6 +15,32 @@ describe("classifyLiveChannelCountry", () => {
     });
   });
 
+  it("normalizes TUR/TRK prefixes into TR", () => {
+    expect(
+      classifyLiveChannelCountry({
+        title: "Spor HD",
+        groupTitle: "TUR:ULUSAL"
+      })
+    ).toEqual({
+      countryCode: "TR",
+      confidence: "high",
+      reason: "prefix"
+    });
+  });
+
+  it("overrides non-TR prefix when title has strong Turkish channel signal", () => {
+    expect(
+      classifyLiveChannelCountry({
+        title: "TRT 1 HD",
+        groupTitle: "DE:News"
+      })
+    ).toEqual({
+      countryCode: "TR",
+      confidence: "high",
+      reason: "tr_strong_group"
+    });
+  });
+
   it("uses strong TR group aliases when prefix is missing", () => {
     expect(
       classifyLiveChannelCountry({

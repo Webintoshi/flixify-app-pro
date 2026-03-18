@@ -17,6 +17,8 @@ describe("live catalog turkiye filter", () => {
     expect(isTurkiyeLiveGroupFilter(undefined)).toBe(false);
     expect(resolveLiveCountryFilter("country:us")).toBe("US");
     expect(resolveLiveCountryFilter("ulke:de")).toBe("DE");
+    expect(resolveLiveCountryFilter("country:tur")).toBe("TR");
+    expect(resolveLiveCountryFilter("ulke:trk")).toBe("TR");
     expect(resolveLiveCountryFilter("TR:SPOR")).toBeNull();
   });
 
@@ -35,10 +37,11 @@ describe("live catalog turkiye filter", () => {
 
   it("builds country filter sql with country_code and prefix fallback", () => {
     const clause = buildLiveCountryFilterWhereClause();
-    expect(clause).toContain("c.country_code = $3");
-    expect(clause).toContain("c.country_code is null");
-    expect(clause).toContain("like $4");
+    expect(clause).toContain("upper(c.country_code)");
+    expect(clause).toContain("regexp_match");
     expect(clause).toContain("$3 = 'TR'");
+    expect(clause).toContain("TUR");
+    expect(clause).toContain("TRK");
     expect(clause.toLowerCase()).toContain("turkiye");
     expect(clause.toLowerCase()).toContain("turkce");
     expect(clause.toLowerCase()).toContain("trt");
@@ -50,6 +53,7 @@ describe("live catalog turkiye filter", () => {
     expect(matchesCatalogGroupFilter("TR:SPOR", "ulke:tr")).toBe(true);
     expect(matchesCatalogGroupFilter("Spor", "country:tr", "TR Spor HD")).toBe(true);
     expect(matchesCatalogGroupFilter("Genel", "country:tr", "TRT 1 HD")).toBe(true);
+    expect(matchesCatalogGroupFilter("DE:SPORT", "country:tr", "TRT 1 HD")).toBe(true);
     expect(matchesCatalogGroupFilter("Haber", "country:tr", "World News")).toBe(false);
   });
 

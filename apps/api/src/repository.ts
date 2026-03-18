@@ -744,10 +744,6 @@ function buildGroupClause(group?: string) {
   return group ? group.toLowerCase() : null;
 }
 
-function buildLiveCountryGroupPrefix(countryCode: string) {
-  return `${countryCode.toLowerCase()}:%`;
-}
-
 function normalizeGroupFilterValue(value: string) {
   return value
     .normalize("NFKD")
@@ -756,12 +752,17 @@ function normalizeGroupFilterValue(value: string) {
     .toLowerCase();
 }
 
+const LIVE_COUNTRY_CODE_ALIASES = new Map<string, string>([
+  ["TUR", "TR"],
+  ["TRK", "TR"]
+]);
+
 function normalizeLiveCountryCode(value: string) {
   const sanitized = value.replace(/[^a-z]/gi, "").toUpperCase();
   if (sanitized.length < 2 || sanitized.length > 3) {
     return null;
   }
-  return sanitized;
+  return LIVE_COUNTRY_CODE_ALIASES.get(sanitized) ?? sanitized;
 }
 
 export function resolveLiveCountryFilter(group?: string | null) {
@@ -793,6 +794,26 @@ export function isCountryWideLiveGroupFilter(group?: string | null) {
 
 export function isTurkiyeLiveGroupFilter(group?: string | null) {
   return resolveLiveCountryFilter(group) === "TR";
+}
+
+function buildNormalizedLiveCountryCodeExpression(countryCodeExpression: string) {
+  return `
+    case
+      when nullif(upper(${countryCodeExpression}), '') in ('TUR', 'TRK') then 'TR'
+      else nullif(upper(${countryCodeExpression}), '')
+    end
+  `;
+}
+
+function buildPrefixedLiveCountryCodeExpression(groupTitleExpression: string) {
+  const rawPrefixExpression = `(regexp_match(lower(coalesce(${groupTitleExpression}, '')), '^\\s*([a-z]{2,3})\\s*[:\\-]'))[1]`;
+  return `
+    case
+      when ${rawPrefixExpression} is null then null
+      when upper(${rawPrefixExpression}) in ('TUR', 'TRK') then 'TR'
+      else upper(${rawPrefixExpression})
+    end
+  `;
 }
 
 function buildTurkiyeStrongTokenSignalClause(textExpression: string) {
@@ -835,13 +856,17 @@ function buildTurkiyeHeuristicClause(groupTextExpression: string, titleTextExpre
 export function buildLiveCountryFilterWhereClause() {
   const groupTextExpression = "lower(coalesce(c.group_title, ''))";
   const titleTextExpression = "lower(coalesce(c.title, ''))";
+  const normalizedCountryCodeExpression = buildNormalizedLiveCountryCodeExpression("c.country_code");
+  const prefixedCountryCodeExpression = buildPrefixedLiveCountryCodeExpression("c.group_title");
   return `
     (
-      c.country_code = $3
-      or (c.country_code is null and lower(coalesce(c.group_title, '')) like $4)
+      ${normalizedCountryCodeExpression} = $3
+      or (
+        ${normalizedCountryCodeExpression} is null
+        and ${prefixedCountryCodeExpression} = $3
+      )
       or (
         $3 = 'TR'
-        and c.country_code is null
         and ${buildTurkiyeHeuristicClause(groupTextExpression, titleTextExpression)}
       )
     )
@@ -919,6 +944,8 @@ async function listLiveCountryGroups(snapshotVersion: number, search?: string) {
   const searchValue = buildSearchClause(search);
   const groupTextExpression = "normalized_group_title";
   const titleTextExpression = "normalized_title";
+  const normalizedCountryCodeExpression = buildNormalizedLiveCountryCodeExpression("country_code");
+  const prefixedCountryCodeExpression = buildPrefixedLiveCountryCodeExpression("normalized_group_title");
   const result = await query<{ title: string; count: string }>(
     `
       with scoped_channels as (
@@ -934,16 +961,14 @@ async function listLiveCountryGroups(snapshotVersion: number, search?: string) {
       ),
       normalized_country as (
         select
-          coalesce(
-            nullif(upper(country_code), ''),
-            upper((regexp_match(normalized_group_title, '^\\s*([a-z]{2,3})\\s*[:\\-]'))[1])
-            ,
-            case
-              when ${buildTurkiyeHeuristicClause(groupTextExpression, titleTextExpression)}
-              then 'TR'
-              else null
-            end
-          ) as country_code
+          case
+            when ${buildTurkiyeHeuristicClause(groupTextExpression, titleTextExpression)}
+            then 'TR'
+            else coalesce(
+              ${normalizedCountryCodeExpression},
+              ${prefixedCountryCodeExpression}
+            )
+          end as country_code
         from scoped_channels
       )
       select country_code as title, count(*)::text as count
@@ -1042,9 +1067,6 @@ export async function listLiveCatalog(
   const offset = (page - 1) * pageSize;
   const searchValue = buildSearchClause(search);
   const countryCodeFilter = resolveLiveCountryFilter(group);
-  const countryGroupPrefix = countryCodeFilter
-    ? buildLiveCountryGroupPrefix(countryCodeFilter)
-    : null;
   const [itemsResult, totalResult, groups] = countryCodeFilter
     ? await Promise.all([
         query<SharedLiveChannelRow>(
@@ -1067,9 +1089,9 @@ export async function listLiveCatalog(
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
               and ${buildLiveCountryFilterWhereClause()}
             order by ${buildLiveCatalogOrderByClause(true)}
-            limit $5 offset $6
+            limit $4 offset $5
           `,
-          [snapshotVersion, searchValue, countryCodeFilter, countryGroupPrefix, pageSize, offset]
+          [snapshotVersion, searchValue, countryCodeFilter, pageSize, offset]
         ),
         query<{ count: string }>(
           `
@@ -1081,7 +1103,7 @@ export async function listLiveCatalog(
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
               and ${buildLiveCountryFilterWhereClause()}
           `,
-          [snapshotVersion, searchValue, countryCodeFilter, countryGroupPrefix]
+          [snapshotVersion, searchValue, countryCodeFilter]
         ),
         listLiveCatalogGroups(snapshotVersion, search)
       ])

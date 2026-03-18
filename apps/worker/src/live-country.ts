@@ -35,6 +35,10 @@ const TR_STRONG_TITLE_PATTERNS: RegExp[] = [
   /(^|[^a-z0-9])ulke\s*tv([^a-z0-9]|$)/,
   /(^|[^a-z0-9])kanal\s*24([^a-z0-9]|$)/
 ];
+const COUNTRY_CODE_ALIASES = new Map<string, string>([
+  ["TUR", "TR"],
+  ["TRK", "TR"]
+]);
 
 function normalizeAsciiText(value: string | null | undefined) {
   return (value ?? "")
@@ -58,7 +62,7 @@ function parseCountryCodeFromGroupPrefix(groupTitle: string | null | undefined) 
   if (rawCode.length < 2 || rawCode.length > 3) {
     return null;
   }
-  return rawCode;
+  return COUNTRY_CODE_ALIASES.get(rawCode) ?? rawCode;
 }
 
 function countTokenMatches(tokens: Set<string>, lookup: Set<string>) {
@@ -99,7 +103,23 @@ export function classifyLiveChannelCountry(input: {
   title: string;
   groupTitle: string | null;
 }): LiveCountryClassification {
+  const groupTokens = tokenize(input.groupTitle);
+  const normalizedTitle = normalizeAsciiText(input.title);
+  const titleTokens = tokenize(input.title);
+  const hasStrongTrSignal =
+    hasStrongTrGroupSignal(groupTokens) || hasStrongTrTitleSignal(normalizedTitle, titleTokens);
   const prefixedCountryCode = parseCountryCodeFromGroupPrefix(input.groupTitle);
+
+  // Prefix is generally reliable, but we prioritize explicit Turkish brand/title signals
+  // so Turkish channels nested under non-TR provider buckets still land in TR.
+  if (prefixedCountryCode && prefixedCountryCode !== "TR" && hasStrongTrSignal) {
+    return {
+      countryCode: "TR",
+      confidence: "high",
+      reason: "tr_strong_group"
+    };
+  }
+
   if (prefixedCountryCode) {
     return {
       countryCode: prefixedCountryCode,
@@ -108,11 +128,7 @@ export function classifyLiveChannelCountry(input: {
     };
   }
 
-  const groupTokens = tokenize(input.groupTitle);
-  const normalizedTitle = normalizeAsciiText(input.title);
-  const titleTokens = tokenize(input.title);
-
-  if (hasStrongTrGroupSignal(groupTokens) || hasStrongTrTitleSignal(normalizedTitle, titleTokens)) {
+  if (hasStrongTrSignal) {
     return {
       countryCode: "TR",
       confidence: "high",

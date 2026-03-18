@@ -448,6 +448,9 @@ function normalizeCountryFilterCode(value: string) {
   if (sanitized.length < 2 || sanitized.length > 3) {
     return null;
   }
+  if (sanitized === "tur" || sanitized === "trk") {
+    return "tr";
+  }
   return sanitized;
 }
 
@@ -497,6 +500,9 @@ function parseCountryCodeFromLiveCatalogEntry(
   groupTitle: string | null | undefined
 ) {
   const prefixedCode = parseCountryCodeFromGroupTitle(groupTitle);
+  if (prefixedCode && prefixedCode !== "tr" && hasTurkiyeCountryHeuristic(title, groupTitle)) {
+    return "tr";
+  }
   if (prefixedCode) {
     return prefixedCode;
   }
