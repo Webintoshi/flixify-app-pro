@@ -935,7 +935,9 @@ export function buildServer() {
           isVerified: channel.isVerified,
           errorMessage: null,
           forceRelayRestart,
-          allowFileProxyFallback: debugFileProxy,
+          // Relay (FFmpeg) unavailable oldugunda playback'i tamamen kapatmak yerine
+          // API uzerinden file-proxy fallback ile devam et.
+          allowFileProxyFallback: true,
           preferDirectProxy: !preferRelay,
           preferTranscode
         });
@@ -1036,7 +1038,9 @@ export function buildServer() {
         isVerified: resolved.ok,
         errorMessage: canPlay ? null : errorMessage ?? "Canli yayin gecici olarak kullanilamiyor.",
         forceRelayRestart,
-        allowFileProxyFallback: debugFileProxy || optimisticProbeFallback,
+        // Relay (FFmpeg) unavailable oldugunda playback'i tamamen kapatmak yerine
+        // API uzerinden file-proxy fallback ile devam et.
+        allowFileProxyFallback: true,
         preferDirectProxy: !preferRelay,
         preferTranscode
       });
