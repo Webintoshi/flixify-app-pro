@@ -18,8 +18,10 @@ describe("live catalog turkiye filter", () => {
     const turkiyeOrder = buildLiveCatalogOrderByClause(true);
     const defaultOrder = buildLiveCatalogOrderByClause(false);
 
+    expect(turkiyeOrder).toContain("4k");
     expect(turkiyeOrder).toContain("c.order_index asc");
     expect(turkiyeOrder).not.toContain("health_status");
+    expect(defaultOrder).toContain("4k");
     expect(defaultOrder).toContain("health_status");
     expect(defaultOrder).toContain("c.order_index asc");
     expect(defaultOrder).toContain("c.title asc");

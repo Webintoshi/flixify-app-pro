@@ -538,12 +538,29 @@ export function isTurkiyeLiveGroupFilter(group?: string | null) {
   return (group ?? "").trim().toLowerCase() === "turkiye";
 }
 
+function buildLive4kPriorityClause() {
+  return `
+    case
+      when (
+        c.title ~* '(^|[^a-z0-9])4k([^a-z0-9]|$)'
+        or coalesce(c.group_title, '') ~* '(^|[^a-z0-9])4k([^a-z0-9]|$)'
+      ) then 0
+      else 1
+    end asc
+  `;
+}
+
 export function buildLiveCatalogOrderByClause(isTurkiyeGroup: boolean) {
   if (isTurkiyeGroup) {
-    return "c.order_index asc, c.title asc";
+    return `
+      ${buildLive4kPriorityClause()},
+      c.order_index asc,
+      c.title asc
+    `;
   }
 
   return `
+    ${buildLive4kPriorityClause()},
     case coalesce(h.health_status, 'unknown')
       when 'healthy' then 0
       when 'unknown' then 1
@@ -585,6 +602,29 @@ async function listCatalogGroupsForTable(
     title: row.title,
     count: Number(row.count),
     kind
+  }));
+}
+
+async function listLiveCatalogGroups(snapshotVersion: number, search?: string) {
+  const searchValue = buildSearchClause(search);
+  const result = await query<{ title: string; count: string }>(
+    `
+      select coalesce(nullif(c.group_title, ''), 'Diger') as title, count(*)::text as count
+      from public.shared_live_channels c
+      left join public.shared_live_channel_health h on h.channel_id = c.id
+      where c.snapshot_version = $1
+        and coalesce(h.health_status, 'unknown') <> 'broken'
+        and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
+      group by 1
+      order by count(*) desc, title asc
+    `,
+    [snapshotVersion, searchValue]
+  );
+
+  return result.rows.map<CatalogGroup>((row) => ({
+    title: row.title,
+    count: Number(row.count),
+    kind: "live"
   }));
 }
 
@@ -655,6 +695,7 @@ export async function listLiveCatalog(
             from public.shared_live_channels c
             left join public.shared_live_channel_health h on h.channel_id = c.id
             where c.snapshot_version = $1
+              and coalesce(h.health_status, 'unknown') <> 'broken'
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
               and lower(coalesce(c.group_title, '')) like 'tr:%'
             order by ${buildLiveCatalogOrderByClause(true)}
@@ -666,13 +707,15 @@ export async function listLiveCatalog(
           `
             select count(*)::text as count
             from public.shared_live_channels c
+            left join public.shared_live_channel_health h on h.channel_id = c.id
             where c.snapshot_version = $1
+              and coalesce(h.health_status, 'unknown') <> 'broken'
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
               and lower(coalesce(c.group_title, '')) like 'tr:%'
           `,
           [snapshotVersion, searchValue]
         ),
-        listCatalogGroupsForTable("shared_live_channels", "live", snapshotVersion, search)
+        listLiveCatalogGroups(snapshotVersion, search)
       ])
     : await Promise.all([
         query<SharedLiveChannelRow>(
@@ -691,6 +734,7 @@ export async function listLiveCatalog(
             from public.shared_live_channels c
             left join public.shared_live_channel_health h on h.channel_id = c.id
             where c.snapshot_version = $1
+              and coalesce(h.health_status, 'unknown') <> 'broken'
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
               and ($3::text is null or lower(coalesce(c.group_title, 'diger')) = $3)
             order by ${buildLiveCatalogOrderByClause(false)}
@@ -702,13 +746,15 @@ export async function listLiveCatalog(
           `
             select count(*)::text as count
             from public.shared_live_channels c
+            left join public.shared_live_channel_health h on h.channel_id = c.id
             where c.snapshot_version = $1
+              and coalesce(h.health_status, 'unknown') <> 'broken'
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
               and ($3::text is null or lower(coalesce(c.group_title, 'diger')) = $3)
           `,
           [snapshotVersion, searchValue, buildGroupClause(group)]
         ),
-        listCatalogGroupsForTable("shared_live_channels", "live", snapshotVersion, search)
+        listLiveCatalogGroups(snapshotVersion, search)
       ]);
 
   return {
@@ -738,6 +784,7 @@ export async function getLiveChannelForPlayback(snapshotVersion: number, channel
       from public.shared_live_channels c
       left join public.shared_live_channel_health h on h.channel_id = c.id
       where c.snapshot_version = $1
+        and coalesce(h.health_status, 'unknown') <> 'broken'
         and c.id = $2
       limit 1
     `,

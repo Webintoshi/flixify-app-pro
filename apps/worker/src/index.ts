@@ -3,13 +3,13 @@ import type { PoolClient, QueryResultRow } from "pg";
 import { env } from "./env.js";
 import { pool } from "./db.js";
 import { buildPlaylistUrl, buildStreamUrl, extractStreamPath, type PlaylistConfig } from "./iptv.js";
-import { detectLiveTransport, probeLiveStream } from "./live.js";
+import { classifyLiveProbeHealth, detectLiveTransport, probeLiveStream } from "./live.js";
 import { parseM3U, type ParsedCatalog } from "./m3u.js";
 
 let pausedUntil = 0;
 const INSERT_BATCH_SIZE = 500;
 const HEALTH_SWEEP_INTERVAL_MS = 60_000;
-const HEALTH_PROBE_LIMIT = 8;
+const HEALTH_PROBE_LIMIT = 24;
 let lastHealthSweepAt = 0;
 
 type SharedSourceRow = QueryResultRow & {
@@ -26,6 +26,7 @@ type HealthCandidateRow = QueryResultRow & {
   snapshot_version: number;
   stream_path: string;
   transport: "ts" | "hls" | "mp4" | "mkv" | "unknown";
+  group_title: string | null;
 };
 
 function shouldPauseWorker(error: unknown) {
@@ -518,7 +519,8 @@ async function loadHealthCandidates(limit = HEALTH_PROBE_LIMIT) {
         c.id,
         c.snapshot_version,
         c.stream_path,
-        c.transport
+        c.transport,
+        c.group_title
       from public.shared_live_channels c
       left join public.shared_live_channel_health h on h.channel_id = c.id
       where c.snapshot_version = (
@@ -527,7 +529,8 @@ async function loadHealthCandidates(limit = HEALTH_PROBE_LIMIT) {
         where id = true
       )
         and (
-          c.order_index < 20
+          lower(coalesce(c.group_title, '')) like 'tr:%'
+          or c.order_index < 40
           or h.last_play_requested_at >= timezone('utc', now()) - interval '30 minutes'
           or coalesce(h.health_status, 'unknown') in ('degraded', 'broken')
         )
@@ -537,10 +540,11 @@ async function loadHealthCandidates(limit = HEALTH_PROBE_LIMIT) {
         )
       order by
         case
-          when h.last_play_requested_at >= timezone('utc', now()) - interval '30 minutes' then 0
-          when coalesce(h.health_status, 'unknown') in ('degraded', 'broken') then 1
-          when c.order_index < 20 then 2
-          else 3
+          when lower(coalesce(c.group_title, '')) like 'tr:%' then 0
+          when h.last_play_requested_at >= timezone('utc', now()) - interval '30 minutes' then 1
+          when coalesce(h.health_status, 'unknown') in ('degraded', 'broken') then 2
+          when c.order_index < 40 then 3
+          else 4
         end,
         coalesce(h.last_checked_at, 'epoch'::timestamptz) asc,
         c.order_index asc
@@ -643,8 +647,9 @@ async function probeHotLiveChannels() {
       candidate.stream_path
     );
     const probe = await probeLiveStream(streamUrl);
+    const status = classifyLiveProbeHealth(probe);
     await updateLiveChannelHealth(candidate.id, candidate.snapshot_version, {
-      status: probe.ok ? "healthy" : "degraded",
+      status,
       errorMessage: probe.errorMessage,
       resetFailureCount: probe.ok
     });

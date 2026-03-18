@@ -769,9 +769,11 @@ export function buildServer() {
         rawQuery?.debugFileProxy === "true" ||
         rawQuery?.debugFileProxy === "1";
       const preferRelay =
-        rawQuery?.preferRelay === true ||
-        rawQuery?.preferRelay === "true" ||
-        rawQuery?.preferRelay === "1";
+        rawQuery?.preferRelay === undefined
+          ? true
+          : rawQuery?.preferRelay === true ||
+            rawQuery?.preferRelay === "true" ||
+            rawQuery?.preferRelay === "1";
       const preferTranscode =
         rawQuery?.preferTranscode === true ||
         rawQuery?.preferTranscode === "true" ||

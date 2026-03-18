@@ -2599,20 +2599,23 @@ function LiveTvPage({
 }) {
   const [search, setSearch] = useState("");
   const [activeGroup, setActiveGroup] = useState(LIVE_TURKIYE_GROUP_FILTER);
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const [appliedGroup, setAppliedGroup] = useState(LIVE_TURKIYE_GROUP_FILTER);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   const [isFiltering, setIsFiltering] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   const applyFiltersRef = useRef(onApplyFilters);
   const loadMoreRef = useRef(onLoadMore);
-  const debounceTimerRef = useRef<number | null>(null);
   const requestIdRef = useRef(0);
-  const skipInitialFilterRef = useRef(true);
   const activeGroupRef = useRef(LIVE_TURKIYE_GROUP_FILTER);
+  const appliedSearchRef = useRef("");
+  const appliedGroupRef = useRef(LIVE_TURKIYE_GROUP_FILTER);
   const loadingMoreInFlightRef = useRef(false);
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
   const channelListRef = useRef<HTMLDivElement | null>(null);
   const autoFillLengthRef = useRef(-1);
+  const initialAutoSelectionDoneRef = useRef(false);
 
   useEffect(() => {
     applyFiltersRef.current = onApplyFilters;
@@ -2626,14 +2629,6 @@ function LiveTvPage({
     activeGroupRef.current = activeGroup;
   }, [activeGroup]);
 
-  useEffect(() => {
-    return () => {
-      if (debounceTimerRef.current !== null) {
-        window.clearTimeout(debounceTimerRef.current);
-      }
-    };
-  }, []);
-
   const sortedGroups = [...groups]
     .filter((group) => !isTurkiyeGroupTitle(group.title))
     .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title, "tr-TR"));
@@ -2646,12 +2641,18 @@ function LiveTvPage({
     .reduce((total, group) => total + group.count, 0);
 
   async function runLiveFilters(nextSearch: string, nextGroup: string) {
+    const normalizedSearch = nextSearch.trim();
+    const normalizedGroup = nextGroup || LIVE_TURKIYE_GROUP_FILTER;
+    appliedSearchRef.current = normalizedSearch;
+    appliedGroupRef.current = normalizedGroup;
+    setAppliedSearch(normalizedSearch);
+    setAppliedGroup(normalizedGroup);
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
     setIsFiltering(true);
 
     try {
-      await applyFiltersRef.current(nextSearch.trim(), nextGroup || undefined);
+      await applyFiltersRef.current(normalizedSearch, normalizedGroup || undefined);
     } finally {
       if (requestIdRef.current === requestId) {
         setIsFiltering(false);
@@ -2663,27 +2664,6 @@ function LiveTvPage({
     void runLiveFilters("", LIVE_TURKIYE_GROUP_FILTER);
   }, []);
 
-  useEffect(() => {
-    if (skipInitialFilterRef.current) {
-      skipInitialFilterRef.current = false;
-      return;
-    }
-
-    if (debounceTimerRef.current !== null) {
-      window.clearTimeout(debounceTimerRef.current);
-    }
-
-    debounceTimerRef.current = window.setTimeout(() => {
-      void runLiveFilters(search, activeGroup);
-    }, 260);
-
-    return () => {
-      if (debounceTimerRef.current !== null) {
-        window.clearTimeout(debounceTimerRef.current);
-      }
-    };
-  }, [search, activeGroup]);
-
   async function loadNextLivePage() {
     if (loadingMoreInFlightRef.current || isFiltering || !hasMoreItems) {
       return;
@@ -2693,7 +2673,7 @@ function LiveTvPage({
     setIsLoadingMore(true);
 
     try {
-      await loadMoreRef.current(search.trim(), activeGroupRef.current || undefined);
+      await loadMoreRef.current(appliedSearchRef.current, appliedGroupRef.current || undefined);
     } catch {
       // Errors are reflected by the shared core error state.
     } finally {
@@ -2726,11 +2706,11 @@ function LiveTvPage({
     return () => {
       observer.disconnect();
     };
-  }, [items.length, hasMoreItems, isFiltering, search, activeGroup]);
+  }, [items.length, hasMoreItems, isFiltering, appliedSearch, appliedGroup]);
 
   useEffect(() => {
     autoFillLengthRef.current = -1;
-  }, [search, activeGroup]);
+  }, [appliedSearch, appliedGroup]);
 
   useEffect(() => {
     const channelList = channelListRef.current;
@@ -2754,7 +2734,7 @@ function LiveTvPage({
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [items.length, hasMoreItems, isFiltering, isLoadingMore, search, activeGroup]);
+  }, [items.length, hasMoreItems, isFiltering, isLoadingMore, appliedSearch, appliedGroup]);
 
   const preferredChannel = getPreferredLiveItem(items, { preferSports: true });
 
@@ -2765,12 +2745,18 @@ function LiveTvPage({
     }
 
     const selectedStillExists = selectedChannelId ? items.some((item) => item.id === selectedChannelId) : false;
-    if (!selectedStillExists) {
-      setSelectedChannelId(preferredChannel?.id ?? null);
+    if (!selectedStillExists && selectedChannelId) {
+      setSelectedChannelId(null);
+      return;
     }
-  }, [items, preferredChannel?.id, selectedChannelId]);
 
-  const activeChannel = items.find((item) => item.id === selectedChannelId) ?? preferredChannel;
+    if (!selectedChannelId && !initialAutoSelectionDoneRef.current && appliedSearch.length === 0) {
+      initialAutoSelectionDoneRef.current = true;
+      setSelectedChannelId(preferredChannel?.id ?? items[0]?.id ?? null);
+    }
+  }, [items, preferredChannel?.id, selectedChannelId, appliedSearch]);
+
+  const activeChannel = selectedChannelId ? items.find((item) => item.id === selectedChannelId) ?? null : null;
 
   return (
     <section className="live-tv-page">
@@ -2779,7 +2765,9 @@ function LiveTvPage({
           type="button"
           className={`live-tv-pill${activeGroup === LIVE_TURKIYE_GROUP_FILTER ? " is-active" : ""}`}
           onClick={() => {
-            setActiveGroup(LIVE_TURKIYE_GROUP_FILTER);
+            const nextGroup = LIVE_TURKIYE_GROUP_FILTER;
+            setActiveGroup(nextGroup);
+            void runLiveFilters(search, nextGroup);
           }}
           data-tv-focusable="true"
           data-tv-region="live-pills"
@@ -2797,6 +2785,7 @@ function LiveTvPage({
             className={`live-tv-pill${activeGroup === group.title ? " is-active" : ""}`}
             onClick={() => {
               setActiveGroup(group.title);
+              void runLiveFilters(search, group.title);
             }}
             data-tv-focusable="true"
             data-tv-region="live-pills"
@@ -2829,6 +2818,11 @@ function LiveTvPage({
                 )}
               </div>
             </>
+          ) : items.length > 0 ? (
+            <div className="live-tv-player-empty">
+              <strong>Kanali acmak icin listeden secim yapin.</strong>
+              <p className="muted">Arama sonuclari otomatik oynatilmaz, secimi sizin yapmaniz gerekir.</p>
+            </div>
           ) : (
             <div className="live-tv-player-empty">
               <strong>Filtreye uyan kanal bulunamadi.</strong>
@@ -2867,21 +2861,22 @@ function LiveTvPage({
               {search ? (
                 <button
                   type="button"
-                className="live-tv-search-clear"
-                onClick={() => {
-                  setSearch("");
-                }}
-              >
-                Temizle
-              </button>
-            ) : null}
-          </div>
+                  className="live-tv-search-clear"
+                  onClick={() => {
+                    setSearch("");
+                    void runLiveFilters("", activeGroupRef.current);
+                  }}
+                >
+                  Temizle
+                </button>
+              ) : null}
+            </div>
 
-          <div className="live-tv-sidebar-bar">
-            <strong>Kanallar</strong>
-            {isFiltering || isLoadingMore ? <span className="muted">{isFiltering ? "Yukleniyor" : "Daha fazla yukleniyor"}</span> : null}
+            <div className="live-tv-sidebar-bar">
+              <strong>Kanallar</strong>
+              {isFiltering || isLoadingMore ? <span className="muted">{isFiltering ? "Yukleniyor" : "Daha fazla yukleniyor"}</span> : null}
+            </div>
           </div>
-        </div>
 
           {items.length > 0 ? (
             <div ref={channelListRef} className="live-tv-channel-list">
@@ -3750,19 +3745,19 @@ function LivePlayerSurface({
       return;
     }
     const media = mediaElement;
-    const liveBufferTargetSec = 180;
-    const liveBufferMaxSec = 360;
-    const liveBackBufferSec = 180;
-    const liveBufferByteCap = 220 * 1000 * 1000;
-    const liveSyncDurationSegments = 10;
-    const liveMaxLatencySegments = 30;
-    const liveDriftSoftNudgeSec = 16;
-    const liveDriftHardResyncSec = 140;
-    const liveTrimBehindEdgeSec = 30;
+    const liveBufferTargetSec = 90;
+    const liveBufferMaxSec = 180;
+    const liveBackBufferSec = 90;
+    const liveBufferByteCap = 140 * 1000 * 1000;
+    const liveSyncDurationSegments = 6;
+    const liveMaxLatencySegments = 18;
+    const liveDriftSoftNudgeSec = 10;
+    const liveDriftHardResyncSec = 60;
+    const liveTrimBehindEdgeSec = 18;
     const liveWatchdogIntervalMs = 4_000;
-    const liveSilentThresholdMs = 10_000;
-    const liveAdvanceWindowMs = 10_000;
-    const liveStallRecoveryThresholdMs = 18_000;
+    const liveSilentThresholdMs = 8_000;
+    const liveAdvanceWindowMs = 8_000;
+    const liveStallRecoveryThresholdMs = 12_000;
     const liveDebugEnabled = isLiveDebugEnabled();
     liveDebugEnabledRef.current = liveDebugEnabled;
 
@@ -4544,14 +4539,14 @@ function LivePlayerSurface({
             maxTimeToFirstByteMs: 12_000,
             maxLoadTimeMs: 20_000,
             timeoutRetry: {
-              maxNumRetry: 4,
+              maxNumRetry: 6,
               retryDelayMs: 500,
-              maxRetryDelayMs: 4_000
+              maxRetryDelayMs: 6_000
             },
             errorRetry: {
-              maxNumRetry: 4,
+              maxNumRetry: 6,
               retryDelayMs: 1_000,
-              maxRetryDelayMs: 8_000
+              maxRetryDelayMs: 10_000
             }
           }
         },
@@ -4560,14 +4555,14 @@ function LivePlayerSurface({
             maxTimeToFirstByteMs: 10_000,
             maxLoadTimeMs: 16_000,
             timeoutRetry: {
-              maxNumRetry: 4,
+              maxNumRetry: 6,
               retryDelayMs: 500,
-              maxRetryDelayMs: 3_000
+              maxRetryDelayMs: 5_000
             },
             errorRetry: {
-              maxNumRetry: 4,
+              maxNumRetry: 6,
               retryDelayMs: 900,
-              maxRetryDelayMs: 6_000
+              maxRetryDelayMs: 8_000
             }
           }
         },
@@ -4576,14 +4571,14 @@ function LivePlayerSurface({
             maxTimeToFirstByteMs: 12_000,
             maxLoadTimeMs: 24_000,
             timeoutRetry: {
-              maxNumRetry: 4,
+              maxNumRetry: 6,
               retryDelayMs: 600,
-              maxRetryDelayMs: 4_000
+              maxRetryDelayMs: 6_000
             },
             errorRetry: {
-              maxNumRetry: 4,
+              maxNumRetry: 6,
               retryDelayMs: 1_000,
-              maxRetryDelayMs: 8_000
+              maxRetryDelayMs: 12_000
             }
           }
         }
@@ -4899,7 +4894,7 @@ function LivePlayerSurface({
       });
 
       try {
-        const playback = await resolveLivePlayback(item.id, { preferRelay: false });
+        const playback = await resolveLivePlayback(item.id, { preferRelay: true });
         if (disposed || sessionRef.current !== sessionId) {
           return;
         }
