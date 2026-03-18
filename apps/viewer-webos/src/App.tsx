@@ -7311,17 +7311,32 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
           <Route
             path="/paketler"
             element={
-              <section className="card-grid">
-                {core.packages.map((pkg) => (
-                  <article key={pkg.id} className="panel-card panel-stack">
-                    <span className="pill">{pkg.durationMonths} ay</span>
-                    <h2>{pkg.title}</h2>
-                    <p className="muted">Paket onayi admin tarafinda baslatilir.</p>
-                    <button className="button" onClick={() => void core.requestPayment(pkg.slug)}>
-                      Paket Al
-                    </button>
-                  </article>
-                ))}
+              <section className="panel-stack">
+                <div className="section-header">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => navigate("/profil")}
+                    data-tv-focusable="true"
+                    data-tv-focus-key="profile-packages-back"
+                  >
+                    Geri
+                  </button>
+                  <h2 style={{ margin: 0 }}>Paketler</h2>
+                </div>
+                <p className="muted">Profil ekranina donup diger hesap islemlerini yonetebilirsiniz.</p>
+                <section className="card-grid">
+                  {core.packages.map((pkg) => (
+                    <article key={pkg.id} className="panel-card panel-stack">
+                      <span className="pill">{pkg.durationMonths} ay</span>
+                      <h2>{pkg.title}</h2>
+                      <p className="muted">Paket onayi admin tarafinda baslatilir.</p>
+                      <button className="button" onClick={() => void core.requestPayment(pkg.slug)}>
+                        Paket Al
+                      </button>
+                    </article>
+                  ))}
+                </section>
               </section>
             }
           />
@@ -7329,7 +7344,18 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
             path="/odemeler"
             element={
               <section className="panel-card panel-stack">
-                <h2>Odeme Bildirimi</h2>
+                <div className="section-header">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => navigate("/profil")}
+                    data-tv-focusable="true"
+                    data-tv-focus-key="profile-payments-back"
+                  >
+                    Geri
+                  </button>
+                  <h2>Odeme Bildirimi</h2>
+                </div>
                 <p className="muted">
                   Paket secimi sonrasinda odeme bildiriminiz burada listelenir. Onay sureci admin panelinde manuel olarak ilerler.
                 </p>
@@ -7392,7 +7418,18 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
             path="/ayarlar"
             element={
               <section className="panel-card panel-stack">
-                <h2>Ayarlar</h2>
+                <div className="section-header">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => navigate("/profil")}
+                    data-tv-focusable="true"
+                    data-tv-focus-key="profile-settings-back"
+                  >
+                    Geri
+                  </button>
+                  <h2>Ayarlar</h2>
+                </div>
                 <div className="settings-grid">
                   <div className="list-card">
                     <strong>Kullanici Adi</strong>
@@ -7425,7 +7462,18 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
             path="/iletisim"
             element={
               <section className="panel-card panel-stack">
-                <h2>Iletisim</h2>
+                <div className="section-header">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => navigate("/profil")}
+                    data-tv-focusable="true"
+                    data-tv-focus-key="profile-contact-back"
+                  >
+                    Geri
+                  </button>
+                  <h2>Iletisim</h2>
+                </div>
                 <div className="button-row">
                   <a className="button" href={me.contact.whatsapp} target="_blank" rel="noreferrer">
                     WhatsApp

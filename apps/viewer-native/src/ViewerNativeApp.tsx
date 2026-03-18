@@ -353,6 +353,8 @@ export function ViewerNativeApp() {
     );
   }
 
+  const isProfileChildScreen = screen === "/paketler" || screen === "/odemeler" || screen === "/iletisim";
+
   const currentItems =
     screen === "/canli-tv"
       ? core.catalogs.live.map((item) => `${item.title} • ${item.playbackAllowed ? "Oynat" : "Kilitli"}`)
@@ -426,6 +428,9 @@ export function ViewerNativeApp() {
 
         <View style={{ gap: 12, backgroundColor: "#121212", borderRadius: 20, padding: 20 }}>
           <Text style={{ color: "white", fontSize: 20, fontWeight: "600" }}>{screen}</Text>
+          {isProfileChildScreen ? (
+            <ActionButton label="Geri (Profil)" secondary onPress={() => setScreen("/ayarlar")} />
+          ) : null}
           <TouchableOpacity onPress={() => setScreen("/ayarlar")}>
             <Text style={{ color: "#b7b7b2" }}>Kod: {core.codeLabel} (Profil)</Text>
           </TouchableOpacity>
