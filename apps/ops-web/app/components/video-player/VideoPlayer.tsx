@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import Hls from "hls.js";
-import screenfull from "screenfull";
 import { PlayerControls } from "./PlayerControls";
 import { PlayerOverlay } from "./PlayerOverlay";
 import { formatTime } from "./utils";
@@ -46,7 +45,7 @@ export function VideoPlayer({
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const controlsTimeoutRef = useRef<NodeJS.Timeout>();
+  const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // State
   const [isPlaying, setIsPlaying] = useState(false);
@@ -269,17 +268,14 @@ export function VideoPlayer({
   // Fullscreen change listener
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(screenfull.isFullscreen);
+      setIsFullscreen(document.fullscreenElement === containerRef.current);
     };
 
-    if (screenfull.isEnabled) {
-      screenfull.on("change", handleFullscreenChange);
-    }
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    handleFullscreenChange();
 
     return () => {
-      if (screenfull.isEnabled) {
-        screenfull.off("change", handleFullscreenChange);
-      }
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
     };
   }, []);
 
@@ -321,9 +317,17 @@ export function VideoPlayer({
   }, []);
 
   const toggleFullscreen = useCallback(() => {
-    if (!containerRef.current || !screenfull.isEnabled) return;
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
 
-    screenfull.toggle(containerRef.current);
+    if (document.fullscreenElement === container) {
+      void document.exitFullscreen().catch(() => undefined);
+      return;
+    }
+
+    void container.requestFullscreen().catch(() => undefined);
   }, []);
 
   const toggleTheaterMode = useCallback(() => {

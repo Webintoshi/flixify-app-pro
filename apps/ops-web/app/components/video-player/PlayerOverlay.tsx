@@ -29,7 +29,7 @@ export function PlayerOverlay({
   const [showLeftRipple, setShowLeftRipple] = useState(false);
   const [showRightRipple, setShowRightRipple] = useState(false);
   const lastTap = useRef<{ time: number; side: "left" | "right" } | null>(null);
-  const tapTimeout = useRef<NodeJS.Timeout>();
+  const tapTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Handle double tap for seek
   const handleTap = useCallback(

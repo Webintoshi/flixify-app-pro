@@ -33,9 +33,10 @@ export function isTouchDevice(): boolean {
  */
 export function supportsHLS(): boolean {
   const video = document.createElement("video");
+  const hlsGlobal = (window as { Hls?: { isSupported?: () => boolean } }).Hls;
   return (
     video.canPlayType("application/vnd.apple.mpegurl") !== "" ||
-    typeof (window as { Hls?: typeof Hls }).Hls !== "undefined"
+    (typeof hlsGlobal !== "undefined" && typeof hlsGlobal?.isSupported === "function")
   );
 }
 
@@ -96,7 +97,7 @@ export function debounce<T extends (...args: unknown[]) => unknown>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {
-  let timeout: NodeJS.Timeout;
+  let timeout: ReturnType<typeof setTimeout>;
   return function (this: unknown, ...args: Parameters<T>) {
     clearTimeout(timeout);
     timeout = setTimeout(() => func.apply(this, args), wait);

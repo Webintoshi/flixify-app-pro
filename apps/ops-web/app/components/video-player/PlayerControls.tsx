@@ -63,7 +63,7 @@ export function PlayerControls({
   const [settingsTab, setSettingsTab] = useState<"quality" | "speed" | null>(null);
   
   const progressRef = useRef<HTMLDivElement>(null);
-  const hideVolumeTimeout = useRef<NodeJS.Timeout>();
+  const hideVolumeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Calculate progress percentage
   const progressPercent = duration ? (currentTime / duration) * 100 : 0;
