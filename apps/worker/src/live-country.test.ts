@@ -80,6 +80,20 @@ describe("classifyLiveChannelCountry", () => {
     });
   });
 
+  it("classifies Turkish channels from tvg-id signal even with generic title/group", () => {
+    expect(
+      classifyLiveChannelCountry({
+        title: "HD Channel",
+        groupTitle: "SPORTS",
+        tvgId: "beinsports1tr"
+      })
+    ).toEqual({
+      countryCode: "TR",
+      confidence: "high",
+      reason: "tr_strong_group"
+    });
+  });
+
   it("classifies TR token with contextual title keywords as strong Turkish signal", () => {
     expect(
       classifyLiveChannelCountry({

@@ -45,6 +45,7 @@ describe("live catalog turkiye filter", () => {
     expect(clause.toLowerCase()).toContain("turkiye");
     expect(clause.toLowerCase()).toContain("turkce");
     expect(clause.toLowerCase()).toContain("trt");
+    expect(clause.toLowerCase()).toContain("beinsports");
   });
 
   it("matches TR heuristics for turkiye filter in demo mode", () => {
@@ -54,6 +55,7 @@ describe("live catalog turkiye filter", () => {
     expect(matchesCatalogGroupFilter("Spor", "country:tr", "TR Spor HD")).toBe(true);
     expect(matchesCatalogGroupFilter("Genel", "country:tr", "TRT 1 HD")).toBe(true);
     expect(matchesCatalogGroupFilter("DE:SPORT", "country:tr", "TRT 1 HD")).toBe(true);
+    expect(matchesCatalogGroupFilter("DE:SPORT", "country:tr", "beIN Sports 1 HD")).toBe(true);
     expect(matchesCatalogGroupFilter("Haber", "country:tr", "World News")).toBe(false);
   });
 

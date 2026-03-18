@@ -33,7 +33,20 @@ const TR_STRONG_TITLE_PATTERNS: RegExp[] = [
   /(^|[^a-z0-9])star\s*tv([^a-z0-9]|$)/,
   /(^|[^a-z0-9])beyaz\s*tv([^a-z0-9]|$)/,
   /(^|[^a-z0-9])ulke\s*tv([^a-z0-9]|$)/,
-  /(^|[^a-z0-9])kanal\s*24([^a-z0-9]|$)/
+  /(^|[^a-z0-9])kanal\s*24([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])ntv([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])tv100([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])halk\s*tv([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])tele\s*1([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])haber\s*global([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])s\s*sport([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])spor\s*smart([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])bein\s*sports?([^a-z0-9]|$)/
+];
+const TR_STRONG_TVG_ID_PATTERNS: RegExp[] = [
+  /(trt1|trt2|trthaber|trtspor|trtcocuk|atv|tv8|kanald|showtv|startv|beyaztv|ulketv|cnnturk|haberturk|ahaber|aspor|tgrt|teve2|tv100|halktv|tele1|haberglobal|ssport|sporsmart|beinsports[0-9]*tr)/,
+  /(^|[^a-z0-9])tr([^a-z0-9]|$).*?(spor|haber|kanal|tv|ulusal)/,
+  /(\.|_|-)(tr)(\.|_|-|$)/
 ];
 const COUNTRY_CODE_ALIASES = new Map<string, string>([
   ["TUR", "TR"],
@@ -79,19 +92,35 @@ function hasStrongTrGroupSignal(groupTokens: Set<string>) {
   return countTokenMatches(groupTokens, TR_STRONG_GROUP_TOKENS) > 0;
 }
 
-function hasStrongTrTitleSignal(titleText: string, titleTokens: Set<string>) {
+function hasStrongTrTitleSignal(
+  titleText: string,
+  titleTokens: Set<string>,
+  tvgIdText: string,
+  tvgIdTokens: Set<string>
+) {
   for (const pattern of TR_STRONG_TITLE_PATTERNS) {
     if (pattern.test(titleText)) {
       return true;
     }
   }
 
+  for (const pattern of TR_STRONG_TVG_ID_PATTERNS) {
+    if (pattern.test(tvgIdText)) {
+      return true;
+    }
+  }
+
+  if (countTokenMatches(tvgIdTokens, TR_STRONG_GROUP_TOKENS) > 0) {
+    return true;
+  }
+
   return titleTokens.has("tr") && countTokenMatches(titleTokens, TR_TITLE_CONTEXT_TOKENS) > 0;
 }
 
-function hasBalancedTrMediumSignals(groupTokens: Set<string>, titleTokens: Set<string>) {
+function hasBalancedTrMediumSignals(groupTokens: Set<string>, titleTokens: Set<string>, tvgIdTokens: Set<string>) {
   const groupMediumMatches = countTokenMatches(groupTokens, TR_MEDIUM_TOKENS);
-  const titleMediumMatches = countTokenMatches(titleTokens, TR_MEDIUM_TOKENS);
+  const titleMediumMatches =
+    countTokenMatches(titleTokens, TR_MEDIUM_TOKENS) + countTokenMatches(tvgIdTokens, TR_MEDIUM_TOKENS);
   return (
     groupMediumMatches > 0 &&
     titleMediumMatches > 0 &&
@@ -102,12 +131,16 @@ function hasBalancedTrMediumSignals(groupTokens: Set<string>, titleTokens: Set<s
 export function classifyLiveChannelCountry(input: {
   title: string;
   groupTitle: string | null;
+  tvgId?: string | null;
 }): LiveCountryClassification {
   const groupTokens = tokenize(input.groupTitle);
   const normalizedTitle = normalizeAsciiText(input.title);
   const titleTokens = tokenize(input.title);
+  const normalizedTvgId = normalizeAsciiText(input.tvgId);
+  const tvgIdTokens = tokenize(input.tvgId);
   const hasStrongTrSignal =
-    hasStrongTrGroupSignal(groupTokens) || hasStrongTrTitleSignal(normalizedTitle, titleTokens);
+    hasStrongTrGroupSignal(groupTokens) ||
+    hasStrongTrTitleSignal(normalizedTitle, titleTokens, normalizedTvgId, tvgIdTokens);
   const prefixedCountryCode = parseCountryCodeFromGroupPrefix(input.groupTitle);
 
   // Prefix is generally reliable, but we prioritize explicit Turkish brand/title signals
@@ -136,7 +169,7 @@ export function classifyLiveChannelCountry(input: {
     };
   }
 
-  if (hasBalancedTrMediumSignals(groupTokens, titleTokens)) {
+  if (hasBalancedTrMediumSignals(groupTokens, titleTokens, tvgIdTokens)) {
     return {
       countryCode: "TR",
       confidence: "medium",

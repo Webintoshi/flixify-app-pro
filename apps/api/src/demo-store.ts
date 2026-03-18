@@ -467,7 +467,7 @@ const TURKIYE_STRONG_GROUP_SIGNAL_PATTERN =
   /(^|[^a-z0-9])(tr|turkiye|turkey|turk|turkce)([^a-z0-9]|$)/;
 const TURKIYE_MEDIUM_SIGNAL_PATTERN = /(^|[^a-z0-9])(turk|turkce|dublaj|ulusal|turkish)([^a-z0-9]|$)/;
 const TURKIYE_STRONG_TITLE_SIGNAL_PATTERN =
-  /(^|[^a-z0-9])(trt|atv|tv8|cnnturk|cnn\s*turk|haberturk|aspor|a\s*spor|ahaber|a\s*haber|kanal\s*d|kanal\s*7|show\s*tv|star\s*tv|beyaz\s*tv|ulke\s*tv|tgrt|teve2|kanal\s*24)([^a-z0-9]|$)/;
+  /(^|[^a-z0-9])(trt|atv|tv8|cnnturk|cnn\s*turk|haberturk|aspor|a\s*spor|ahaber|a\s*haber|kanal\s*d|kanal\s*7|show\s*tv|star\s*tv|beyaz\s*tv|ulke\s*tv|tgrt|teve2|kanal\s*24|ntv|tv100|halk\s*tv|tele\s*1|haber\s*global|s\s*sport|spor\s*smart|bein\s*sports?)([^a-z0-9]|$)/;
 
 function hasTurkiyeStrongTitleSignal(normalizedTitle: string) {
   if (TURKIYE_STRONG_TITLE_SIGNAL_PATTERN.test(normalizedTitle)) {

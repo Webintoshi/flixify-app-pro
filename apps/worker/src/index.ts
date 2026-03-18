@@ -245,7 +245,8 @@ async function insertSharedLiveChannels(
     }
     const country = classifyLiveChannelCountry({
       title: channel.title,
-      groupTitle: channel.groupTitle
+      groupTitle: channel.groupTitle,
+      tvgId: channel.tvgId
     });
     countryStats.total += 1;
     countryStats.byReason[country.reason] += 1;
