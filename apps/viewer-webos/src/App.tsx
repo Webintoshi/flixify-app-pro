@@ -7329,9 +7329,9 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
             path="/odemeler"
             element={
               <section className="panel-card panel-stack">
-                <h2>Odeme Akisi</h2>
+                <h2>Odeme Bildirimi</h2>
                 <p className="muted">
-                  Paket secildikten sonra destek ekibine WhatsApp veya Telegram uzerinden ulasin. Odeme admin panelinde manuel onaylanir.
+                  Paket secimi sonrasinda odeme bildiriminiz burada listelenir. Onay sureci admin panelinde manuel olarak ilerler.
                 </p>
                 <div className="list">
                   {core.paymentRequests.map((payment) => (
@@ -7347,7 +7347,42 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
           />
           <Route
             path="/profil"
-            element={<Navigate to="/ayarlar" replace />}
+            element={
+              <section className="panel-card panel-stack">
+                <h2>Profil</h2>
+                <p className="muted">Hesabinizla ilgili tum islemleri buradan yonetebilirsiniz.</p>
+                <div className="settings-grid">
+                  <article className="list-card panel-stack">
+                    <strong>Profil Ayarlari</strong>
+                    <p className="muted">Kullanici adi, paket durumu ve baglanti bilgilerinizi goruntuleyin.</p>
+                    <button className="button secondary" onClick={() => navigate("/ayarlar")}>
+                      Ayarlara Git
+                    </button>
+                  </article>
+                  <article className="list-card panel-stack">
+                    <strong>Paketler</strong>
+                    <p className="muted">Admin tarafindan tanimlanan paketleri gorup satin alim talebi olusturun.</p>
+                    <button className="button" onClick={() => navigate("/paketler")}>
+                      Paketleri Gor
+                    </button>
+                  </article>
+                  <article className="list-card panel-stack">
+                    <strong>Odeme Bildirimi</strong>
+                    <p className="muted">Gonderdiginiz odeme taleplerinin durumunu takip edin.</p>
+                    <button className="button secondary" onClick={() => navigate("/odemeler")}>
+                      Bildirimleri Gor
+                    </button>
+                  </article>
+                  <article className="list-card panel-stack">
+                    <strong>Iletisim</strong>
+                    <p className="muted">Destek ekibine WhatsApp veya Telegram uzerinden hizli ulasin.</p>
+                    <button className="button secondary" onClick={() => navigate("/iletisim")}>
+                      Iletisime Gec
+                    </button>
+                  </article>
+                </div>
+              </section>
+            }
           />
           <Route
             path="/profile"
@@ -7371,6 +7406,17 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                     <strong>Link Durumu</strong>
                     <div className="muted">{me.user.hasAssignedLink ? "Bagli" : "Admin atamasi bekleniyor"}</div>
                   </div>
+                </div>
+                <div className="button-row">
+                  <button className="button" onClick={() => navigate("/paketler")}>
+                    Paketler
+                  </button>
+                  <button className="button secondary" onClick={() => navigate("/odemeler")}>
+                    Odeme Bildirimi
+                  </button>
+                  <button className="button secondary" onClick={() => navigate("/iletisim")}>
+                    Iletisim
+                  </button>
                 </div>
               </section>
             }
