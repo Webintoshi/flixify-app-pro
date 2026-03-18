@@ -1,0 +1,67 @@
+<!--
+  🎬 FLIXIFY PRO - Brand Logo
+  Premium gradient logo for dark backgrounds
+  Usage: <img src="/icons/flixify-logo.svg" alt="Flixify Pro" width="120" />
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 40" fill="none">
+  <defs>
+    <!-- Main brand gradient -->
+    <linearGradient id="brandGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f40612;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8c0208;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Glow effect -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <!-- Text gradient -->
+    <linearGradient id="textGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e0e0e0;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Logo mark: Stylized F with play button -->
+  <g transform="translate(0, 0)">
+    <!-- Background shape -->
+    <rect x="0" y="0" width="36" height="36" rx="10" fill="url(#brandGradient)" filter="url(#glow)"/>
+    
+    <!-- Play triangle -->
+    <path d="M14 10 L26 18 L14 26 Z" fill="white"/>
+    
+    <!-- F letter hint -->
+    <path d="M8 8 L8 28" stroke="white" stroke-width="3" stroke-linecap="round" opacity="0.3"/>
+    <path d="M8 8 L20 8" stroke="white" stroke-width="3" stroke-linecap="round" opacity="0.3"/>
+    <path d="M8 18 L16 18" stroke="white" stroke-width="3" stroke-linecap="round" opacity="0.3"/>
+  </g>
+  
+  <!-- Brand wordmark -->
+  <g transform="translate(44, 8)">
+    <!-- FLIXIFY text -->
+    <text x="0" y="20" 
+          font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" 
+          font-size="22" 
+          font-weight="800" 
+          letter-spacing="-0.02em"
+          fill="url(#textGradient)">
+      FLIXIFY
+    </text>
+    
+    <!-- PRO badge -->
+    <rect x="94" y="2" width="36" height="18" rx="6" fill="#f40612"/>
+    <text x="112" y="15" 
+          font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" 
+          font-size="11" 
+          font-weight="800" 
+          fill="white" 
+          text-anchor="middle">
+      PRO
+    </text>
+  </g>
+</svg>
