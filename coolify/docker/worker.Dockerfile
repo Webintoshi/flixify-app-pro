@@ -8,7 +8,12 @@ COPY scripts ./scripts
 COPY apps ./apps
 COPY packages ./packages
 
-RUN npm ci
+RUN npm ci \
+  --include-workspace-root \
+  --workspace @flixify/contracts \
+  --workspace @flixify/worker \
+  --no-audit \
+  --fund=false
 RUN npm run build -w @flixify/contracts \
   && npm run build -w @flixify/worker
 

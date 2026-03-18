@@ -14,9 +14,17 @@ COPY scripts ./scripts
 COPY apps ./apps
 COPY packages ./packages
 
-RUN npm ci
+RUN npm ci \
+  --include-workspace-root \
+  --workspace @flixify/contracts \
+  --workspace @flixify/sdk \
+  --workspace @flixify/viewer-core \
+  --workspace @flixify/viewer-webos \
+  --no-audit \
+  --fund=false
 RUN npm run build -w @flixify/contracts \
   && npm run build -w @flixify/sdk \
+  && npm run build -w @flixify/viewer-core \
   && npm run build -w @flixify/viewer-webos
 
 ENV NODE_ENV=production

@@ -10,9 +10,13 @@ COPY scripts ./scripts
 COPY apps ./apps
 COPY packages ./packages
 
-RUN npm ci
+RUN npm ci \
+  --include-workspace-root \
+  --workspace @flixify/contracts \
+  --workspace @flixify/api \
+  --no-audit \
+  --fund=false
 RUN npm run build -w @flixify/contracts \
-  && npm run build -w @flixify/sdk \
   && npm run build -w @flixify/api
 
 ENV NODE_ENV=production
