@@ -795,11 +795,55 @@ export function isTurkiyeLiveGroupFilter(group?: string | null) {
   return resolveLiveCountryFilter(group) === "TR";
 }
 
+function buildTurkiyeStrongTokenSignalClause(textExpression: string) {
+  return `
+    ${textExpression} ~ '(^|[^a-z0-9çğıöşü])(tr|turkiye|türkiye|turkey|turk|türk|turkce|türkçe)([^a-z0-9çğıöşü]|$)'
+  `;
+}
+
+function buildTurkiyeStrongTitleSignalClause(textExpression: string) {
+  return `
+    (
+      ${textExpression} ~ '(^|[^a-z0-9çğıöşü])(trt|atv|tv8|cnnturk|cnn\\s*turk|haberturk|aspor|a\\s*spor|ahaber|a\\s*haber|kanal\\s*d|kanal\\s*7|show\\s*tv|star\\s*tv|beyaz\\s*tv|ulke\\s*tv|ülke\\s*tv|tgrt|teve2|kanal\\s*24)([^a-z0-9çğıöşü]|$)'
+      or (
+        ${textExpression} ~ '(^|[^a-z0-9çğıöşü])tr([^a-z0-9çğıöşü]|$)'
+        and ${textExpression} ~ '(^|[^a-z0-9çğıöşü])(spor|haber|kanal|tv|ulusal)([^a-z0-9çğıöşü]|$)'
+      )
+    )
+  `;
+}
+
+function buildTurkiyeMediumTokenSignalClause(textExpression: string) {
+  return `
+    ${textExpression} ~ '(^|[^a-z0-9çğıöşü])(turk|türk|turkce|türkçe|dublaj|ulusal|turkish)([^a-z0-9çğıöşü]|$)'
+  `;
+}
+
+function buildTurkiyeHeuristicClause(groupTextExpression: string, titleTextExpression: string) {
+  return `
+    (
+      ${buildTurkiyeStrongTokenSignalClause(groupTextExpression)}
+      or ${buildTurkiyeStrongTitleSignalClause(titleTextExpression)}
+      or (
+        ${buildTurkiyeMediumTokenSignalClause(groupTextExpression)}
+        and ${buildTurkiyeMediumTokenSignalClause(titleTextExpression)}
+      )
+    )
+  `;
+}
+
 export function buildLiveCountryFilterWhereClause() {
+  const groupTextExpression = "lower(coalesce(c.group_title, ''))";
+  const titleTextExpression = "lower(coalesce(c.title, ''))";
   return `
     (
       c.country_code = $3
       or (c.country_code is null and lower(coalesce(c.group_title, '')) like $4)
+      or (
+        $3 = 'TR'
+        and c.country_code is null
+        and ${buildTurkiyeHeuristicClause(groupTextExpression, titleTextExpression)}
+      )
     )
   `;
 }
@@ -873,11 +917,14 @@ async function listCatalogGroupsForTable(
 
 async function listLiveCountryGroups(snapshotVersion: number, search?: string) {
   const searchValue = buildSearchClause(search);
+  const groupTextExpression = "normalized_group_title";
+  const titleTextExpression = "normalized_title";
   const result = await query<{ title: string; count: string }>(
     `
       with scoped_channels as (
         select
           c.country_code,
+          lower(coalesce(c.title, '')) as normalized_title,
           lower(coalesce(c.group_title, '')) as normalized_group_title
         from public.shared_live_channels c
         left join public.shared_live_channel_health h on h.channel_id = c.id
@@ -890,6 +937,12 @@ async function listLiveCountryGroups(snapshotVersion: number, search?: string) {
           coalesce(
             nullif(upper(country_code), ''),
             upper((regexp_match(normalized_group_title, '^\\s*([a-z]{2,3})\\s*[:\\-]'))[1])
+            ,
+            case
+              when ${buildTurkiyeHeuristicClause(groupTextExpression, titleTextExpression)}
+              then 'TR'
+              else null
+            end
           ) as country_code
         from scoped_channels
       )

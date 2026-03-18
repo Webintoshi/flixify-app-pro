@@ -394,7 +394,7 @@ function mapDemoPaymentMethods(settingsValue: DemoPaymentMethodSettings): Paymen
 }
 
 function collectGroups(
-  items: Array<{ groupTitle: string | null | undefined }>,
+  items: Array<{ title?: string; groupTitle: string | null | undefined }>,
   kind: CatalogGroup["kind"],
   options?: {
     includeCountryBuckets?: boolean;
@@ -416,7 +416,7 @@ function collectGroups(
 
   const countryCounts = new Map<string, number>();
   for (const item of items) {
-    const code = parseCountryCodeFromGroupTitle(item.groupTitle);
+    const code = parseCountryCodeFromLiveCatalogEntry(item.title, item.groupTitle);
     if (!code) {
       continue;
     }
@@ -460,6 +460,54 @@ function parseCountryCodeFromGroupTitle(groupTitle: string | null | undefined) {
   return normalizeCountryFilterCode(match[1]);
 }
 
+const TURKIYE_STRONG_GROUP_SIGNAL_PATTERN =
+  /(^|[^a-z0-9])(tr|turkiye|turkey|turk|turkce)([^a-z0-9]|$)/;
+const TURKIYE_MEDIUM_SIGNAL_PATTERN = /(^|[^a-z0-9])(turk|turkce|dublaj|ulusal|turkish)([^a-z0-9]|$)/;
+const TURKIYE_STRONG_TITLE_SIGNAL_PATTERN =
+  /(^|[^a-z0-9])(trt|atv|tv8|cnnturk|cnn\s*turk|haberturk|aspor|a\s*spor|ahaber|a\s*haber|kanal\s*d|kanal\s*7|show\s*tv|star\s*tv|beyaz\s*tv|ulke\s*tv|tgrt|teve2|kanal\s*24)([^a-z0-9]|$)/;
+
+function hasTurkiyeStrongTitleSignal(normalizedTitle: string) {
+  if (TURKIYE_STRONG_TITLE_SIGNAL_PATTERN.test(normalizedTitle)) {
+    return true;
+  }
+
+  return (
+    /(^|[^a-z0-9])tr([^a-z0-9]|$)/.test(normalizedTitle) &&
+    /(^|[^a-z0-9])(spor|haber|kanal|tv|ulusal)([^a-z0-9]|$)/.test(normalizedTitle)
+  );
+}
+
+function hasTurkiyeCountryHeuristic(title: string | null | undefined, groupTitle: string | null | undefined) {
+  const normalizedGroup = normalizeGroupFilterValue(groupTitle);
+  const normalizedTitle = normalizeGroupFilterValue(title);
+  if (TURKIYE_STRONG_GROUP_SIGNAL_PATTERN.test(normalizedGroup)) {
+    return true;
+  }
+  if (hasTurkiyeStrongTitleSignal(normalizedTitle)) {
+    return true;
+  }
+  return (
+    TURKIYE_MEDIUM_SIGNAL_PATTERN.test(normalizedGroup) &&
+    TURKIYE_MEDIUM_SIGNAL_PATTERN.test(normalizedTitle)
+  );
+}
+
+function parseCountryCodeFromLiveCatalogEntry(
+  title: string | null | undefined,
+  groupTitle: string | null | undefined
+) {
+  const prefixedCode = parseCountryCodeFromGroupTitle(groupTitle);
+  if (prefixedCode) {
+    return prefixedCode;
+  }
+
+  if (hasTurkiyeCountryHeuristic(title, groupTitle)) {
+    return "tr";
+  }
+
+  return null;
+}
+
 function resolveCountryFilterCode(group?: string) {
   const normalized = normalizeGroupFilterValue(group);
   if (!normalized) {
@@ -485,7 +533,11 @@ function normalizeCatalogGroupLabel(value: string | null | undefined) {
   return normalizeGroupFilterValue(value ?? "Diger").replace(/\s*:\s*/g, ":");
 }
 
-export function matchesCatalogGroupFilter(groupTitle: string | null | undefined, group?: string) {
+export function matchesCatalogGroupFilter(
+  groupTitle: string | null | undefined,
+  group?: string,
+  title?: string | null
+) {
   const normalizedGroup = normalizeGroupFilterValue(group);
   if (!normalizedGroup) {
     return true;
@@ -494,7 +546,13 @@ export function matchesCatalogGroupFilter(groupTitle: string | null | undefined,
   const groupLabel = normalizeCatalogGroupLabel(groupTitle ?? "Diger");
   const countryFilterCode = resolveCountryFilterCode(group);
   if (countryFilterCode) {
-    return groupLabel.startsWith(`${countryFilterCode}:`);
+    if (parseCountryCodeFromGroupTitle(groupTitle) === countryFilterCode) {
+      return true;
+    }
+    if (countryFilterCode === "tr") {
+      return hasTurkiyeCountryHeuristic(title, groupTitle);
+    }
+    return false;
   }
 
   return groupLabel === normalizedGroup;
@@ -512,7 +570,7 @@ function paginate<T extends { title?: string; groupTitle?: string | null }>(
     const matchesSearch = normalizedSearch
       ? (item.title ?? "").toLowerCase().includes(normalizedSearch)
       : true;
-    const matchesGroup = matchesCatalogGroupFilter(item.groupTitle, group);
+    const matchesGroup = matchesCatalogGroupFilter(item.groupTitle, group, item.title);
     return matchesSearch && matchesGroup;
   });
   const start = (page - 1) * pageSize;

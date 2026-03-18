@@ -28,6 +28,45 @@ describe("classifyLiveChannelCountry", () => {
     });
   });
 
+  it("classifies TURK group aliases as strong TR signal", () => {
+    expect(
+      classifyLiveChannelCountry({
+        title: "Spor HD",
+        groupTitle: "Turk Kanallari"
+      })
+    ).toEqual({
+      countryCode: "TR",
+      confidence: "high",
+      reason: "tr_strong_group"
+    });
+  });
+
+  it("classifies strong Turkish title brands even when group is generic", () => {
+    expect(
+      classifyLiveChannelCountry({
+        title: "TRT 1 HD",
+        groupTitle: "Genel"
+      })
+    ).toEqual({
+      countryCode: "TR",
+      confidence: "high",
+      reason: "tr_strong_group"
+    });
+  });
+
+  it("classifies TR token with contextual title keywords as strong Turkish signal", () => {
+    expect(
+      classifyLiveChannelCountry({
+        title: "TR Spor HD",
+        groupTitle: "Spor"
+      })
+    ).toEqual({
+      countryCode: "TR",
+      confidence: "high",
+      reason: "tr_strong_group"
+    });
+  });
+
   it("rejects single-title-only medium signals", () => {
     expect(
       classifyLiveChannelCountry({

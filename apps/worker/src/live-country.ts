@@ -12,8 +12,29 @@ export type LiveCountryClassification = {
 };
 
 const COUNTRY_PREFIX_PATTERN = /^\s*([A-Za-z]{2,3})\s*[:\-]/;
-const TR_STRONG_GROUP_TOKENS = new Set(["turkiye", "turkey", "tr"]);
+const TR_STRONG_GROUP_TOKENS = new Set([
+  "turkiye",
+  "turkey",
+  "tr",
+  "turk",
+  "turkce",
+  "turkish"
+]);
 const TR_MEDIUM_TOKENS = new Set(["turk", "turkce", "dublaj", "ulusal", "turkish"]);
+const TR_TITLE_CONTEXT_TOKENS = new Set(["spor", "haber", "kanal", "tv", "ulusal"]);
+const TR_STRONG_TITLE_PATTERNS: RegExp[] = [
+  /(^|[^a-z0-9])(trt|atv|tv8|cnnturk|haberturk|aspor|ahaber|tgrt|teve2)([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])cnn\s*turk([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])a\s*spor([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])a\s*haber([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])kanal\s*d([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])kanal\s*7([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])show\s*tv([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])star\s*tv([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])beyaz\s*tv([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])ulke\s*tv([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])kanal\s*24([^a-z0-9]|$)/
+];
 
 function normalizeAsciiText(value: string | null | undefined) {
   return (value ?? "")
@@ -54,6 +75,16 @@ function hasStrongTrGroupSignal(groupTokens: Set<string>) {
   return countTokenMatches(groupTokens, TR_STRONG_GROUP_TOKENS) > 0;
 }
 
+function hasStrongTrTitleSignal(titleText: string, titleTokens: Set<string>) {
+  for (const pattern of TR_STRONG_TITLE_PATTERNS) {
+    if (pattern.test(titleText)) {
+      return true;
+    }
+  }
+
+  return titleTokens.has("tr") && countTokenMatches(titleTokens, TR_TITLE_CONTEXT_TOKENS) > 0;
+}
+
 function hasBalancedTrMediumSignals(groupTokens: Set<string>, titleTokens: Set<string>) {
   const groupMediumMatches = countTokenMatches(groupTokens, TR_MEDIUM_TOKENS);
   const titleMediumMatches = countTokenMatches(titleTokens, TR_MEDIUM_TOKENS);
@@ -78,9 +109,10 @@ export function classifyLiveChannelCountry(input: {
   }
 
   const groupTokens = tokenize(input.groupTitle);
+  const normalizedTitle = normalizeAsciiText(input.title);
   const titleTokens = tokenize(input.title);
 
-  if (hasStrongTrGroupSignal(groupTokens)) {
+  if (hasStrongTrGroupSignal(groupTokens) || hasStrongTrTitleSignal(normalizedTitle, titleTokens)) {
     return {
       countryCode: "TR",
       confidence: "high",

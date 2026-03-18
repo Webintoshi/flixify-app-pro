@@ -38,15 +38,19 @@ describe("live catalog turkiye filter", () => {
     expect(clause).toContain("c.country_code = $3");
     expect(clause).toContain("c.country_code is null");
     expect(clause).toContain("like $4");
+    expect(clause).toContain("$3 = 'TR'");
+    expect(clause.toLowerCase()).toContain("turkiye");
+    expect(clause.toLowerCase()).toContain("turkce");
+    expect(clause.toLowerCase()).toContain("trt");
   });
 
-  it("matches only TR: prefixed groups for turkiye filter in demo mode", () => {
+  it("matches TR heuristics for turkiye filter in demo mode", () => {
     expect(matchesCatalogGroupFilter("TR:SPOR", "turkiye")).toBe(true);
     expect(matchesCatalogGroupFilter("TR:SPOR", "country:tr")).toBe(true);
     expect(matchesCatalogGroupFilter("TR:SPOR", "ulke:tr")).toBe(true);
-    expect(matchesCatalogGroupFilter("tr:haber", "turkiye")).toBe(true);
-    expect(matchesCatalogGroupFilter("TR SPOR", "turkiye")).toBe(false);
-    expect(matchesCatalogGroupFilter("SPORT", "turkiye")).toBe(false);
+    expect(matchesCatalogGroupFilter("Spor", "country:tr", "TR Spor HD")).toBe(true);
+    expect(matchesCatalogGroupFilter("Genel", "country:tr", "TRT 1 HD")).toBe(true);
+    expect(matchesCatalogGroupFilter("Haber", "country:tr", "World News")).toBe(false);
   });
 
   it("keeps exact group matching for non-turkiye filters", () => {
