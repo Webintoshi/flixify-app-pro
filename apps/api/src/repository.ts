@@ -975,9 +975,7 @@ async function listLiveCountryGroups(snapshotVersion: number, search?: string) {
           lower(coalesce(c.group_title, '')) as normalized_group_title,
           lower(coalesce(c.tvg_id, '')) as normalized_tvg_id
         from public.shared_live_channels c
-        left join public.shared_live_channel_health h on h.channel_id = c.id
         where c.snapshot_version = $1
-          and coalesce(h.health_status, 'unknown') <> 'broken'
           and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
       ),
       normalized_country as (
@@ -1016,9 +1014,7 @@ async function listLiveCatalogGroups(snapshotVersion: number, search?: string) {
       `
         select coalesce(nullif(c.group_title, ''), 'Diger') as title, count(*)::text as count
         from public.shared_live_channels c
-        left join public.shared_live_channel_health h on h.channel_id = c.id
         where c.snapshot_version = $1
-          and coalesce(h.health_status, 'unknown') <> 'broken'
           and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
         group by 1
         order by count(*) desc, title asc
@@ -1106,7 +1102,6 @@ export async function listLiveCatalog(
             from public.shared_live_channels c
             left join public.shared_live_channel_health h on h.channel_id = c.id
             where c.snapshot_version = $1
-              and coalesce(h.health_status, 'unknown') <> 'broken'
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
               and ${buildLiveCountryFilterWhereClause()}
             order by ${buildLiveCatalogOrderByClause(true)}
@@ -1120,7 +1115,6 @@ export async function listLiveCatalog(
             from public.shared_live_channels c
             left join public.shared_live_channel_health h on h.channel_id = c.id
             where c.snapshot_version = $1
-              and coalesce(h.health_status, 'unknown') <> 'broken'
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
               and ${buildLiveCountryFilterWhereClause()}
           `,
@@ -1145,7 +1139,6 @@ export async function listLiveCatalog(
             from public.shared_live_channels c
             left join public.shared_live_channel_health h on h.channel_id = c.id
             where c.snapshot_version = $1
-              and coalesce(h.health_status, 'unknown') <> 'broken'
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
               and ($3::text is null or lower(coalesce(c.group_title, 'diger')) = $3)
             order by ${buildLiveCatalogOrderByClause(false)}
@@ -1159,7 +1152,6 @@ export async function listLiveCatalog(
             from public.shared_live_channels c
             left join public.shared_live_channel_health h on h.channel_id = c.id
             where c.snapshot_version = $1
-              and coalesce(h.health_status, 'unknown') <> 'broken'
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
               and ($3::text is null or lower(coalesce(c.group_title, 'diger')) = $3)
           `,
@@ -1195,7 +1187,6 @@ export async function getLiveChannelForPlayback(snapshotVersion: number, channel
       from public.shared_live_channels c
       left join public.shared_live_channel_health h on h.channel_id = c.id
       where c.snapshot_version = $1
-        and coalesce(h.health_status, 'unknown') <> 'broken'
         and c.id = $2
       limit 1
     `,
@@ -1248,8 +1239,8 @@ export async function updateLiveChannelHealth(
         health_status = case
           when excluded.health_status = 'healthy' then 'healthy'
           when $8::boolean then public.shared_live_channel_health.health_status
-          when public.shared_live_channel_health.failure_count + 1 >= 5 then 'broken'
-          when public.shared_live_channel_health.failure_count + 1 >= 2 then 'degraded'
+          when public.shared_live_channel_health.failure_count + 1 >= 12 then 'broken'
+          when public.shared_live_channel_health.failure_count + 1 >= 4 then 'degraded'
           else excluded.health_status
         end,
         failure_count = case

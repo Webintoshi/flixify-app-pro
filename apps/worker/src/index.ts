@@ -577,7 +577,8 @@ async function loadHealthCandidates(limit = HEALTH_PROBE_LIMIT) {
         where id = true
       )
         and (
-          lower(coalesce(c.group_title, '')) like 'tr:%'
+          upper(coalesce(c.country_code, '')) = 'TR'
+          or lower(coalesce(c.group_title, '')) like 'tr:%'
           or c.order_index < 40
           or h.last_play_requested_at >= timezone('utc', now()) - interval '30 minutes'
           or coalesce(h.health_status, 'unknown') in ('degraded', 'broken')
@@ -588,11 +589,12 @@ async function loadHealthCandidates(limit = HEALTH_PROBE_LIMIT) {
         )
       order by
         case
-          when lower(coalesce(c.group_title, '')) like 'tr:%' then 0
-          when h.last_play_requested_at >= timezone('utc', now()) - interval '30 minutes' then 1
-          when coalesce(h.health_status, 'unknown') in ('degraded', 'broken') then 2
-          when c.order_index < 40 then 3
-          else 4
+          when upper(coalesce(c.country_code, '')) = 'TR' then 0
+          when lower(coalesce(c.group_title, '')) like 'tr:%' then 1
+          when h.last_play_requested_at >= timezone('utc', now()) - interval '30 minutes' then 2
+          when coalesce(h.health_status, 'unknown') in ('degraded', 'broken') then 3
+          when c.order_index < 40 then 4
+          else 5
         end,
         coalesce(h.last_checked_at, 'epoch'::timestamptz) asc,
         c.order_index asc
@@ -661,8 +663,8 @@ async function updateLiveChannelHealth(
       `
         update public.shared_live_channel_health
         set health_status = case
-          when failure_count >= 5 then 'broken'
-          when failure_count >= 2 then 'degraded'
+          when failure_count >= 12 then 'broken'
+          when failure_count >= 4 then 'degraded'
           else health_status
         end
         where channel_id = $1

@@ -212,10 +212,10 @@ export async function probeLiveStream(url: string) {
 }
 
 export function computeHealthStatus(failureCount: number): LiveHealthStatus {
-  if (failureCount >= 5) {
+  if (failureCount >= 12) {
     return "broken";
   }
-  if (failureCount >= 2) {
+  if (failureCount >= 4) {
     return "degraded";
   }
   return failureCount > 0 ? "degraded" : "healthy";
