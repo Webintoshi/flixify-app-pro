@@ -415,6 +415,29 @@ async function resolveVodSourceUrl(input: {
   };
 }
 
+function buildDirectVodPlaybackFallback(input: {
+  itemId: string;
+  kind: "movie" | "episode";
+  sourceUrl: string;
+  transport: "hls" | "mp4" | "mkv" | "avi" | "unknown";
+  isVerified: boolean;
+}) {
+  return {
+    itemId: input.itemId,
+    kind: input.kind,
+    url: input.sourceUrl,
+    transport: input.transport,
+    deliveryMode: input.transport === "hls" ? ("hls_proxy" as const) : ("file_proxy" as const),
+    audioTracks: [],
+    defaultAudioTrackId: null,
+    selectedAudioTrackId: null,
+    expiresAt: null,
+    canPlay: true,
+    isVerified: input.isVerified,
+    errorMessage: null
+  };
+}
+
 async function issueSession(userId: string, input: { deviceName?: string; platform?: string }) {
   const refreshToken = generateRefreshToken();
   const refreshTokenHash = await hashSecret(refreshToken);
@@ -1158,7 +1181,7 @@ export function buildServer() {
         fallbackCredentials: userContext.sharedReferenceCredentials
       });
 
-      if (!resolved.ok || !resolved.sourceUrl) {
+      if (!resolved.sourceUrl) {
         return {
           itemId,
           kind,
@@ -1175,8 +1198,18 @@ export function buildServer() {
         };
       }
 
+      if (!resolved.ok && !preferTranscode) {
+        return buildDirectVodPlaybackFallback({
+          itemId,
+          kind,
+          sourceUrl: resolved.sourceUrl,
+          transport: resolved.transport,
+          isVerified: false
+        });
+      }
+
       try {
-        return await vodPlaybackManager.createPlayback({
+        const playback = await vodPlaybackManager.createPlayback({
           userId: auth.userId,
           itemId,
           kind,
@@ -1188,8 +1221,29 @@ export function buildServer() {
           sourceTransportHint: resolved.transport,
           selectedAudioTrackId: audioTrackId
         });
+
+        if (!playback.canPlay && !preferTranscode) {
+          return buildDirectVodPlaybackFallback({
+            itemId,
+            kind,
+            sourceUrl: resolved.sourceUrl,
+            transport: resolved.transport,
+            isVerified: false
+          });
+        }
+
+        return playback;
       } catch (error) {
         if (error instanceof VodPlaybackUnavailableError) {
+          if (!preferTranscode) {
+            return buildDirectVodPlaybackFallback({
+              itemId,
+              kind,
+              sourceUrl: resolved.sourceUrl,
+              transport: resolved.transport,
+              isVerified: false
+            });
+          }
           return reply.status(error.statusCode).send({
             message: error.message
           });
