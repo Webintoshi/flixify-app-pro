@@ -942,3 +942,114 @@
   cursor: default;
   transform: none;
 }
+
+.payment-method-details {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(5, 8, 19, 0.56);
+}
+
+.payment-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.payment-detail-row small {
+  display: block;
+  margin-bottom: 4px;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 0.78rem;
+}
+
+.payment-detail-row strong {
+  display: block;
+  font-size: 0.95rem;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.payment-copy-button {
+  min-width: 104px;
+}
+
+.crypto-asset-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.crypto-asset-chip {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 10px 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.crypto-asset-symbol {
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.crypto-asset-label {
+  font-size: 0.74rem;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.crypto-asset-chip:hover,
+.crypto-asset-chip:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.34);
+  outline: none;
+}
+
+.crypto-asset-chip[data-tv-active="true"] {
+  border-color: rgba(229, 9, 20, 0.6);
+  box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.24);
+}
+
+.crypto-asset-chip.is-usdt .crypto-asset-symbol {
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.72), rgba(22, 163, 74, 0.45));
+}
+
+.crypto-asset-chip.is-tron .crypto-asset-symbol {
+  background: linear-gradient(180deg, rgba(244, 63, 94, 0.72), rgba(190, 24, 93, 0.46));
+}
+
+.crypto-asset-chip.is-sol .crypto-asset-symbol {
+  background: linear-gradient(180deg, rgba(124, 58, 237, 0.72), rgba(37, 99, 235, 0.46));
+}
+
+.crypto-asset-chip.is-btc .crypto-asset-symbol {
+  background: linear-gradient(180deg, rgba(251, 146, 60, 0.78), rgba(245, 158, 11, 0.48));
+}
+
+.crypto-asset-chip.is-usdc .crypto-asset-symbol {
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.72), rgba(37, 99, 235, 0.46));
+}
+
+@media (max-width: 900px) {
+  .crypto-asset-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

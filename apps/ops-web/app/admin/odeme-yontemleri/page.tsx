@@ -6,8 +6,16 @@ import { apiRequest } from "../../../lib/api";
 type PaymentMethodSettingsState = {
   bankTransferEftEnabled: boolean;
   bankTransferEftDetails: string;
+  bankTransferRecipientName: string;
+  bankTransferIban: string;
+  bankTransferBankName: string;
   cryptoEnabled: boolean;
   cryptoDetails: string;
+  cryptoWalletUsdtTrc20: string;
+  cryptoWalletTron: string;
+  cryptoWalletSol: string;
+  cryptoWalletBtc: string;
+  cryptoWalletUsdc: string;
   bankCardEnabled: boolean;
   bankCardDetails: string;
 };
@@ -15,8 +23,16 @@ type PaymentMethodSettingsState = {
 const initialState: PaymentMethodSettingsState = {
   bankTransferEftEnabled: true,
   bankTransferEftDetails: "",
+  bankTransferRecipientName: "",
+  bankTransferIban: "",
+  bankTransferBankName: "",
   cryptoEnabled: true,
   cryptoDetails: "",
+  cryptoWalletUsdtTrc20: "",
+  cryptoWalletTron: "",
+  cryptoWalletSol: "",
+  cryptoWalletBtc: "",
+  cryptoWalletUsdc: "",
   bankCardEnabled: true,
   bankCardDetails: ""
 };
@@ -29,8 +45,16 @@ export default function AdminPaymentMethodsPage() {
     apiRequest<{
       bankTransferEftEnabled: boolean;
       bankTransferEftDetails: string | null;
+      bankTransferRecipientName: string | null;
+      bankTransferIban: string | null;
+      bankTransferBankName: string | null;
       cryptoEnabled: boolean;
       cryptoDetails: string | null;
+      cryptoWalletUsdtTrc20: string | null;
+      cryptoWalletTron: string | null;
+      cryptoWalletSol: string | null;
+      cryptoWalletBtc: string | null;
+      cryptoWalletUsdc: string | null;
       bankCardEnabled: boolean;
       bankCardDetails: string | null;
     }>("/admin/payment-methods", {
@@ -40,8 +64,16 @@ export default function AdminPaymentMethodsPage() {
         setSettings({
           bankTransferEftEnabled: response.bankTransferEftEnabled,
           bankTransferEftDetails: response.bankTransferEftDetails ?? "",
+          bankTransferRecipientName: response.bankTransferRecipientName ?? "",
+          bankTransferIban: response.bankTransferIban ?? "",
+          bankTransferBankName: response.bankTransferBankName ?? "",
           cryptoEnabled: response.cryptoEnabled,
           cryptoDetails: response.cryptoDetails ?? "",
+          cryptoWalletUsdtTrc20: response.cryptoWalletUsdtTrc20 ?? "",
+          cryptoWalletTron: response.cryptoWalletTron ?? "",
+          cryptoWalletSol: response.cryptoWalletSol ?? "",
+          cryptoWalletBtc: response.cryptoWalletBtc ?? "",
+          cryptoWalletUsdc: response.cryptoWalletUsdc ?? "",
           bankCardEnabled: response.bankCardEnabled,
           bankCardDetails: response.bankCardDetails ?? ""
         });
@@ -58,8 +90,16 @@ export default function AdminPaymentMethodsPage() {
         body: {
           bankTransferEftEnabled: settings.bankTransferEftEnabled,
           bankTransferEftDetails: settings.bankTransferEftDetails.trim() || null,
+          bankTransferRecipientName: settings.bankTransferRecipientName.trim() || null,
+          bankTransferIban: settings.bankTransferIban.trim() || null,
+          bankTransferBankName: settings.bankTransferBankName.trim() || null,
           cryptoEnabled: settings.cryptoEnabled,
           cryptoDetails: settings.cryptoDetails.trim() || null,
+          cryptoWalletUsdtTrc20: settings.cryptoWalletUsdtTrc20.trim() || null,
+          cryptoWalletTron: settings.cryptoWalletTron.trim() || null,
+          cryptoWalletSol: settings.cryptoWalletSol.trim() || null,
+          cryptoWalletBtc: settings.cryptoWalletBtc.trim() || null,
+          cryptoWalletUsdc: settings.cryptoWalletUsdc.trim() || null,
           bankCardEnabled: settings.bankCardEnabled,
           bankCardDetails: settings.bankCardDetails.trim() || null
         },
@@ -102,6 +142,36 @@ export default function AdminPaymentMethodsPage() {
         </label>
 
         <label className="field">
+          <span>Alici Adi</span>
+          <input
+            type="text"
+            value={settings.bankTransferRecipientName}
+            onChange={(event) => setSettings({ ...settings, bankTransferRecipientName: event.target.value })}
+            placeholder="Hesap sahibi / alici unvani"
+          />
+        </label>
+
+        <label className="field">
+          <span>IBAN</span>
+          <input
+            type="text"
+            value={settings.bankTransferIban}
+            onChange={(event) => setSettings({ ...settings, bankTransferIban: event.target.value })}
+            placeholder="TR..."
+          />
+        </label>
+
+        <label className="field">
+          <span>Banka Adi</span>
+          <input
+            type="text"
+            value={settings.bankTransferBankName}
+            onChange={(event) => setSettings({ ...settings, bankTransferBankName: event.target.value })}
+            placeholder="Banka adi (opsiyonel)"
+          />
+        </label>
+
+        <label className="field">
           <span>
             <input
               type="checkbox"
@@ -116,6 +186,56 @@ export default function AdminPaymentMethodsPage() {
             value={settings.cryptoDetails}
             onChange={(event) => setSettings({ ...settings, cryptoDetails: event.target.value })}
             placeholder="Ag tipi, coin ve cuzdan adresini yazin."
+          />
+        </label>
+
+        <label className="field">
+          <span>USDT (TRC20) Cuzdan</span>
+          <input
+            type="text"
+            value={settings.cryptoWalletUsdtTrc20}
+            onChange={(event) => setSettings({ ...settings, cryptoWalletUsdtTrc20: event.target.value })}
+            placeholder="USDT TRC20 adresi"
+          />
+        </label>
+
+        <label className="field">
+          <span>TRON (TRX) Cuzdan</span>
+          <input
+            type="text"
+            value={settings.cryptoWalletTron}
+            onChange={(event) => setSettings({ ...settings, cryptoWalletTron: event.target.value })}
+            placeholder="TRON adresi"
+          />
+        </label>
+
+        <label className="field">
+          <span>SOL Cuzdan</span>
+          <input
+            type="text"
+            value={settings.cryptoWalletSol}
+            onChange={(event) => setSettings({ ...settings, cryptoWalletSol: event.target.value })}
+            placeholder="SOL adresi"
+          />
+        </label>
+
+        <label className="field">
+          <span>BTC Cuzdan</span>
+          <input
+            type="text"
+            value={settings.cryptoWalletBtc}
+            onChange={(event) => setSettings({ ...settings, cryptoWalletBtc: event.target.value })}
+            placeholder="BTC adresi"
+          />
+        </label>
+
+        <label className="field">
+          <span>USDC Cuzdan</span>
+          <input
+            type="text"
+            value={settings.cryptoWalletUsdc}
+            onChange={(event) => setSettings({ ...settings, cryptoWalletUsdc: event.target.value })}
+            placeholder="USDC adresi"
           />
         </label>
 

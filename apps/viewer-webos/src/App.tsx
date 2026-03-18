@@ -9,6 +9,7 @@ import type {
   LiveTransport,
   MovieRecord,
   PaymentMethodId,
+  PaymentMethodOption,
   PackageRecord,
   SeriesRecord,
   SeriesSeasonRecord,
@@ -117,6 +118,76 @@ const paymentMethodLabelById: Record<PaymentMethodId, string> = {
   crypto: "Kripto",
   "bank-card": "Banka Karti"
 };
+
+type CryptoAssetId = "usdt-trc20" | "tron" | "sol" | "btc" | "usdc";
+
+type CryptoAssetView = {
+  id: CryptoAssetId;
+  label: string;
+  symbol: string;
+  walletAddress: string | null;
+};
+
+const defaultCryptoAssets: CryptoAssetView[] = [
+  { id: "usdt-trc20", label: "Tether", symbol: "USDT", walletAddress: null },
+  { id: "tron", label: "Tron", symbol: "TRX", walletAddress: null },
+  { id: "sol", label: "Sol", symbol: "SOL", walletAddress: null },
+  { id: "btc", label: "BTC", symbol: "BTC", walletAddress: null },
+  { id: "usdc", label: "USDC", symbol: "USDC", walletAddress: null }
+];
+
+const cryptoAssetClassById: Record<CryptoAssetId, string> = {
+  "usdt-trc20": "is-usdt",
+  tron: "is-tron",
+  sol: "is-sol",
+  btc: "is-btc",
+  usdc: "is-usdc"
+};
+
+function toTextOrNull(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function buildCryptoAssets(method: PaymentMethodOption | null | undefined): CryptoAssetView[] {
+  if (!method?.cryptoAssets || method.cryptoAssets.length === 0) {
+    return defaultCryptoAssets;
+  }
+
+  return defaultCryptoAssets.map((fallbackAsset) => {
+    const found = method.cryptoAssets?.find((asset) => asset.id === fallbackAsset.id);
+    return {
+      id: fallbackAsset.id,
+      label: found?.label?.trim() || fallbackAsset.label,
+      symbol: found?.symbol?.trim() || fallbackAsset.symbol,
+      walletAddress: toTextOrNull(found?.walletAddress)
+    };
+  });
+}
+
+async function copyText(text: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  if (typeof document === "undefined") {
+    throw new Error("clipboard-unsupported");
+  }
+
+  const helper = document.createElement("textarea");
+  helper.value = text;
+  helper.setAttribute("readonly", "true");
+  helper.style.position = "fixed";
+  helper.style.opacity = "0";
+  document.body.appendChild(helper);
+  helper.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(helper);
+  if (!copied) {
+    throw new Error("copy-failed");
+  }
+}
 
 const liveCountryLabelByCode: Record<string, string> = {
   TR: "Turkiye"
@@ -7129,10 +7200,28 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
   const [playingItem, setPlayingItem] = useState<PlaybackItem | null>(null);
   const [premiumPopupDismissed, setPremiumPopupDismissed] = useState(false);
   const [pendingPaymentPackage, setPendingPaymentPackage] = useState<PackageRecord | null>(null);
+  const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<PaymentMethodId | null>(null);
+  const [selectedCryptoAssetId, setSelectedCryptoAssetId] = useState<CryptoAssetId>("usdt-trc20");
+  const [paymentModalNotice, setPaymentModalNotice] = useState<string | null>(null);
   const paymentMethods = core.paymentMethods.filter((method) => method.enabled);
   const isPaymentModalOpen = Boolean(pendingPaymentPackage);
   const tvRouteKey = `${location.pathname}${playingItem ? "::overlay" : ""}${isPaymentModalOpen ? "::payment-modal" : ""}`;
   const me = core.me;
+  const selectedPaymentMethod = selectedPaymentMethodId
+    ? paymentMethods.find((method) => method.id === selectedPaymentMethodId) ?? null
+    : null;
+  const selectedCryptoAssets = buildCryptoAssets(
+    selectedPaymentMethod?.id === "crypto" ? selectedPaymentMethod : null
+  );
+  const selectedCryptoAsset =
+    selectedCryptoAssets.find((asset) => asset.id === selectedCryptoAssetId) ?? selectedCryptoAssets[0];
+
+  function closePaymentMethodModal() {
+    setPendingPaymentPackage(null);
+    setSelectedPaymentMethodId(null);
+    setSelectedCryptoAssetId("usdt-trc20");
+    setPaymentModalNotice(null);
+  }
 
   useTvNavigation({
     scopeRef: shellRef,
@@ -7150,7 +7239,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
       }
 
       if (isPaymentModalOpen) {
-        setPendingPaymentPackage(null);
+        closePaymentMethodModal();
         return true;
       }
 
@@ -7164,7 +7253,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
     }
 
     setPlayingItem(null);
-    setPendingPaymentPackage(null);
+    closePaymentMethodModal();
   }, [location.pathname]);
 
   useEffect(() => {
@@ -7209,6 +7298,30 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
     }
   }, [me?.user.hasActiveSubscription]);
 
+  useEffect(() => {
+    if (!isPaymentModalOpen) {
+      return;
+    }
+
+    if (paymentMethods.length === 0) {
+      setSelectedPaymentMethodId(null);
+      return;
+    }
+
+    if (!selectedPaymentMethodId || !paymentMethods.some((method) => method.id === selectedPaymentMethodId)) {
+      setSelectedPaymentMethodId(paymentMethods[0]?.id ?? null);
+    }
+  }, [isPaymentModalOpen, paymentMethods, selectedPaymentMethodId]);
+
+  useEffect(() => {
+    if (!paymentModalNotice) {
+      return;
+    }
+
+    const timer = setTimeout(() => setPaymentModalNotice(null), 1800);
+    return () => clearTimeout(timer);
+  }, [paymentModalNotice]);
+
   if (!me) {
     return <div className="content">Yukleniyor...</div>;
   }
@@ -7218,6 +7331,9 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
   }
 
   function openPaymentMethodModal(pkg: PackageRecord) {
+    setSelectedPaymentMethodId(paymentMethods[0]?.id ?? null);
+    setSelectedCryptoAssetId("usdt-trc20");
+    setPaymentModalNotice(null);
     setPendingPaymentPackage(pkg);
   }
 
@@ -7227,8 +7343,23 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
     }
 
     const packageSlug = pendingPaymentPackage.slug;
-    setPendingPaymentPackage(null);
+    closePaymentMethodModal();
     await core.requestPayment(packageSlug);
+  }
+
+  async function handleCopyPaymentValue(value: string | null | undefined, label: string) {
+    const copyValue = toTextOrNull(value);
+    if (!copyValue) {
+      setPaymentModalNotice(`${label} bilgisi tanimli degil.`);
+      return;
+    }
+
+    try {
+      await copyText(copyValue);
+      setPaymentModalNotice(`${label} kopyalandi.`);
+    } catch {
+      setPaymentModalNotice("Kopyalama su an desteklenmiyor.");
+    }
   }
 
   const liveItems = core.catalogs.live.map<PlaybackItem>((channel: LiveChannel) => ({
@@ -7605,7 +7736,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
               <button
                 type="button"
                 className="premium-modal-close payment-method-modal-close"
-                onClick={() => setPendingPaymentPackage(null)}
+                onClick={closePaymentMethodModal}
                 aria-label="Kapat"
                 data-tv-focusable="true"
                 data-tv-region="overlay-actions"
@@ -7618,24 +7749,172 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
               <h2>{pendingPaymentPackage.title} paketi icin odeme yontemi secin</h2>
               <p className="muted">Yontem seciminden sonra odeme talebiniz admin paneline iletilecek.</p>
               {paymentMethods.length > 0 ? (
-                <div className="payment-method-grid">
-                  {paymentMethods.map((method, index) => (
-                    <button
-                      key={method.id}
-                      type="button"
-                      className="payment-method-option"
-                      onClick={() => void submitPaymentRequestWithMethod(method.id)}
-                      disabled={core.busy}
-                      data-tv-focusable="true"
-                      data-tv-region="overlay-actions"
-                      data-tv-focus-key={`payment-method-${method.id}`}
-                      data-tv-overlay-initial={index === 0 ? "true" : undefined}
-                    >
-                      <strong>{method.label || paymentMethodLabelById[method.id]}</strong>
-                      <span>{method.details?.trim() || paymentMethodFallbackDetails[method.id]}</span>
-                    </button>
-                  ))}
-                </div>
+                <>
+                  <div className="payment-method-grid">
+                    {paymentMethods.map((method, index) => (
+                      <button
+                        key={method.id}
+                        type="button"
+                        className="payment-method-option"
+                        onClick={() => setSelectedPaymentMethodId(method.id)}
+                        disabled={core.busy}
+                        data-tv-focusable="true"
+                        data-tv-region="overlay-actions"
+                        data-tv-focus-key={`payment-method-${method.id}`}
+                        data-tv-overlay-initial={index === 0 ? "true" : undefined}
+                        data-tv-active={selectedPaymentMethod?.id === method.id ? "true" : undefined}
+                      >
+                        <strong>{method.label || paymentMethodLabelById[method.id]}</strong>
+                        <span>{method.details?.trim() || paymentMethodFallbackDetails[method.id]}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {selectedPaymentMethod ? (
+                    <div className="payment-method-details">
+                      {selectedPaymentMethod.id === "bank-transfer-eft" ? (
+                        <>
+                          <div className="payment-detail-row">
+                            <div>
+                              <small>Alici Adi</small>
+                              <strong>{toTextOrNull(selectedPaymentMethod.bankTransfer?.recipientName) ?? "-"}</strong>
+                            </div>
+                            <button
+                              type="button"
+                              className="button secondary payment-copy-button"
+                              onClick={() =>
+                                void handleCopyPaymentValue(selectedPaymentMethod.bankTransfer?.recipientName, "Alici adi")
+                              }
+                              data-tv-focusable="true"
+                              data-tv-region="overlay-actions"
+                              data-tv-focus-key="payment-copy-recipient"
+                            >
+                              Kopyala
+                            </button>
+                          </div>
+                          <div className="payment-detail-row">
+                            <div>
+                              <small>IBAN</small>
+                              <strong>{toTextOrNull(selectedPaymentMethod.bankTransfer?.iban) ?? "-"}</strong>
+                            </div>
+                            <button
+                              type="button"
+                              className="button secondary payment-copy-button"
+                              onClick={() => void handleCopyPaymentValue(selectedPaymentMethod.bankTransfer?.iban, "IBAN")}
+                              data-tv-focusable="true"
+                              data-tv-region="overlay-actions"
+                              data-tv-focus-key="payment-copy-iban"
+                            >
+                              Kopyala
+                            </button>
+                          </div>
+                          <div className="payment-detail-row">
+                            <div>
+                              <small>Banka</small>
+                              <strong>{toTextOrNull(selectedPaymentMethod.bankTransfer?.bankName) ?? "-"}</strong>
+                            </div>
+                            <button
+                              type="button"
+                              className="button secondary payment-copy-button"
+                              onClick={() =>
+                                void handleCopyPaymentValue(selectedPaymentMethod.bankTransfer?.bankName, "Banka adi")
+                              }
+                              data-tv-focusable="true"
+                              data-tv-region="overlay-actions"
+                              data-tv-focus-key="payment-copy-bank-name"
+                            >
+                              Kopyala
+                            </button>
+                          </div>
+                          <div className="payment-detail-row">
+                            <div>
+                              <small>Kullanici Kodu</small>
+                              <strong>{headerUserLabel}</strong>
+                            </div>
+                            <button
+                              type="button"
+                              className="button secondary payment-copy-button"
+                              onClick={() => void handleCopyPaymentValue(headerUserLabel, "Kullanici kodu")}
+                              data-tv-focusable="true"
+                              data-tv-region="overlay-actions"
+                              data-tv-focus-key="payment-copy-user-code"
+                            >
+                              Kopyala
+                            </button>
+                          </div>
+                        </>
+                      ) : null}
+
+                      {selectedPaymentMethod.id === "crypto" ? (
+                        <>
+                          <div className="crypto-asset-grid">
+                            {selectedCryptoAssets.map((asset, index) => (
+                              <button
+                                key={asset.id}
+                                type="button"
+                                className={`crypto-asset-chip ${cryptoAssetClassById[asset.id]}`}
+                                onClick={() => setSelectedCryptoAssetId(asset.id)}
+                                data-tv-focusable="true"
+                                data-tv-region="overlay-actions"
+                                data-tv-focus-key={`payment-crypto-${asset.id}`}
+                                data-tv-active={selectedCryptoAsset?.id === asset.id ? "true" : undefined}
+                                data-tv-overlay-initial={
+                                  selectedPaymentMethod.id === "crypto" && index === 0 ? "true" : undefined
+                                }
+                              >
+                                <span className="crypto-asset-symbol">{asset.symbol}</span>
+                                <span className="crypto-asset-label">{asset.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                          <div className="payment-detail-row">
+                            <div>
+                              <small>Cuzdan Adresi ({selectedCryptoAsset?.symbol ?? "-"})</small>
+                              <strong>{toTextOrNull(selectedCryptoAsset?.walletAddress) ?? "-"}</strong>
+                            </div>
+                            <button
+                              type="button"
+                              className="button secondary payment-copy-button"
+                              onClick={() =>
+                                void handleCopyPaymentValue(
+                                  selectedCryptoAsset?.walletAddress,
+                                  `${selectedCryptoAsset?.symbol ?? "Kripto"} adresi`
+                                )
+                              }
+                              data-tv-focusable="true"
+                              data-tv-region="overlay-actions"
+                              data-tv-focus-key="payment-copy-crypto-wallet"
+                            >
+                              Kopyala
+                            </button>
+                          </div>
+                        </>
+                      ) : null}
+
+                      {selectedPaymentMethod.id === "bank-card" ? (
+                        <div className="notice-card subtle">
+                          {selectedPaymentMethod.details?.trim() || paymentMethodFallbackDetails["bank-card"]}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {paymentModalNotice ? <div className="notice-card subtle">{paymentModalNotice}</div> : null}
+
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={core.busy || !selectedPaymentMethod}
+                    onClick={() =>
+                      selectedPaymentMethod ? void submitPaymentRequestWithMethod(selectedPaymentMethod.id) : undefined
+                    }
+                    data-tv-focusable="true"
+                    data-tv-region="overlay-actions"
+                    data-tv-focus-key="payment-submit-request"
+                  >
+                    Odeme Talebi Olustur
+                  </button>
+                </>
               ) : (
                 <div className="notice-card danger">
                   Aktif odeme yontemi bulunamadi. Lutfen destek ekibiyle iletisime gecin.
@@ -7644,7 +7923,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
               <button
                 type="button"
                 className="button secondary"
-                onClick={() => setPendingPaymentPackage(null)}
+                onClick={closePaymentMethodModal}
                 data-tv-focusable="true"
                 data-tv-region="overlay-actions"
                 data-tv-focus-key="payment-modal-cancel"

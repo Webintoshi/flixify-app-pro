@@ -93,7 +93,25 @@ export const paymentMethodOptionSchema = z.object({
   id: paymentMethodIdSchema,
   label: z.string().min(2),
   enabled: z.boolean(),
-  details: z.string().trim().max(2000).nullable()
+  details: z.string().trim().max(2000).nullable(),
+  bankTransfer: z
+    .object({
+      recipientName: z.string().trim().max(200).nullable(),
+      iban: z.string().trim().max(120).nullable(),
+      bankName: z.string().trim().max(200).nullable()
+    })
+    .nullable()
+    .optional(),
+  cryptoAssets: z
+    .array(
+      z.object({
+        id: z.enum(["usdt-trc20", "tron", "sol", "btc", "usdc"]),
+        label: z.string().trim().min(1).max(120),
+        symbol: z.string().trim().min(1).max(20),
+        walletAddress: z.string().trim().max(500).nullable()
+      })
+    )
+    .optional()
 });
 export type PaymentMethodOption = z.infer<typeof paymentMethodOptionSchema>;
 

@@ -68,8 +68,16 @@ type DemoSource = {
 type DemoPaymentMethodSettings = {
   bankTransferEftEnabled: boolean;
   bankTransferEftDetails: string | null;
+  bankTransferRecipientName: string | null;
+  bankTransferIban: string | null;
+  bankTransferBankName: string | null;
   cryptoEnabled: boolean;
   cryptoDetails: string | null;
+  cryptoWalletUsdtTrc20: string | null;
+  cryptoWalletTron: string | null;
+  cryptoWalletSol: string | null;
+  cryptoWalletBtc: string | null;
+  cryptoWalletUsdc: string | null;
   bankCardEnabled: boolean;
   bankCardDetails: string | null;
 };
@@ -136,8 +144,16 @@ const settings = {
 const paymentMethodSettings: DemoPaymentMethodSettings = {
   bankTransferEftEnabled: true,
   bankTransferEftDetails: "Havale/EFT detaylarini buraya girin.",
+  bankTransferRecipientName: "Flixify Teknoloji",
+  bankTransferIban: "TR000000000000000000000000",
+  bankTransferBankName: "Ornek Bankasi",
   cryptoEnabled: true,
   cryptoDetails: "Kripto odeme agi ve cuzdan bilgisini buraya girin.",
+  cryptoWalletUsdtTrc20: "TM2D3moAddressDemoUsdtTrc20",
+  cryptoWalletTron: "TVfAddressDemoTron",
+  cryptoWalletSol: "7D2kAddressDemoSolana",
+  cryptoWalletBtc: "bc1qaddressdemobtc",
+  cryptoWalletUsdc: "0xAddressDemoUsdcEth",
   bankCardEnabled: true,
   bankCardDetails: "Banka karti odeme linkini buraya girin."
 };
@@ -287,13 +303,50 @@ function mapDemoPaymentMethods(settingsValue: DemoPaymentMethodSettings): Paymen
       id: "bank-transfer-eft",
       label: "Banka Havale / EFT",
       enabled: settingsValue.bankTransferEftEnabled,
-      details: settingsValue.bankTransferEftDetails
+      details: settingsValue.bankTransferEftDetails,
+      bankTransfer: {
+        recipientName: settingsValue.bankTransferRecipientName,
+        iban: settingsValue.bankTransferIban,
+        bankName: settingsValue.bankTransferBankName
+      }
     },
     {
       id: "crypto",
       label: "Kripto",
       enabled: settingsValue.cryptoEnabled,
-      details: settingsValue.cryptoDetails
+      details: settingsValue.cryptoDetails,
+      cryptoAssets: [
+        {
+          id: "usdt-trc20",
+          label: "Tether",
+          symbol: "USDT",
+          walletAddress: settingsValue.cryptoWalletUsdtTrc20
+        },
+        {
+          id: "tron",
+          label: "Tron",
+          symbol: "TRX",
+          walletAddress: settingsValue.cryptoWalletTron
+        },
+        {
+          id: "sol",
+          label: "Sol",
+          symbol: "SOL",
+          walletAddress: settingsValue.cryptoWalletSol
+        },
+        {
+          id: "btc",
+          label: "BTC",
+          symbol: "BTC",
+          walletAddress: settingsValue.cryptoWalletBtc
+        },
+        {
+          id: "usdc",
+          label: "USDC",
+          symbol: "USDC",
+          walletAddress: settingsValue.cryptoWalletUsdc
+        }
+      ]
     },
     {
       id: "bank-card",
@@ -1166,8 +1219,16 @@ export function getDemoPaymentMethodSettings() {
 export function updateDemoPaymentMethodSettings(input: DemoPaymentMethodSettings) {
   paymentMethodSettings.bankTransferEftEnabled = input.bankTransferEftEnabled;
   paymentMethodSettings.bankTransferEftDetails = input.bankTransferEftDetails;
+  paymentMethodSettings.bankTransferRecipientName = input.bankTransferRecipientName;
+  paymentMethodSettings.bankTransferIban = input.bankTransferIban;
+  paymentMethodSettings.bankTransferBankName = input.bankTransferBankName;
   paymentMethodSettings.cryptoEnabled = input.cryptoEnabled;
   paymentMethodSettings.cryptoDetails = input.cryptoDetails;
+  paymentMethodSettings.cryptoWalletUsdtTrc20 = input.cryptoWalletUsdtTrc20;
+  paymentMethodSettings.cryptoWalletTron = input.cryptoWalletTron;
+  paymentMethodSettings.cryptoWalletSol = input.cryptoWalletSol;
+  paymentMethodSettings.cryptoWalletBtc = input.cryptoWalletBtc;
+  paymentMethodSettings.cryptoWalletUsdc = input.cryptoWalletUsdc;
   paymentMethodSettings.bankCardEnabled = input.bankCardEnabled;
   paymentMethodSettings.bankCardDetails = input.bankCardDetails;
   addAuditLog("update-payment-method-settings", "app_settings", "true");

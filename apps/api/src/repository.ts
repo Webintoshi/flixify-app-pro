@@ -74,8 +74,16 @@ type AppSettingsRow = QueryResultRow & {
   hero_subtitle: string | null;
   bank_transfer_eft_enabled: boolean | null;
   bank_transfer_eft_details: string | null;
+  bank_transfer_recipient_name: string | null;
+  bank_transfer_iban: string | null;
+  bank_transfer_bank_name: string | null;
   crypto_enabled: boolean | null;
   crypto_details: string | null;
+  crypto_wallet_usdt_trc20: string | null;
+  crypto_wallet_tron: string | null;
+  crypto_wallet_sol: string | null;
+  crypto_wallet_btc: string | null;
+  crypto_wallet_usdc: string | null;
   bank_card_enabled: boolean | null;
   bank_card_details: string | null;
   shared_source_base_url: string | null;
@@ -106,8 +114,16 @@ type SharedLiveChannelRow = QueryResultRow & {
 type PaymentMethodSettings = {
   bankTransferEftEnabled: boolean;
   bankTransferEftDetails: string | null;
+  bankTransferRecipientName: string | null;
+  bankTransferIban: string | null;
+  bankTransferBankName: string | null;
   cryptoEnabled: boolean;
   cryptoDetails: string | null;
+  cryptoWalletUsdtTrc20: string | null;
+  cryptoWalletTron: string | null;
+  cryptoWalletSol: string | null;
+  cryptoWalletBtc: string | null;
+  cryptoWalletUsdc: string | null;
   bankCardEnabled: boolean;
   bankCardDetails: string | null;
 };
@@ -116,8 +132,16 @@ const PAYMENT_METHOD_COLUMNS_SQL = `
   alter table public.app_settings
   add column if not exists bank_transfer_eft_enabled boolean not null default true,
   add column if not exists bank_transfer_eft_details text,
+  add column if not exists bank_transfer_recipient_name text,
+  add column if not exists bank_transfer_iban text,
+  add column if not exists bank_transfer_bank_name text,
   add column if not exists crypto_enabled boolean not null default true,
   add column if not exists crypto_details text,
+  add column if not exists crypto_wallet_usdt_trc20 text,
+  add column if not exists crypto_wallet_tron text,
+  add column if not exists crypto_wallet_sol text,
+  add column if not exists crypto_wallet_btc text,
+  add column if not exists crypto_wallet_usdc text,
   add column if not exists bank_card_enabled boolean not null default true,
   add column if not exists bank_card_details text;
 `;
@@ -209,8 +233,16 @@ function mapPaymentMethodSettings(row: AppSettingsRow | null | undefined): Payme
   return {
     bankTransferEftEnabled: row?.bank_transfer_eft_enabled ?? true,
     bankTransferEftDetails: row?.bank_transfer_eft_details ?? null,
+    bankTransferRecipientName: row?.bank_transfer_recipient_name ?? null,
+    bankTransferIban: row?.bank_transfer_iban ?? null,
+    bankTransferBankName: row?.bank_transfer_bank_name ?? null,
     cryptoEnabled: row?.crypto_enabled ?? true,
     cryptoDetails: row?.crypto_details ?? null,
+    cryptoWalletUsdtTrc20: row?.crypto_wallet_usdt_trc20 ?? null,
+    cryptoWalletTron: row?.crypto_wallet_tron ?? null,
+    cryptoWalletSol: row?.crypto_wallet_sol ?? null,
+    cryptoWalletBtc: row?.crypto_wallet_btc ?? null,
+    cryptoWalletUsdc: row?.crypto_wallet_usdc ?? null,
     bankCardEnabled: row?.bank_card_enabled ?? true,
     bankCardDetails: row?.bank_card_details ?? null
   };
@@ -222,13 +254,50 @@ function mapPaymentMethodsForViewer(settings: PaymentMethodSettings): PaymentMet
       id: "bank-transfer-eft",
       label: "Banka Havale / EFT",
       enabled: settings.bankTransferEftEnabled,
-      details: settings.bankTransferEftDetails
+      details: settings.bankTransferEftDetails,
+      bankTransfer: {
+        recipientName: settings.bankTransferRecipientName,
+        iban: settings.bankTransferIban,
+        bankName: settings.bankTransferBankName
+      }
     },
     {
       id: "crypto",
       label: "Kripto",
       enabled: settings.cryptoEnabled,
-      details: settings.cryptoDetails
+      details: settings.cryptoDetails,
+      cryptoAssets: [
+        {
+          id: "usdt-trc20",
+          label: "Tether",
+          symbol: "USDT",
+          walletAddress: settings.cryptoWalletUsdtTrc20
+        },
+        {
+          id: "tron",
+          label: "Tron",
+          symbol: "TRX",
+          walletAddress: settings.cryptoWalletTron
+        },
+        {
+          id: "sol",
+          label: "Sol",
+          symbol: "SOL",
+          walletAddress: settings.cryptoWalletSol
+        },
+        {
+          id: "btc",
+          label: "BTC",
+          symbol: "BTC",
+          walletAddress: settings.cryptoWalletBtc
+        },
+        {
+          id: "usdc",
+          label: "USDC",
+          symbol: "USDC",
+          walletAddress: settings.cryptoWalletUsdc
+        }
+      ]
     },
     {
       id: "bank-card",
@@ -253,8 +322,16 @@ function isMissingPaymentMethodColumnsError(error: unknown) {
   return (
     message.includes("bank_transfer_eft_enabled") ||
     message.includes("bank_transfer_eft_details") ||
+    message.includes("bank_transfer_recipient_name") ||
+    message.includes("bank_transfer_iban") ||
+    message.includes("bank_transfer_bank_name") ||
     message.includes("crypto_enabled") ||
     message.includes("crypto_details") ||
+    message.includes("crypto_wallet_usdt_trc20") ||
+    message.includes("crypto_wallet_tron") ||
+    message.includes("crypto_wallet_sol") ||
+    message.includes("crypto_wallet_btc") ||
+    message.includes("crypto_wallet_usdc") ||
     message.includes("bank_card_enabled") ||
     message.includes("bank_card_details")
   );
@@ -2569,8 +2646,16 @@ export async function getPaymentMethodSettings() {
         select
           bank_transfer_eft_enabled,
           bank_transfer_eft_details,
+          bank_transfer_recipient_name,
+          bank_transfer_iban,
+          bank_transfer_bank_name,
           crypto_enabled,
           crypto_details,
+          crypto_wallet_usdt_trc20,
+          crypto_wallet_tron,
+          crypto_wallet_sol,
+          crypto_wallet_btc,
+          crypto_wallet_usdc,
           bank_card_enabled,
           bank_card_details
         from public.app_settings
@@ -2592,8 +2677,16 @@ export async function getPaymentMethodSettings() {
         select
           bank_transfer_eft_enabled,
           bank_transfer_eft_details,
+          bank_transfer_recipient_name,
+          bank_transfer_iban,
+          bank_transfer_bank_name,
           crypto_enabled,
           crypto_details,
+          crypto_wallet_usdt_trc20,
+          crypto_wallet_tron,
+          crypto_wallet_sol,
+          crypto_wallet_btc,
+          crypto_wallet_usdc,
           bank_card_enabled,
           bank_card_details
         from public.app_settings
@@ -2626,8 +2719,16 @@ export async function updatePaymentMethodSettings(input: PaymentMethodSettings, 
           hero_subtitle,
           bank_transfer_eft_enabled,
           bank_transfer_eft_details,
+          bank_transfer_recipient_name,
+          bank_transfer_iban,
+          bank_transfer_bank_name,
           crypto_enabled,
           crypto_details,
+          crypto_wallet_usdt_trc20,
+          crypto_wallet_tron,
+          crypto_wallet_sol,
+          crypto_wallet_btc,
+          crypto_wallet_usdc,
           bank_card_enabled,
           bank_card_details
         ) values (
@@ -2642,22 +2743,46 @@ export async function updatePaymentMethodSettings(input: PaymentMethodSettings, 
           $3,
           $4,
           $5,
-          $6
+          $6,
+          $7,
+          $8,
+          $9,
+          $10,
+          $11,
+          $12,
+          $13,
+          $14
         )
         on conflict (id) do update
         set
           bank_transfer_eft_enabled = excluded.bank_transfer_eft_enabled,
           bank_transfer_eft_details = excluded.bank_transfer_eft_details,
+          bank_transfer_recipient_name = excluded.bank_transfer_recipient_name,
+          bank_transfer_iban = excluded.bank_transfer_iban,
+          bank_transfer_bank_name = excluded.bank_transfer_bank_name,
           crypto_enabled = excluded.crypto_enabled,
           crypto_details = excluded.crypto_details,
+          crypto_wallet_usdt_trc20 = excluded.crypto_wallet_usdt_trc20,
+          crypto_wallet_tron = excluded.crypto_wallet_tron,
+          crypto_wallet_sol = excluded.crypto_wallet_sol,
+          crypto_wallet_btc = excluded.crypto_wallet_btc,
+          crypto_wallet_usdc = excluded.crypto_wallet_usdc,
           bank_card_enabled = excluded.bank_card_enabled,
           bank_card_details = excluded.bank_card_details
       `,
       [
         input.bankTransferEftEnabled,
         input.bankTransferEftDetails,
+        input.bankTransferRecipientName,
+        input.bankTransferIban,
+        input.bankTransferBankName,
         input.cryptoEnabled,
         input.cryptoDetails,
+        input.cryptoWalletUsdtTrc20,
+        input.cryptoWalletTron,
+        input.cryptoWalletSol,
+        input.cryptoWalletBtc,
+        input.cryptoWalletUsdc,
         input.bankCardEnabled,
         input.bankCardDetails
       ]
@@ -2674,11 +2799,26 @@ export async function updatePaymentMethodSettings(input: PaymentMethodSettings, 
           jsonb_build_object(
             'bankTransferEftEnabled', $2::boolean,
             'cryptoEnabled', $3::boolean,
-            'bankCardEnabled', $4::boolean
+            'bankCardEnabled', $4::boolean,
+            'bankTransferHasIban', ($5::text is not null and length(trim($5::text)) > 0),
+            'cryptoWalletCount', $6::int
           )
         )
       `,
-      [adminId, input.bankTransferEftEnabled, input.cryptoEnabled, input.bankCardEnabled]
+      [
+        adminId,
+        input.bankTransferEftEnabled,
+        input.cryptoEnabled,
+        input.bankCardEnabled,
+        input.bankTransferIban,
+        [
+          input.cryptoWalletUsdtTrc20,
+          input.cryptoWalletTron,
+          input.cryptoWalletSol,
+          input.cryptoWalletBtc,
+          input.cryptoWalletUsdc
+        ].filter((value) => Boolean(value && value.trim().length > 0)).length
+      ]
     );
   });
 }

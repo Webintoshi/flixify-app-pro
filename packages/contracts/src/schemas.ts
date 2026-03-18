@@ -43,8 +43,16 @@ export const paymentRequestInputSchema = z.object({
 export const paymentMethodSettingsSchema = z.object({
   bankTransferEftEnabled: z.boolean(),
   bankTransferEftDetails: z.string().trim().max(2000).nullable(),
+  bankTransferRecipientName: z.string().trim().max(200).nullable(),
+  bankTransferIban: z.string().trim().max(120).nullable(),
+  bankTransferBankName: z.string().trim().max(200).nullable(),
   cryptoEnabled: z.boolean(),
   cryptoDetails: z.string().trim().max(2000).nullable(),
+  cryptoWalletUsdtTrc20: z.string().trim().max(500).nullable(),
+  cryptoWalletTron: z.string().trim().max(500).nullable(),
+  cryptoWalletSol: z.string().trim().max(500).nullable(),
+  cryptoWalletBtc: z.string().trim().max(500).nullable(),
+  cryptoWalletUsdc: z.string().trim().max(500).nullable(),
   bankCardEnabled: z.boolean(),
   bankCardDetails: z.string().trim().max(2000).nullable()
 });
