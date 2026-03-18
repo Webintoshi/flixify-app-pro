@@ -370,7 +370,7 @@ async function resolveVodSourceUrl(input: {
   let lastError = "VOD kaynagi dogrulanamadi.";
   let lastTransport: "hls" | "mp4" | "mkv" | "avi" | "unknown" = "unknown";
   let sawNetworkLikeFailure = false;
-  let sawClientHttpFailure = false;
+  let sawPotentialFalseNegativeHttpFailure = false;
   let firstCandidateUrl: string | null = candidates[0]?.url ?? null;
 
   for (const candidate of candidates) {
@@ -388,13 +388,14 @@ async function resolveVodSourceUrl(input: {
     if (probe.statusCode === 0) {
       sawNetworkLikeFailure = true;
     }
-    if (probe.statusCode >= 400 && probe.statusCode < 500) {
-      sawClientHttpFailure = true;
+    if ([401, 403, 405, 416, 429].includes(probe.statusCode)) {
+      sawPotentialFalseNegativeHttpFailure = true;
     }
     lastError = probe.errorMessage ?? lastError;
   }
 
-  const allowOptimisticSourceAttempt = Boolean(firstCandidateUrl) && (sawNetworkLikeFailure || sawClientHttpFailure);
+  const allowOptimisticSourceAttempt =
+    Boolean(firstCandidateUrl) && (sawNetworkLikeFailure || sawPotentialFalseNegativeHttpFailure);
   if (allowOptimisticSourceAttempt) {
     return {
       ok: true,

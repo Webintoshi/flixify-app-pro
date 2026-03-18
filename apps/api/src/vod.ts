@@ -1063,6 +1063,30 @@ function trimErrorMessage(value: string | null | undefined, fallback: string) {
   return normalized && normalized.length > 0 ? normalized : fallback;
 }
 
+function sanitizePlaybackErrorMessage(
+  value: string | null | undefined,
+  fallback = "VOD kaynagi gecici olarak acilamadi."
+) {
+  const normalized = trimErrorMessage(value, fallback);
+  const statusMatch = /\b(401|403|404|410|422|429|500|502|503|504)\b/.exec(normalized);
+  if (statusMatch?.[1]) {
+    return `Upstream ${statusMatch[1]}`;
+  }
+
+  const lowered = normalized.toLowerCase();
+  if (lowered.includes("timeout") || lowered.includes("timed out")) {
+    return "Upstream zaman asimi.";
+  }
+  if (lowered.includes("connection refused")) {
+    return "Kaynak sunucu baglantiyi reddetti.";
+  }
+  if (lowered.includes("name or service not known") || lowered.includes("could not resolve")) {
+    return "Kaynak sunucu adresi cozumlenemedi.";
+  }
+
+  return fallback;
+}
+
 export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
   const sessions = new Map<string, VodPlaybackSession>();
   const sessionTtlMs = Math.max(options.sessionTtlMs, 60_000);
@@ -1221,9 +1245,9 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       }
       session.localState.process = null;
       session.localState.startupFailed = true;
-      session.localState.lastError = trimErrorMessage(
+      session.localState.lastError = sanitizePlaybackErrorMessage(
         stderrOutput,
-        "FFmpeg transcode baslatilamadi."
+        "VOD kaynagi gecici olarak acilamadi."
       );
       releaseTranscodeSlot(session.localState);
       await emitDiagnostic({
@@ -1248,7 +1272,10 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
         session.localState.process = null;
       }
       if (code && session.localState && !session.localState.startupFailed) {
-        session.localState.lastError = trimErrorMessage(stderrOutput, `FFmpeg cikis kodu ${code}`);
+        session.localState.lastError = sanitizePlaybackErrorMessage(
+          stderrOutput,
+          `FFmpeg cikis kodu ${code}`
+        );
         void emitDiagnostic({
           itemId: session.itemId,
           kind: session.kind,
@@ -1269,7 +1296,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
 
     child.on("error", (error) => {
       if (session.localState) {
-        session.localState.lastError = error.message;
+        session.localState.lastError = sanitizePlaybackErrorMessage(error.message);
         session.localState.process = null;
       }
       releaseTranscodeSlot(session.localState);
