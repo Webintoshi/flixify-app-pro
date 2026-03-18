@@ -125,24 +125,17 @@ type CryptoAssetView = {
   id: CryptoAssetId;
   label: string;
   symbol: string;
+  logoUrl: string;
   walletAddress: string | null;
 };
 
 const defaultCryptoAssets: CryptoAssetView[] = [
-  { id: "usdt-trc20", label: "Tether", symbol: "USDT", walletAddress: null },
-  { id: "tron", label: "Tron", symbol: "TRX", walletAddress: null },
-  { id: "sol", label: "Sol", symbol: "SOL", walletAddress: null },
-  { id: "btc", label: "BTC", symbol: "BTC", walletAddress: null },
-  { id: "usdc", label: "USDC", symbol: "USDC", walletAddress: null }
+  { id: "usdt-trc20", label: "Tether", symbol: "USDT", logoUrl: "/crypto-icons/usdt.svg", walletAddress: null },
+  { id: "tron", label: "Tron", symbol: "TRX", logoUrl: "/crypto-icons/trx.svg", walletAddress: null },
+  { id: "sol", label: "Sol", symbol: "SOL", logoUrl: "/crypto-icons/sol.svg", walletAddress: null },
+  { id: "btc", label: "BTC", symbol: "BTC", logoUrl: "/crypto-icons/btc.svg", walletAddress: null },
+  { id: "usdc", label: "USDC", symbol: "USDC", logoUrl: "/crypto-icons/usdc.svg", walletAddress: null }
 ];
-
-const cryptoAssetClassById: Record<CryptoAssetId, string> = {
-  "usdt-trc20": "is-usdt",
-  tron: "is-tron",
-  sol: "is-sol",
-  btc: "is-btc",
-  usdc: "is-usdc"
-};
 
 function toTextOrNull(value: string | null | undefined) {
   const trimmed = value?.trim();
@@ -160,6 +153,7 @@ function buildCryptoAssets(method: PaymentMethodOption | null | undefined): Cryp
       id: fallbackAsset.id,
       label: found?.label?.trim() || fallbackAsset.label,
       symbol: found?.symbol?.trim() || fallbackAsset.symbol,
+      logoUrl: fallbackAsset.logoUrl,
       walletAddress: toTextOrNull(found?.walletAddress)
     };
   });
@@ -7852,7 +7846,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                               <button
                                 key={asset.id}
                                 type="button"
-                                className={`crypto-asset-chip ${cryptoAssetClassById[asset.id]}`}
+                                className="crypto-asset-chip"
                                 onClick={() => setSelectedCryptoAssetId(asset.id)}
                                 data-tv-focusable="true"
                                 data-tv-region="overlay-actions"
@@ -7862,7 +7856,9 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                                   selectedPaymentMethod.id === "crypto" && index === 0 ? "true" : undefined
                                 }
                               >
-                                <span className="crypto-asset-symbol">{asset.symbol}</span>
+                                <span className="crypto-asset-symbol">
+                                  <img src={asset.logoUrl} alt={`${asset.label} logo`} className="crypto-asset-logo" />
+                                </span>
                                 <span className="crypto-asset-label">{asset.label}</span>
                               </button>
                             ))}
