@@ -890,13 +890,26 @@
 }
 
 .payment-method-modal-card {
-  width: min(1100px, calc(100vw - 36px));
-  max-height: calc(100dvh - 36px);
+  width: min(980px, calc(100vw - 52px));
+  max-height: calc(100dvh - 54px);
   padding: clamp(18px, 2.2vw, 30px);
   gap: clamp(12px, 1.5vw, 18px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    radial-gradient(circle at 85% 8%, rgba(124, 182, 255, 0.12), transparent 40%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    rgba(8, 11, 19, 0.92);
+  box-shadow: 0 34px 90px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.12);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+}
+
+.payment-method-modal {
+  place-items: center;
+  padding: clamp(24px, 4vh, 52px) clamp(18px, 3vw, 34px);
+  background: linear-gradient(180deg, rgba(3, 5, 8, 0.9), rgba(2, 4, 7, 0.94));
+  z-index: 52;
 }
 
 .payment-method-modal-card::-webkit-scrollbar {
@@ -915,7 +928,7 @@
 .payment-method-grid {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: 1fr;
 }
 
 .payment-method-option {
@@ -1050,20 +1063,24 @@
 }
 
 @media (max-width: 1100px) {
-  .payment-method-modal-card {
-    width: min(920px, calc(100vw - 28px));
-    max-height: calc(100dvh - 24px);
+  .payment-method-modal {
+    padding: 18px 14px;
   }
 
-  .payment-method-grid {
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  .payment-method-modal-card {
+    width: min(880px, calc(100vw - 28px));
+    max-height: calc(100dvh - 24px);
   }
 }
 
 @media (max-width: 780px) {
+  .payment-method-modal {
+    padding: 10px 8px;
+  }
+
   .payment-method-modal-card {
-    width: calc(100vw - 18px);
-    max-height: calc(100dvh - 14px);
+    width: calc(100vw - 14px);
+    max-height: calc(100dvh - 10px);
     padding: 16px;
     border-radius: 22px;
   }

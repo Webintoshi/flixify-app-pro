@@ -7712,7 +7712,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
         </Routes>
 
         {pendingPaymentPackage ? (
-          <div className="modal">
+          <div className="modal payment-method-modal">
             <div className="modal-card payment-method-modal-card">
               <button
                 type="button"
