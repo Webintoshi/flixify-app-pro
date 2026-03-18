@@ -69,6 +69,8 @@ Video decode sorunu yasarsan opsiyonel olarak donanim hizlandirma kapatilabilir:
 
 - Masaustu uygulama menude `Guncelle` aksiyonu sunar (`CmdOrCtrl+Shift+R`).
 - `Guncelle`, Electron cache'ini temizler ve uygulamayi yeniden yukler.
+- Uygulama 6 saatte bir otomatik hard-reload yapar ve en guncel web surumunu tekrar yukler.
+- Periyot varsayilan `21600000ms` (6 saat) olup `FLIXIFY_AUTO_UPDATE_INTERVAL_MS` ile degistirilebilir.
 
 Canli commitleri yeniden kurulum olmadan almak icin:
 

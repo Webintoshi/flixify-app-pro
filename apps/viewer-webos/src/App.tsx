@@ -36,6 +36,7 @@ const TV_FOCUSABLE_SELECTOR = '[data-tv-focusable="true"]';
 const AUTH_PREFILL_CODE_KEY = "flixify-auth-prefill-code";
 const AUTH_DEVICE_NAME = "LG webOS TV";
 const AUTH_LEGACY_REDIRECT_ENTRIES = Object.entries(legacyAuthRedirects);
+const APP_AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const AUTH_ROUTE_PATHS = new Set<string>([
   loginRoute,
   registerRoute,
@@ -8104,6 +8105,26 @@ export function App() {
     message: null
   });
   const [probeAttempt, setProbeAttempt] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      try {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set("_auto_update", Date.now().toString());
+        window.location.replace(nextUrl.toString());
+      } catch {
+        window.location.reload();
+      }
+    }, APP_AUTO_UPDATE_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;

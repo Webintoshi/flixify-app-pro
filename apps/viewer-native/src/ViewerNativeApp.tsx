@@ -22,6 +22,7 @@ type AuthScreen = typeof loginRoute | typeof registerRoute;
 
 const storage = createInMemoryStorageAdapter();
 const revealAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const APP_AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 function normalizeCode(value: string) {
   return value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 16);
@@ -111,9 +112,14 @@ export function ViewerNativeApp() {
     platform: "tvos",
     defaultDeviceName: "Apple TV"
   });
+  const coreRef = React.useRef(core);
   const me = core.me;
   const supportWhatsappUrl = me?.contact.whatsapp ?? null;
   const userCodeLabel = me?.user.kryptoniteCode ?? core.codeLabel;
+
+  useEffect(() => {
+    coreRef.current = core;
+  }, [core]);
 
   useEffect(() => {
     if (!issuedCode) {
@@ -154,6 +160,16 @@ export function ViewerNativeApp() {
 
     void core.refreshMe().catch(() => undefined);
   }, [screen]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void coreRef.current.bootstrap().catch(() => undefined);
+    }, APP_AUTO_UPDATE_INTERVAL_MS);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, []);
 
   const animatedCode = issuedCode
     ? issuedCode
