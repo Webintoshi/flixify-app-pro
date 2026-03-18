@@ -46,10 +46,10 @@ const AUTH_ROUTE_PATHS = new Set<string>([
   registerRoute,
   ...Object.keys(legacyAuthRedirects)
 ]);
-const DEFAULT_DOWNLOAD_ANDROID_URL = "https://app.flixify.pro/downloads/flixify-android.apk";
-const DEFAULT_DOWNLOAD_ANDROID_TV_URL = "https://app.flixify.pro/downloads/flixify-android-tv.apk";
-const DEFAULT_DOWNLOAD_WINDOWS_URL = "https://app.flixify.pro/downloads/flixify-windows.exe";
-const DEFAULT_DOWNLOAD_MACOS_URL = "https://app.flixify.pro/downloads/flixify-macos.dmg";
+const DEFAULT_DOWNLOAD_ANDROID_URL = "/downloads/flixify-android.apk";
+const DEFAULT_DOWNLOAD_ANDROID_TV_URL = "/downloads/flixify-android.apk";
+const DEFAULT_DOWNLOAD_WINDOWS_URL = "/downloads/flixify-windows.exe";
+const DEFAULT_DOWNLOAD_MACOS_URL = "";
 
 type RuntimeAppConfig = {
   apiBaseUrl?: string | null;
@@ -100,6 +100,7 @@ type AuthDownloadCard = {
   id: string;
   label: string;
   href: string;
+  filename: string;
   icon: ReactNode;
 };
 
@@ -435,6 +436,26 @@ function isVodDebugEnabled() {
 function resolveDownloadUrl(rawValue: string | undefined, fallback: string) {
   const trimmed = rawValue?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : fallback;
+}
+
+function triggerDownload(url: string, suggestedFilename: string) {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.rel = "noopener noreferrer";
+  link.target = "_self";
+  link.download = suggestedFilename;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  window.setTimeout(() => {
+    if (document.body.contains(link)) {
+      document.body.removeChild(link);
+    }
+  }, 0);
 }
 
 const DOWNLOAD_ANDROID_URL = resolveDownloadUrl(ENV_DOWNLOAD_ANDROID_URL, DEFAULT_DOWNLOAD_ANDROID_URL);
@@ -1936,27 +1957,31 @@ function AuthDownloadPanel() {
       id: "android",
       label: "Android",
       href: DOWNLOAD_ANDROID_URL,
+      filename: "flixify-android.apk",
       icon: <AndroidPlatformIcon />
     },
     {
       id: "android-tv",
       label: "Android TV",
       href: DOWNLOAD_ANDROID_TV_URL,
+      filename: "flixify-android-tv.apk",
       icon: <AndroidTvPlatformIcon />
     },
     {
       id: "windows",
       label: "Windows",
       href: DOWNLOAD_WINDOWS_URL,
+      filename: "flixify-windows.exe",
       icon: <WindowsPlatformIcon />
     },
     {
       id: "macos",
       label: "macOS",
       href: DOWNLOAD_MACOS_URL,
+      filename: "flixify-macos.dmg",
       icon: <MacPlatformIcon />
     }
-  ];
+  ].filter((card) => card.href.trim().length > 0);
 
   return (
     <section className="auth-downloads" aria-label="Platform indirme baglantilari">
@@ -1967,8 +1992,12 @@ function AuthDownloadPanel() {
             key={card.id}
             className="auth-download-card"
             href={card.href}
-            target="_blank"
+            download={card.filename}
             rel="noopener noreferrer"
+            onClick={(event) => {
+              event.preventDefault();
+              triggerDownload(card.href, card.filename);
+            }}
             data-tv-focusable="true"
             data-tv-region="auth-downloads"
             data-tv-focus-key={`auth-download-${card.id}`}
