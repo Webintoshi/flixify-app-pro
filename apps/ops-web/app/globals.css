@@ -2139,6 +2139,9 @@ button {
    Premium Glassmorphism Executive Theme
    ============================================ */
 
+/* Import icon utilities */
+@import url('/icons/icons.css');
+
 /* === DESIGN TOKENS - Extended === */
 :root {
   /* Extended Color Palette */
@@ -2296,6 +2299,22 @@ button {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Inline icon in labels */
+.icon-inline {
+  width: 16px;
+  height: 16px;
+  color: currentColor;
+  opacity: 0.7;
+}
+
+.icon-inline.icon-lg {
+  width: 22px;
+  height: 22px;
 }
 
 .admin-filter-field input,
@@ -2310,11 +2329,25 @@ button {
   transition: all var(--duration-fast);
 }
 
-.admin-filter-field:first-child input {
+/* Search input wrapper with SVG icon */
+.search-input-wrapper {
+  position: relative;
+}
+
+.search-input-wrapper input {
+  width: 100%;
   padding-left: 48px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.4)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: 16px center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  color: rgba(255, 255, 255, 0.4);
+  pointer-events: none;
 }
 
 .admin-filter-field input:focus,
@@ -2593,12 +2626,16 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.05);
   color: var(--muted);
-  font-size: 1.2rem;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   transition: all var(--duration-fast);
+}
+
+.admin-row-icon .icon {
+  width: 20px;
+  height: 20px;
 }
 
 .admin-row-icon:hover {
@@ -2609,17 +2646,30 @@ button {
 }
 
 /* Edit button specific */
-.admin-row-icon[title="Düzenle"]:hover {
+.icon-btn-edit:hover {
   background: rgba(74, 142, 255, 0.15);
   border-color: rgba(74, 142, 255, 0.3);
   color: #4a8eff;
 }
 
 /* Delete button specific */
-.admin-row-icon[title="Sil"]:hover {
+.icon-btn-delete:hover {
   background: rgba(244, 6, 18, 0.15);
   border-color: rgba(244, 6, 18, 0.3);
   color: #f40612;
+}
+
+/* Primary action button icon */
+.admin-primary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.icon-btn-svg {
+  width: 18px;
+  height: 18px;
 }
 
 /* === ENHANCED MODALS === */
@@ -2926,6 +2976,27 @@ button {
   color: #7eeab8;
   font-size: 0.95rem;
   animation: slideDown 300ms ease;
+}
+
+/* Info box with icon */
+.admin-info-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  background: rgba(74, 142, 255, 0.1);
+  border: 1px solid rgba(74, 142, 255, 0.2);
+  color: #8fb8ff;
+}
+
+.admin-info-box .icon-inline {
+  color: #4a8eff;
+  opacity: 1;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.admin-info-box span {
+  line-height: 1.5;
 }
 
 @keyframes slideDown {

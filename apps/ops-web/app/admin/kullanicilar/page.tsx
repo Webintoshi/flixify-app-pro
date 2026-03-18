@@ -296,7 +296,10 @@ export default function AdminUsersPage() {
 
       <section className="admin-stats-grid">
         <article className="admin-stat-card">
-          <span className="admin-stat-kicker">📊 Toplam Kullanici</span>
+          <span className="admin-stat-kicker">
+            <svg className="stat-icon stat-icon-total" aria-hidden="true"><use href="/icons/admin-icons.svg#users-total"/></svg>
+            Toplam Kullanici
+          </span>
           <strong>{counters.total}</strong>
           <div className="admin-stat-progress">
             <div className="admin-stat-progress-fill" style={{ width: '100%' }} />
@@ -304,7 +307,10 @@ export default function AdminUsersPage() {
           <span className="admin-stat-note">Listelenen hesaplar</span>
         </article>
         <article className="admin-stat-card">
-          <span className="admin-stat-kicker">✅ Aktif</span>
+          <span className="admin-stat-kicker">
+            <svg className="stat-icon stat-icon-active" aria-hidden="true"><use href="/icons/admin-icons.svg#users-active"/></svg>
+            Aktif
+          </span>
           <strong>{counters.active}</strong>
           <div className="admin-stat-progress">
             <div className="admin-stat-progress-fill" style={{ width: `${counters.total > 0 ? (counters.active / counters.total) * 100 : 0}%` }} />
@@ -312,7 +318,10 @@ export default function AdminUsersPage() {
           <span className="admin-stat-note">Paket suresi aktif</span>
         </article>
         <article className="admin-stat-card">
-          <span className="admin-stat-kicker">⏳ M3U Bekleyen</span>
+          <span className="admin-stat-kicker">
+            <svg className="stat-icon stat-icon-waiting" aria-hidden="true"><use href="/icons/admin-icons.svg#users-waiting"/></svg>
+            M3U Bekleyen
+          </span>
           <strong>{counters.waitingM3u}</strong>
           <div className="admin-stat-progress">
             <div className="admin-stat-progress-fill" style={{ width: `${counters.total > 0 ? (counters.waitingM3u / counters.total) * 100 : 0}%` }} />
@@ -320,7 +329,10 @@ export default function AdminUsersPage() {
           <span className="admin-stat-note">Link tanimlanmamis</span>
         </article>
         <article className="admin-stat-card">
-          <span className="admin-stat-kicker">⚠️ Suresi Dolmus</span>
+          <span className="admin-stat-kicker">
+            <svg className="stat-icon stat-icon-expired" aria-hidden="true"><use href="/icons/admin-icons.svg#users-expired"/></svg>
+            Suresi Dolmus
+          </span>
           <strong>{counters.expired}</strong>
           <div className="admin-stat-progress">
             <div className="admin-stat-progress-fill" style={{ width: `${counters.total > 0 ? (counters.expired / counters.total) * 100 : 0}%` }} />
@@ -366,12 +378,12 @@ export default function AdminUsersPage() {
 
         <div className="admin-users-table">
           <div className="admin-users-head">
-            <span>🔑 Kod</span>
-            <span>📅 Bitis</span>
-            <span>⏱️ Kalan</span>
-            <span>📦 Paket</span>
-            <span>🔗 M3U</span>
-            <span>⚡ Aksiyonlar</span>
+            <span>Kod</span>
+            <span>Bitis</span>
+            <span>Kalan</span>
+            <span>Paket</span>
+            <span>M3U</span>
+            <span>Aksiyonlar</span>
           </div>
 
           {users.length === 0 ? (
@@ -417,13 +429,14 @@ export default function AdminUsersPage() {
                 </div>
                 <div className="admin-user-cell admin-user-actions">
                   <button className={`button admin-primary-action ${primaryLabel === "Yenile" ? "secondary" : ""}`} type="button" onClick={() => void openAssignModal(user)}>
+                    <svg className="icon-btn-svg" aria-hidden="true"><use href="/icons/admin-icons.svg#action-assign"/></svg>
                     {primaryLabel}
                   </button>
-                  <button className="icon-button admin-row-icon" type="button" onClick={() => openEditModal(user)} title="Düzenle">
-                    ✏️
+                  <button className="icon-button admin-row-icon icon-btn-edit" type="button" onClick={() => openEditModal(user)} title="Düzenle">
+                    <svg className="icon" aria-hidden="true"><use href="/icons/admin-icons.svg#action-edit"/></svg>
                   </button>
-                  <button className="icon-button admin-row-icon" type="button" onClick={() => void handleDelete(user)} title="Sil">
-                    🗑️
+                  <button className="icon-button admin-row-icon icon-btn-delete" type="button" onClick={() => void handleDelete(user)} title="Sil">
+                    <svg className="icon" aria-hidden="true"><use href="/icons/admin-icons.svg#action-delete"/></svg>
                   </button>
                 </div>
               </article>
@@ -440,11 +453,14 @@ export default function AdminUsersPage() {
                 <h2>IPTV Atama</h2>
                 <strong>{getCodeLabel(assigningUser.summary)}</strong>
               </div>
-              <button className="admin-modal-close" onClick={() => setAssigningUser(null)}>×</button>
+              <button className="admin-modal-close" onClick={() => setAssigningUser(null)} aria-label="Kapat">
+                <svg className="icon" aria-hidden="true"><use href="/icons/admin-icons.svg#close"/></svg>
+              </button>
             </div>
 
-            <div className="admin-inline-message">
-              Ortak playlist kaynagi tum kullanicilar icin tektir. Burada sadece kullaniciya ait IPTV kullanici adi ve sifre tanimlanir.
+            <div className="admin-inline-message admin-info-box">
+              <svg className="icon-inline icon-lg" aria-hidden="true"><use href="/icons/admin-icons.svg#info"/></svg>
+              <span>Ortak playlist kaynagi tum kullanicilar icin tektir. Burada sadece kullaniciya ait IPTV kullanici adi ve sifre tanimlanir.</span>
             </div>
 
             <div className="admin-package-grid">
@@ -517,7 +533,9 @@ export default function AdminUsersPage() {
                 <h2>Kullaniciyi Duzenle</h2>
                 <strong>{getCodeLabel(editingUser)}</strong>
               </div>
-              <button className="admin-modal-close" onClick={() => setEditingUser(null)}>×</button>
+              <button className="admin-modal-close" onClick={() => setEditingUser(null)} aria-label="Kapat">
+                <svg className="icon" aria-hidden="true"><use href="/icons/admin-icons.svg#close"/></svg>
+              </button>
             </div>
 
             <label className="field">
