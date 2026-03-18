@@ -94,6 +94,48 @@ describe("classifyLiveChannelCountry", () => {
     });
   });
 
+  it("does not override non-TR prefix for ambiguous sports brands without TR context", () => {
+    expect(
+      classifyLiveChannelCountry({
+        title: "beIN Sports 1 HD",
+        groupTitle: "DE:SPORT",
+        tvgId: "beinsports1de"
+      })
+    ).toEqual({
+      countryCode: "DE",
+      confidence: "high",
+      reason: "prefix"
+    });
+  });
+
+  it("classifies ambiguous sports brands as TR only when explicit TR context exists", () => {
+    expect(
+      classifyLiveChannelCountry({
+        title: "beIN Sports 1 TR",
+        groupTitle: "Spor",
+        tvgId: "beinsports1"
+      })
+    ).toEqual({
+      countryCode: "TR",
+      confidence: "high",
+      reason: "tr_strong_group"
+    });
+  });
+
+  it("keeps ambiguous sports brands unknown when no TR context exists", () => {
+    expect(
+      classifyLiveChannelCountry({
+        title: "S Sport 2 HD",
+        groupTitle: "Sports",
+        tvgId: "ssport2"
+      })
+    ).toEqual({
+      countryCode: null,
+      confidence: "unknown",
+      reason: "none"
+    });
+  });
+
   it("classifies TR token with contextual title keywords as strong Turkish signal", () => {
     expect(
       classifyLiveChannelCountry({

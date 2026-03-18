@@ -55,7 +55,9 @@ describe("live catalog turkiye filter", () => {
     expect(matchesCatalogGroupFilter("Spor", "country:tr", "TR Spor HD")).toBe(true);
     expect(matchesCatalogGroupFilter("Genel", "country:tr", "TRT 1 HD")).toBe(true);
     expect(matchesCatalogGroupFilter("DE:SPORT", "country:tr", "TRT 1 HD")).toBe(true);
-    expect(matchesCatalogGroupFilter("DE:SPORT", "country:tr", "beIN Sports 1 HD")).toBe(true);
+    expect(matchesCatalogGroupFilter("DE:SPORT", "country:tr", "beIN Sports 1 HD")).toBe(false);
+    expect(matchesCatalogGroupFilter("Spor", "country:tr", "beIN Sports 1 TR")).toBe(true);
+    expect(matchesCatalogGroupFilter("Sports", "country:tr", "S Sport 2 HD")).toBe(false);
     expect(matchesCatalogGroupFilter("Haber", "country:tr", "World News")).toBe(false);
   });
 

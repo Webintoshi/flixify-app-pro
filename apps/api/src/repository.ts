@@ -816,16 +816,22 @@ function buildPrefixedLiveCountryCodeExpression(groupTitleExpression: string) {
   `;
 }
 
-function buildTurkiyeStrongTokenSignalClause(textExpression: string) {
+function buildTurkiyeStrongGroupSignalClause(textExpression: string) {
   return `
     ${textExpression} ~ '(^|[^a-z0-9çğıöşü])(tr|turkiye|türkiye|turkey|turk|türk|turkce|türkçe)([^a-z0-9çğıöşü]|$)'
   `;
 }
 
-function buildTurkiyeStrongTitleSignalClause(textExpression: string) {
+function buildTurkiyeContextTokenSignalClause(textExpression: string) {
+  return `
+    ${textExpression} ~ '(^|[^a-z0-9çğıöşü])(tr|turkiye|türkiye|turkey|turk|türk|turkce|türkçe|turkish)([^a-z0-9çğıöşü]|$)'
+  `;
+}
+
+function buildTurkiyeUniqueTitleSignalClause(textExpression: string) {
   return `
     (
-      ${textExpression} ~ '(^|[^a-z0-9çğıöşü])(trt|atv|tv8|cnnturk|cnn\\s*turk|haberturk|aspor|a\\s*spor|ahaber|a\\s*haber|kanal\\s*d|kanal\\s*7|show\\s*tv|star\\s*tv|beyaz\\s*tv|ulke\\s*tv|ülke\\s*tv|tgrt|teve2|kanal\\s*24|ntv|tv100|halk\\s*tv|tele\\s*1|haber\\s*global|s\\s*sport|spor\\s*smart|bein\\s*sports?)([^a-z0-9çğıöşü]|$)'
+      ${textExpression} ~ '(^|[^a-z0-9çğıöşü])(trt|atv|tv8|cnnturk|cnn\\s*turk|haberturk|aspor|a\\s*spor|ahaber|a\\s*haber|kanal\\s*d|kanal\\s*7|show\\s*tv|star\\s*tv|beyaz\\s*tv|ulke\\s*tv|ülke\\s*tv|tgrt|teve2|kanal\\s*24|ntv|tv100|halk\\s*tv|tele\\s*1|haber\\s*global)([^a-z0-9çğıöşü]|$)'
       or (
         ${textExpression} ~ '(^|[^a-z0-9çğıöşü])tr([^a-z0-9çğıöşü]|$)'
         and ${textExpression} ~ '(^|[^a-z0-9çğıöşü])(spor|haber|kanal|tv|ulusal)([^a-z0-9çğıöşü]|$)'
@@ -834,10 +840,17 @@ function buildTurkiyeStrongTitleSignalClause(textExpression: string) {
   `;
 }
 
-function buildTurkiyeStrongTvgIdSignalClause(textExpression: string) {
+function buildTurkiyeContextualBrandSignalClause(textExpression: string) {
+  return `
+    ${textExpression} ~ '(^|[^a-z0-9çğıöşü])(s\\s*sport|spor\\s*smart|bein\\s*sports?)([^a-z0-9çğıöşü]|$)'
+  `;
+}
+
+function buildTurkiyeUniqueTvgIdSignalClause(textExpression: string) {
   return `
     (
-      ${textExpression} ~ '(trt1|trt2|trthaber|trtspor|trtcocuk|atv|tv8|kanald|showtv|startv|beyaztv|ulketv|cnnturk|haberturk|ahaber|aspor|tgrt|teve2|tv100|halktv|tele1|haberglobal|ssport|sporsmart|beinsports[0-9]*tr)'
+      ${textExpression} ~ '(trt1|trt2|trthaber|trtspor|trtcocuk|atv|tv8|kanald|showtv|startv|beyaztv|ulketv|cnnturk|haberturk|ahaber|aspor|tgrt|teve2|tv100|halktv|tele1|haberglobal)'
+      or ${textExpression} ~ '(beinsports[0-9]*tr|ssport.*tr|sporsmart.*tr)'
       or ${textExpression} ~ '(^|[^a-z0-9])tr([^a-z0-9]|$).*(spor|haber|kanal|tv|ulusal)'
       or ${textExpression} ~ '(\\.|_|-)(tr)(\\.|_|-|$)'
     )
@@ -850,17 +863,89 @@ function buildTurkiyeMediumTokenSignalClause(textExpression: string) {
   `;
 }
 
+function buildForeignSignalClause(textExpression: string) {
+  return `
+    ${textExpression} ~ '(^|[^a-z0-9])(us|usa|uk|eng|de|ger|germany|deutsch|fr|fra|france|es|esp|spain|it|ita|italy|pt|por|portugal|br|bra|brazil|latin|latam|arab|pl|pol|poland|ru|rus|russia|exyu|balkan)([^a-z0-9]|$)'
+  `;
+}
+
+function buildTurkiyeAnySignalClause(
+  groupTextExpression: string,
+  titleTextExpression: string,
+  tvgIdTextExpression: string,
+  builder: (textExpression: string) => string
+) {
+  return `
+    (
+      ${builder(groupTextExpression)}
+      or ${builder(titleTextExpression)}
+      or ${builder(tvgIdTextExpression)}
+    )
+  `;
+}
+
+function buildTurkiyeStrongHeuristicClause(
+  groupTextExpression: string,
+  titleTextExpression: string,
+  tvgIdTextExpression: string
+) {
+  const hasTrContextClause = buildTurkiyeAnySignalClause(
+    groupTextExpression,
+    titleTextExpression,
+    tvgIdTextExpression,
+    buildTurkiyeContextTokenSignalClause
+  );
+  const hasForeignSignalClause = buildTurkiyeAnySignalClause(
+    groupTextExpression,
+    titleTextExpression,
+    tvgIdTextExpression,
+    buildForeignSignalClause
+  );
+  const hasContextualBrandClause = buildTurkiyeAnySignalClause(
+    groupTextExpression,
+    titleTextExpression,
+    tvgIdTextExpression,
+    buildTurkiyeContextualBrandSignalClause
+  );
+
+  return `
+    (
+      ${buildTurkiyeStrongGroupSignalClause(groupTextExpression)}
+      or ${buildTurkiyeUniqueTitleSignalClause(titleTextExpression)}
+      or ${buildTurkiyeUniqueTvgIdSignalClause(tvgIdTextExpression)}
+      or (
+        ${hasContextualBrandClause}
+        and ${hasTrContextClause}
+        and not ${hasForeignSignalClause}
+      )
+    )
+  `;
+}
+
 function buildTurkiyeHeuristicClause(
   groupTextExpression: string,
   titleTextExpression: string,
   tvgIdTextExpression: string
 ) {
+  const hasTrContextClause = buildTurkiyeAnySignalClause(
+    groupTextExpression,
+    titleTextExpression,
+    tvgIdTextExpression,
+    buildTurkiyeContextTokenSignalClause
+  );
+  const hasForeignSignalClause = buildTurkiyeAnySignalClause(
+    groupTextExpression,
+    titleTextExpression,
+    tvgIdTextExpression,
+    buildForeignSignalClause
+  );
   return `
     (
-      ${buildTurkiyeStrongTokenSignalClause(groupTextExpression)}
-      or ${buildTurkiyeStrongTitleSignalClause(titleTextExpression)}
-      or ${buildTurkiyeStrongTvgIdSignalClause(tvgIdTextExpression)}
+      ${buildTurkiyeStrongHeuristicClause(groupTextExpression, titleTextExpression, tvgIdTextExpression)}
       or (
+        not ${hasForeignSignalClause}
+        and ${hasTrContextClause}
+        and
         ${buildTurkiyeMediumTokenSignalClause(groupTextExpression)}
         and (
           ${buildTurkiyeMediumTokenSignalClause(titleTextExpression)}

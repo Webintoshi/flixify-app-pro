@@ -466,11 +466,58 @@ function parseCountryCodeFromGroupTitle(groupTitle: string | null | undefined) {
 const TURKIYE_STRONG_GROUP_SIGNAL_PATTERN =
   /(^|[^a-z0-9])(tr|turkiye|turkey|turk|turkce)([^a-z0-9]|$)/;
 const TURKIYE_MEDIUM_SIGNAL_PATTERN = /(^|[^a-z0-9])(turk|turkce|dublaj|ulusal|turkish)([^a-z0-9]|$)/;
-const TURKIYE_STRONG_TITLE_SIGNAL_PATTERN =
-  /(^|[^a-z0-9])(trt|atv|tv8|cnnturk|cnn\s*turk|haberturk|aspor|a\s*spor|ahaber|a\s*haber|kanal\s*d|kanal\s*7|show\s*tv|star\s*tv|beyaz\s*tv|ulke\s*tv|tgrt|teve2|kanal\s*24|ntv|tv100|halk\s*tv|tele\s*1|haber\s*global|s\s*sport|spor\s*smart|bein\s*sports?)([^a-z0-9]|$)/;
+const TURKIYE_UNIQUE_TITLE_SIGNAL_PATTERN =
+  /(^|[^a-z0-9])(trt|atv|tv8|cnnturk|cnn\s*turk|haberturk|aspor|a\s*spor|ahaber|a\s*haber|kanal\s*d|kanal\s*7|show\s*tv|star\s*tv|beyaz\s*tv|ulke\s*tv|tgrt|teve2|kanal\s*24|ntv|tv100|halk\s*tv|tele\s*1|haber\s*global)([^a-z0-9]|$)/;
+const TURKIYE_CONTEXTUAL_BRAND_SIGNAL_PATTERN =
+  /(^|[^a-z0-9])(s\s*sport|spor\s*smart|bein\s*sports?)([^a-z0-9]|$)/;
+const TURKIYE_CONTEXT_TOKEN_SET = new Set(["tr", "turk", "turkce", "turkiye", "turkey", "turkish"]);
+const FOREIGN_SIGNAL_TOKEN_SET = new Set([
+  "us",
+  "usa",
+  "uk",
+  "eng",
+  "de",
+  "ger",
+  "germany",
+  "deutsch",
+  "fr",
+  "fra",
+  "france",
+  "es",
+  "esp",
+  "spain",
+  "it",
+  "ita",
+  "italy",
+  "pt",
+  "por",
+  "portugal",
+  "br",
+  "bra",
+  "brazil",
+  "latin",
+  "latam",
+  "arab",
+  "pl",
+  "pol",
+  "poland",
+  "ru",
+  "rus",
+  "russia",
+  "exyu",
+  "balkan"
+]);
 
-function hasTurkiyeStrongTitleSignal(normalizedTitle: string) {
-  if (TURKIYE_STRONG_TITLE_SIGNAL_PATTERN.test(normalizedTitle)) {
+function tokenizeNormalized(value: string) {
+  return value.split(/[^a-z0-9]+/g).filter(Boolean);
+}
+
+function hasTokenMatch(tokens: string[], lookup: Set<string>) {
+  return tokens.some((token) => lookup.has(token));
+}
+
+function hasTurkiyeUniqueTitleSignal(normalizedTitle: string) {
+  if (TURKIYE_UNIQUE_TITLE_SIGNAL_PATTERN.test(normalizedTitle)) {
     return true;
   }
 
@@ -483,13 +530,28 @@ function hasTurkiyeStrongTitleSignal(normalizedTitle: string) {
 function hasTurkiyeCountryHeuristic(title: string | null | undefined, groupTitle: string | null | undefined) {
   const normalizedGroup = normalizeGroupFilterValue(groupTitle);
   const normalizedTitle = normalizeGroupFilterValue(title);
-  if (TURKIYE_STRONG_GROUP_SIGNAL_PATTERN.test(normalizedGroup)) {
+  const groupTokens = tokenizeNormalized(normalizedGroup);
+  const titleTokens = tokenizeNormalized(normalizedTitle);
+  const hasTrContext = hasTokenMatch(groupTokens, TURKIYE_CONTEXT_TOKEN_SET) || hasTokenMatch(titleTokens, TURKIYE_CONTEXT_TOKEN_SET);
+  const hasForeignSignal = hasTokenMatch(groupTokens, FOREIGN_SIGNAL_TOKEN_SET) || hasTokenMatch(titleTokens, FOREIGN_SIGNAL_TOKEN_SET);
+  const hasContextualBrandSignal =
+    TURKIYE_CONTEXTUAL_BRAND_SIGNAL_PATTERN.test(normalizedGroup) ||
+    TURKIYE_CONTEXTUAL_BRAND_SIGNAL_PATTERN.test(normalizedTitle);
+  const hasUniqueStrongSignal =
+    TURKIYE_STRONG_GROUP_SIGNAL_PATTERN.test(normalizedGroup) ||
+    hasTurkiyeUniqueTitleSignal(normalizedTitle);
+
+  if (hasUniqueStrongSignal) {
     return true;
   }
-  if (hasTurkiyeStrongTitleSignal(normalizedTitle)) {
+
+  if (hasContextualBrandSignal && hasTrContext && !hasForeignSignal) {
     return true;
   }
+
   return (
+    !hasForeignSignal &&
+    hasTrContext &&
     TURKIYE_MEDIUM_SIGNAL_PATTERN.test(normalizedGroup) &&
     TURKIYE_MEDIUM_SIGNAL_PATTERN.test(normalizedTitle)
   );

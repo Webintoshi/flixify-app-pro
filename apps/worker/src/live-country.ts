@@ -22,7 +22,7 @@ const TR_STRONG_GROUP_TOKENS = new Set([
 ]);
 const TR_MEDIUM_TOKENS = new Set(["turk", "turkce", "dublaj", "ulusal", "turkish"]);
 const TR_TITLE_CONTEXT_TOKENS = new Set(["spor", "haber", "kanal", "tv", "ulusal"]);
-const TR_STRONG_TITLE_PATTERNS: RegExp[] = [
+const TR_UNIQUE_TITLE_PATTERNS: RegExp[] = [
   /(^|[^a-z0-9])(trt|atv|tv8|cnnturk|haberturk|aspor|ahaber|tgrt|teve2)([^a-z0-9]|$)/,
   /(^|[^a-z0-9])cnn\s*turk([^a-z0-9]|$)/,
   /(^|[^a-z0-9])a\s*spor([^a-z0-9]|$)/,
@@ -38,16 +38,56 @@ const TR_STRONG_TITLE_PATTERNS: RegExp[] = [
   /(^|[^a-z0-9])tv100([^a-z0-9]|$)/,
   /(^|[^a-z0-9])halk\s*tv([^a-z0-9]|$)/,
   /(^|[^a-z0-9])tele\s*1([^a-z0-9]|$)/,
-  /(^|[^a-z0-9])haber\s*global([^a-z0-9]|$)/,
+  /(^|[^a-z0-9])haber\s*global([^a-z0-9]|$)/
+];
+const TR_CONTEXTUAL_BRAND_PATTERNS: RegExp[] = [
   /(^|[^a-z0-9])s\s*sport([^a-z0-9]|$)/,
   /(^|[^a-z0-9])spor\s*smart([^a-z0-9]|$)/,
   /(^|[^a-z0-9])bein\s*sports?([^a-z0-9]|$)/
 ];
-const TR_STRONG_TVG_ID_PATTERNS: RegExp[] = [
-  /(trt1|trt2|trthaber|trtspor|trtcocuk|atv|tv8|kanald|showtv|startv|beyaztv|ulketv|cnnturk|haberturk|ahaber|aspor|tgrt|teve2|tv100|halktv|tele1|haberglobal|ssport|sporsmart|beinsports[0-9]*tr)/,
+const TR_UNIQUE_TVG_ID_PATTERNS: RegExp[] = [
+  /(trt1|trt2|trthaber|trtspor|trtcocuk|atv|tv8|kanald|showtv|startv|beyaztv|ulketv|cnnturk|haberturk|ahaber|aspor|tgrt|teve2|tv100|halktv|tele1|haberglobal)/,
+  /(beinsports[0-9]*tr|ssport.*tr|sporsmart.*tr)/,
   /(^|[^a-z0-9])tr([^a-z0-9]|$).*?(spor|haber|kanal|tv|ulusal)/,
   /(\.|_|-)(tr)(\.|_|-|$)/
 ];
+const FOREIGN_SIGNAL_TOKENS = new Set([
+  "us",
+  "usa",
+  "uk",
+  "eng",
+  "de",
+  "ger",
+  "germany",
+  "deutsch",
+  "fr",
+  "fra",
+  "france",
+  "es",
+  "esp",
+  "spain",
+  "it",
+  "ita",
+  "italy",
+  "pt",
+  "por",
+  "portugal",
+  "br",
+  "bra",
+  "brazil",
+  "latin",
+  "latam",
+  "arab",
+  "pl",
+  "pol",
+  "poland",
+  "ru",
+  "rus",
+  "russia",
+  "exyu",
+  "balkan"
+]);
+const TR_CONTEXT_TOKENS = new Set(["tr", "turk", "turkce", "turkiye", "turkey", "turkish"]);
 const COUNTRY_CODE_ALIASES = new Map<string, string>([
   ["TUR", "TR"],
   ["TRK", "TR"]
@@ -92,19 +132,30 @@ function hasStrongTrGroupSignal(groupTokens: Set<string>) {
   return countTokenMatches(groupTokens, TR_STRONG_GROUP_TOKENS) > 0;
 }
 
-function hasStrongTrTitleSignal(
+function hasContextualTrBrandSignal(titleText: string, tvgIdText: string, groupText: string) {
+  return TR_CONTEXTUAL_BRAND_PATTERNS.some(
+    (pattern) => pattern.test(titleText) || pattern.test(tvgIdText) || pattern.test(groupText)
+  );
+}
+
+function hasUniqueTrSignal(
+  groupTokens: Set<string>,
   titleText: string,
   titleTokens: Set<string>,
   tvgIdText: string,
   tvgIdTokens: Set<string>
 ) {
-  for (const pattern of TR_STRONG_TITLE_PATTERNS) {
+  if (hasStrongTrGroupSignal(groupTokens)) {
+    return true;
+  }
+
+  for (const pattern of TR_UNIQUE_TITLE_PATTERNS) {
     if (pattern.test(titleText)) {
       return true;
     }
   }
 
-  for (const pattern of TR_STRONG_TVG_ID_PATTERNS) {
+  for (const pattern of TR_UNIQUE_TVG_ID_PATTERNS) {
     if (pattern.test(tvgIdText)) {
       return true;
     }
@@ -117,11 +168,33 @@ function hasStrongTrTitleSignal(
   return titleTokens.has("tr") && countTokenMatches(titleTokens, TR_TITLE_CONTEXT_TOKENS) > 0;
 }
 
-function hasBalancedTrMediumSignals(groupTokens: Set<string>, titleTokens: Set<string>, tvgIdTokens: Set<string>) {
+function hasTrContextSignal(groupTokens: Set<string>, titleTokens: Set<string>, tvgIdTokens: Set<string>) {
+  return (
+    countTokenMatches(groupTokens, TR_CONTEXT_TOKENS) > 0 ||
+    countTokenMatches(titleTokens, TR_CONTEXT_TOKENS) > 0 ||
+    countTokenMatches(tvgIdTokens, TR_CONTEXT_TOKENS) > 0
+  );
+}
+
+function hasForeignSignal(groupTokens: Set<string>, titleTokens: Set<string>, tvgIdTokens: Set<string>) {
+  return (
+    countTokenMatches(groupTokens, FOREIGN_SIGNAL_TOKENS) > 0 ||
+    countTokenMatches(titleTokens, FOREIGN_SIGNAL_TOKENS) > 0 ||
+    countTokenMatches(tvgIdTokens, FOREIGN_SIGNAL_TOKENS) > 0
+  );
+}
+
+function hasBalancedTrMediumSignals(
+  groupTokens: Set<string>,
+  titleTokens: Set<string>,
+  tvgIdTokens: Set<string>,
+  hasTrContext: boolean
+) {
   const groupMediumMatches = countTokenMatches(groupTokens, TR_MEDIUM_TOKENS);
   const titleMediumMatches =
     countTokenMatches(titleTokens, TR_MEDIUM_TOKENS) + countTokenMatches(tvgIdTokens, TR_MEDIUM_TOKENS);
   return (
+    hasTrContext &&
     groupMediumMatches > 0 &&
     titleMediumMatches > 0 &&
     groupMediumMatches + titleMediumMatches >= 2
@@ -133,14 +206,24 @@ export function classifyLiveChannelCountry(input: {
   groupTitle: string | null;
   tvgId?: string | null;
 }): LiveCountryClassification {
+  const normalizedGroup = normalizeAsciiText(input.groupTitle);
   const groupTokens = tokenize(input.groupTitle);
   const normalizedTitle = normalizeAsciiText(input.title);
   const titleTokens = tokenize(input.title);
   const normalizedTvgId = normalizeAsciiText(input.tvgId);
   const tvgIdTokens = tokenize(input.tvgId);
+  const hasUniqueStrongTrSignal = hasUniqueTrSignal(
+    groupTokens,
+    normalizedTitle,
+    titleTokens,
+    normalizedTvgId,
+    tvgIdTokens
+  );
+  const hasTrContext = hasTrContextSignal(groupTokens, titleTokens, tvgIdTokens);
+  const hasForeign = hasForeignSignal(groupTokens, titleTokens, tvgIdTokens);
+  const hasContextualBrand = hasContextualTrBrandSignal(normalizedTitle, normalizedTvgId, normalizedGroup);
   const hasStrongTrSignal =
-    hasStrongTrGroupSignal(groupTokens) ||
-    hasStrongTrTitleSignal(normalizedTitle, titleTokens, normalizedTvgId, tvgIdTokens);
+    hasUniqueStrongTrSignal || (hasContextualBrand && hasTrContext && !hasForeign);
   const prefixedCountryCode = parseCountryCodeFromGroupPrefix(input.groupTitle);
 
   // Prefix is generally reliable, but we prioritize explicit Turkish brand/title signals
@@ -169,7 +252,7 @@ export function classifyLiveChannelCountry(input: {
     };
   }
 
-  if (hasBalancedTrMediumSignals(groupTokens, titleTokens, tvgIdTokens)) {
+  if (!hasForeign && hasBalancedTrMediumSignals(groupTokens, titleTokens, tvgIdTokens, hasTrContext)) {
     return {
       countryCode: "TR",
       confidence: "medium",
