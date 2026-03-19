@@ -187,8 +187,8 @@ export class FlixifyClient {
     if (options.debugVod) {
       query.set("debugVod", "true");
     }
-    if (options.preferTranscode) {
-      query.set("preferTranscode", "true");
+    if (typeof options.preferTranscode === "boolean") {
+      query.set("preferTranscode", options.preferTranscode ? "true" : "false");
     }
     if (options.audioTrackId) {
       query.set("audioTrackId", options.audioTrackId);

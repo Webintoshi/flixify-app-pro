@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { createFfmpegArgs, resolveVodTranscodeDecision, selectVodAudioTrackId } from "./vod.js";
 
 describe("resolveVodTranscodeDecision", () => {
-  it("forces transcode for mp4 sources", () => {
+  it("keeps browser runtime on transcode-first mode for mp4 sources", () => {
     const decision = resolveVodTranscodeDecision({
       transport: "mp4",
       supportsByteRange: true,
-      preferTranscode: false
+      preferTranscode: false,
+      clientRuntime: "browser"
     });
 
     expect(decision.needsTranscode).toBe(true);
@@ -32,6 +33,34 @@ describe("resolveVodTranscodeDecision", () => {
     expect(normalDecision.needsTranscode).toBe(true);
     expect(debugDecision.deliveryMode).toBe("hls_proxy");
     expect(debugDecision.needsTranscode).toBe(false);
+  });
+
+  it("uses fast-start proxy modes for app runtime unless transcode is explicitly requested", () => {
+    const appFileProxyDecision = resolveVodTranscodeDecision({
+      transport: "mkv",
+      supportsByteRange: true,
+      preferTranscode: false,
+      clientRuntime: "app"
+    });
+    const appHlsDecision = resolveVodTranscodeDecision({
+      transport: "hls",
+      supportsByteRange: true,
+      preferTranscode: false,
+      clientRuntime: "app"
+    });
+    const appForcedTranscode = resolveVodTranscodeDecision({
+      transport: "mkv",
+      supportsByteRange: true,
+      preferTranscode: true,
+      clientRuntime: "app"
+    });
+
+    expect(appFileProxyDecision.deliveryMode).toBe("file_proxy");
+    expect(appFileProxyDecision.needsTranscode).toBe(false);
+    expect(appHlsDecision.deliveryMode).toBe("hls_proxy");
+    expect(appHlsDecision.needsTranscode).toBe(false);
+    expect(appForcedTranscode.deliveryMode).toBe("hls_transcoded");
+    expect(appForcedTranscode.needsTranscode).toBe(true);
   });
 });
 
@@ -68,6 +97,12 @@ describe("selectVodAudioTrackId", () => {
     ];
     const firstSelected = selectVodAudioTrackId(firstTracks);
     expect(firstSelected.selectedTrackId).toBe("a1");
+  });
+
+  it("keeps selection empty when ffprobe cannot detect any audio track", () => {
+    const selected = selectVodAudioTrackId([]);
+    expect(selected.selectedTrackId).toBeNull();
+    expect(selected.defaultTrackId).toBeNull();
   });
 });
 

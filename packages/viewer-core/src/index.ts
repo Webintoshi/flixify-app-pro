@@ -207,9 +207,25 @@ function getCodeLabel(kryptoniteCode: string | null | undefined, codeSuffix: str
 }
 
 class ViewerAuthInvalidatedError extends Error {
-  constructor(message = "Oturum suresi doldu.") {
+  readonly reason: "expired" | "revoked" | "invalid-refresh" | "unknown";
+
+  constructor(
+    reason: "expired" | "revoked" | "invalid-refresh" | "unknown" = "unknown",
+    message = "Oturum suresi doldu."
+  ) {
     super(message);
     this.name = "ViewerAuthInvalidatedError";
+    this.reason = reason;
+  }
+}
+
+class ViewerSessionRefreshTransientError extends Error {
+  readonly reason: "network-retry-exhausted";
+
+  constructor(reason: "network-retry-exhausted" = "network-retry-exhausted") {
+    super("Oturum yenileme gecici olarak basarisiz.");
+    this.name = "ViewerSessionRefreshTransientError";
+    this.reason = reason;
   }
 }
 
@@ -236,6 +252,27 @@ function resolveApiErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function parseApiErrorReason(error: unknown) {
+  if (!(error instanceof ApiError)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(error.body) as { reason?: unknown };
+    return typeof parsed.reason === "string" && parsed.reason.trim().length > 0 ? parsed.reason.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveAuthInvalidReason(error: unknown): "expired" | "revoked" | "invalid-refresh" | "unknown" {
+  const parsed = parseApiErrorReason(error)?.toLowerCase();
+  if (parsed === "expired" || parsed === "revoked" || parsed === "invalid-refresh") {
+    return parsed;
+  }
+  return "unknown";
+}
+
 export function useViewerCore(options: ViewerCoreOptions) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -254,8 +291,18 @@ export function useViewerCore(options: ViewerCoreOptions) {
   const liveCatalogRequestIdRef = useRef(0);
   const movieCatalogRequestIdRef = useRef(0);
   const seriesCatalogRequestIdRef = useRef(0);
-  const refreshPromiseRef = useRef<Promise<"refreshed" | "auth-invalid"> | null>(null);
+  const refreshPromiseRef = useRef<
+    Promise<
+      | { status: "refreshed" }
+      | { status: "auth-invalid"; reason: "expired" | "revoked" | "invalid-refresh" | "unknown" }
+      | { status: "transient-failure"; reason: "network-retry-exhausted" }
+    > | null
+  >(null);
   const sessionKey = options.sessionStorageKey ?? "flixify-viewer-session";
+
+  function sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
   const clientRef = useRef(
     new FlixifyClient({
@@ -345,21 +392,52 @@ export function useViewerCore(options: ViewerCoreOptions) {
 
     const currentSession = sessionRef.current;
     if (!currentSession) {
-      return "auth-invalid" as const;
+      return {
+        status: "auth-invalid" as const,
+        reason: "unknown" as const
+      };
     }
 
     refreshPromiseRef.current = (async () => {
       try {
-        await refreshSessionOnly(currentSession);
-        return "refreshed" as const;
-      } catch (error) {
-        if (isUnauthorizedError(error)) {
-          await clearAuthenticatedState();
-          await loadPublicBootstrapData();
-          return "auth-invalid" as const;
+        const maxTransientRetries = 3;
+        for (let attempt = 1; attempt <= maxTransientRetries; attempt += 1) {
+          try {
+            await refreshSessionOnly(currentSession);
+            return {
+              status: "refreshed" as const
+            };
+          } catch (error) {
+            if (isUnauthorizedError(error)) {
+              if (attempt < 2) {
+                await sleep(350);
+                continue;
+              }
+
+              const authInvalidReason = resolveAuthInvalidReason(error);
+              await clearAuthenticatedState();
+              await loadPublicBootstrapData();
+              return {
+                status: "auth-invalid" as const,
+                reason: authInvalidReason
+              };
+            }
+
+            if (attempt >= maxTransientRetries) {
+              return {
+                status: "transient-failure" as const,
+                reason: "network-retry-exhausted" as const
+              };
+            }
+
+            await sleep(350 * attempt);
+          }
         }
 
-        throw error;
+        return {
+          status: "transient-failure" as const,
+          reason: "network-retry-exhausted" as const
+        };
       } finally {
         refreshPromiseRef.current = null;
       }
@@ -377,8 +455,12 @@ export function useViewerCore(options: ViewerCoreOptions) {
       }
 
       const refreshOutcome = await ensureFreshSession();
-      if (refreshOutcome !== "refreshed") {
-        throw new ViewerAuthInvalidatedError();
+      if (refreshOutcome.status === "auth-invalid") {
+        throw new ViewerAuthInvalidatedError(refreshOutcome.reason);
+      }
+      if (refreshOutcome.status === "transient-failure") {
+        setNotice((current) => current ?? "Baglanti gecici olarak sorunlu. Lutfen tekrar deneyin.");
+        throw new ViewerSessionRefreshTransientError(refreshOutcome.reason);
       }
 
       try {
@@ -388,9 +470,10 @@ export function useViewerCore(options: ViewerCoreOptions) {
           throw retryError;
         }
 
+        const authInvalidReason = resolveAuthInvalidReason(retryError);
         await clearAuthenticatedState();
         await loadPublicBootstrapData();
-        throw new ViewerAuthInvalidatedError();
+        throw new ViewerAuthInvalidatedError(authInvalidReason);
       }
     }
   }

@@ -857,6 +857,33 @@ function getMediaErrorMessage(error: unknown, fallback: string) {
   return readableMessage ?? normalizedMessage;
 }
 
+function extractSessionFailureReason(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const reason = (error as { reason?: unknown }).reason;
+  if (typeof reason !== "string") {
+    return null;
+  }
+
+  const normalized = reason.trim().toLowerCase();
+  if (normalized === "network-retry-exhausted") {
+    return "network-retry-exhausted" as const;
+  }
+  if (normalized === "expired") {
+    return "expired" as const;
+  }
+  if (normalized === "revoked") {
+    return "revoked" as const;
+  }
+  if (normalized === "invalid-refresh") {
+    return "invalid-refresh" as const;
+  }
+
+  return null;
+}
+
 function isAutoplayBlockedError(error: unknown) {
   if (!(error instanceof Error)) {
     return false;
@@ -4447,6 +4474,7 @@ function LivePlayerSurface({
     const sessionId = sessionRef.current + 1;
     sessionRef.current = sessionId;
     let disposed = false;
+    const isActiveSession = () => !disposed && sessionRef.current === sessionId;
 
     function clearStartupTimer() {
       if (startupTimerRef.current !== null) {
@@ -4571,6 +4599,7 @@ function LivePlayerSurface({
       const playlistAgeMs =
         lastManifestAdvanceAtRef.current > 0 ? Math.max(0, Date.now() - lastManifestAdvanceAtRef.current) : null;
       const baseDetail = {
+        startupStrategy: clientRuntime === "app" ? "app-direct-first" : "relay-first",
         playerState: playerStateRef.current,
         stallCount: stallCountRef.current,
         recoveryTier: recoveryTierRef.current,
@@ -4652,8 +4681,13 @@ function LivePlayerSurface({
       media.load();
     }
 
-    async function failPlayback(message: string) {
-      if (disposed || sessionRef.current !== sessionId) {
+    async function failPlayback(
+      message: string,
+      input?: {
+        sessionReason?: "network-retry-exhausted" | "expired" | "revoked" | "invalid-refresh" | null;
+      }
+    ) {
+      if (!isActiveSession()) {
         return;
       }
       recoveryInFlightRef.current = false;
@@ -4669,7 +4703,8 @@ function LivePlayerSurface({
           lastKnownPosition: lastPlaybackPositionRef.current,
           relayAttempted: relayFallbackAttemptCountRef.current > 0,
           relayAttemptCount: relayFallbackAttemptCountRef.current,
-          relayResult: lastRelayFallbackResultRef.current
+          relayResult: lastRelayFallbackResultRef.current,
+          sessionReason: input?.sessionReason ?? null
         }
       });
     }
@@ -4939,7 +4974,9 @@ function LivePlayerSurface({
         }
         await mountResolvedPlayback(playback);
       } catch (error) {
-        await failPlayback(getMediaErrorMessage(error, "Canli yayin yeniden baglanamadi."));
+        await failPlayback(getMediaErrorMessage(error, "Canli yayin yeniden baglanamadi."), {
+          sessionReason: extractSessionFailureReason(error)
+        });
       }
     }
 
@@ -5165,7 +5202,9 @@ function LivePlayerSurface({
           setStateSafe("buffering");
           return;
         }
-        await failPlayback(getMediaErrorMessage(error, startupMessage));
+        await failPlayback(getMediaErrorMessage(error, startupMessage), {
+          sessionReason: extractSessionFailureReason(error)
+        });
       }
     }
 
@@ -5306,7 +5345,9 @@ function LivePlayerSurface({
             setStateSafe("buffering");
             return;
           }
-          void failPlayback(getMediaErrorMessage(error, startupMessage));
+          void failPlayback(getMediaErrorMessage(error, startupMessage), {
+            sessionReason: extractSessionFailureReason(error)
+          });
         });
       });
 
@@ -5518,7 +5559,9 @@ function LivePlayerSurface({
           setStateSafe("buffering");
           return;
         }
-        await failPlayback(getMediaErrorMessage(error, startupMessage));
+        await failPlayback(getMediaErrorMessage(error, startupMessage), {
+          sessionReason: extractSessionFailureReason(error)
+        });
       }
     }
 
@@ -5579,7 +5622,10 @@ function LivePlayerSurface({
       });
 
       try {
-        const playback = await resolveLivePlayback(item.id, { preferRelay: true, clientRuntime });
+        const playback = await resolveLivePlayback(item.id, {
+          preferRelay: clientRuntime !== "app",
+          clientRuntime
+        });
         if (disposed || sessionRef.current !== sessionId) {
           return;
         }
@@ -5590,7 +5636,9 @@ function LivePlayerSurface({
         }
         await mountResolvedPlayback(playback);
       } catch (error) {
-        await failPlayback(getMediaErrorMessage(error, "Canli yayin baslatilamadi."));
+        await failPlayback(getMediaErrorMessage(error, "Canli yayin baslatilamadi."), {
+          sessionReason: extractSessionFailureReason(error)
+        });
       }
     }
 
@@ -5845,6 +5893,8 @@ function useVodPlaybackController({
   const compatibilityRetryHandlerRef = useRef<(() => Promise<void>) | null>(null);
   const compatibilityRetryingRef = useRef(false);
   const autoCompatibilityEscalatedRef = useRef(false);
+  const audioDecodeUnavailableSinceRef = useRef(0);
+  const lastAudioDecodedByteCountRef = useRef<number | null>(null);
   const vodDebugEnabledRef = useRef(false);
   const vodDebugCounterRef = useRef(0);
   const onEndedRef = useRef(onEnded);
@@ -5879,6 +5929,8 @@ function useVodPlaybackController({
     compatibilityRetryHandlerRef.current = null;
     compatibilityRetryingRef.current = false;
     autoCompatibilityEscalatedRef.current = false;
+    audioDecodeUnavailableSinceRef.current = 0;
+    lastAudioDecodedByteCountRef.current = null;
     preferredAudioTrackIdRef.current = null;
     activeAudioTrackIdRef.current = null;
     audioTracksRef.current = [];
@@ -5906,12 +5958,14 @@ function useVodPlaybackController({
     const media = mediaElement;
     const vodWatchdogIntervalMs = 3_000;
     const vodSilentThresholdMs = 12_000;
+    const audioDecodeStallThresholdMs = 10_000;
     const waitingRecoveryThresholdMs = 5_500;
     const recoveryCooldownMs = 6_000;
 
     const sessionId = sessionRef.current + 1;
     sessionRef.current = sessionId;
     let disposed = false;
+    const isActiveSession = () => !disposed && sessionRef.current === sessionId;
 
     function clearSeekGuard() {
       if (seekGuardTimerRef.current !== null) {
@@ -6087,7 +6141,10 @@ function useVodPlaybackController({
           audioTrackId: input?.audioTrackId ?? activeAudioTrackIdRef.current ?? null,
           errorCode: input?.errorCode ?? null,
           upstreamStatus: input?.upstreamStatus ?? null,
-          detail: input?.detail ?? null,
+          detail: {
+            startupStrategy: clientRuntime === "app" ? "app-fast-start" : "browser-transcode-first",
+            ...(input?.detail ?? {})
+          },
           errorMessage: input?.errorMessage ?? null
         });
       } catch {
@@ -6136,6 +6193,20 @@ function useVodPlaybackController({
       return true;
     }
 
+    function getDecodedAudioByteCount() {
+      const value = (
+        media as HTMLVideoElement & {
+          webkitAudioDecodedByteCount?: number;
+        }
+      ).webkitAudioDecodedByteCount;
+      return typeof value === "number" && Number.isFinite(value) ? value : null;
+    }
+
+    function resetAudioDecodeWatchdog() {
+      audioDecodeUnavailableSinceRef.current = 0;
+      lastAudioDecodedByteCountRef.current = getDecodedAudioByteCount();
+    }
+
     function teardownPlayer() {
       clearSeekGuard();
       clearStallWatchdog();
@@ -6153,13 +6224,20 @@ function useVodPlaybackController({
       waitingSinceRef.current = 0;
       lastPlaybackPositionRef.current = 0;
       lastProgressAtRef.current = Date.now();
+      audioDecodeUnavailableSinceRef.current = 0;
+      lastAudioDecodedByteCountRef.current = null;
       setPausedSafe(true);
       setCurrentTimeSafe(0);
       setDurationSafe(0);
       setCanSeekSafe(false);
     }
 
-    async function failPlayback(message: string) {
+    async function failPlayback(
+      message: string,
+      input?: {
+        sessionReason?: "network-retry-exhausted" | "expired" | "revoked" | "invalid-refresh" | null;
+      }
+    ) {
       if (disposed || sessionRef.current !== sessionId) {
         return;
       }
@@ -6172,7 +6250,10 @@ function useVodPlaybackController({
       setInteractionRequiredSafe(false);
       await reportVodEvent("playback-failed", {
         errorCode: "playback-failed",
-        errorMessage: message
+        errorMessage: message,
+        detail: {
+          sessionReason: input?.sessionReason ?? null
+        }
       });
     }
 
@@ -6187,6 +6268,9 @@ function useVodPlaybackController({
         audioTrackId: requestedAudioTrackId ?? undefined,
         clientRuntime
       });
+      if (!isActiveSession()) {
+        return null;
+      }
       debugVod("resolve-playback", {
         canPlay: playback.canPlay,
         url: playback.url,
@@ -6221,7 +6305,7 @@ function useVodPlaybackController({
       reason: string,
       options: { resumeAt?: number; trigger: "manual" | "auto" }
     ) {
-      if (disposed || sessionRef.current !== sessionId) {
+      if (!isActiveSession()) {
         return;
       }
 
@@ -6251,10 +6335,15 @@ function useVodPlaybackController({
         if (!playback) {
           return;
         }
+        if (!isActiveSession()) {
+          return;
+        }
 
         await mountSource(playback, resumeFrom);
       } catch (error) {
-        await failPlayback(getMediaErrorMessage(error, "Uyumluluk modu baslatilamadi."));
+        await failPlayback(getMediaErrorMessage(error, "Uyumluluk modu baslatilamadi."), {
+          sessionReason: extractSessionFailureReason(error)
+        });
       } finally {
         compatibilityRetryingRef.current = false;
         setCompatibilityRetryingSafe(false);
@@ -6270,7 +6359,7 @@ function useVodPlaybackController({
     }
 
     async function recoverPlayback(reason: string, resumeAt?: number) {
-      if (disposed || sessionRef.current !== sessionId) {
+      if (!isActiveSession()) {
         return;
       }
       if (Date.now() - lastRecoverAtRef.current < recoveryCooldownMs) {
@@ -6323,9 +6412,14 @@ function useVodPlaybackController({
         if (!playback) {
           return;
         }
+        if (!isActiveSession()) {
+          return;
+        }
         await mountSource(playback, resumeFrom);
       } catch (error) {
-        await failPlayback(getMediaErrorMessage(error, reason));
+        await failPlayback(getMediaErrorMessage(error, reason), {
+          sessionReason: extractSessionFailureReason(error)
+        });
       }
     }
 
@@ -6360,6 +6454,7 @@ function useVodPlaybackController({
         setStateSafe("playing");
         setErrorSafe(null);
         setPausedSafe(false);
+        resetAudioDecodeWatchdog();
         markPlaybackProgress(media.currentTime);
         syncTimelineState();
         if (recoveredFromFailure) {
@@ -6377,6 +6472,7 @@ function useVodPlaybackController({
       const onPause = () => {
         setPausedSafe(true);
         waitingSinceRef.current = 0;
+        audioDecodeUnavailableSinceRef.current = 0;
         syncTimelineState();
       };
       const onTimeUpdate = () => {
@@ -6463,6 +6559,39 @@ function useVodPlaybackController({
           return;
         }
 
+        const decodedAudioByteCount = getDecodedAudioByteCount();
+        if (decodedAudioByteCount !== null) {
+          const previousDecodedAudioByteCount = lastAudioDecodedByteCountRef.current;
+          if (
+            previousDecodedAudioByteCount === null ||
+            decodedAudioByteCount > previousDecodedAudioByteCount + 128
+          ) {
+            lastAudioDecodedByteCountRef.current = decodedAudioByteCount;
+            audioDecodeUnavailableSinceRef.current = 0;
+          } else if (
+            media.currentTime > 8 &&
+            media.volume > 0 &&
+            !media.muted &&
+            !autoCompatibilityEscalatedRef.current &&
+            canUseVodCompatibilityRetry(resolvedPlaybackRef.current)
+          ) {
+            if (audioDecodeUnavailableSinceRef.current === 0) {
+              audioDecodeUnavailableSinceRef.current = now;
+            }
+
+            if (now - audioDecodeUnavailableSinceRef.current >= audioDecodeStallThresholdMs) {
+              autoCompatibilityEscalatedRef.current = true;
+              void runCompatibilityRetry("Ses akisi algilanmadi, uyumluluk modu devreye aliniyor.", {
+                resumeAt: media.currentTime,
+                trigger: "auto"
+              });
+              return;
+            }
+          }
+        } else {
+          audioDecodeUnavailableSinceRef.current = 0;
+        }
+
         const silentForMs = now - lastProgressAtRef.current;
         if (silentForMs < vodSilentThresholdMs) {
           return;
@@ -6540,6 +6669,9 @@ function useVodPlaybackController({
     }
 
     async function mountNative(url: string, resumeAt?: number) {
+      if (!isActiveSession()) {
+        return;
+      }
       teardownPlayer();
       const detachEvents = attachMediaEvents((targetTime) => {
         if (typeof targetTime === "number" && targetTime > 0) {
@@ -6561,6 +6693,9 @@ function useVodPlaybackController({
     }
 
     async function mountHls(url: string, resumeAt?: number) {
+      if (!isActiveSession()) {
+        return;
+      }
       if (media.canPlayType("application/vnd.apple.mpegurl")) {
         await mountNative(url, resumeAt);
         return;
@@ -6579,6 +6714,9 @@ function useVodPlaybackController({
 
       if (!HlsCtor || !isSupported || !hlsEvents) {
         await mountNative(url, resumeAt);
+        return;
+      }
+      if (!isActiveSession()) {
         return;
       }
 
@@ -6677,7 +6815,9 @@ function useVodPlaybackController({
 
       hls.on(hlsEvents.MANIFEST_PARSED, () => {
         void requestPlay().catch((error) => {
-          void failPlayback(getMediaErrorMessage(error, "Video oynatilamadi."));
+          void failPlayback(getMediaErrorMessage(error, "Video oynatilamadi."), {
+            sessionReason: extractSessionFailureReason(error)
+          });
         });
       });
 
@@ -6830,6 +6970,9 @@ function useVodPlaybackController({
     }
 
     async function mountSource(playback: VodPlaybackRecord, resumeAt?: number) {
+      if (!isActiveSession()) {
+        return;
+      }
       if (!playback.url) {
         await failPlayback(playback.errorMessage ?? "VOD akisi hazir degil.");
         return;
@@ -6896,9 +7039,14 @@ function useVodPlaybackController({
         if (!playback) {
           return;
         }
+        if (!isActiveSession()) {
+          return;
+        }
         await mountSource(playback);
       } catch (error) {
-        await failPlayback(getMediaErrorMessage(error, "VOD oynatici hazirlanamadi."));
+        await failPlayback(getMediaErrorMessage(error, "VOD oynatici hazirlanamadi."), {
+          sessionReason: extractSessionFailureReason(error)
+        });
       }
     })();
 

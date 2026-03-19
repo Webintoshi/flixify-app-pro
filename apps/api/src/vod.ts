@@ -381,6 +381,7 @@ type CreateVodPlaybackInput = {
   itemId: string;
   kind: VodPlaybackKind;
   sourceUrl: string;
+  clientRuntime?: "browser" | "app";
   allowUnverifiedSource?: boolean;
   sourceTransportHint?: VodTransport;
   baseOrigin: string;
@@ -543,15 +544,7 @@ function isTurkishLanguageTag(value: string | null | undefined) {
 
 function mapSourceTracksToVodAudioTracks(sourceTracks: SourceAudioTrack[], selectedTrackId: string | null): VodAudioTrack[] {
   if (sourceTracks.length === 0) {
-    return [
-      {
-        id: "fallback-silence-0",
-        language: "und",
-        title: "Fallback Stereo",
-        channels: 2,
-        isDefault: true
-      }
-    ];
+    return [];
   }
 
   return sourceTracks.map((track) => ({
@@ -569,8 +562,8 @@ export function selectVodAudioTrackId(
 ) {
   if (sourceTracks.length === 0) {
     return {
-      selectedTrackId: "fallback-silence-0",
-      defaultTrackId: "fallback-silence-0"
+      selectedTrackId: null,
+      defaultTrackId: null
     };
   }
 
@@ -885,6 +878,7 @@ export type VodTranscodeDecisionInput = {
   transport: VodTransport;
   supportsByteRange: boolean;
   preferTranscode: boolean;
+  clientRuntime?: "browser" | "app";
   debugPassthrough?: boolean;
 };
 
@@ -896,6 +890,33 @@ export type VodTranscodeDecision = {
 };
 
 export function resolveVodTranscodeDecision(input: VodTranscodeDecisionInput): VodTranscodeDecision {
+  if (input.preferTranscode) {
+    return {
+      needsTranscode: true,
+      useFileProxy: false,
+      requiresFfmpeg: true,
+      deliveryMode: "hls_transcoded"
+    };
+  }
+
+  if (input.clientRuntime === "app") {
+    if (input.transport === "hls") {
+      return {
+        needsTranscode: false,
+        useFileProxy: false,
+        requiresFfmpeg: false,
+        deliveryMode: "hls_proxy"
+      };
+    }
+
+    return {
+      needsTranscode: false,
+      useFileProxy: true,
+      requiresFfmpeg: false,
+      deliveryMode: "file_proxy"
+    };
+  }
+
   const debugPassthrough = input.debugPassthrough === true;
   if (debugPassthrough && input.transport === "hls") {
     return {
@@ -1388,6 +1409,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       transport: effectiveTransport,
       supportsByteRange,
       preferTranscode: input.preferTranscode === true,
+      clientRuntime: input.clientRuntime,
       debugPassthrough: debugEnabled
     });
     const canUseFfmpeg = decision.requiresFfmpeg ? await checkFfmpegAvailability() : true;
@@ -1411,7 +1433,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     const sourceAudioTracks = shouldTranscode
       ? await probeSourceAudioTracks(options.ffmpegBinary, effectiveSourceUrl)
       : [];
-    const injectSilentAudioTrack = shouldTranscode && sourceAudioTracks.length === 0;
+    const injectSilentAudioTrack = false;
     const audioSelection = shouldTranscode
       ? selectVodAudioTrackId(sourceAudioTracks, input.selectedAudioTrackId)
       : { selectedTrackId: null, defaultTrackId: null };

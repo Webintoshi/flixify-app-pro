@@ -1097,7 +1097,10 @@ export function buildServer() {
     if (isDemoMode) {
       const session = await refreshDemoSession(payload.refreshToken);
       if (!session) {
-        return reply.status(401).send({ message: "Oturum yenilenemedi." });
+        return reply.status(401).send({
+          message: "Oturum yenilenemedi.",
+          reason: "invalid-refresh"
+        });
       }
       return session;
     }
@@ -1108,12 +1111,30 @@ export function buildServer() {
     const [encodedSessionId] = token.split(".");
     sessionId = encodedSessionId || "";
     if (!sessionId) {
-      return reply.status(401).send({ message: "Refresh token gecersiz." });
+      return reply.status(401).send({
+        message: "Refresh token gecersiz.",
+        reason: "invalid-refresh"
+      });
     }
 
     const session = await getSessionById(sessionId);
-    if (!session || session.revoked_at || new Date(session.expires_at).getTime() <= Date.now()) {
-      return reply.status(401).send({ message: "Oturum yenilenemedi." });
+    if (!session) {
+      return reply.status(401).send({
+        message: "Oturum yenilenemedi.",
+        reason: "invalid-refresh"
+      });
+    }
+    if (session.revoked_at) {
+      return reply.status(401).send({
+        message: "Oturum yenilenemedi.",
+        reason: "revoked"
+      });
+    }
+    if (new Date(session.expires_at).getTime() <= Date.now()) {
+      return reply.status(401).send({
+        message: "Oturum suresi doldu.",
+        reason: "expired"
+      });
     }
 
     const userStatus = await getUserStatus(session.user_id);
@@ -1124,7 +1145,10 @@ export function buildServer() {
     const rawSecret = token.slice(sessionId.length + 1);
     const matches = await verifySecret(rawSecret, session.refresh_token_hash);
     if (!matches) {
-      return reply.status(401).send({ message: "Oturum yenilenemedi." });
+      return reply.status(401).send({
+        message: "Oturum yenilenemedi.",
+        reason: "invalid-refresh"
+      });
     }
 
     await revokeSession(session.id);
@@ -1282,7 +1306,7 @@ export function buildServer() {
         rawQuery?.debugFileProxy === "1";
       const preferRelay =
         rawQuery?.preferRelay === undefined
-          ? true
+          ? clientRuntime !== "app"
           : rawQuery?.preferRelay === true ||
             rawQuery?.preferRelay === "true" ||
             rawQuery?.preferRelay === "1";
@@ -1382,6 +1406,25 @@ export function buildServer() {
         return reply.status(404).send({ message: "Canli kanal bulunamadi." });
       }
 
+      const cooldownMs = 5 * 60 * 1000;
+      const normalizedLastError = typeof channel.last_error === "string" ? channel.last_error.trim().toLowerCase() : "";
+      const isRecent404Failure =
+        channel.health_status === "broken" &&
+        normalizedLastError.includes("upstream 404") &&
+        typeof channel.last_checked_at === "string" &&
+        Date.now() - new Date(channel.last_checked_at).getTime() <= cooldownMs;
+
+      if (isRecent404Failure) {
+        return buildDisabledLivePlaybackRecord({
+          channelId,
+          transport: channel.transport,
+          healthStatus: channel.health_status,
+          lastCheckedAt: channel.last_checked_at,
+          isVerified: false,
+          errorMessage: "Canli yayin kaynagi gecici olarak kullanilamiyor."
+        });
+      }
+
       if (
         !userContext.playbackBaseUrl ||
         (!userContext.iptvCredentials && !userContext.sharedReferenceCredentials)
@@ -1422,7 +1465,7 @@ export function buildServer() {
       const errorMessage = resolved.errorMessage;
       const upstreamStatus = extractUpstreamStatus(errorMessage);
       const skipFailureCountIncrement =
-        typeof upstreamStatus === "number" && upstreamStatus >= 400 && upstreamStatus < 500;
+        typeof upstreamStatus === "number" && [405, 416, 429].includes(upstreamStatus);
       const currentFailureCount = channel.failure_count ?? 0;
       const nextFailureCount =
         resolved.ok || skipFailureCountIncrement ? currentFailureCount : currentFailureCount + 1;
@@ -1439,8 +1482,7 @@ export function buildServer() {
         canAttemptPlayback &&
         !resolved.ok &&
         typeof upstreamStatus === "number" &&
-        upstreamStatus >= 400 &&
-        upstreamStatus < 500;
+        [401, 403, 405, 416, 429].includes(upstreamStatus);
 
       if (userContext.canPlay) {
         await updateLiveChannelHealth(channel.id, channel.snapshot_version, {
@@ -1497,7 +1539,8 @@ export function buildServer() {
         clientRuntime === "app" &&
         !playback.canPlay &&
         userContext.canPlay &&
-        typeof resolved.sourceUrl === "string"
+        typeof resolved.sourceUrl === "string" &&
+        upstreamStatus !== 404
       ) {
         return buildDirectLivePlaybackFallback({
           channelId,
@@ -1511,7 +1554,7 @@ export function buildServer() {
 
       if (!playback.canPlay) {
         await updateLiveChannelHealth(channel.id, channel.snapshot_version, {
-          status: "degraded",
+          status: healthStatus === "broken" ? "broken" : "degraded",
           errorMessage: playback.errorMessage ?? "Canli relay hazirlanamadi.",
           touchPlaybackRequest: true
         });
@@ -1632,7 +1675,7 @@ export function buildServer() {
         rawQuery?.debugVod === "1";
       const preferTranscode =
         rawQuery?.preferTranscode === undefined
-          ? true
+          ? clientRuntime !== "app"
           : rawQuery?.preferTranscode === true ||
             rawQuery?.preferTranscode === "true" ||
             rawQuery?.preferTranscode === "1";
@@ -1745,7 +1788,17 @@ export function buildServer() {
       }
 
       if (!resolved.sourceUrl) {
+        const upstreamStatus = extractUpstreamStatus(resolved.errorMessage);
         if (clientRuntime === "app" && directSourceUrlFromCandidates) {
+          if (upstreamStatus === 404) {
+            return buildDisabledVodPlaybackRecord({
+              itemId,
+              kind,
+              transport: resolved.transport,
+              errorMessage: "VOD kaynagi gecici olarak kullanilamiyor."
+            });
+          }
+
           return buildDirectVodPlaybackFallback({
             itemId,
             kind,
@@ -1763,6 +1816,8 @@ export function buildServer() {
         });
       }
 
+      const resolvedUpstreamStatus = extractUpstreamStatus(resolved.errorMessage);
+
       let playback: VodPlaybackRecord;
       try {
         playback = await vodPlaybackManager.createPlayback({
@@ -1771,6 +1826,7 @@ export function buildServer() {
           kind,
           sourceUrl: resolved.sourceUrl,
           baseOrigin,
+          clientRuntime,
           debug: debugVod,
           preferTranscode,
           allowUnverifiedSource: resolved.isVerified === false,
@@ -1806,6 +1862,15 @@ export function buildServer() {
       }
 
       if (clientRuntime === "app") {
+        if (resolvedUpstreamStatus === 404) {
+          return buildDisabledVodPlaybackRecord({
+            itemId,
+            kind,
+            transport: resolved.transport,
+            errorMessage: "VOD kaynagi gecici olarak kullanilamiyor."
+          });
+        }
+
         return buildDirectVodPlaybackFallback({
           itemId,
           kind,
