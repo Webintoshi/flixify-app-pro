@@ -1234,3 +1234,48 @@
     height: 26px;
   }
 }
+
+/* ===== Minimal Movie Player (YouTube-like) ===== */
+.movie-player-stage.is-youtube {
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.62);
+  background: #000;
+}
+
+.movie-player-stage.is-youtube .movie-player-video {
+  border-radius: 28px;
+  min-height: clamp(320px, 70vh, 860px);
+}
+
+.movie-player-back-minimal {
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
+}
+
+.movie-player-back-minimal .site-glyph {
+  width: 20px;
+  height: 20px;
+}
+
+.movie-player-back-minimal:hover,
+.movie-player-back-minimal:focus-visible {
+  background: rgba(0, 0, 0, 0.74);
+  border-color: rgba(255, 255, 255, 0.34);
+}
+
+.movie-play-overlay.is-youtube {
+  min-width: 128px;
+  min-height: 52px;
+  padding: 0 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: linear-gradient(180deg, #ff424c, #d90a12);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.58);
+}

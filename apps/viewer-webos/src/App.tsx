@@ -7073,25 +7073,16 @@ function MoviePlayerSurface({
 }) {
   const {
     videoRef,
-    playerState,
-    playerError,
     interactionRequired,
     continuePlayback,
     stopPlayback,
     togglePlayback,
-    seekBy,
-    isPaused,
-    canSeek,
-    audioTracks,
-    selectedAudioTrackId,
-    selectAudioTrack
+    isPaused
   } = useVodPlaybackController({
     item,
     resolveVodPlayback,
     reportVodPlayback
   });
-  const showStatusBar = Boolean(playerError) || interactionRequired || audioTracks.length > 1;
-  const controlsLocked = playerState === "resolving" || playerState === "connecting";
 
   useVodMediaShortcuts({
     onTogglePlayback: togglePlayback,
@@ -7100,27 +7091,19 @@ function MoviePlayerSurface({
 
   return (
     <div className="movie-player-shell">
-      <div className="movie-player-stage">
+      <div className="movie-player-stage is-youtube">
         <button
           type="button"
-          className="button secondary movie-player-back"
+          className="button secondary movie-player-back movie-player-back-minimal"
           onClick={onClose}
+          aria-label="Geri"
           data-tv-focusable="true"
           data-tv-region="overlay-player-actions"
           data-tv-focus-key={`movie-back-${item.id}`}
           data-tv-overlay-initial="true"
         >
           <ChevronLeftGlyph />
-          <span>Geri</span>
         </button>
-
-        <div className="movie-player-topbar">
-          <span className="movie-player-kicker">Film</span>
-          <div className="movie-player-copy">
-            <strong>{item.title}</strong>
-            {item.subtitle ? <span>{item.subtitle}</span> : null}
-          </div>
-        </div>
 
         <video
           ref={videoRef}
@@ -7133,51 +7116,12 @@ function MoviePlayerSurface({
           Tarayici video elementini desteklemiyor.
         </video>
 
-        <VodMiniControls
-          itemId={item.id}
-          kind="movie"
-          canSeek={canSeek}
-          isPaused={isPaused}
-          controlsLocked={controlsLocked}
-          onSeekBackward={() => seekBy(-10)}
-          onSeekForward={() => seekBy(10)}
-          onTogglePlayback={togglePlayback}
-        />
-
-        {showStatusBar ? (
-          <div className="movie-player-status">
-            {playerError ? <span className="movie-player-status-text">{playerError}</span> : null}
-            {!playerError && interactionRequired ? (
-              <span className="movie-player-status-text">Oynatmayi baslatmak icin dokunun.</span>
-            ) : null}
-            {audioTracks.length > 1 ? (
-              <label className="movie-player-status-text">
-                Ses:
-                <select
-                  value={selectedAudioTrackId ?? ""}
-                  onChange={(event) => {
-                    void selectAudioTrack(event.target.value);
-                  }}
-                  data-tv-focusable="true"
-                  data-tv-region="overlay-player-actions"
-                  data-tv-focus-key={`movie-audio-track-${item.id}`}
-                >
-                  {audioTracks.map((track) => (
-                    <option key={track.id} value={track.id}>
-                      {track.title ?? track.language ?? track.id}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-          </div>
-        ) : null}
-
         {interactionRequired ? (
           <button
             type="button"
-            className="movie-play-overlay"
+            className="movie-play-overlay is-youtube"
             onClick={() => void continuePlayback()}
+            aria-label={isPaused ? "Oynat" : "Devam et"}
             data-tv-focusable="true"
             data-tv-region="overlay-player-actions"
             data-tv-focus-key={`movie-play-${item.id}`}
