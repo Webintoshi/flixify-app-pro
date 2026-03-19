@@ -31,6 +31,15 @@ Uretilen dosyalar:
 
 Not: build once `apps/viewer-webos` derlenir ve `dist` icerigi otomatik olarak bu pakete kopyalanir.
 
+## Logo ve Installer Ikonlari
+
+- Installer ve uygulama ikonlari `apps/viewer-windows/resources` altindan okunur:
+  - `icon.ico` (Windows installer ve exe)
+  - `icon.icns` (macOS paket)
+  - `icon.png` (genel fallback)
+  - `installer.nsh` (NSIS ozellestirme scripti)
+- Masaustu penceresi ikonu ise `web-dist/favicon.png` dosyasindan yuklenir.
+
 ## Runtime API Ayari
 
 - Paketleme sirasinda `web-dist/app-config.json` otomatik olusturulur.
@@ -69,8 +78,8 @@ Video decode sorunu yasarsan opsiyonel olarak donanim hizlandirma kapatilabilir:
 
 - Masaustu uygulama menude `Guncelle` aksiyonu sunar (`CmdOrCtrl+Shift+R`).
 - `Guncelle`, Electron cache'ini temizler ve uygulamayi yeniden yukler.
-- Uygulama 6 saatte bir otomatik hard-reload yapar ve en guncel web surumunu tekrar yukler.
-- Periyot varsayilan `21600000ms` (6 saat) olup `FLIXIFY_AUTO_UPDATE_INTERVAL_MS` ile degistirilebilir.
+- Guncelleme kontrolu artik istemci icinden soft-update prompt olarak calisir; oynatmayi bloklamaz.
+- Uygulama otomatik hard-reload yapmaz; bu sayede aktif oturum ve playback kesintileri azalir.
 
 Canli commitleri yeniden kurulum olmadan almak icin:
 

@@ -166,6 +166,9 @@ async function resolveWebAppUrl() {
 await mkdir(appRoot, { recursive: true });
 await rm(targetDist, { recursive: true, force: true });
 await cp(sourceDist, targetDist, { recursive: true });
+// Keep installer bundles out of the desktop wrapper payload.
+// Download artifacts are served by web deployment, not shipped inside Electron packages.
+await rm(path.join(targetDist, "downloads"), { recursive: true, force: true });
 
 const resolvedApiBase = await resolveApiBaseUrl();
 const resolvedWebAppUrl = await resolveWebAppUrl();

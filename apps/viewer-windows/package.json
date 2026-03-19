@@ -1,6 +1,6 @@
 {
   "name": "@flixify/viewer-windows",
-  "version": "1.31.0",
+  "version": "1.32.0",
   "private": true,
   "description": "Flixify Pro Windows desktop wrapper",
   "author": "Flixify",
@@ -40,21 +40,25 @@
     "productName": "Flixify Pro",
     "directories": {
       "output": "dist-electron",
-      "buildResources": "build"
+      "buildResources": "resources"
     },
+    "icon": "icon.png",
     "files": [
       "electron/**/*",
       "web-dist/**/*",
+      "!web-dist/downloads/**",
       "package.json"
     ],
     "asar": true,
     "win": {
+      "icon": "icon.ico",
       "target": [
         "portable",
         "nsis"
       ]
     },
     "mac": {
+      "icon": "icon.icns",
       "target": [
         "dmg",
         "zip"
@@ -70,7 +74,10 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
-      "include": "build/installer.nsh"
+      "include": "installer.nsh",
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico",
+      "installerHeaderIcon": "icon.ico"
     }
   }
 }
