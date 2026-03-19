@@ -1,4 +1,5 @@
 import {
+  appUpdateCheckResponseSchema,
   deviceSessionsResponseSchema,
   authResponseSchema,
   livePlaybackEventInputSchema,
@@ -24,6 +25,7 @@ export type MeResponse = z.infer<typeof meResponseSchema>;
 export type LiveCatalogResponse = z.infer<typeof liveCatalogResponseSchema>;
 export type LivePlaybackResponse = z.infer<typeof livePlaybackResponseSchema>;
 export type VodPlaybackResponse = z.infer<typeof vodPlaybackResponseSchema>;
+export type AppUpdateCheckResponse = z.infer<typeof appUpdateCheckResponseSchema>;
 export type MovieCatalogResponse = z.infer<typeof movieCatalogResponseSchema>;
 export type SeriesCatalogResponse = z.infer<typeof seriesCatalogResponseSchema>;
 export type PackagesResponse = z.infer<typeof packagesResponseSchema>;
@@ -46,12 +48,19 @@ export type ResolveLivePlaybackOptions = {
   debugFileProxy?: boolean;
   preferRelay?: boolean;
   preferTranscode?: boolean;
+  clientRuntime?: "browser" | "app";
 };
 
 export type ResolveVodPlaybackOptions = {
   debugVod?: boolean;
   preferTranscode?: boolean;
   audioTrackId?: string;
+  clientRuntime?: "browser" | "app";
+};
+
+export type AppUpdateCheckOptions = {
+  platform?: string;
+  appVersion?: string;
 };
 
 export class ApiError extends Error {
@@ -67,6 +76,24 @@ export class ApiError extends Error {
 
 export class FlixifyClient {
   constructor(private readonly options: ClientOptions) {}
+
+  private resolveApiErrorMessage(errorText: string, status: number) {
+    const trimmed = errorText.trim();
+    if (!trimmed) {
+      return `Request failed with ${status}`;
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed) as { message?: unknown };
+      if (typeof parsed.message === "string" && parsed.message.trim().length > 0) {
+        return parsed.message.trim();
+      }
+    } catch {
+      // Body may not be JSON.
+    }
+
+    return trimmed;
+  }
 
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const accessToken = this.options.getAccessToken?.();
@@ -87,7 +114,7 @@ export class FlixifyClient {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new ApiError(errorText || `Request failed with ${response.status}`, response.status, errorText);
+      throw new ApiError(this.resolveApiErrorMessage(errorText, response.status), response.status, errorText);
     }
 
     return (await response.json()) as T;
@@ -147,6 +174,9 @@ export class FlixifyClient {
     if (typeof options.preferTranscode === "boolean") {
       query.set("preferTranscode", options.preferTranscode ? "true" : "false");
     }
+    if (options.clientRuntime) {
+      query.set("clientRuntime", options.clientRuntime);
+    }
 
     const suffix = query.size > 0 ? `?${query.toString()}` : "";
     return this.request<LivePlaybackResponse>(`/me/live/${channelId}/playback${suffix}`);
@@ -163,8 +193,24 @@ export class FlixifyClient {
     if (options.audioTrackId) {
       query.set("audioTrackId", options.audioTrackId);
     }
+    if (options.clientRuntime) {
+      query.set("clientRuntime", options.clientRuntime);
+    }
     const suffix = query.size > 0 ? `?${query.toString()}` : "";
     return this.request<VodPlaybackResponse>(`/me/vod/${kind}/${itemId}/playback${suffix}`);
+  }
+
+  checkAppUpdate(options: AppUpdateCheckOptions = {}) {
+    const query = new URLSearchParams();
+    if (options.platform && options.platform.trim().length > 0) {
+      query.set("platform", options.platform.trim());
+    }
+    if (options.appVersion && options.appVersion.trim().length > 0) {
+      query.set("appVersion", options.appVersion.trim());
+    }
+
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request<AppUpdateCheckResponse>(`/me/app-update/check${suffix}`);
   }
 
   reportVodPlayback(

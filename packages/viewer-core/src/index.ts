@@ -14,6 +14,7 @@ import {
 import type { z } from "zod";
 import {
   ApiError,
+  type AppUpdateCheckOptions,
   FlixifyClient,
   type MeResponse,
   type ResolveLivePlaybackOptions,
@@ -889,6 +890,10 @@ export function useViewerCore(options: ViewerCoreOptions) {
     return runAuthenticatedRequest(() => clientRef.current.resolveVodPlayback(kind, itemId, options));
   }
 
+  async function checkAppUpdate(options?: AppUpdateCheckOptions) {
+    return runAuthenticatedRequest(() => clientRef.current.checkAppUpdate(options));
+  }
+
   async function reportLivePlayback(
     channelId: string,
     event: "playing" | "stalled" | "recovered" | "failed",
@@ -954,6 +959,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
     revokeDeviceSession,
     resolveLivePlayback,
     resolveVodPlayback,
+    checkAppUpdate,
     reportLivePlayback,
     reportVodPlayback,
     clearNotice() {

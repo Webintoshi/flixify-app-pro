@@ -1,4 +1,4 @@
-import { type ChangeEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import type {
   CatalogGroup,
@@ -40,7 +40,7 @@ const TV_FOCUSABLE_SELECTOR = '[data-tv-focusable="true"]';
 const AUTH_PREFILL_CODE_KEY = "flixify-auth-prefill-code";
 const AUTH_DEVICE_NAME = "LG webOS TV";
 const AUTH_LEGACY_REDIRECT_ENTRIES = Object.entries(legacyAuthRedirects);
-const APP_AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const SOFT_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const AUTH_ROUTE_PATHS = new Set<string>([
   loginRoute,
   registerRoute,
@@ -50,12 +50,19 @@ const DEFAULT_DOWNLOAD_ANDROID_URL = "/downloads/flixify-android.apk";
 const DEFAULT_DOWNLOAD_ANDROID_TV_URL = "/downloads/flixify-android.apk";
 const DEFAULT_DOWNLOAD_WINDOWS_URL = "/downloads/flixify-windows.exe";
 const DEFAULT_DOWNLOAD_MACOS_URL = "";
+const ENV_APP_VERSION = import.meta.env.VITE_APP_VERSION as string | undefined;
 
 type RuntimeAppConfig = {
   apiBaseUrl?: string | null;
 };
 
 type ViewerCoreHandle = ReturnType<typeof useViewerCore>;
+type ClientRuntime = "browser" | "app";
+type RuntimeClientContext = {
+  clientRuntime: ClientRuntime;
+  platform: string;
+  appVersion: string | null;
+};
 type PlaybackKind = "live" | "movie" | "episode";
 type ArtworkMode = "poster" | "logo";
 type PlayerState =
@@ -102,6 +109,15 @@ type AuthDownloadCard = {
   href: string;
   filename: string;
   icon: ReactNode;
+};
+
+type AppUpdatePrompt = {
+  platform: string;
+  appVersion: string | null;
+  latestVersion: string;
+  downloadUrl: string | null;
+  notes: string | null;
+  checkedAt: string;
 };
 
 const primaryNavigationItems = [
@@ -560,6 +576,143 @@ function normalizeArtworkUrlForRuntime(value: string | null | undefined) {
   }
 }
 
+function normalizeRuntimeToken(value: string | null | undefined, maxLength = 120) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.slice(0, maxLength);
+}
+
+function getLocationRuntimeParam(name: string) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const searchParams = new URLSearchParams(window.location.search);
+    const directValue = normalizeRuntimeToken(searchParams.get(name));
+    if (directValue) {
+      return directValue;
+    }
+
+    const hash = window.location.hash;
+    const queryStart = hash.indexOf("?");
+    if (queryStart >= 0) {
+      const hashParams = new URLSearchParams(hash.slice(queryStart + 1));
+      const hashValue = normalizeRuntimeToken(hashParams.get(name));
+      if (hashValue) {
+        return hashValue;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function hasWebOsRuntimeGlobals() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const runtimeWindow = window as Window & {
+    webOS?: unknown;
+    webOSSystem?: unknown;
+    PalmSystem?: unknown;
+  };
+
+  return (
+    typeof runtimeWindow.webOS !== "undefined" ||
+    typeof runtimeWindow.webOSSystem !== "undefined" ||
+    typeof runtimeWindow.PalmSystem !== "undefined"
+  );
+}
+
+function resolveClientRuntime(): ClientRuntime {
+  if (typeof window === "undefined") {
+    return "browser";
+  }
+
+  if (window.location.protocol === "file:") {
+    return "app";
+  }
+
+  const userAgent = typeof navigator !== "undefined" ? navigator.userAgent.toLowerCase() : "";
+  if (userAgent.includes("electron")) {
+    return "app";
+  }
+
+  if (hasWebOsRuntimeGlobals()) {
+    return "app";
+  }
+
+  return "browser";
+}
+
+function resolveClientPlatform(clientRuntime: ClientRuntime) {
+  const fromQuery = normalizeRuntimeToken(getLocationRuntimeParam("platform"), 80)?.toLowerCase();
+  if (fromQuery) {
+    return fromQuery;
+  }
+
+  if (hasWebOsRuntimeGlobals()) {
+    return "webos-app";
+  }
+
+  const userAgent = typeof navigator !== "undefined" ? navigator.userAgent.toLowerCase() : "";
+  if (userAgent.includes("electron")) {
+    if (userAgent.includes("windows")) {
+      return "windows-desktop";
+    }
+    if (userAgent.includes("mac")) {
+      return "macos-desktop";
+    }
+    if (userAgent.includes("linux")) {
+      return "linux-desktop";
+    }
+    return "desktop-app";
+  }
+
+  return clientRuntime === "app" ? "app" : "browser";
+}
+
+function resolveClientAppVersion() {
+  const fromQuery = normalizeRuntimeToken(getLocationRuntimeParam("appVersion"));
+  if (fromQuery) {
+    return fromQuery;
+  }
+
+  if (typeof window !== "undefined") {
+    const runtimeWindow = window as Window & {
+      __FLIXIFY_APP_VERSION__?: unknown;
+    };
+    if (typeof runtimeWindow.__FLIXIFY_APP_VERSION__ === "string") {
+      const fromGlobal = normalizeRuntimeToken(runtimeWindow.__FLIXIFY_APP_VERSION__);
+      if (fromGlobal) {
+        return fromGlobal;
+      }
+    }
+  }
+
+  return normalizeRuntimeToken(ENV_APP_VERSION);
+}
+
+function resolveRuntimeClientContext(): RuntimeClientContext {
+  const clientRuntime = resolveClientRuntime();
+  return {
+    clientRuntime,
+    platform: resolveClientPlatform(clientRuntime),
+    appVersion: resolveClientAppVersion()
+  };
+}
+
 function resolveApiBaseUrlFromLocation() {
   if (typeof window === "undefined") {
     return null;
@@ -659,8 +812,49 @@ async function probeApiHealth(baseUrl: string) {
   }
 }
 
+function parseJsonErrorMessage(value: string) {
+  try {
+    const parsed = JSON.parse(value) as { message?: unknown };
+    if (typeof parsed.message === "string" && parsed.message.trim().length > 0) {
+      return parsed.message.trim();
+    }
+  } catch {
+    // Body may be plain text.
+  }
+
+  return null;
+}
+
+function extractReadableApiErrorMessage(value: string) {
+  const direct = parseJsonErrorMessage(value);
+  if (direct) {
+    return direct;
+  }
+
+  const firstBrace = value.indexOf("{");
+  const lastBrace = value.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    const nested = parseJsonErrorMessage(value.slice(firstBrace, lastBrace + 1));
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
 function getMediaErrorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback;
+  if (!(error instanceof Error) || !error.message) {
+    return fallback;
+  }
+
+  const normalizedMessage = error.message.trim();
+  if (!normalizedMessage) {
+    return fallback;
+  }
+
+  const readableMessage = extractReadableApiErrorMessage(normalizedMessage);
+  return readableMessage ?? normalizedMessage;
 }
 
 function isAutoplayBlockedError(error: unknown) {
@@ -2985,7 +3179,8 @@ function LiveTvPage({
   onLoadMore,
   hasMoreItems,
   resolveLivePlayback,
-  reportLivePlayback
+  reportLivePlayback,
+  clientRuntime
 }: {
   items: PlaybackItem[];
   groups: CatalogGroup[];
@@ -2994,6 +3189,7 @@ function LiveTvPage({
   hasMoreItems: boolean;
   resolveLivePlayback: ViewerCoreHandle["resolveLivePlayback"];
   reportLivePlayback: ViewerCoreHandle["reportLivePlayback"];
+  clientRuntime: ClientRuntime;
 }) {
   const [search, setSearch] = useState("");
   const [activeGroup, setActiveGroup] = useState(LIVE_DEFAULT_COUNTRY_FILTER);
@@ -3282,6 +3478,7 @@ function LiveTvPage({
                     compact
                     resolveLivePlayback={resolveLivePlayback}
                     reportLivePlayback={reportLivePlayback}
+                    clientRuntime={clientRuntime}
                   />
                 ) : (
                   <div className="live-tv-player-empty">
@@ -3941,7 +4138,8 @@ function PlayerOverlay({
   resolveLivePlayback,
   resolveVodPlayback,
   reportLivePlayback,
-  reportVodPlayback
+  reportVodPlayback,
+  clientRuntime
 }: {
   item: PlaybackItem | null;
   onClose: () => void;
@@ -3949,6 +4147,7 @@ function PlayerOverlay({
   resolveVodPlayback: ViewerCoreHandle["resolveVodPlayback"];
   reportLivePlayback: ViewerCoreHandle["reportLivePlayback"];
   reportVodPlayback: ViewerCoreHandle["reportVodPlayback"];
+  clientRuntime: ClientRuntime;
 }) {
   const [activeItem, setActiveItem] = useState<PlaybackItem | null>(item);
   const overlayToneClass =
@@ -4007,6 +4206,7 @@ function PlayerOverlay({
               item={activeItem}
               resolveLivePlayback={resolveLivePlayback}
               reportLivePlayback={reportLivePlayback}
+              clientRuntime={clientRuntime}
             />
           ) : activeItem.kind === "movie" ? (
             <MoviePlayerSurface
@@ -4014,6 +4214,7 @@ function PlayerOverlay({
               item={activeItem}
               resolveVodPlayback={resolveVodPlayback}
               reportVodPlayback={reportVodPlayback}
+              clientRuntime={clientRuntime}
               onClose={onClose}
             />
           ) : (
@@ -4022,6 +4223,7 @@ function PlayerOverlay({
               item={activeItem}
               resolveVodPlayback={resolveVodPlayback}
               reportVodPlayback={reportVodPlayback}
+              clientRuntime={clientRuntime}
               onClose={onClose}
               onRequestNext={(nextItem, options) => {
                 const currentDepth = activeItem?.autoSkipDepth ?? 0;
@@ -4045,12 +4247,14 @@ function LivePlayerSurface({
   item,
   compact = false,
   resolveLivePlayback,
-  reportLivePlayback
+  reportLivePlayback,
+  clientRuntime
 }: {
   item: PlaybackItem;
   compact?: boolean;
   resolveLivePlayback: ViewerCoreHandle["resolveLivePlayback"];
   reportLivePlayback: ViewerCoreHandle["reportLivePlayback"];
+  clientRuntime: ClientRuntime;
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -4681,7 +4885,8 @@ function LivePlayerSurface({
             const relayPlayback = await resolveLivePlayback(item.id, {
               preferRelay: true,
               forceRelayRestart: shouldForceTranscode,
-              preferTranscode: shouldForceTranscode
+              preferTranscode: shouldForceTranscode,
+              clientRuntime
             });
             if (
               relayPlayback.canPlay &&
@@ -4691,11 +4896,11 @@ function LivePlayerSurface({
               playback = relayPlayback;
               lastRelayFallbackResultRef.current = "success";
             } else {
-              playback = await resolveLivePlayback(item.id, { preferRelay: false });
+              playback = await resolveLivePlayback(item.id, { preferRelay: false, clientRuntime });
               lastRelayFallbackResultRef.current = "fallback-direct";
             }
           } catch {
-            playback = await resolveLivePlayback(item.id, { preferRelay: false });
+            playback = await resolveLivePlayback(item.id, { preferRelay: false, clientRuntime });
             lastRelayFallbackResultRef.current = "fallback-direct";
           }
         } else if (stickWithRelay) {
@@ -4703,24 +4908,25 @@ function LivePlayerSurface({
             const relayPlayback = await resolveLivePlayback(item.id, {
               preferRelay: true,
               forceRelayRestart: shouldForceTranscode,
-              preferTranscode: shouldForceTranscode
+              preferTranscode: shouldForceTranscode,
+              clientRuntime
             });
             if (relayPlayback.canPlay && relayPlayback.url) {
               playback = relayPlayback;
               lastRelayFallbackResultRef.current = "success";
             } else {
-              playback = await resolveLivePlayback(item.id, { preferRelay: false });
+              playback = await resolveLivePlayback(item.id, { preferRelay: false, clientRuntime });
               lastRelayFallbackResultRef.current = "fallback-direct";
             }
           } catch {
-            playback = await resolveLivePlayback(item.id, { preferRelay: false });
+            playback = await resolveLivePlayback(item.id, { preferRelay: false, clientRuntime });
             lastRelayFallbackResultRef.current = "fallback-direct";
           }
         } else {
           if (relayEligible && (!relayWithinLimit || !relayCooldownElapsed)) {
             lastRelayFallbackResultRef.current = "failed";
           }
-          playback = await resolveLivePlayback(item.id, { preferRelay: false });
+          playback = await resolveLivePlayback(item.id, { preferRelay: false, clientRuntime });
         }
 
         if (disposed || sessionRef.current !== sessionId) {
@@ -5373,7 +5579,7 @@ function LivePlayerSurface({
       });
 
       try {
-        const playback = await resolveLivePlayback(item.id, { preferRelay: true });
+        const playback = await resolveLivePlayback(item.id, { preferRelay: true, clientRuntime });
         if (disposed || sessionRef.current !== sessionId) {
           return;
         }
@@ -5395,7 +5601,7 @@ function LivePlayerSurface({
       clearStartupTimer();
       teardownPlayer();
     };
-  }, [item.id, reportLivePlayback, resolveLivePlayback]);
+  }, [clientRuntime, item.id, reportLivePlayback, resolveLivePlayback]);
 
   async function continuePlayback() {
     const media = videoRef.current;
@@ -5605,11 +5811,13 @@ function useVodPlaybackController({
   item,
   resolveVodPlayback,
   reportVodPlayback,
+  clientRuntime,
   onEnded
 }: {
   item: PlaybackItem;
   resolveVodPlayback: ViewerCoreHandle["resolveVodPlayback"];
   reportVodPlayback: ViewerCoreHandle["reportVodPlayback"];
+  clientRuntime: ClientRuntime;
   onEnded?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -5976,7 +6184,8 @@ function useVodPlaybackController({
       const playback = await resolveVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
         debugVod: vodDebugEnabledRef.current,
         preferTranscode: options.preferTranscode === true,
-        audioTrackId: requestedAudioTrackId ?? undefined
+        audioTrackId: requestedAudioTrackId ?? undefined,
+        clientRuntime
       });
       debugVod("resolve-playback", {
         canPlay: playback.canPlay,
@@ -6699,7 +6908,7 @@ function useVodPlaybackController({
       compatibilityRetryingRef.current = false;
       teardownPlayer();
     };
-  }, [item.id, item.kind, item.playbackAllowed, reportVodPlayback, resolveVodPlayback]);
+  }, [clientRuntime, item.id, item.kind, item.playbackAllowed, reportVodPlayback, resolveVodPlayback]);
 
   const continuePlayback = useCallback(async () => {
     const mediaElement = videoRef.current;
@@ -6869,7 +7078,8 @@ function useVodPlaybackController({
       try {
         const refreshedPlayback = await resolveVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
           debugVod: vodDebugEnabledRef.current,
-          audioTrackId: normalizedTrackId
+          audioTrackId: normalizedTrackId,
+          clientRuntime
         });
 
         if (!refreshedPlayback.canPlay || !refreshedPlayback.url) {
@@ -6926,7 +7136,7 @@ function useVodPlaybackController({
         }
       }
     },
-    [item.id, item.kind, reportVodPlayback, resolveVodPlayback, selectedAudioTrackId]
+    [clientRuntime, item.id, item.kind, reportVodPlayback, resolveVodPlayback, selectedAudioTrackId]
   );
 
   const canRetryWithCompatibilityMode = canUseVodCompatibilityRetry(resolvedPlayback);
@@ -7064,11 +7274,13 @@ function MoviePlayerSurface({
   item,
   resolveVodPlayback,
   reportVodPlayback,
+  clientRuntime,
   onClose
 }: {
   item: PlaybackItem;
   resolveVodPlayback: ViewerCoreHandle["resolveVodPlayback"];
   reportVodPlayback: ViewerCoreHandle["reportVodPlayback"];
+  clientRuntime: ClientRuntime;
   onClose: () => void;
 }) {
   const {
@@ -7081,7 +7293,8 @@ function MoviePlayerSurface({
   } = useVodPlaybackController({
     item,
     resolveVodPlayback,
-    reportVodPlayback
+    reportVodPlayback,
+    clientRuntime
   });
 
   useVodMediaShortcuts({
@@ -7138,12 +7351,14 @@ function EpisodePlayerSurface({
   item,
   resolveVodPlayback,
   reportVodPlayback,
+  clientRuntime,
   onClose,
   onRequestNext
 }: {
   item: PlaybackItem;
   resolveVodPlayback: ViewerCoreHandle["resolveVodPlayback"];
   reportVodPlayback: ViewerCoreHandle["reportVodPlayback"];
+  clientRuntime: ClientRuntime;
   onClose: () => void;
   onRequestNext: (nextItem: PlaybackItem, options?: { reason: "ended" | "failed" }) => void;
 }) {
@@ -7207,6 +7422,7 @@ function EpisodePlayerSurface({
     item,
     resolveVodPlayback,
     reportVodPlayback,
+    clientRuntime,
     onEnded: () => {
       startNextCountdown("ended");
     }
@@ -7435,7 +7651,13 @@ function BlockedScreen({ whatsapp, telegram }: { whatsapp: string; telegram: str
   );
 }
 
-function HomeShell({ core }: { core: ViewerCoreHandle }) {
+function HomeShell({
+  core,
+  runtimeClientContext
+}: {
+  core: ViewerCoreHandle;
+  runtimeClientContext: RuntimeClientContext;
+}) {
   const location = useLocation();
   const navigate = useNavigate();
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -7445,6 +7667,9 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
   const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<PaymentMethodId | null>(null);
   const [selectedCryptoAssetId, setSelectedCryptoAssetId] = useState<CryptoAssetId | null>(null);
   const [paymentModalNotice, setPaymentModalNotice] = useState<string | null>(null);
+  const [appUpdatePrompt, setAppUpdatePrompt] = useState<AppUpdatePrompt | null>(null);
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null);
+  const checkAppUpdateRef = useRef(core.checkAppUpdate);
   const paymentMethods = core.paymentMethods.filter((method) => method.enabled);
   const isPaymentModalOpen = Boolean(pendingPaymentPackage);
   const tvRouteKey = `${location.pathname}${playingItem ? "::overlay" : ""}${isPaymentModalOpen ? "::payment-modal" : ""}`;
@@ -7551,6 +7776,67 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
     return () => clearTimeout(timer);
   }, [paymentModalNotice]);
 
+  useEffect(() => {
+    checkAppUpdateRef.current = core.checkAppUpdate;
+  }, [core.checkAppUpdate]);
+
+  useEffect(() => {
+    if (runtimeClientContext.clientRuntime !== "app" || !core.session) {
+      setAppUpdatePrompt(null);
+      return;
+    }
+
+    let disposed = false;
+    const checkForUpdates = async () => {
+      try {
+        const response = await checkAppUpdateRef.current({
+          platform: runtimeClientContext.platform,
+          appVersion: runtimeClientContext.appVersion ?? undefined
+        });
+
+        if (disposed) {
+          return;
+        }
+
+        if (!response.updateAvailable || !response.latestVersion) {
+          setAppUpdatePrompt(null);
+          return;
+        }
+
+        if (dismissedUpdateVersion && response.latestVersion === dismissedUpdateVersion) {
+          return;
+        }
+
+        setAppUpdatePrompt({
+          platform: response.platform,
+          appVersion: response.appVersion,
+          latestVersion: response.latestVersion,
+          downloadUrl: response.downloadUrl,
+          notes: response.notes,
+          checkedAt: response.checkedAt
+        });
+      } catch {
+        // Soft update checks should never block playback.
+      }
+    };
+
+    void checkForUpdates();
+    const timer = window.setInterval(() => {
+      void checkForUpdates();
+    }, SOFT_UPDATE_CHECK_INTERVAL_MS);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    core.session,
+    dismissedUpdateVersion,
+    runtimeClientContext.appVersion,
+    runtimeClientContext.clientRuntime,
+    runtimeClientContext.platform
+  ]);
+
   if (!me) {
     return <div className="content">Yukleniyor...</div>;
   }
@@ -7560,6 +7846,13 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
   }
 
   const supportWhatsappUrl = me.contact.whatsapp;
+
+  function dismissAppUpdatePrompt() {
+    if (appUpdatePrompt?.latestVersion) {
+      setDismissedUpdateVersion(appUpdatePrompt.latestVersion);
+    }
+    setAppUpdatePrompt(null);
+  }
 
   function openPaymentMethodModal(pkg: PackageRecord) {
     setSelectedPaymentMethodId(null);
@@ -7727,6 +8020,27 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
       <main className="content shell-content">
         {core.notice ? <section className="notice-card">{core.notice}</section> : null}
         {core.error ? <section className="notice-card danger">{core.error}</section> : null}
+        {appUpdatePrompt ? (
+          <section className="notice-card subtle">
+            <strong>Yeni surum hazir: v{appUpdatePrompt.latestVersion}</strong>
+            <p className="muted">
+              {appUpdatePrompt.appVersion
+                ? `Mevcut surum: v${appUpdatePrompt.appVersion}`
+                : "Guncelleme indirilebilir durumda."}
+            </p>
+            {appUpdatePrompt.notes ? <p className="muted">{appUpdatePrompt.notes}</p> : null}
+            <div className="button-row">
+              {appUpdatePrompt.downloadUrl ? (
+                <a className="button secondary" href={appUpdatePrompt.downloadUrl} target="_blank" rel="noreferrer">
+                  Guncellemeyi Indir
+                </a>
+              ) : null}
+              <button type="button" className="button secondary" onClick={dismissAppUpdatePrompt}>
+                Daha Sonra
+              </button>
+            </div>
+          </section>
+        ) : null}
 
         <Routes>
           <Route
@@ -7755,6 +8069,7 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
                 hasMoreItems={core.catalogs.live.length < core.catalogs.livePagination.total}
                 resolveLivePlayback={core.resolveLivePlayback}
                 reportLivePlayback={core.reportLivePlayback}
+                clientRuntime={runtimeClientContext.clientRuntime}
               />
             }
           />
@@ -8233,13 +8548,24 @@ function HomeShell({ core }: { core: ViewerCoreHandle }) {
         resolveVodPlayback={core.resolveVodPlayback}
         reportLivePlayback={core.reportLivePlayback}
         reportVodPlayback={core.reportVodPlayback}
+        clientRuntime={runtimeClientContext.clientRuntime}
       />
     </div>
   );
 }
 
-function ConnectedApp({ baseUrl }: { baseUrl: string }) {
+function ConnectedApp({
+  baseUrl,
+  runtimeClientContext
+}: {
+  baseUrl: string;
+  runtimeClientContext: RuntimeClientContext;
+}) {
   const location = useLocation();
+  const authPlatform =
+    runtimeClientContext.platform.startsWith("windows") ? "windows" : runtimeClientContext.platform.startsWith("webos") ? "webos" : runtimeClientContext.clientRuntime === "app" ? "desktop" : "web";
+  const defaultDeviceName =
+    authPlatform === "windows" ? "Flixify Windows App" : authPlatform === "webos" ? "LG webOS TV" : "Flixify App";
   const [storage] = useState(() =>
     typeof window !== "undefined"
       ? createBrowserStorageAdapter(window.localStorage)
@@ -8249,8 +8575,8 @@ function ConnectedApp({ baseUrl }: { baseUrl: string }) {
   const core = useViewerCore({
     baseUrl,
     storage,
-    platform: "webos",
-    defaultDeviceName: "LG webOS TV"
+    platform: authPlatform,
+    defaultDeviceName
   });
 
   if (core.loading) {
@@ -8265,7 +8591,7 @@ function ConnectedApp({ baseUrl }: { baseUrl: string }) {
     return <Navigate to="/" replace />;
   }
 
-  return <HomeShell core={core} />;
+  return <HomeShell core={core} runtimeClientContext={runtimeClientContext} />;
 }
 
 function ApiConnectionScreen({
@@ -8318,26 +8644,7 @@ export function App() {
     message: null
   });
   const [probeAttempt, setProbeAttempt] = useState(0);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const timer = window.setInterval(() => {
-      try {
-        const nextUrl = new URL(window.location.href);
-        nextUrl.searchParams.set("_auto_update", Date.now().toString());
-        window.location.replace(nextUrl.toString());
-      } catch {
-        window.location.reload();
-      }
-    }, APP_AUTO_UPDATE_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, []);
+  const runtimeClientContext = useMemo(() => resolveRuntimeClientContext(), []);
 
   useEffect(() => {
     let active = true;
@@ -8430,5 +8737,5 @@ export function App() {
     );
   }
 
-  return <ConnectedApp baseUrl={resolvedApiBaseUrl} />;
+  return <ConnectedApp baseUrl={resolvedApiBaseUrl} runtimeClientContext={runtimeClientContext} />;
 }

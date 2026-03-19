@@ -19,7 +19,7 @@ import {
   trialRequestInputSchema,
   vodPlaybackEventInputSchema
 } from "@flixify/contracts";
-import type { LiveTransport } from "@flixify/contracts";
+import type { LiveHealthStatus, LivePlaybackRecord, LiveTransport, VodPlaybackRecord } from "@flixify/contracts";
 import {
   activateSubscription,
   activateTestSubscription24Hours,
@@ -150,8 +150,30 @@ type PlaybackCredentials = {
   password: string;
 };
 
+type ClientRuntime = "browser" | "app";
+type VodTransport = "hls" | "mp4" | "mkv" | "avi" | "unknown";
+
+type AppUpdateManifestEntry = {
+  latestVersion: string;
+  downloadUrl: string | null;
+  notes: string | null;
+};
+
+type AppUpdateManifest = {
+  platforms: Record<string, AppUpdateManifestEntry>;
+};
+
 const isDemoMode = env.APP_DEMO_MODE;
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+const appUpdateManifestCache: {
+  expiresAt: number;
+  value: AppUpdateManifest | null;
+  inflight: Promise<AppUpdateManifest | null> | null;
+} = {
+  expiresAt: 0,
+  value: null,
+  inflight: null
+};
 const livePlaybackManager = createLivePlaybackManager({
   ffmpegBinary: env.FFMPEG_BINARY,
   sessionTtlMs: 5 * 60 * 1000,
@@ -325,10 +347,35 @@ function buildStreamCandidates(
     candidates.push(fallbackCredentials);
   }
 
-  return candidates.map((credentials) => ({
-    credentials,
-    url: buildStreamUrl(baseUrl, credentials.username, credentials.password, streamPath)
-  }));
+  const resolvedCandidates: Array<{ credentials: PlaybackCredentials; url: string }> = [];
+  for (const credentials of candidates) {
+    try {
+      resolvedCandidates.push({
+        credentials,
+        url: buildStreamUrl(baseUrl, credentials.username, credentials.password, streamPath)
+      });
+    } catch (error) {
+      console.warn("[playback] stream candidate skip edildi", {
+        error: error instanceof Error ? error.message : String(error ?? "unknown"),
+        streamPath
+      });
+    }
+  }
+
+  return resolvedCandidates;
+}
+
+function normalizeClientRuntime(value: unknown): ClientRuntime {
+  if (typeof value !== "string") {
+    return "browser";
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "app") {
+    return "app";
+  }
+
+  return "browser";
 }
 
 function extractUpstreamStatus(errorMessage: string | null | undefined) {
@@ -466,11 +513,98 @@ async function resolveVodSourceUrl(input: {
   };
 }
 
+function buildDisabledLivePlaybackRecord(input: {
+  channelId: string;
+  transport: LiveTransport;
+  healthStatus: LiveHealthStatus | null;
+  lastCheckedAt: string | null;
+  isVerified: boolean;
+  errorMessage: string;
+}): LivePlaybackRecord {
+  return {
+    channelId: input.channelId,
+    url: null,
+    transport: input.transport,
+    sourceTransport: input.transport,
+    deliveryMode: input.transport === "hls" ? "hls_proxy" : "file_proxy",
+    diagnosticsSessionId: null,
+    healthStatus: input.healthStatus ?? "unknown",
+    lastCheckedAt: input.lastCheckedAt,
+    expiresAt: null,
+    canPlay: false,
+    isVerified: input.isVerified,
+    errorMessage: input.errorMessage
+  };
+}
+
+function buildDirectLivePlaybackFallback(input: {
+  channelId: string;
+  sourceUrl: string;
+  transport: LiveTransport;
+  healthStatus: LiveHealthStatus | null;
+  lastCheckedAt: string | null;
+  isVerified: boolean;
+}): LivePlaybackRecord {
+  return {
+    channelId: input.channelId,
+    url: input.sourceUrl,
+    transport: input.transport,
+    sourceTransport: input.transport,
+    deliveryMode: input.transport === "hls" ? "hls_proxy" : "file_proxy",
+    diagnosticsSessionId: null,
+    healthStatus: input.healthStatus ?? "unknown",
+    lastCheckedAt: input.lastCheckedAt,
+    expiresAt: null,
+    canPlay: true,
+    isVerified: input.isVerified,
+    errorMessage: null
+  };
+}
+
+function buildDisabledVodPlaybackRecord(input: {
+  itemId: string;
+  kind: "movie" | "episode";
+  transport: VodTransport;
+  errorMessage: string;
+}) {
+  return {
+    itemId: input.itemId,
+    kind: input.kind,
+    url: null,
+    transport: input.transport,
+    deliveryMode: "hls_transcoded" as const,
+    audioTracks: [],
+    defaultAudioTrackId: null,
+    selectedAudioTrackId: null,
+    expiresAt: null,
+    canPlay: false,
+    isVerified: false,
+    errorMessage: input.errorMessage
+  };
+}
+
+function guessVodTransportFromPath(streamPath: string): VodTransport {
+  const normalized = streamPath.toLowerCase();
+  if (normalized.includes(".m3u8")) {
+    return "hls";
+  }
+  if (normalized.includes(".mp4")) {
+    return "mp4";
+  }
+  if (normalized.includes(".mkv")) {
+    return "mkv";
+  }
+  if (normalized.includes(".avi")) {
+    return "avi";
+  }
+  return "unknown";
+}
+
 function buildDirectVodPlaybackFallback(input: {
   itemId: string;
   kind: "movie" | "episode";
   sourceUrl: string;
-  transport: "hls" | "mp4" | "mkv" | "avi" | "unknown";
+  transport: VodTransport;
   isVerified: boolean;
 }) {
   return {
@@ -487,6 +621,229 @@ function buildDirectVodPlaybackFallback(input: {
     isVerified: input.isVerified,
     errorMessage: null
   };
+}
+
+function normalizeOptionalText(value: unknown, maxLength = 2000) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.slice(0, maxLength);
+}
+
+function normalizeDownloadUrl(value: unknown) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeManifestPlatformMap(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  const platforms: Record<string, AppUpdateManifestEntry> = {};
+
+  for (const [platformKey, rawEntry] of entries) {
+    if (!rawEntry || typeof rawEntry !== "object") {
+      continue;
+    }
+
+    const latestVersion = normalizeOptionalText((rawEntry as Record<string, unknown>).latestVersion, 120);
+    if (!latestVersion) {
+      continue;
+    }
+
+    const normalizedPlatform = platformKey.trim().toLowerCase();
+    if (!normalizedPlatform) {
+      continue;
+    }
+
+    platforms[normalizedPlatform] = {
+      latestVersion,
+      downloadUrl: normalizeDownloadUrl((rawEntry as Record<string, unknown>).downloadUrl),
+      notes: normalizeOptionalText((rawEntry as Record<string, unknown>).notes, 2_000)
+    };
+  }
+
+  return Object.keys(platforms).length > 0 ? platforms : null;
+}
+
+function normalizeAppUpdateManifest(value: unknown): AppUpdateManifest | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const topLevel = value as Record<string, unknown>;
+  const directPlatforms = normalizeManifestPlatformMap(topLevel.platforms);
+  if (directPlatforms) {
+    return { platforms: directPlatforms };
+  }
+
+  const fallbackPlatforms = normalizeManifestPlatformMap(topLevel);
+  if (fallbackPlatforms) {
+    return { platforms: fallbackPlatforms };
+  }
+
+  return null;
+}
+
+function resolvePlatformAliases(platform: string) {
+  const normalized = platform.trim().toLowerCase();
+  const aliases = [normalized];
+
+  if (normalized.startsWith("windows")) {
+    aliases.push("windows-desktop");
+  }
+  if (normalized.startsWith("webos")) {
+    aliases.push("webos-app");
+  }
+  if (normalized.startsWith("mac")) {
+    aliases.push("macos-desktop");
+  }
+  if (normalized.includes("desktop")) {
+    aliases.push("desktop");
+  }
+  aliases.push("default");
+
+  return [...new Set(aliases)];
+}
+
+function resolveAppUpdateEntry(manifest: AppUpdateManifest | null, platform: string) {
+  if (!manifest) {
+    return null;
+  }
+
+  const aliases = resolvePlatformAliases(platform);
+  for (const alias of aliases) {
+    const entry = manifest.platforms[alias];
+    if (entry) {
+      return entry;
+    }
+  }
+
+  return null;
+}
+
+function parseVersionParts(value: string) {
+  const normalized = value.trim().split("+")[0]?.split("-")[0]?.trim() ?? "";
+  if (!/^\d+(?:\.\d+){0,4}$/.test(normalized)) {
+    return null;
+  }
+
+  return normalized.split(".").map((part) => Number.parseInt(part, 10));
+}
+
+function isUpdateAvailable(currentVersion: string | null, latestVersion: string | null) {
+  if (!currentVersion || !latestVersion) {
+    return false;
+  }
+
+  const currentParts = parseVersionParts(currentVersion);
+  const latestParts = parseVersionParts(latestVersion);
+
+  if (!currentParts || !latestParts) {
+    return currentVersion.trim() !== latestVersion.trim();
+  }
+
+  const length = Math.max(currentParts.length, latestParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const current = currentParts[index] ?? 0;
+    const latest = latestParts[index] ?? 0;
+    if (latest > current) {
+      return true;
+    }
+    if (latest < current) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+async function fetchAppUpdateManifest() {
+  const manifestUrl = env.APP_UPDATE_MANIFEST_URL;
+  if (!manifestUrl) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+
+  try {
+    const response = await fetch(manifestUrl, {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+      headers: {
+        accept: "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      console.warn("[app-update] manifest okunamadi", {
+        status: response.status
+      });
+      return null;
+    }
+
+    const parsed = await response.json();
+    const manifest = normalizeAppUpdateManifest(parsed);
+    if (!manifest) {
+      console.warn("[app-update] manifest formati gecersiz");
+    }
+    return manifest;
+  } catch (error) {
+    console.warn("[app-update] manifest fetch hatasi", {
+      error: error instanceof Error ? error.message : String(error ?? "unknown")
+    });
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function loadAppUpdateManifest() {
+  const now = Date.now();
+  if (appUpdateManifestCache.value && appUpdateManifestCache.expiresAt > now) {
+    return appUpdateManifestCache.value;
+  }
+
+  if (!appUpdateManifestCache.inflight) {
+    appUpdateManifestCache.inflight = fetchAppUpdateManifest()
+      .then((manifest) => {
+        appUpdateManifestCache.value = manifest;
+        appUpdateManifestCache.expiresAt =
+          Date.now() + Math.max(30_000, env.APP_UPDATE_CACHE_TTL_SECONDS * 1_000);
+        return manifest;
+      })
+      .finally(() => {
+        appUpdateManifestCache.inflight = null;
+      });
+  }
+
+  return appUpdateManifestCache.inflight;
 }
 
 async function issueSession(userId: string, input: { deviceName?: string; platform?: string }) {
@@ -816,6 +1173,30 @@ export function buildServer() {
     }
   });
 
+  app.get("/me/app-update/check", async (request, reply) => {
+    try {
+      await authenticateUser(request.headers.authorization);
+      const rawQuery = request.query as Record<string, unknown> | undefined;
+      const rawPlatform = normalizeOptionalText(rawQuery?.platform, 80) ?? "unknown";
+      const platform = rawPlatform.trim().toLowerCase();
+      const appVersion = normalizeOptionalText(rawQuery?.appVersion, 120);
+      const manifest = await loadAppUpdateManifest();
+      const matchedEntry = resolveAppUpdateEntry(manifest, platform);
+
+      return {
+        platform,
+        appVersion,
+        latestVersion: matchedEntry?.latestVersion ?? null,
+        updateAvailable: isUpdateAvailable(appVersion, matchedEntry?.latestVersion ?? null),
+        downloadUrl: matchedEntry?.downloadUrl ?? null,
+        notes: matchedEntry?.notes ?? null,
+        checkedAt: new Date().toISOString()
+      };
+    } catch (error) {
+      return sendUserRouteError(request, reply, error);
+    }
+  });
+
   app.get("/me/device-sessions", async (request, reply) => {
     try {
       const auth = await authenticateUser(request.headers.authorization);
@@ -890,6 +1271,7 @@ export function buildServer() {
       const auth = await authenticateUser(request.headers.authorization);
       const { channelId } = request.params as { channelId: string };
       const rawQuery = request.query as Record<string, unknown> | undefined;
+      const clientRuntime = normalizeClientRuntime(rawQuery?.clientRuntime);
       const forceRelayRestart =
         rawQuery?.forceRelayRestart === true ||
         rawQuery?.forceRelayRestart === "true" ||
@@ -923,24 +1305,71 @@ export function buildServer() {
         if (!channel) {
           return reply.status(404).send({ message: "Canli kanal bulunamadi." });
         }
-        return livePlaybackManager.createPlayback({
-          channelId,
-          snapshotVersion: 1,
-          sourceUrl: channel.playbackAllowed ? channel.streamUrl : null,
-          baseOrigin: getRequestBaseOrigin(request),
-          sourceTransport: channel.transport,
-          healthStatus: channel.healthStatus,
-          lastCheckedAt: channel.lastCheckedAt,
-          canPlay: channel.playbackAllowed,
-          isVerified: channel.isVerified,
-          errorMessage: null,
-          forceRelayRestart,
-          // Relay (FFmpeg) unavailable oldugunda playback'i tamamen kapatmak yerine
-          // API uzerinden file-proxy fallback ile devam et.
-          allowFileProxyFallback: true,
-          preferDirectProxy: !preferRelay,
-          preferTranscode
-        });
+        try {
+          const playback = await livePlaybackManager.createPlayback({
+            channelId,
+            snapshotVersion: 1,
+            sourceUrl: channel.playbackAllowed ? channel.streamUrl : null,
+            baseOrigin: getRequestBaseOrigin(request),
+            sourceTransport: channel.transport,
+            healthStatus: channel.healthStatus,
+            lastCheckedAt: channel.lastCheckedAt,
+            canPlay: channel.playbackAllowed,
+            isVerified: channel.isVerified,
+            errorMessage: null,
+            forceRelayRestart,
+            allowFileProxyFallback: debugFileProxy,
+            preferDirectProxy: !preferRelay,
+            preferTranscode
+          });
+
+          if (
+            clientRuntime === "app" &&
+            !playback.canPlay &&
+            channel.playbackAllowed &&
+            typeof channel.streamUrl === "string"
+          ) {
+            return buildDirectLivePlaybackFallback({
+              channelId,
+              sourceUrl: channel.streamUrl,
+              transport: channel.transport,
+              healthStatus: channel.healthStatus,
+              lastCheckedAt: channel.lastCheckedAt,
+              isVerified: channel.isVerified
+            });
+          }
+
+          return playback;
+        } catch (error) {
+          request.log.warn(
+            {
+              err: error,
+              channelId,
+              clientRuntime
+            },
+            "Demo live playback manager error"
+          );
+
+          if (clientRuntime === "app" && channel.playbackAllowed && typeof channel.streamUrl === "string") {
+            return buildDirectLivePlaybackFallback({
+              channelId,
+              sourceUrl: channel.streamUrl,
+              transport: channel.transport,
+              healthStatus: channel.healthStatus,
+              lastCheckedAt: channel.lastCheckedAt,
+              isVerified: channel.isVerified
+            });
+          }
+
+          return buildDisabledLivePlaybackRecord({
+            channelId,
+            transport: channel.transport,
+            healthStatus: channel.healthStatus,
+            lastCheckedAt: channel.lastCheckedAt,
+            isVerified: channel.isVerified,
+            errorMessage: "Canli yayin gecici olarak kullanilamiyor."
+          });
+        }
       }
 
       const userContext = await getUserContext(auth.userId);
@@ -1026,24 +1455,59 @@ export function buildServer() {
 
       const canPlay = Boolean(userContext.canPlay) && (resolved.ok || optimisticProbeFallback);
 
-      const playback = await livePlaybackManager.createPlayback({
-        channelId,
-        snapshotVersion: channel.snapshot_version,
-        sourceUrl: canPlay ? resolved.sourceUrl : null,
-        baseOrigin: getRequestBaseOrigin(request),
-        sourceTransport: transport,
-        healthStatus,
-        lastCheckedAt: checkedAt,
-        canPlay,
-        isVerified: resolved.ok,
-        errorMessage: canPlay ? null : errorMessage ?? "Canli yayin gecici olarak kullanilamiyor.",
-        forceRelayRestart,
-        // Relay (FFmpeg) unavailable oldugunda playback'i tamamen kapatmak yerine
-        // API uzerinden file-proxy fallback ile devam et.
-        allowFileProxyFallback: true,
-        preferDirectProxy: !preferRelay,
-        preferTranscode
-      });
+      let playback: LivePlaybackRecord;
+      try {
+        playback = await livePlaybackManager.createPlayback({
+          channelId,
+          snapshotVersion: channel.snapshot_version,
+          sourceUrl: canPlay ? resolved.sourceUrl : null,
+          baseOrigin: getRequestBaseOrigin(request),
+          sourceTransport: transport,
+          healthStatus,
+          lastCheckedAt: checkedAt,
+          canPlay,
+          isVerified: resolved.ok,
+          errorMessage: canPlay ? null : errorMessage ?? "Canli yayin gecici olarak kullanilamiyor.",
+          forceRelayRestart,
+          allowFileProxyFallback: debugFileProxy || optimisticProbeFallback,
+          preferDirectProxy: !preferRelay,
+          preferTranscode
+        });
+      } catch (error) {
+        request.log.warn(
+          {
+            err: error,
+            channelId,
+            clientRuntime
+          },
+          "Live playback manager error"
+        );
+
+        playback = buildDisabledLivePlaybackRecord({
+          channelId,
+          transport,
+          healthStatus,
+          lastCheckedAt: checkedAt,
+          isVerified: resolved.ok,
+          errorMessage: "Canli yayin gecici olarak kullanilamiyor."
+        });
+      }
+
+      if (
+        clientRuntime === "app" &&
+        !playback.canPlay &&
+        userContext.canPlay &&
+        typeof resolved.sourceUrl === "string"
+      ) {
+        return buildDirectLivePlaybackFallback({
+          channelId,
+          sourceUrl: resolved.sourceUrl,
+          transport,
+          healthStatus,
+          lastCheckedAt: checkedAt,
+          isVerified: resolved.ok
+        });
+      }
 
       if (!playback.canPlay) {
         await updateLiveChannelHealth(channel.id, channel.snapshot_version, {
@@ -1161,6 +1625,7 @@ export function buildServer() {
       const auth = await authenticateUser(request.headers.authorization);
       const { kind, itemId } = request.params as { kind: string; itemId: string };
       const rawQuery = request.query as Record<string, unknown> | undefined;
+      const clientRuntime = normalizeClientRuntime(rawQuery?.clientRuntime);
       const debugVod =
         rawQuery?.debugVod === true ||
         rawQuery?.debugVod === "true" ||
@@ -1226,48 +1691,81 @@ export function buildServer() {
         !userContext.playbackBaseUrl ||
         (!userContext.iptvCredentials && !userContext.sharedReferenceCredentials)
       ) {
-        return {
+        return buildDisabledVodPlaybackRecord({
           itemId,
           kind,
-          url: null,
           transport: "unknown",
-          deliveryMode: "hls_transcoded",
-          audioTracks: [],
-          defaultAudioTrackId: null,
-          selectedAudioTrackId: null,
-          expiresAt: null,
-          canPlay: false,
-          isVerified: false,
           errorMessage: "VOD kaynagi hazir degil."
-        };
+        });
       }
 
-      const resolved = await resolveVodSourceUrl({
-        baseUrl: userContext.playbackBaseUrl,
-        streamPath: record.stream_path,
-        primaryCredentials: userContext.iptvCredentials,
-        fallbackCredentials: userContext.sharedReferenceCredentials
-      });
+      const directSourceUrlFromCandidates =
+        buildStreamCandidates(
+          userContext.playbackBaseUrl,
+          record.stream_path,
+          userContext.iptvCredentials,
+          userContext.sharedReferenceCredentials
+        )[0]?.url ?? null;
+
+      let resolved: Awaited<ReturnType<typeof resolveVodSourceUrl>>;
+      try {
+        resolved = await resolveVodSourceUrl({
+          baseUrl: userContext.playbackBaseUrl,
+          streamPath: record.stream_path,
+          primaryCredentials: userContext.iptvCredentials,
+          fallbackCredentials: userContext.sharedReferenceCredentials
+        });
+      } catch (error) {
+        request.log.warn(
+          {
+            err: error,
+            itemId,
+            kind,
+            clientRuntime
+          },
+          "VOD source resolve error"
+        );
+
+        if (clientRuntime === "app" && directSourceUrlFromCandidates) {
+          return buildDirectVodPlaybackFallback({
+            itemId,
+            kind,
+            sourceUrl: directSourceUrlFromCandidates,
+            transport: guessVodTransportFromPath(record.stream_path),
+            isVerified: false
+          });
+        }
+
+        return buildDisabledVodPlaybackRecord({
+          itemId,
+          kind,
+          transport: guessVodTransportFromPath(record.stream_path),
+          errorMessage: "VOD kaynagi gecici olarak hazirlanamadi."
+        });
+      }
 
       if (!resolved.sourceUrl) {
-        return {
+        if (clientRuntime === "app" && directSourceUrlFromCandidates) {
+          return buildDirectVodPlaybackFallback({
+            itemId,
+            kind,
+            sourceUrl: directSourceUrlFromCandidates,
+            transport: resolved.transport,
+            isVerified: false
+          });
+        }
+
+        return buildDisabledVodPlaybackRecord({
           itemId,
           kind,
-          url: null,
           transport: resolved.transport,
-          deliveryMode: "hls_transcoded",
-          audioTracks: [],
-          defaultAudioTrackId: null,
-          selectedAudioTrackId: null,
-          expiresAt: null,
-          canPlay: false,
-          isVerified: false,
           errorMessage: resolved.errorMessage ?? "VOD kaynagi hazir degil."
-        };
+        });
       }
 
+      let playback: VodPlaybackRecord;
       try {
-        const playback = await vodPlaybackManager.createPlayback({
+        playback = await vodPlaybackManager.createPlayback({
           userId: auth.userId,
           itemId,
           kind,
@@ -1279,37 +1777,45 @@ export function buildServer() {
           sourceTransportHint: resolved.transport,
           selectedAudioTrackId: audioTrackId
         });
-
-        if (!playback.canPlay) {
-          return buildDirectVodPlaybackFallback({
-            itemId,
-            kind,
-            sourceUrl: resolved.sourceUrl,
-            transport: resolved.transport,
-            isVerified: false
-          });
-        }
-
-        return playback;
       } catch (error) {
-        if (error instanceof VodPlaybackUnavailableError) {
-          return buildDirectVodPlaybackFallback({
+        request.log.warn(
+          {
+            err: error,
             itemId,
             kind,
-            sourceUrl: resolved.sourceUrl,
-            transport: resolved.transport,
-            isVerified: false
-          });
-        }
+            clientRuntime
+          },
+          "VOD playback manager error"
+        );
 
+        const message =
+          error instanceof VodPlaybackUnavailableError && error.message.trim().length > 0
+            ? error.message.trim()
+            : "VOD akisi gecici olarak hazirlanamadi.";
+
+        playback = buildDisabledVodPlaybackRecord({
+          itemId,
+          kind,
+          transport: resolved.transport,
+          errorMessage: message
+        });
+      }
+
+      if (playback.canPlay) {
+        return playback;
+      }
+
+      if (clientRuntime === "app") {
         return buildDirectVodPlaybackFallback({
           itemId,
           kind,
           sourceUrl: resolved.sourceUrl,
           transport: resolved.transport,
-          isVerified: false
+          isVerified: resolved.isVerified
         });
       }
+
+      return playback;
     } catch (error) {
       return sendUserRouteError(request, reply, error);
     }

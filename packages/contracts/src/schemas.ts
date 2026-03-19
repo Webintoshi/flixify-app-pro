@@ -106,6 +106,18 @@ export const vodPlaybackEventInputSchema = z.object({
   errorMessage: z.string().trim().max(500).nullable().optional()
 });
 
+export const clientRuntimeSchema = z.enum(["browser", "app"]);
+
+export const appUpdateCheckResponseSchema = z.object({
+  platform: z.string().trim().min(1),
+  appVersion: z.string().trim().min(1).nullable(),
+  latestVersion: z.string().trim().min(1).nullable(),
+  updateAvailable: z.boolean(),
+  downloadUrl: z.string().url().nullable(),
+  notes: z.string().trim().max(2_000).nullable(),
+  checkedAt: z.string()
+});
+
 export const paginationQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(20),

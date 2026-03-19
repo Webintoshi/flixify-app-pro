@@ -4,15 +4,6 @@ const { pathToFileURL } = require("node:url");
 const { Menu, app, BrowserWindow, shell } = require("electron");
 
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
-const DEFAULT_AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const AUTO_UPDATE_INTERVAL_MS = (() => {
-  const parsed = Number.parseInt(process.env.FLIXIFY_AUTO_UPDATE_INTERVAL_MS ?? "", 10);
-  if (Number.isFinite(parsed) && parsed >= 60_000) {
-    return parsed;
-  }
-
-  return DEFAULT_AUTO_UPDATE_INTERVAL_MS;
-})();
 
 if (
   process.env.FLIXIFY_DISABLE_HARDWARE_ACCELERATION === "1" ||
@@ -126,22 +117,6 @@ async function hardReload(mainWindow) {
   mainWindow.webContents.reloadIgnoringCache();
 }
 
-function schedulePeriodicAppUpdate(mainWindow) {
-  const timer = setInterval(() => {
-    if (mainWindow.isDestroyed()) {
-      return;
-    }
-
-    void hardReload(mainWindow);
-  }, AUTO_UPDATE_INTERVAL_MS);
-
-  if (typeof timer.unref === "function") {
-    timer.unref();
-  }
-
-  return timer;
-}
-
 async function ensureVersionedCache(mainWindow) {
   const markerPath = path.join(app.getPath("userData"), "cache-marker.txt");
   const markerValue = `${app.getVersion()}::${process.platform}`;
@@ -222,6 +197,9 @@ async function createMainWindow() {
     return BrowserWindow.getAllWindows()[0];
   }
 
+  const windowIconPath = path.join(__dirname, "..", "web-dist", "favicon.png");
+  const windowIcon = fs.existsSync(windowIconPath) ? windowIconPath : undefined;
+
   const mainWindow = new BrowserWindow({
     width: 1366,
     height: 820,
@@ -230,6 +208,7 @@ async function createMainWindow() {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: "#05070B",
+    icon: windowIcon,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -264,6 +243,16 @@ async function createMainWindow() {
   if (runtime.apiBaseUrl) {
     entryUrl.searchParams.set("apiBaseUrl", runtime.apiBaseUrl);
   }
+  const platform =
+    process.platform === "win32"
+      ? "windows-desktop"
+      : process.platform === "darwin"
+        ? "macos-desktop"
+        : process.platform === "linux"
+          ? "linux-desktop"
+          : "desktop-app";
+  entryUrl.searchParams.set("platform", platform);
+  entryUrl.searchParams.set("appVersion", app.getVersion());
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
     try {
@@ -334,15 +323,11 @@ async function createMainWindow() {
 
   await ensureVersionedCache(mainWindow);
   void mainWindow.loadURL(entryUrl.toString());
-  const autoUpdateTimer = schedulePeriodicAppUpdate(mainWindow);
   mainWindow.once("ready-to-show", () => {
     if (!mainWindow.isDestroyed()) {
       mainWindow.show();
       mainWindow.focus();
     }
-  });
-  mainWindow.on("closed", () => {
-    clearInterval(autoUpdateTimer);
   });
   createAppMenu(mainWindow);
   return mainWindow;
