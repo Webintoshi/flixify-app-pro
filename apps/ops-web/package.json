@@ -1,6 +1,6 @@
 {
   "name": "@flixify/ops-web",
-  "version": "0.2.0",
+  "version": "1.34.0",
   "private": true,
   "scripts": {
     "build": "node ../../scripts/run-next.mjs build .",
