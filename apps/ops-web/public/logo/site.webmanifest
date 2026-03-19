@@ -4,15 +4,26 @@
   "description": "Premium IPTV Deneyimi",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#060606",
-  "theme_color": "#f40612",
+  "background_color": "#0B0C10",
+  "theme_color": "#F40612",
   "orientation": "portrait-primary",
   "icons": [
     {
+      "src": "/logo/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
       "src": "/logo/flixify-icon-only.svg",
       "sizes": "512x512",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "type": "image/svg+xml"
     },
     {
       "src": "/logo/flixify-icon.svg",

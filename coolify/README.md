@@ -48,6 +48,6 @@ Not:
 
 - Canli API ile paketle:
   - `FLIXIFY_API_BASE_URL=https://api.<domain> npm run dist:win:installer:x64 -w @flixify/viewer-windows`
-- Surum: `1.31.0`
+- Surum: `1.33.0`
 - Dagitim dosyasi:
-  - `apps/viewer-windows/dist-electron/Flixify-Pro-Setup-1.31.0-x64.exe`
+  - `apps/viewer-windows/dist-electron/Flixify-Pro-Setup-1.33.0-x64.exe`

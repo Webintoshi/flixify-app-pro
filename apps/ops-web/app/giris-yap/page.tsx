@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -241,10 +242,7 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="login-logo">
           <div className="login-logo-icon">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect width="20" height="15" x="2" y="7" rx="2" ry="2" />
-              <polyline points="17 2 12 7 7 2" />
-            </svg>
+            <Image src="/logo/flixify-icon-only.svg" alt="" width={40} height={40} className="login-logo-glyph" />
           </div>
           <span className="login-logo-text">FLIXIFY</span>
           <span className="login-logo-badge">PRO</span>

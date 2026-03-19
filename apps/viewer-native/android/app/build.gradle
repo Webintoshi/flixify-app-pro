@@ -41,7 +41,7 @@ react {
 
     /* Hermes Commands */
     //   The hermes compiler command to run. By default it is 'hermesc'
-    // hermesCommand = "$rootDir/my-custom-hermesc/bin/hermesc"
+    hermesCommand = file("../../../../node_modules/react-native/node_modules/hermes-compiler/hermesc/osx-bin/hermesc").absolutePath
     //
     //   The list of flags to pass to the Hermes compiler. By default is "-O", "-output-source-map"
     // hermesFlags = ["-O", "-output-source-map"]
@@ -77,8 +77,8 @@ android {
         applicationId "pro.flixify.viewerapp"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName "1.32.0"
+        versionCode 4
+        versionName "1.35.0"
     }
     signingConfigs {
         debug {
