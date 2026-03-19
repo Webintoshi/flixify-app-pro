@@ -982,15 +982,15 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
 
     if (!session) {
       const canUseLocalRelay = wantsRelay ? await checkFfmpegAvailability() : false;
-      const allowFileProxyFallback = input.allowFileProxyFallback === true;
 
-      if (wantsRelay && !canUseLocalRelay && !allowFileProxyFallback) {
-        return createDisabledPlaybackRecord({
+      if (wantsRelay && !canUseLocalRelay) {
+        void emitDiagnostic({
           channelId: input.channelId,
+          snapshotVersion: input.snapshotVersion,
+          event: "relay-fallback-file-proxy",
+          deliveryMode: "file_proxy",
           sourceTransport: input.sourceTransport,
-          healthStatus: "degraded",
-          lastCheckedAt: input.lastCheckedAt,
-          errorMessage: "Canli relay icin FFmpeg gerekli."
+          errorMessage: "FFmpeg kullanilamiyor, file_proxy moduna geri donuluyor."
         });
       }
 

@@ -417,6 +417,9 @@ async function resolveLiveSourceUrl(input: {
 
   let lastError = "Canli yayin kaynagi dogrulanamadi.";
   let lastTransport = input.fallbackTransport;
+  let sawNetworkLikeFailure = false;
+  let sawPotentialFalseNegativeHttpFailure = false;
+  const firstCandidateUrl = candidates[0]?.url ?? null;
 
   for (const candidate of candidates) {
     const probe = await probeLiveStream(candidate.url);
@@ -431,13 +434,30 @@ async function resolveLiveSourceUrl(input: {
         errorMessage: null
       };
     }
+    if (probe.statusCode === 0) {
+      sawNetworkLikeFailure = true;
+    }
+    if ([401, 403, 405, 416, 429].includes(probe.statusCode)) {
+      sawPotentialFalseNegativeHttpFailure = true;
+    }
     lastError = probe.errorMessage ?? lastError;
+  }
+
+  const allowOptimisticSourceAttempt =
+    Boolean(firstCandidateUrl) && (sawNetworkLikeFailure || sawPotentialFalseNegativeHttpFailure);
+  if (allowOptimisticSourceAttempt) {
+    return {
+      ok: true,
+      sourceUrl: firstCandidateUrl,
+      transport: lastTransport === "unknown" ? input.fallbackTransport : lastTransport,
+      errorMessage: lastError
+    };
   }
 
   return {
     ok: false,
-    sourceUrl: candidates[0]?.url ?? null,
-    transport: lastTransport,
+    sourceUrl: firstCandidateUrl,
+    transport: lastTransport === "unknown" ? input.fallbackTransport : lastTransport,
     errorMessage: lastError
   };
 }
@@ -1536,7 +1556,6 @@ export function buildServer() {
       }
 
       if (
-        clientRuntime === "app" &&
         !playback.canPlay &&
         userContext.canPlay &&
         typeof resolved.sourceUrl === "string" &&

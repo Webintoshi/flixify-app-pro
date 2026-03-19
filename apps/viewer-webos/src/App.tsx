@@ -6814,6 +6814,22 @@ function useVodPlaybackController({
       });
 
       hls.on(hlsEvents.MANIFEST_PARSED, () => {
+        const playback = resolvedPlaybackRef.current;
+        if (playback && typeof hls.audioTrack === "number") {
+          const knownTracks = playback.audioTracks ?? [];
+          const preferredTrackId =
+            preferredAudioTrackIdRef.current ??
+            playback.selectedAudioTrackId ??
+            playback.defaultAudioTrackId;
+          if (preferredTrackId && knownTracks.length > 0) {
+            const preferredIndex = knownTracks.findIndex((track) => track.id === preferredTrackId);
+            if (preferredIndex >= 0 && hls.audioTrack !== preferredIndex) {
+              hls.audioTrack = preferredIndex;
+              activeAudioTrackIdRef.current = preferredTrackId;
+              setSelectedAudioTrackId(preferredTrackId);
+            }
+          }
+        }
         void requestPlay().catch((error) => {
           void failPlayback(getMediaErrorMessage(error, "Video oynatilamadi."), {
             sessionReason: extractSessionFailureReason(error)

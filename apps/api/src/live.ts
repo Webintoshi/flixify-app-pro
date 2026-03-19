@@ -162,13 +162,13 @@ async function probeUrl(url: string, redirects = 0, useRange = true): Promise<{
             return;
           }
 
-          if (transport === "unknown" || firstChunkBytes === 0) {
+          if (firstChunkBytes === 0) {
             resolve({
               ok: false,
               statusCode,
               finalUrl,
               transport,
-              errorMessage: firstChunkBytes === 0 ? "Akistan veri okunamadi." : "Transport taninamadi."
+              errorMessage: "Akistan veri okunamadi."
             });
             return;
           }

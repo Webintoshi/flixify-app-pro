@@ -1433,7 +1433,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     const sourceAudioTracks = shouldTranscode
       ? await probeSourceAudioTracks(options.ffmpegBinary, effectiveSourceUrl)
       : [];
-    const injectSilentAudioTrack = false;
+    const injectSilentAudioTrack = shouldTranscode && sourceAudioTracks.length === 0;
     const audioSelection = shouldTranscode
       ? selectVodAudioTrackId(sourceAudioTracks, input.selectedAudioTrackId)
       : { selectedTrackId: null, defaultTrackId: null };
