@@ -15,8 +15,7 @@ import type {
 } from "@flixify/contracts";
 
 const DEFAULT_REQUEST_HEADERS = {
-  "user-agent":
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36",
+  "user-agent": "VLC/3.0.20 LibVLC/3.0.20",
   accept: "*/*",
   "accept-encoding": "identity"
 };
@@ -253,15 +252,25 @@ export async function probeVodStream(url: string) {
 
     const finalUrl = response.url || url;
     const transport = detectVodTransportFromParts(finalUrl, response.headers.get("content-type"));
+
+    let cookie: string | null = null;
+    if (response.headers.getSetCookie && typeof response.headers.getSetCookie === "function") {
+      const setCookies = response.headers.getSetCookie();
+      if (setCookies && setCookies.length > 0) {
+        cookie = setCookies.map((c: string) => c.split(";")[0].trim()).join("; ");
+      }
+    }
+
     return {
       response,
+      cookie,
       finalUrl,
       transport
     };
   }
 
   try {
-    let { response, finalUrl, transport } = await probeOnce("bytes=0-65535");
+    let { response, cookie, finalUrl, transport } = await probeOnce("bytes=0-65535");
     if (
       response.status === 400 ||
       response.status === 403 ||
@@ -270,7 +279,7 @@ export async function probeVodStream(url: string) {
       response.status === 416 ||
       response.status === 501
     ) {
-      ({ response, finalUrl, transport } = await probeOnce());
+      ({ response, finalUrl, transport, cookie } = await probeOnce());
     }
 
     if (response.status >= 400) {
@@ -279,6 +288,7 @@ export async function probeVodStream(url: string) {
         statusCode: response.status,
         finalUrl,
         transport,
+        cookie,
         supportsByteRange: hasByteRangeSupport(response),
         errorMessage: `Upstream ${response.status}`
       };
@@ -291,6 +301,7 @@ export async function probeVodStream(url: string) {
         statusCode: response.status,
         finalUrl,
         transport,
+        cookie,
         supportsByteRange: hasByteRangeSupport(response),
         errorMessage: "Akistan veri okunamadi."
       };
@@ -303,8 +314,9 @@ export async function probeVodStream(url: string) {
         statusCode: response.status,
         finalUrl,
         transport,
+        cookie,
         supportsByteRange: hasByteRangeSupport(response),
-        errorMessage: "Kaynak video yerine HTML donuyor."
+        errorMessage: "VOD akisi gecici olarak kullanilamiyor. Html yaniti alindi."
       };
     }
 
@@ -315,6 +327,7 @@ export async function probeVodStream(url: string) {
       statusCode: response.status,
       finalUrl,
       transport,
+      cookie,
       supportsByteRange: hasByteRangeSupport(response),
       errorMessage: null
     };
@@ -323,7 +336,8 @@ export async function probeVodStream(url: string) {
       ok: false,
       statusCode: 0,
       finalUrl: url,
-      transport: detectVodTransportFromParts(url),
+      transport: detectVodTransportFromParts(url, null),
+      cookie: null,
       supportsByteRange: false,
       errorMessage: error instanceof Error ? error.message : "VOD probe basarisiz."
     };
@@ -372,6 +386,7 @@ type VodPlaybackSession = {
   audioTracks: VodAudioTrack[];
   defaultAudioTrackId: string | null;
   selectedAudioTrackId: string | null;
+  cookie: string | null;
   proxyState: ProxyAssetState | null;
   localState: LocalHlsState | null;
 };
@@ -385,6 +400,7 @@ type CreateVodPlaybackInput = {
   allowUnverifiedSource?: boolean;
   sourceTransportHint?: VodTransport;
   baseOrigin: string;
+  cookie?: string | null;
   debug?: boolean;
   preferTranscode?: boolean;
   selectedAudioTrackId?: string | null;
@@ -1451,6 +1467,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       kind: input.kind,
       baseOrigin: input.baseOrigin,
       sourceUrl: effectiveSourceUrl,
+      cookie: input.cookie ?? null,
       sourceTransport: effectiveTransport,
       deliveryMode,
       expiresAt: Date.now() + sessionTtlMs,
@@ -1569,10 +1586,14 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     return session;
   }
 
-  async function fetchUpstream(url: string, options: FetchUpstreamOptions = {}) {
+  async function fetchUpstream(session: VodPlaybackSession, url: string, options: FetchUpstreamOptions = {}) {
     const headers: Record<string, string> = {
       ...DEFAULT_REQUEST_HEADERS
     };
+
+    if (session.cookie) {
+      headers.cookie = session.cookie;
+    }
 
     if (options.rangeHeader) {
       headers.range = options.rangeHeader;
@@ -1611,6 +1632,27 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
           },
           timeoutMs
         );
+
+        if (response.headers.getSetCookie && typeof response.headers.getSetCookie === "function") {
+          const setCookies = response.headers.getSetCookie();
+          if (setCookies && setCookies.length > 0) {
+            const currentCookies = session.cookie ? session.cookie.split(";").map((c) => c.trim()) : [];
+            for (const c of setCookies) {
+              const baseCookie = c.split(";")[0];
+              if (baseCookie) currentCookies.push(baseCookie.trim());
+            }
+            const cookieMap = new Map<string, string>();
+            for (const c of currentCookies) {
+              const idx = c.indexOf("=");
+              if (idx > 0) {
+                cookieMap.set(c.substring(0, idx).trim(), c);
+              }
+            }
+            if (cookieMap.size > 0) {
+              session.cookie = Array.from(cookieMap.values()).join("; ");
+            }
+          }
+        }
 
         if (HARD_FAIL_UPSTREAM_STATUS_CODES.has(response.status)) {
           return response;
@@ -1651,7 +1693,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     if (session.deliveryMode === "hls_proxy" && session.proxyState) {
       let response: Response;
       try {
-        response = await fetchUpstream(session.proxyState.rootUrl, {
+        response = await fetchUpstream(session, session.proxyState.rootUrl, {
           kind: "manifest"
         });
       } catch (error) {
@@ -1705,7 +1747,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
 
     let response: Response;
     try {
-      response = await fetchUpstream(targetUrl, {
+      response = await fetchUpstream(session, targetUrl, {
         kind: "segment"
       });
     } catch (error) {
@@ -1783,7 +1825,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
 
     let response: Response;
     try {
-      response = await fetchUpstream(session.sourceUrl, {
+      response = await fetchUpstream(session, session.sourceUrl, {
         rangeHeader,
         kind: "file"
       });

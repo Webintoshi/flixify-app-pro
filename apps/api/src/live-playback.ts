@@ -14,8 +14,7 @@ import type {
 } from "@flixify/contracts";
 
 const DEFAULT_REQUEST_HEADERS = {
-  "user-agent":
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36",
+  "user-agent": "VLC/3.0.20 LibVLC/3.0.20",
   accept: "*/*",
   "accept-encoding": "identity"
 };
@@ -96,6 +95,7 @@ type LiveRelaySession = {
   expiresAt: number;
   lastViewerAt: number;
   viewers: Map<string, ViewerLease>;
+  cookie: string | null;
   proxyState: HlsProxyState | null;
   localState: LocalHlsState | null;
 };
@@ -124,6 +124,7 @@ type CreateLivePlaybackInput = {
   channelId: string;
   snapshotVersion: number;
   sourceUrl: string | null;
+  cookie: string | null;
   baseOrigin: string;
   sourceTransport: LiveTransport;
   healthStatus: LiveHealthStatus;
@@ -666,10 +667,14 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
     return { session, viewer };
   }
 
-  async function fetchUpstream(url: string, options: FetchUpstreamOptions = {}) {
+  async function fetchUpstream(session: LiveRelaySession, url: string, options: FetchUpstreamOptions = {}) {
     const headers: Record<string, string> = {
       ...DEFAULT_REQUEST_HEADERS
     };
+
+    if (session.cookie) {
+      headers.cookie = session.cookie;
+    }
 
     if (options.rangeHeader) {
       headers.range = options.rangeHeader;
@@ -711,6 +716,27 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
           signal: controller.signal
         });
         clearTimeout(timeout);
+
+        if (response.headers.getSetCookie && typeof response.headers.getSetCookie === "function") {
+          const setCookies = response.headers.getSetCookie();
+          if (setCookies && setCookies.length > 0) {
+            const currentCookies = session.cookie ? session.cookie.split(";").map((c) => c.trim()) : [];
+            for (const c of setCookies) {
+              const baseCookie = c.split(";")[0];
+              if (baseCookie) currentCookies.push(baseCookie.trim());
+            }
+            const cookieMap = new Map<string, string>();
+            for (const c of currentCookies) {
+              const idx = c.indexOf("=");
+              if (idx > 0) {
+                cookieMap.set(c.substring(0, idx).trim(), c);
+              }
+            }
+            if (cookieMap.size > 0) {
+              session.cookie = Array.from(cookieMap.values()).join("; ");
+            }
+          }
+        }
 
         if (HARD_FAIL_UPSTREAM_STATUS_CODES.has(response.status)) {
           return response;
@@ -1013,6 +1039,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
         expiresAt: Date.now() + sessionTtlMs,
         lastViewerAt: Date.now(),
         viewers: new Map(),
+        cookie: input.cookie,
         proxyState:
           input.sourceTransport === "hls"
             ? {
@@ -1075,6 +1102,9 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
     session.lastCheckedAt = input.lastCheckedAt;
     session.isVerified = input.isVerified;
     session.expiresAt = Date.now() + sessionTtlMs;
+    if (input.cookie) {
+      session.cookie = input.cookie;
+    }
 
     if (session.localState) {
       const prepared = await ensureLocalRelay(session);
@@ -1123,7 +1153,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
     if (session.deliveryMode === "hls_proxy" && session.proxyState) {
       let response: Response;
       try {
-        response = await fetchUpstream(session.proxyState.rootUrl, {
+        response = await fetchUpstream(session, session.proxyState.rootUrl, {
           kind: "manifest"
         });
       } catch (error) {
@@ -1232,7 +1262,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
 
     let response: Response;
     try {
-      response = await fetchUpstream(targetUrl, {
+      response = await fetchUpstream(session, targetUrl, {
         kind: "segment"
       });
     } catch (error) {
@@ -1379,7 +1409,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
     const { session, viewer } = authorized;
     let response: Response;
     try {
-      response = await fetchUpstream(session.sourceUrl, {
+      response = await fetchUpstream(session, session.sourceUrl, {
         rangeHeader,
         kind: "file"
       });

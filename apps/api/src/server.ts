@@ -431,6 +431,7 @@ async function resolveLiveSourceUrl(input: {
         ok: true,
         sourceUrl: candidate.url,
         transport: probe.transport === "unknown" ? input.fallbackTransport : probe.transport,
+        cookie: probe.cookie,
         errorMessage: null
       };
     }
@@ -450,6 +451,7 @@ async function resolveLiveSourceUrl(input: {
       ok: true,
       sourceUrl: firstCandidateUrl,
       transport: lastTransport === "unknown" ? input.fallbackTransport : lastTransport,
+      cookie: null,
       errorMessage: lastError
     };
   }
@@ -458,6 +460,7 @@ async function resolveLiveSourceUrl(input: {
     ok: false,
     sourceUrl: firstCandidateUrl,
     transport: lastTransport === "unknown" ? input.fallbackTransport : lastTransport,
+    cookie: null,
     errorMessage: lastError
   };
 }
@@ -480,6 +483,7 @@ async function resolveVodSourceUrl(input: {
       ok: false,
       sourceUrl: null,
       transport: "unknown" as const,
+      cookie: null,
       errorMessage: "VOD kimlik bilgileri eksik.",
       isVerified: false
     };
@@ -499,6 +503,7 @@ async function resolveVodSourceUrl(input: {
         ok: true,
         sourceUrl: candidate.url,
         transport: probe.transport,
+        cookie: probe.cookie,
         errorMessage: null,
         isVerified: true
       };
@@ -519,6 +524,7 @@ async function resolveVodSourceUrl(input: {
       ok: true,
       sourceUrl: firstCandidateUrl,
       transport: lastTransport,
+      cookie: null,
       errorMessage: lastError,
       isVerified: false
     };
@@ -528,6 +534,7 @@ async function resolveVodSourceUrl(input: {
     ok: false,
     sourceUrl: firstCandidateUrl,
     transport: lastTransport,
+    cookie: null,
     errorMessage: lastError,
     isVerified: false
   };
@@ -1523,6 +1530,7 @@ export function buildServer() {
           channelId,
           snapshotVersion: channel.snapshot_version,
           sourceUrl: canPlay ? resolved.sourceUrl : null,
+          cookie: canPlay ? resolved.cookie : null,
           baseOrigin: getRequestBaseOrigin(request),
           sourceTransport: transport,
           healthStatus,
@@ -1836,12 +1844,11 @@ export function buildServer() {
       }
 
       const resolvedUpstreamStatus = extractUpstreamStatus(resolved.errorMessage);
-
       let playback: VodPlaybackRecord;
       try {
         playback = await vodPlaybackManager.createPlayback({
           userId: auth.userId,
-          itemId,
+          itemId: itemId,
           kind,
           sourceUrl: resolved.sourceUrl,
           baseOrigin,

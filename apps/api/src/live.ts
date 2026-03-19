@@ -94,11 +94,12 @@ function readFirstChunk(response: IncomingMessage) {
   });
 }
 
-async function probeUrl(url: string, redirects = 0, useRange = true): Promise<{
+async function probeUrl(url: string, redirects = 0, useRange = true, accumulatedCookies: string[] = []): Promise<{
   ok: boolean;
   statusCode: number;
   finalUrl: string;
   transport: LiveTransport;
+  cookie: string | null;
   errorMessage: string | null;
 }> {
   return new Promise((resolve, reject) => {
@@ -106,24 +107,32 @@ async function probeUrl(url: string, redirects = 0, useRange = true): Promise<{
       url,
       {
         headers: {
-          "user-agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36",
+          "user-agent": "VLC/3.0.20 LibVLC/3.0.20",
           accept: "*/*",
+          ...(accumulatedCookies.length > 0 ? { cookie: accumulatedCookies.join("; ") } : {}),
           ...(useRange ? { range: "bytes=0-65535" } : {})
         }
       },
       async (response) => {
         try {
           const statusCode = response.statusCode ?? 0;
-          const location = response.headers.location;
+          const setCookieHeaders = response.headers["set-cookie"];
+          if (Array.isArray(setCookieHeaders)) {
+            for (const c of setCookieHeaders) {
+              const baseCookie = c.split(";")[0];
+              if (baseCookie) accumulatedCookies.push(baseCookie.trim());
+            }
+          }
+          const locationHeader = response.headers.location;
+
           if (
             [301, 302, 303, 307, 308].includes(statusCode) &&
-            location &&
+            locationHeader &&
             redirects < MAX_REDIRECTS
           ) {
             response.resume();
-            const redirectUrl = new URL(location, url).toString();
-            resolve(await probeUrl(redirectUrl, redirects + 1, useRange));
+            const redirectUrl = new URL(locationHeader, url).toString();
+            resolve(await probeUrl(redirectUrl, redirects + 1, useRange, accumulatedCookies));
             return;
           }
 
@@ -141,7 +150,7 @@ async function probeUrl(url: string, redirects = 0, useRange = true): Promise<{
               [400, 403, 404, 405, 416, 501].includes(statusCode)
             ) {
               response.resume();
-              resolve(await probeUrl(url, redirects, false));
+              resolve(await probeUrl(url, redirects, false, accumulatedCookies));
               return;
             }
 
@@ -151,6 +160,7 @@ async function probeUrl(url: string, redirects = 0, useRange = true): Promise<{
               statusCode,
               finalUrl,
               transport,
+              cookie: null,
               errorMessage: `Upstream ${statusCode}`
             });
             return;
@@ -158,7 +168,7 @@ async function probeUrl(url: string, redirects = 0, useRange = true): Promise<{
 
           const firstChunkBytes = await readFirstChunk(response);
           if (useRange && firstChunkBytes === 0) {
-            resolve(await probeUrl(url, redirects, false));
+            resolve(await probeUrl(url, redirects, false, accumulatedCookies));
             return;
           }
 
@@ -168,6 +178,7 @@ async function probeUrl(url: string, redirects = 0, useRange = true): Promise<{
               statusCode,
               finalUrl,
               transport,
+              cookie: null,
               errorMessage: "Akistan veri okunamadi."
             });
             return;
@@ -178,6 +189,7 @@ async function probeUrl(url: string, redirects = 0, useRange = true): Promise<{
             statusCode,
             finalUrl,
             transport,
+            cookie: accumulatedCookies.length > 0 ? accumulatedCookies.join("; ") : null,
             errorMessage: null
           });
         } catch (error) {
@@ -206,6 +218,7 @@ export async function probeLiveStream(url: string) {
       statusCode: 0,
       finalUrl: url,
       transport: detectTransportFromParts(url),
+      cookie: null,
       errorMessage: error instanceof Error ? error.message : "Canli yayin probe basarisiz."
     };
   }
