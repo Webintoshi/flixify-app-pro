@@ -121,7 +121,14 @@ if(WIN32)
   set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\Flixify Pro.exe")
   set(CPACK_NSIS_EXECUTABLES_DIRECTORY "bin")
   set(CPACK_PACKAGE_EXECUTABLES "Flixify Pro" "Flixify Pro")
-  set(CPACK_CREATE_DESKTOP_LINKS "Flixify Pro")
+  set(
+    CPACK_NSIS_EXTRA_INSTALL_COMMANDS
+    "CreateShortCut \\\"$DESKTOP\\\\Flixify Pro.lnk\\\" \\\"$INSTDIR\\\\bin\\\\Flixify Pro.exe\\\""
+  )
+  set(
+    CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
+    "Delete \\\"$DESKTOP\\\\Flixify Pro.lnk\\\""
+  )
 endif()
 
 include(CPack)
