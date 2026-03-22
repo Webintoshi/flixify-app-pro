@@ -125,6 +125,7 @@ import { pool } from "./db.js";
 import { buildStreamUrl } from "./iptv.js";
 import { probeLiveStream } from "./live.js";
 import { createLivePlaybackManager } from "./live-playback.js";
+import { canUseAppDirectPlaybackFallback } from "./app-direct-fallback.js";
 import {
   samePlaybackCredentials,
   shouldHonorSharedLive404Cooldown,
@@ -1564,7 +1565,8 @@ export function buildServer() {
         !playback.canPlay &&
         userContext.canPlay &&
         typeof resolved.sourceUrl === "string" &&
-        upstreamStatus !== 404
+        (canUseAppDirectPlaybackFallback(clientRuntime, resolved.sourceUrl) ||
+          upstreamStatus !== 404)
       ) {
         return buildDirectLivePlaybackFallback({
           channelId,
@@ -1812,17 +1814,7 @@ export function buildServer() {
       }
 
       if (!resolved.sourceUrl) {
-        const upstreamStatus = extractUpstreamStatus(resolved.errorMessage);
         if (clientRuntime === "app" && directSourceUrlFromCandidates) {
-          if (upstreamStatus === 404) {
-            return buildDisabledVodPlaybackRecord({
-              itemId,
-              kind,
-              transport: resolved.transport,
-              errorMessage: "VOD kaynagi gecici olarak kullanilamiyor."
-            });
-          }
-
           return buildDirectVodPlaybackFallback({
             itemId,
             kind,
@@ -1885,15 +1877,6 @@ export function buildServer() {
       }
 
       if (clientRuntime === "app") {
-        if (resolvedUpstreamStatus === 404) {
-          return buildDisabledVodPlaybackRecord({
-            itemId,
-            kind,
-            transport: resolved.transport,
-            errorMessage: "VOD kaynagi gecici olarak kullanilamiyor."
-          });
-        }
-
         return buildDirectVodPlaybackFallback({
           itemId,
           kind,
