@@ -165,6 +165,77 @@ const LIVE_VARIANT_COLUMNS_SQL = `
   on public.shared_live_channels(snapshot_version, variant_group_key, quality_rank desc, order_index asc);
 `;
 
+const LIVE_PLAYBACK_DIAGNOSTICS_TABLE_SQL = `
+  create table if not exists public.live_playback_diagnostics (
+    id uuid primary key default gen_random_uuid(),
+    channel_id uuid not null references public.shared_live_channels(id) on delete cascade,
+    snapshot_version integer not null,
+    diagnostics_session_id uuid,
+    event text not null,
+    delivery_mode text check (delivery_mode in ('hls_proxy', 'hls_transmuxed', 'hls_transcoded', 'file_proxy')),
+    source_transport text check (source_transport in ('ts', 'hls', 'mp4', 'mkv', 'avi', 'unknown')),
+    player_engine text,
+    uptime_ms integer,
+    buffered_seconds double precision,
+    current_time_seconds double precision,
+    ready_state integer,
+    network_state integer,
+    stall_reason text,
+    error_code text,
+    upstream_status integer,
+    error_message text,
+    detail jsonb,
+    created_at timestamptz not null default timezone('utc', now())
+  );
+
+  create index if not exists idx_live_playback_diagnostics_channel_created
+  on public.live_playback_diagnostics(channel_id, created_at desc);
+
+  create index if not exists idx_live_playback_diagnostics_session
+  on public.live_playback_diagnostics(diagnostics_session_id, created_at desc);
+`;
+
+const VOD_PLAYBACK_DIAGNOSTICS_TABLE_SQL = `
+  create table if not exists public.vod_playback_diagnostics (
+    id uuid primary key default gen_random_uuid(),
+    item_id uuid not null,
+    kind text not null check (kind in ('movie', 'episode')),
+    diagnostics_session_id uuid,
+    event text not null check (
+      event in (
+        'session-created',
+        'audio-track-selected',
+        'audio-track-switch-failed',
+        'no-audio-detected',
+        'transcode-started',
+        'transcode-failed',
+        'playback-failed',
+        'recovered'
+      )
+    ),
+    delivery_mode text check (delivery_mode in ('hls_proxy', 'file_proxy', 'hls_transcoded')),
+    source_transport text check (source_transport in ('hls', 'mp4', 'mkv', 'avi', 'unknown')),
+    player_engine text,
+    uptime_ms integer,
+    buffered_seconds double precision,
+    current_time_seconds double precision,
+    ready_state integer,
+    network_state integer,
+    audio_track_id text,
+    error_code text,
+    upstream_status integer,
+    error_message text,
+    detail jsonb,
+    created_at timestamptz not null default timezone('utc', now())
+  );
+
+  create index if not exists idx_vod_playback_diagnostics_item_created
+  on public.vod_playback_diagnostics(item_id, created_at desc);
+
+  create index if not exists idx_vod_playback_diagnostics_session
+  on public.vod_playback_diagnostics(diagnostics_session_id, created_at desc);
+`;
+
 const NATIVE_PLAYBACK_DIAGNOSTIC_COLUMNS_SQL = `
   alter table public.live_playback_diagnostics
   add column if not exists client_runtime text,
@@ -184,6 +255,8 @@ let ensuredNativePlaybackSchemaPromise: Promise<void> | null = null;
 export async function ensureNativePlaybackSchema() {
   if (!ensuredNativePlaybackSchemaPromise) {
     ensuredNativePlaybackSchemaPromise = (async () => {
+      await query(LIVE_PLAYBACK_DIAGNOSTICS_TABLE_SQL);
+      await query(VOD_PLAYBACK_DIAGNOSTICS_TABLE_SQL);
       await query(LIVE_VARIANT_COLUMNS_SQL);
       await query(NATIVE_PLAYBACK_DIAGNOSTIC_COLUMNS_SQL);
     })().catch((error) => {
@@ -193,6 +266,24 @@ export async function ensureNativePlaybackSchema() {
   }
 
   await ensuredNativePlaybackSchemaPromise;
+}
+
+function getDatabaseErrorCode(error: unknown) {
+  if (!error || typeof error !== "object" || !("code" in error)) {
+    return null;
+  }
+
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
+}
+
+function logPlaybackDiagnosticsFailure(scope: "live" | "vod", error: unknown) {
+  const code = getDatabaseErrorCode(error);
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(`[playback-diagnostics] ${scope} diagnostic write skipped`, {
+    code,
+    message
+  });
 }
 
 export type UserContext = {
@@ -1453,79 +1544,83 @@ export async function reportLivePlaybackEvent(
     errorMessage?: string | null;
   }
 ) {
-  await ensureNativePlaybackSchema();
-  await query(
-    `
-      insert into public.live_playback_diagnostics (
-        channel_id,
-        snapshot_version,
-        diagnostics_session_id,
+  try {
+    await ensureNativePlaybackSchema();
+    await query(
+      `
+        insert into public.live_playback_diagnostics (
+          channel_id,
+          snapshot_version,
+          diagnostics_session_id,
+          event,
+          client_runtime,
+          delivery_mode,
+          source_transport,
+          player_engine,
+          decoder_mode,
+          uptime_ms,
+          buffered_seconds,
+          current_time_seconds,
+          ready_state,
+          network_state,
+          stall_reason,
+          error_code,
+          open_error_code,
+          native_state,
+          upstream_status,
+          error_message,
+          detail
+        ) values (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10,
+          $11,
+          $12,
+          $13,
+          $14,
+          $15,
+          $16,
+          $17,
+          $18,
+          $19,
+          $20,
+          $21::jsonb
+        )
+      `,
+      [
+        channelId,
+        snapshotVersion,
+        input?.diagnosticsSessionId ?? null,
         event,
-        client_runtime,
-        delivery_mode,
-        source_transport,
-        player_engine,
-        decoder_mode,
-        uptime_ms,
-        buffered_seconds,
-        current_time_seconds,
-        ready_state,
-        network_state,
-        stall_reason,
-        error_code,
-        open_error_code,
-        native_state,
-        upstream_status,
-        error_message,
-        detail
-      ) values (
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        $6,
-        $7,
-        $8,
-        $9,
-        $10,
-        $11,
-        $12,
-        $13,
-        $14,
-        $15,
-        $16,
-        $17,
-        $18,
-        $19,
-        $20,
-        $21::jsonb
-      )
-    `,
-    [
-      channelId,
-      snapshotVersion,
-      input?.diagnosticsSessionId ?? null,
-      event,
-      input?.clientRuntime ?? null,
-      input?.deliveryMode ?? null,
-      input?.sourceTransport ?? null,
-      input?.playerEngine ?? null,
-      input?.decoderMode ?? null,
-      input?.uptimeMs ?? null,
-      input?.bufferedSeconds ?? null,
-      input?.currentTime ?? null,
-      input?.readyState ?? null,
-      input?.networkState ?? null,
-      input?.stallReason ?? null,
-      input?.errorCode ?? null,
-      input?.openErrorCode ?? null,
-      input?.nativeState ?? null,
-      input?.upstreamStatus ?? null,
-      input?.errorMessage ?? null,
-      input?.detail ? JSON.stringify(input.detail) : null
-    ]
-  );
+        input?.clientRuntime ?? null,
+        input?.deliveryMode ?? null,
+        input?.sourceTransport ?? null,
+        input?.playerEngine ?? null,
+        input?.decoderMode ?? null,
+        input?.uptimeMs ?? null,
+        input?.bufferedSeconds ?? null,
+        input?.currentTime ?? null,
+        input?.readyState ?? null,
+        input?.networkState ?? null,
+        input?.stallReason ?? null,
+        input?.errorCode ?? null,
+        input?.openErrorCode ?? null,
+        input?.nativeState ?? null,
+        input?.upstreamStatus ?? null,
+        input?.errorMessage ?? null,
+        input?.detail ? JSON.stringify(input.detail) : null
+      ]
+    );
+  } catch (error) {
+    logPlaybackDiagnosticsFailure("live", error);
+  }
 }
 
 export async function reportVodPlaybackEvent(
@@ -1561,79 +1656,83 @@ export async function reportVodPlaybackEvent(
     errorMessage?: string | null;
   }
 ) {
-  await ensureNativePlaybackSchema();
-  await query(
-    `
-      insert into public.vod_playback_diagnostics (
-        item_id,
+  try {
+    await ensureNativePlaybackSchema();
+    await query(
+      `
+        insert into public.vod_playback_diagnostics (
+          item_id,
+          kind,
+          diagnostics_session_id,
+          event,
+          client_runtime,
+          delivery_mode,
+          source_transport,
+          player_engine,
+          decoder_mode,
+          uptime_ms,
+          buffered_seconds,
+          current_time_seconds,
+          ready_state,
+          network_state,
+          audio_track_id,
+          error_code,
+          open_error_code,
+          native_state,
+          upstream_status,
+          error_message,
+          detail
+        ) values (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10,
+          $11,
+          $12,
+          $13,
+          $14,
+          $15,
+          $16,
+          $17,
+          $18,
+          $19,
+          $20,
+          $21::jsonb
+        )
+      `,
+      [
+        itemId,
         kind,
-        diagnostics_session_id,
+        input?.diagnosticsSessionId ?? null,
         event,
-        client_runtime,
-        delivery_mode,
-        source_transport,
-        player_engine,
-        decoder_mode,
-        uptime_ms,
-        buffered_seconds,
-        current_time_seconds,
-        ready_state,
-        network_state,
-        audio_track_id,
-        error_code,
-        open_error_code,
-        native_state,
-        upstream_status,
-        error_message,
-        detail
-      ) values (
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        $6,
-        $7,
-        $8,
-        $9,
-        $10,
-        $11,
-        $12,
-        $13,
-        $14,
-        $15,
-        $16,
-        $17,
-        $18,
-        $19,
-        $20,
-        $21::jsonb
-      )
-    `,
-    [
-      itemId,
-      kind,
-      input?.diagnosticsSessionId ?? null,
-      event,
-      input?.clientRuntime ?? null,
-      input?.deliveryMode ?? null,
-      input?.sourceTransport ?? null,
-      input?.playerEngine ?? null,
-      input?.decoderMode ?? null,
-      input?.uptimeMs ?? null,
-      input?.bufferedSeconds ?? null,
-      input?.currentTime ?? null,
-      input?.readyState ?? null,
-      input?.networkState ?? null,
-      input?.audioTrackId ?? null,
-      input?.errorCode ?? null,
-      input?.openErrorCode ?? null,
-      input?.nativeState ?? null,
-      input?.upstreamStatus ?? null,
-      input?.errorMessage ?? null,
-      input?.detail ? JSON.stringify(input.detail) : null
-    ]
-  );
+        input?.clientRuntime ?? null,
+        input?.deliveryMode ?? null,
+        input?.sourceTransport ?? null,
+        input?.playerEngine ?? null,
+        input?.decoderMode ?? null,
+        input?.uptimeMs ?? null,
+        input?.bufferedSeconds ?? null,
+        input?.currentTime ?? null,
+        input?.readyState ?? null,
+        input?.networkState ?? null,
+        input?.audioTrackId ?? null,
+        input?.errorCode ?? null,
+        input?.openErrorCode ?? null,
+        input?.nativeState ?? null,
+        input?.upstreamStatus ?? null,
+        input?.errorMessage ?? null,
+        input?.detail ? JSON.stringify(input.detail) : null
+      ]
+    );
+  } catch (error) {
+    logPlaybackDiagnosticsFailure("vod", error);
+  }
 }
 
 export async function insertLivePlaybackDiagnostic(
@@ -1656,64 +1755,68 @@ export async function insertLivePlaybackDiagnostic(
     detail?: Record<string, unknown> | null;
   }
 ) {
-  await ensureNativePlaybackSchema();
-  await query(
-    `
-      insert into public.live_playback_diagnostics (
-        channel_id,
-        snapshot_version,
-        diagnostics_session_id,
-        event,
-        client_runtime,
-        delivery_mode,
-        source_transport,
-        player_engine,
-        decoder_mode,
-        stall_reason,
-        error_code,
-        open_error_code,
-        native_state,
-        upstream_status,
-        error_message,
-        detail
-      ) values (
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        $6,
-        $7,
-        $8,
-        $9,
-        $10,
-        $11,
-        $12,
-        $13,
-        $14,
-        $15,
-        $16::jsonb
-      )
-    `,
-    [
-      channelId,
-      snapshotVersion,
-      input.diagnosticsSessionId ?? null,
-      input.event,
-      input.clientRuntime ?? null,
-      input.deliveryMode ?? null,
-      input.sourceTransport ?? null,
-      input.playerEngine ?? null,
-      input.decoderMode ?? null,
-      input.stallReason ?? null,
-      input.errorCode ?? null,
-      input.openErrorCode ?? null,
-      input.nativeState ?? null,
-      input.upstreamStatus ?? null,
-      input.errorMessage ?? null,
-      input.detail ? JSON.stringify(input.detail) : null
-    ]
-  );
+  try {
+    await ensureNativePlaybackSchema();
+    await query(
+      `
+        insert into public.live_playback_diagnostics (
+          channel_id,
+          snapshot_version,
+          diagnostics_session_id,
+          event,
+          client_runtime,
+          delivery_mode,
+          source_transport,
+          player_engine,
+          decoder_mode,
+          stall_reason,
+          error_code,
+          open_error_code,
+          native_state,
+          upstream_status,
+          error_message,
+          detail
+        ) values (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10,
+          $11,
+          $12,
+          $13,
+          $14,
+          $15,
+          $16::jsonb
+        )
+      `,
+      [
+        channelId,
+        snapshotVersion,
+        input.diagnosticsSessionId ?? null,
+        input.event,
+        input.clientRuntime ?? null,
+        input.deliveryMode ?? null,
+        input.sourceTransport ?? null,
+        input.playerEngine ?? null,
+        input.decoderMode ?? null,
+        input.stallReason ?? null,
+        input.errorCode ?? null,
+        input.openErrorCode ?? null,
+        input.nativeState ?? null,
+        input.upstreamStatus ?? null,
+        input.errorMessage ?? null,
+        input.detail ? JSON.stringify(input.detail) : null
+      ]
+    );
+  } catch (error) {
+    logPlaybackDiagnosticsFailure("live", error);
+  }
 }
 
 export async function listMoviesCatalog(
