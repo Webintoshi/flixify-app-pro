@@ -42,6 +42,9 @@ export type VodTransport = z.infer<typeof vodTransportSchema>;
 export const vodDeliveryModeSchema = z.enum(["hls_proxy", "file_proxy", "hls_transcoded"]);
 export type VodDeliveryMode = z.infer<typeof vodDeliveryModeSchema>;
 
+export const nativeVodDeliveryModeSchema = z.enum(["direct", "hls_proxy", "file_proxy", "hls_transcoded"]);
+export type NativeVodDeliveryMode = z.infer<typeof nativeVodDeliveryModeSchema>;
+
 export const vodAudioTrackSchema = z.object({
   id: z.string().trim().min(1),
   language: z.string().trim().min(1).nullable(),
@@ -57,7 +60,15 @@ export type LiveHealthStatus = z.infer<typeof liveHealthStatusSchema>;
 export const clientRuntimeSchema = z.enum(["browser", "app", "native"]);
 export type ClientRuntime = z.infer<typeof clientRuntimeSchema>;
 
-export const playerEngineSchema = z.enum(["native", "hls.js", "mpegts.js", "relay", "libvlc", "unknown"]);
+export const playerEngineSchema = z.enum([
+  "native",
+  "hls.js",
+  "mpegts.js",
+  "relay",
+  "libvlc",
+  "webos-media-pipeline",
+  "unknown"
+]);
 export type PlayerEngine = z.infer<typeof playerEngineSchema>;
 
 export const decoderModeSchema = z.enum(["hardware", "software"]);
@@ -190,6 +201,14 @@ export const nativePlaybackSourceSchema = z.object({
   lastCheckedAt: z.string().nullable()
 });
 export type NativePlaybackSource = z.infer<typeof nativePlaybackSourceSchema>;
+
+export const nativeVodPlaybackSourceSchema = nativePlaybackSourceSchema.extend({
+  deliveryMode: nativeVodDeliveryModeSchema,
+  audioTracks: z.array(vodAudioTrackSchema),
+  defaultAudioTrackId: z.string().nullable(),
+  selectedAudioTrackId: z.string().nullable()
+});
+export type NativeVodPlaybackSource = z.infer<typeof nativeVodPlaybackSourceSchema>;
 
 export const movieSchema = z.object({
   id: z.string().uuid(),

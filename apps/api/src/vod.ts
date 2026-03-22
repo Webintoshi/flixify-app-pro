@@ -350,13 +350,20 @@ type ProxyAssetState = {
   rootUrl: string;
 };
 
-type SourceAudioTrack = {
+export type SourceAudioTrack = {
   id: string;
   sourceStreamIndex: number;
   language: string | null;
   title: string | null;
   channels: number | null;
   sourceDefault: boolean;
+};
+
+export type VodMediaProfile = {
+  containerTransport: VodTransport;
+  primaryVideoCodec: string | null;
+  audioCodecs: string[];
+  audioTracks: SourceAudioTrack[];
 };
 
 type LocalHlsState = {
@@ -397,6 +404,7 @@ type CreateVodPlaybackInput = {
   kind: VodPlaybackKind;
   sourceUrl: string;
   clientRuntime?: "browser" | "app" | "native";
+  platform?: string | null;
   allowUnverifiedSource?: boolean;
   sourceTransportHint?: VodTransport;
   baseOrigin: string;
@@ -408,6 +416,7 @@ type CreateVodPlaybackInput = {
 
 type VodPlaybackManagerOptions = {
   ffmpegBinary: string;
+  ffprobeBinary: string;
   sessionTtlMs: number;
   tempRoot?: string;
   maxConcurrentTranscodes?: number;
@@ -558,7 +567,10 @@ function isTurkishLanguageTag(value: string | null | undefined) {
   );
 }
 
-function mapSourceTracksToVodAudioTracks(sourceTracks: SourceAudioTrack[], selectedTrackId: string | null): VodAudioTrack[] {
+export function mapSourceTracksToVodAudioTracks(
+  sourceTracks: SourceAudioTrack[],
+  selectedTrackId: string | null
+): VodAudioTrack[] {
   if (sourceTracks.length === 0) {
     return [];
   }
@@ -613,24 +625,10 @@ export function selectVodAudioTrackId(
   };
 }
 
-function resolveFfprobeBinary(ffmpegBinary: string) {
-  if (process.env.FFPROBE_BINARY?.trim()) {
-    return process.env.FFPROBE_BINARY.trim();
-  }
-
-  if (ffmpegBinary.endsWith("ffmpeg")) {
-    return `${ffmpegBinary.slice(0, -6)}ffprobe`;
-  }
-
-  if (ffmpegBinary.endsWith("ffmpeg.exe")) {
-    return `${ffmpegBinary.slice(0, -10)}ffprobe.exe`;
-  }
-
-  return "ffprobe";
-}
-
 type FfprobeStream = {
   index?: number;
+  codec_type?: string;
+  codec_name?: string;
   channels?: number;
   disposition?: {
     default?: number;
@@ -641,16 +639,110 @@ type FfprobeStream = {
   };
 };
 
-async function probeSourceAudioTracks(ffmpegBinary: string, sourceUrl: string) {
-  const ffprobeBinary = resolveFfprobeBinary(ffmpegBinary);
+type FfprobeFormat = {
+  format_name?: string;
+};
+
+function normalizeCodecName(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function resolveTransportFromFormatName(value: string | null | undefined, fallbackTransport: VodTransport): VodTransport {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  if (!normalized) {
+    return fallbackTransport;
+  }
+
+  if (
+    normalized.includes("hls") ||
+    normalized.includes("applehttp") ||
+    normalized.includes("mpegurl")
+  ) {
+    return "hls";
+  }
+  if (normalized.includes("mp4") || normalized.includes("mov")) {
+    return "mp4";
+  }
+  if (normalized.includes("matroska") || normalized.includes("webm")) {
+    return "mkv";
+  }
+  if (normalized.includes("avi")) {
+    return "avi";
+  }
+
+  return fallbackTransport;
+}
+
+function mapFfprobeAudioTracks(streams: FfprobeStream[]) {
+  return streams
+    .filter((stream) => stream.codec_type === "audio")
+    .map((stream, outputIndex) => {
+      const streamIndex =
+        typeof stream.index === "number" && Number.isFinite(stream.index)
+          ? stream.index
+          : outputIndex;
+      return {
+        id: `a${streamIndex}`,
+        sourceStreamIndex: streamIndex,
+        language: normalizeAudioLanguage(stream.tags?.language),
+        title: normalizeAudioTitle(stream.tags?.title),
+        channels:
+          typeof stream.channels === "number" && Number.isFinite(stream.channels) && stream.channels > 0
+            ? Math.floor(stream.channels)
+            : null,
+        sourceDefault: stream.disposition?.default === 1
+      } satisfies SourceAudioTrack;
+    })
+    .sort((left, right) => left.sourceStreamIndex - right.sourceStreamIndex);
+}
+
+export function parseVodMediaProfile(
+  payload: string | { streams?: FfprobeStream[]; format?: FfprobeFormat },
+  fallbackTransport: VodTransport
+): VodMediaProfile | null {
+  try {
+    const parsed =
+      typeof payload === "string"
+        ? (JSON.parse(payload) as { streams?: FfprobeStream[]; format?: FfprobeFormat })
+        : payload;
+    const streams = Array.isArray(parsed.streams) ? parsed.streams : [];
+    const primaryVideoStream = streams.find((stream) => stream.codec_type === "video");
+    const audioTracks = mapFfprobeAudioTracks(streams);
+    const audioCodecs = [...new Set(
+      streams
+        .filter((stream) => stream.codec_type === "audio")
+        .map((stream) => normalizeCodecName(stream.codec_name))
+        .filter((codec): codec is string => codec !== null)
+    )];
+
+    return {
+      containerTransport: resolveTransportFromFormatName(parsed.format?.format_name, fallbackTransport),
+      primaryVideoCodec: normalizeCodecName(primaryVideoStream?.codec_name),
+      audioCodecs,
+      audioTracks
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function probeVodMediaProfile(
+  ffprobeBinary: string,
+  sourceUrl: string,
+  fallbackTransport: VodTransport
+) {
   const args = [
     "-v",
     "error",
-    "-select_streams",
-    "a",
+    "-show_format",
     "-show_streams",
     "-show_entries",
-    "stream=index,channels:stream_tags=language,title:stream_disposition=default",
+    "format=format_name:stream=index,codec_type,codec_name,channels:stream_tags=language,title:stream_disposition=default",
     "-of",
     "json",
     "-user_agent",
@@ -658,7 +750,7 @@ async function probeSourceAudioTracks(ffmpegBinary: string, sourceUrl: string) {
     sourceUrl
   ];
 
-  return new Promise<SourceAudioTrack[]>((resolve) => {
+  return new Promise<VodMediaProfile | null>((resolve) => {
     let stdoutOutput = "";
     let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -666,58 +758,33 @@ async function probeSourceAudioTracks(ffmpegBinary: string, sourceUrl: string) {
       stdio: ["ignore", "pipe", "ignore"]
     });
 
-    const finish = (tracks: SourceAudioTrack[]) => {
+    const finish = (profile: VodMediaProfile | null) => {
       if (timer) {
         clearTimeout(timer);
       }
-      resolve(tracks);
+      resolve(profile);
     };
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutOutput = `${stdoutOutput}${chunk.toString("utf8")}`.slice(-512_000);
     });
 
-    child.once("error", () => finish([]));
+    child.once("error", () => finish(null));
 
     child.once("close", (code) => {
       if (code !== 0) {
-        finish([]);
+        finish(null);
         return;
       }
 
-      try {
-        const parsed = JSON.parse(stdoutOutput) as { streams?: FfprobeStream[] };
-        const streams = Array.isArray(parsed.streams) ? parsed.streams : [];
-        const tracks = streams
-          .map((stream, outputIndex) => {
-            const streamIndex =
-              typeof stream.index === "number" && Number.isFinite(stream.index)
-                ? stream.index
-                : outputIndex;
-            return {
-              id: `a${streamIndex}`,
-              sourceStreamIndex: streamIndex,
-              language: normalizeAudioLanguage(stream.tags?.language),
-              title: normalizeAudioTitle(stream.tags?.title),
-              channels:
-                typeof stream.channels === "number" && Number.isFinite(stream.channels) && stream.channels > 0
-                  ? Math.floor(stream.channels)
-                  : null,
-              sourceDefault: stream.disposition?.default === 1
-            } satisfies SourceAudioTrack;
-          })
-          .sort((left, right) => left.sourceStreamIndex - right.sourceStreamIndex);
-        finish(tracks);
-      } catch {
-        finish([]);
-      }
+      finish(parseVodMediaProfile(stdoutOutput, fallbackTransport));
     });
 
     timer = setTimeout(() => {
       if (!child.killed) {
         child.kill("SIGKILL");
       }
-      finish([]);
+      finish(null);
     }, MAX_FFPROBE_TIMEOUT_MS);
   });
 }
@@ -897,6 +964,8 @@ export type VodTranscodeDecisionInput = {
   supportsByteRange: boolean;
   preferTranscode: boolean;
   clientRuntime?: "browser" | "app" | "native";
+  platform?: string | null;
+  mediaProfile?: VodMediaProfile | null;
   debugPassthrough?: boolean;
 };
 
@@ -906,6 +975,67 @@ export type VodTranscodeDecision = {
   requiresFfmpeg: boolean;
   deliveryMode: VodDeliveryMode;
 };
+
+function normalizePlaybackPlatform(value: string | null | undefined) {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return normalized.length > 0 ? normalized : null;
+}
+
+function isInstalledAppRuntime(clientRuntime: VodTranscodeDecisionInput["clientRuntime"]) {
+  return clientRuntime === "app" || clientRuntime === "native";
+}
+
+function resolveEffectiveTransport(input: VodTranscodeDecisionInput) {
+  return input.mediaProfile?.containerTransport && input.mediaProfile.containerTransport !== "unknown"
+    ? input.mediaProfile.containerTransport
+    : input.transport;
+}
+
+function isDesktopPlaybackPlatform(platform: string | null) {
+  if (!platform) {
+    return false;
+  }
+
+  return (
+    platform.startsWith("windows") ||
+    platform.startsWith("macos") ||
+    platform.startsWith("linux") ||
+    platform.includes("desktop")
+  );
+}
+
+function isWebOsPlaybackPlatform(platform: string | null) {
+  return Boolean(platform && platform.startsWith("webos"));
+}
+
+function isSafeDirectVideoCodec(codec: string | null) {
+  return codec === "h264" || codec === "avc1";
+}
+
+function isSafeDirectAudioCodec(codec: string) {
+  return codec === "aac" || codec === "mp3";
+}
+
+function isDirectSafeInstalledMp4(input: VodTranscodeDecisionInput) {
+  if (!input.supportsByteRange) {
+    return false;
+  }
+
+  const mediaProfile = input.mediaProfile;
+  if (!mediaProfile || mediaProfile.containerTransport !== "mp4") {
+    return false;
+  }
+
+  if (!isSafeDirectVideoCodec(mediaProfile.primaryVideoCodec)) {
+    return false;
+  }
+
+  if (mediaProfile.audioCodecs.length === 0) {
+    return false;
+  }
+
+  return mediaProfile.audioCodecs.every((codec) => isSafeDirectAudioCodec(codec));
+}
 
 export function resolveVodTranscodeDecision(input: VodTranscodeDecisionInput): VodTranscodeDecision {
   if (input.preferTranscode) {
@@ -917,8 +1047,11 @@ export function resolveVodTranscodeDecision(input: VodTranscodeDecisionInput): V
     };
   }
 
-  if (input.clientRuntime === "app" || input.clientRuntime === "native") {
-    if (input.transport === "hls") {
+  const effectiveTransport = resolveEffectiveTransport(input);
+
+  if (isInstalledAppRuntime(input.clientRuntime)) {
+    const platform = normalizePlaybackPlatform(input.platform);
+    if (effectiveTransport === "hls") {
       return {
         needsTranscode: false,
         useFileProxy: false,
@@ -927,16 +1060,26 @@ export function resolveVodTranscodeDecision(input: VodTranscodeDecisionInput): V
       };
     }
 
+    const safeInstalledPlatform = isDesktopPlaybackPlatform(platform) || isWebOsPlaybackPlatform(platform);
+    if (safeInstalledPlatform && effectiveTransport === "mp4" && isDirectSafeInstalledMp4(input)) {
+      return {
+        needsTranscode: false,
+        useFileProxy: true,
+        requiresFfmpeg: false,
+        deliveryMode: "file_proxy"
+      };
+    }
+
     return {
-      needsTranscode: false,
-      useFileProxy: true,
-      requiresFfmpeg: false,
-      deliveryMode: "file_proxy"
+      needsTranscode: true,
+      useFileProxy: false,
+      requiresFfmpeg: true,
+      deliveryMode: "hls_transcoded"
     };
   }
 
   const debugPassthrough = input.debugPassthrough === true;
-  if (debugPassthrough && input.transport === "hls") {
+  if (debugPassthrough && effectiveTransport === "hls") {
     return {
       needsTranscode: false,
       useFileProxy: false,
@@ -1414,6 +1557,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       probe.transport !== "unknown" ? probe.transport : (input.sourceTransportHint ?? "unknown");
     const isVerified = probe.ok && Boolean(probe.finalUrl);
     const supportsByteRange = isVerified ? probe.supportsByteRange : false;
+    const mediaProfile = await probeVodMediaProfile(options.ffprobeBinary, effectiveSourceUrl, effectiveTransport);
 
     if (!isVerified && allowUnverifiedSource) {
       debugLog("probe-bypassed", {
@@ -1423,11 +1567,23 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       });
     }
 
+    debugLog("media-profile", {
+      platform: input.platform ?? null,
+      clientRuntime: input.clientRuntime ?? "browser",
+      effectiveTransport,
+      profileTransport: mediaProfile?.containerTransport ?? null,
+      primaryVideoCodec: mediaProfile?.primaryVideoCodec ?? null,
+      audioCodecs: mediaProfile?.audioCodecs ?? [],
+      audioTrackCount: mediaProfile?.audioTracks.length ?? 0
+    });
+
     const decision = resolveVodTranscodeDecision({
       transport: effectiveTransport,
       supportsByteRange,
       preferTranscode: input.preferTranscode === true,
       clientRuntime: input.clientRuntime,
+      platform: input.platform,
+      mediaProfile,
       debugPassthrough: debugEnabled
     });
     const canUseFfmpeg = decision.requiresFfmpeg ? await checkFfmpegAvailability() : true;
@@ -1448,10 +1604,8 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
 
     const deliveryMode: VodDeliveryMode = decision.deliveryMode;
     const shouldTranscode = deliveryMode === "hls_transcoded";
-    const sourceAudioTracks = shouldTranscode
-      ? await probeSourceAudioTracks(options.ffmpegBinary, effectiveSourceUrl)
-      : [];
-    const injectSilentAudioTrack = shouldTranscode && sourceAudioTracks.length === 0;
+    const sourceAudioTracks = shouldTranscode ? (mediaProfile?.audioTracks ?? []) : [];
+    const injectSilentAudioTrack = shouldTranscode && mediaProfile !== null && sourceAudioTracks.length === 0;
     const audioSelection = shouldTranscode
       ? selectVodAudioTrackId(sourceAudioTracks, input.selectedAudioTrackId)
       : { selectedTrackId: null, defaultTrackId: null };

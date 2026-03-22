@@ -22,6 +22,7 @@ const envSchema = z.object({
   ADMIN_EMAILS: z.string().min(3),
   API_PORT: z.coerce.number().int().positive().default(4000),
   FFMPEG_BINARY: z.string().trim().min(1).optional(),
+  FFPROBE_BINARY: z.string().trim().min(1).optional(),
   VOD_PLAYBACK_TTL_SECONDS: z.coerce.number().int().positive().optional().default(900),
   VOD_PLAYBACK_TEMP_DIR: z.string().trim().min(1).optional(),
   VOD_TRANSCODE_MAX_CONCURRENT: z.coerce.number().int().positive().optional().default(2),
@@ -64,11 +65,38 @@ function resolveFfmpegBinary(explicitBinary: string | undefined) {
   return uniqueCandidates[0] ?? "ffmpeg";
 }
 
+function deriveFfprobeCandidate(ffmpegBinary: string) {
+  if (ffmpegBinary.endsWith("ffmpeg.exe")) {
+    return `${ffmpegBinary.slice(0, -10)}ffprobe.exe`;
+  }
+  if (ffmpegBinary.endsWith("ffmpeg")) {
+    return `${ffmpegBinary.slice(0, -6)}ffprobe`;
+  }
+  return undefined;
+}
+
+function resolveFfprobeBinary(explicitBinary: string | undefined, ffmpegBinary: string) {
+  const candidates = [explicitBinary?.trim(), deriveFfprobeCandidate(ffmpegBinary), "ffprobe"].filter(
+    (value): value is string => Boolean(value && value.length > 0)
+  );
+  const uniqueCandidates = [...new Set(candidates)];
+
+  for (const candidate of uniqueCandidates) {
+    if (isExecutableFfmpeg(candidate)) {
+      return candidate;
+    }
+  }
+
+  return uniqueCandidates[0] ?? "ffprobe";
+}
+
 const resolvedFfmpegBinary = resolveFfmpegBinary(parsed.FFMPEG_BINARY);
+const resolvedFfprobeBinary = resolveFfprobeBinary(parsed.FFPROBE_BINARY, resolvedFfmpegBinary);
 
 export const env = {
   ...parsed,
   FFMPEG_BINARY: resolvedFfmpegBinary,
+  FFPROBE_BINARY: resolvedFfprobeBinary,
   adminEmails: parsed.ADMIN_EMAILS.split(",")
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean)

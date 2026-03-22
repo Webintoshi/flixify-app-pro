@@ -10,6 +10,7 @@ import {
   m3uSyncJobRecordSchema,
   movieSchema,
   nativePlaybackSourceSchema,
+  nativeVodPlaybackSourceSchema,
   packageSchema,
   paymentMethodOptionSchema,
   pagedResponseSchema,
@@ -100,7 +101,7 @@ export const vodPlaybackEventInputSchema = z.object({
   ]),
   clientRuntime: clientRuntimeSchema.nullable().optional(),
   diagnosticsSessionId: z.string().uuid().nullable().optional(),
-  deliveryMode: z.enum(["hls_proxy", "file_proxy", "hls_transcoded"]).nullable().optional(),
+  deliveryMode: z.enum(["direct", "hls_proxy", "file_proxy", "hls_transcoded"]).nullable().optional(),
   sourceTransport: z.enum(["hls", "mp4", "mkv", "avi", "unknown"]).nullable().optional(),
   playerEngine: playerEngineSchema.nullable().optional(),
   decoderMode: decoderModeSchema.nullable().optional(),
@@ -207,7 +208,7 @@ export const liveCatalogResponseSchema = pagedResponseSchema(liveChannelSchema).
   groups: z.array(catalogGroupSchema)
 });
 export const nativeLivePlaybackResponseSchema = nativePlaybackSourceSchema;
-export const nativeVodPlaybackResponseSchema = nativePlaybackSourceSchema;
+export const nativeVodPlaybackResponseSchema = nativeVodPlaybackSourceSchema;
 export const movieCatalogResponseSchema = pagedResponseSchema(movieSchema).extend({
   groups: z.array(catalogGroupSchema)
 });

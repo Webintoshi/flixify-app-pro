@@ -9,7 +9,7 @@
 int main(int argc, char *argv[]) {
   QGuiApplication app(argc, argv);
   QCoreApplication::setOrganizationName(QStringLiteral("Flixify"));
-  QCoreApplication::setApplicationName(QStringLiteral("Flixify Native Qt"));
+  QCoreApplication::setApplicationName(QStringLiteral("Flixify Pro"));
   QCoreApplication::setApplicationVersion(QStringLiteral(FLIXIFY_APP_VERSION));
 
   qmlRegisterType<NativeVideoSurface>("Flixify.Native", 1, 0, "NativeVideoSurface");

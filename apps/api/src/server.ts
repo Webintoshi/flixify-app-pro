@@ -20,7 +20,12 @@ import {
   trialRequestInputSchema,
   vodPlaybackEventInputSchema
 } from "@flixify/contracts";
-import type { LiveHealthStatus, LivePlaybackRecord, LiveTransport, VodPlaybackRecord } from "@flixify/contracts";
+import type {
+  LiveHealthStatus,
+  LivePlaybackRecord,
+  LiveTransport,
+  VodPlaybackRecord
+} from "@flixify/contracts";
 import {
   activateSubscription,
   activateTestSubscription24Hours,
@@ -132,7 +137,14 @@ import {
   shouldHonorSharedLive404Cooldown,
   type PlaybackCredentials
 } from "./playback-credentials.js";
-import { createVodPlaybackManager, probeVodStream, VodPlaybackUnavailableError } from "./vod.js";
+import {
+  createVodPlaybackManager,
+  mapSourceTracksToVodAudioTracks,
+  probeVodMediaProfile,
+  probeVodStream,
+  selectVodAudioTrackId,
+  VodPlaybackUnavailableError
+} from "./vod.js";
 import { API_CORS_CONFIG } from "./cors-config.js";
 import { stripEmptyJsonContentType } from "./http-headers.js";
 import {
@@ -141,7 +153,7 @@ import {
   isUserRouteAuthError,
   UnauthorizedUserRouteError
 } from "./user-route-error.js";
-import { buildNativePlaybackSource } from "./native-playback.js";
+import { buildNativePlaybackSource, buildNativeVodPlaybackSource } from "./native-playback.js";
 
 type UserRequest = {
   userId: string;
@@ -208,6 +220,7 @@ const livePlaybackManager = createLivePlaybackManager({
 });
 const vodPlaybackManager = createVodPlaybackManager({
   ffmpegBinary: env.FFMPEG_BINARY,
+  ffprobeBinary: env.FFPROBE_BINARY,
   sessionTtlMs: env.VOD_PLAYBACK_TTL_SECONDS * 1000,
   tempRoot: env.VOD_PLAYBACK_TEMP_DIR,
   maxConcurrentTranscodes: env.VOD_TRANSCODE_MAX_CONCURRENT,
@@ -654,6 +667,23 @@ function buildDirectVodPlaybackFallback(input: {
   };
 }
 
+function canUseVodDirectPlaybackFallback(input: {
+  clientRuntime: ClientRuntime;
+  platform: string | null;
+  transport: VodTransport;
+  sourceUrl: string | null | undefined;
+}) {
+  if (!canUseAppDirectPlaybackFallback(input.clientRuntime, input.sourceUrl)) {
+    return false;
+  }
+
+  if (input.transport === "hls") {
+    return true;
+  }
+
+  return false;
+}
+
 function replyWithNativePlaybackError(
   reply: FastifyReply,
   statusCode: number,
@@ -687,19 +717,37 @@ function buildNativeLivePlaybackResponse(input: {
 function buildNativeVodPlaybackResponse(input: {
   url: string;
   transport: VodTransport;
+  deliveryMode: "direct" | "hls_proxy" | "file_proxy" | "hls_transcoded";
+  audioTracks?: Array<{
+    id: string;
+    language: string | null;
+    title: string | null;
+    channels: number | null;
+    isDefault: boolean;
+  }>;
+  defaultAudioTrackId?: string | null;
+  selectedAudioTrackId?: string | null;
   cookie?: string | null;
   diagnosticsSessionId?: string | null;
   isVerified: boolean;
   lastCheckedAt?: string | null;
 }) {
-  return buildNativePlaybackSource({
+  return buildNativeVodPlaybackSource({
     url: input.url,
     transport: input.transport,
+    deliveryMode: input.deliveryMode,
+    audioTracks: input.audioTracks ?? [],
+    defaultAudioTrackId: input.defaultAudioTrackId ?? null,
+    selectedAudioTrackId: input.selectedAudioTrackId ?? null,
     cookie: input.cookie ?? null,
     diagnosticsSessionId: input.diagnosticsSessionId ?? null,
     isVerified: input.isVerified,
     lastCheckedAt: input.lastCheckedAt ?? null
   });
+}
+
+function isWebOsPlaybackPlatform(platform: string | null) {
+  return typeof platform === "string" && platform.startsWith("webos");
 }
 
 function normalizeOptionalText(value: unknown, maxLength = 2000) {
@@ -1863,6 +1911,7 @@ export function buildServer() {
       const { kind, itemId } = request.params as { kind: string; itemId: string };
       const rawQuery = request.query as Record<string, unknown> | undefined;
       const clientRuntime = normalizeClientRuntime(rawQuery?.clientRuntime);
+      const platform = normalizeOptionalText(rawQuery?.platform, 80)?.trim().toLowerCase() ?? null;
       const debugVod =
         rawQuery?.debugVod === true ||
         rawQuery?.debugVod === "true" ||
@@ -1963,7 +2012,14 @@ export function buildServer() {
           "VOD source resolve error"
         );
 
-        if (clientRuntime === "app" && directSourceUrlFromCandidates) {
+        if (
+          canUseVodDirectPlaybackFallback({
+            clientRuntime,
+            platform,
+            transport: guessVodTransportFromPath(record.stream_path),
+            sourceUrl: directSourceUrlFromCandidates
+          })
+        ) {
           return buildDirectVodPlaybackFallback({
             itemId,
             kind,
@@ -1982,7 +2038,14 @@ export function buildServer() {
       }
 
       if (!resolved.sourceUrl) {
-        if (clientRuntime === "app" && directSourceUrlFromCandidates) {
+        if (
+          canUseVodDirectPlaybackFallback({
+            clientRuntime,
+            platform,
+            transport: resolved.transport,
+            sourceUrl: directSourceUrlFromCandidates
+          })
+        ) {
           return buildDirectVodPlaybackFallback({
             itemId,
             kind,
@@ -2010,6 +2073,7 @@ export function buildServer() {
           sourceUrl: resolved.sourceUrl,
           baseOrigin,
           clientRuntime,
+          platform,
           debug: debugVod,
           preferTranscode,
           allowUnverifiedSource: resolved.isVerified === false,
@@ -2044,7 +2108,14 @@ export function buildServer() {
         return playback;
       }
 
-      if (clientRuntime === "app") {
+      if (
+        canUseVodDirectPlaybackFallback({
+          clientRuntime,
+          platform,
+          transport: resolved.transport,
+          sourceUrl: resolved.sourceUrl
+        })
+      ) {
         return buildDirectVodPlaybackFallback({
           itemId,
           kind,
@@ -2064,9 +2135,18 @@ export function buildServer() {
     try {
       const auth = await authenticateUser(request.headers.authorization);
       const { kind, itemId } = request.params as { kind: string; itemId: string };
+      const rawQuery = request.query as Record<string, unknown> | undefined;
+      const platform = normalizeOptionalText(rawQuery?.platform, 80)?.trim().toLowerCase() ?? null;
+      const audioTrackId =
+        typeof rawQuery?.audioTrackId === "string" && rawQuery.audioTrackId.trim().length > 0
+          ? rawQuery.audioTrackId.trim().slice(0, 120)
+          : null;
 
       if (kind !== "movie" && kind !== "episode") {
         return replyWithNativePlaybackError(reply, 400, "VOD turu gecersiz.");
+      }
+      if (!platform) {
+        return replyWithNativePlaybackError(reply, 400, "Native VOD playback icin platform zorunludur.");
       }
 
       if (isDemoMode) {
@@ -2087,6 +2167,10 @@ export function buildServer() {
         return buildNativeVodPlaybackResponse({
           url: playback.url,
           transport: playback.transport,
+          deliveryMode: "direct",
+          audioTracks: [],
+          defaultAudioTrackId: null,
+          selectedAudioTrackId: null,
           isVerified: playback.isVerified,
           lastCheckedAt: null
         });
@@ -2135,9 +2219,54 @@ export function buildServer() {
         );
       }
 
+      if (isWebOsPlaybackPlatform(platform)) {
+        const playback = await vodPlaybackManager.createPlayback({
+          userId: auth.userId,
+          itemId,
+          kind,
+          sourceUrl: resolved.sourceUrl,
+          baseOrigin: getRequestBaseOrigin(request),
+          clientRuntime: "native",
+          platform,
+          allowUnverifiedSource: resolved.isVerified === false,
+          sourceTransportHint: resolved.transport,
+          selectedAudioTrackId: audioTrackId
+        });
+
+        if (!playback.canPlay || !playback.url) {
+          return replyWithNativePlaybackError(
+            reply,
+            503,
+            playback.errorMessage ?? "webOS VOD kaynagi native playback icin hazirlanamadi."
+          );
+        }
+
+        return buildNativeVodPlaybackResponse({
+          url: playback.url,
+          transport: playback.transport,
+          deliveryMode: playback.deliveryMode,
+          audioTracks: playback.audioTracks,
+          defaultAudioTrackId: playback.defaultAudioTrackId,
+          selectedAudioTrackId: playback.selectedAudioTrackId,
+          isVerified: playback.isVerified,
+          lastCheckedAt: playback.expiresAt ?? new Date().toISOString()
+        });
+      }
+
+      const mediaProfile = await probeVodMediaProfile(env.FFPROBE_BINARY, resolved.sourceUrl, resolved.transport);
+      const audioSelection = selectVodAudioTrackId(mediaProfile?.audioTracks ?? [], audioTrackId);
+      const audioTracks = mapSourceTracksToVodAudioTracks(
+        mediaProfile?.audioTracks ?? [],
+        audioSelection.selectedTrackId
+      );
+
       return buildNativeVodPlaybackResponse({
         url: resolved.sourceUrl,
         transport: resolved.transport,
+        deliveryMode: "direct",
+        audioTracks,
+        defaultAudioTrackId: audioSelection.defaultTrackId,
+        selectedAudioTrackId: audioSelection.selectedTrackId,
         cookie: resolved.cookie,
         isVerified: resolved.isVerified,
         lastCheckedAt: new Date().toISOString()

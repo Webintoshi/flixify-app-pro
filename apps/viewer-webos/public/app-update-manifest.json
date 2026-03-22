@@ -3,6 +3,10 @@
     "windows-desktop": {
       "latestVersion": "2.1.0",
       "downloadUrl": "https://app.flixify.pro/downloads/flixify-windows.exe"
+    },
+    "windows-native-qt": {
+      "latestVersion": "2.1.0",
+      "downloadUrl": "https://app.flixify.pro/downloads/flixify-windows.exe"
     }
   }
 }

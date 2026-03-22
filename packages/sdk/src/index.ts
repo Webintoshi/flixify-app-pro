@@ -60,6 +60,12 @@ export type ResolveVodPlaybackOptions = {
   preferTranscode?: boolean;
   audioTrackId?: string;
   clientRuntime?: "browser" | "app" | "native";
+  platform?: string;
+};
+
+export type ResolveNativeVodPlaybackOptions = {
+  platform?: string;
+  audioTrackId?: string;
 };
 
 export type AppUpdateCheckOptions = {
@@ -200,6 +206,9 @@ export class FlixifyClient {
     if (options.clientRuntime) {
       query.set("clientRuntime", options.clientRuntime);
     }
+    if (options.platform) {
+      query.set("platform", options.platform);
+    }
     const suffix = query.size > 0 ? `?${query.toString()}` : "";
     return this.request<VodPlaybackResponse>(`/me/vod/${kind}/${itemId}/playback${suffix}`);
   }
@@ -208,8 +217,20 @@ export class FlixifyClient {
     return this.request<NativeLivePlaybackResponse>(`/me/native/live/${channelId}/playback`);
   }
 
-  resolveNativeVodPlayback(kind: "movie" | "episode", itemId: string) {
-    return this.request<NativeVodPlaybackResponse>(`/me/native/vod/${kind}/${itemId}/playback`);
+  resolveNativeVodPlayback(
+    kind: "movie" | "episode",
+    itemId: string,
+    options: ResolveNativeVodPlaybackOptions = {}
+  ) {
+    const query = new URLSearchParams();
+    if (options.platform) {
+      query.set("platform", options.platform);
+    }
+    if (options.audioTrackId) {
+      query.set("audioTrackId", options.audioTrackId);
+    }
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request<NativeVodPlaybackResponse>(`/me/native/vod/${kind}/${itemId}/playback${suffix}`);
   }
 
   checkAppUpdate(options: AppUpdateCheckOptions = {}) {

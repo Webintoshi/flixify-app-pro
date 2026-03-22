@@ -17,6 +17,7 @@ import {
   type AppUpdateCheckOptions,
   FlixifyClient,
   type MeResponse,
+  type ResolveNativeVodPlaybackOptions,
   type ResolveLivePlaybackOptions,
   type ResolveVodPlaybackOptions
 } from "@flixify/sdk";
@@ -973,6 +974,14 @@ export function useViewerCore(options: ViewerCoreOptions) {
     return runAuthenticatedRequest(() => clientRef.current.resolveVodPlayback(kind, itemId, options));
   }
 
+  async function resolveNativeVodPlayback(
+    kind: "movie" | "episode",
+    itemId: string,
+    options?: ResolveNativeVodPlaybackOptions
+  ) {
+    return runAuthenticatedRequest(() => clientRef.current.resolveNativeVodPlayback(kind, itemId, options));
+  }
+
   async function checkAppUpdate(options?: AppUpdateCheckOptions) {
     return runAuthenticatedRequest(() => clientRef.current.checkAppUpdate(options));
   }
@@ -1042,6 +1051,7 @@ export function useViewerCore(options: ViewerCoreOptions) {
     revokeDeviceSession,
     resolveLivePlayback,
     resolveVodPlayback,
+    resolveNativeVodPlayback,
     checkAppUpdate,
     reportLivePlayback,
     reportVodPlayback,

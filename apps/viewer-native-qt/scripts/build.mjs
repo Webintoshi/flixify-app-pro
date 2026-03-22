@@ -1,22 +1,9 @@
-import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolveNativeQtToolchain, resolvePreset, spawnChecked } from "./toolchain.mjs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const appRoot = path.resolve(__dirname, "..");
-const presetArgIndex = process.argv.findIndex((value) => value === "--preset");
-const preset =
-  presetArgIndex >= 0
-    ? process.argv[presetArgIndex + 1]
-    : process.env.FLIXIFY_NATIVE_QT_PRESET ||
-      (process.platform === "win32" ? "windows-x64-debug" : "macos-universal-release");
+const preset = resolvePreset("windows-x64-debug", "macos-universal-release");
+const { appRoot, cmakeBinary, env } = resolveNativeQtToolchain();
 
-const result = spawnSync("cmake", ["--build", "--preset", preset], {
+spawnChecked(cmakeBinary, ["--build", "--preset", preset], {
   cwd: appRoot,
-  stdio: "inherit",
-  shell: true
+  env
 });
-
-if (result.status !== 0) {
-  process.exit(result.status ?? 1);
-}

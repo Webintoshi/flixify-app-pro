@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { buildLiveVariantMetadata } from "./live-variants";
-import { loginByCodeInputSchema, nativeLivePlaybackResponseSchema, paginationQuerySchema } from "./schemas";
+import {
+  loginByCodeInputSchema,
+  nativeLivePlaybackResponseSchema,
+  nativeVodPlaybackResponseSchema,
+  paginationQuerySchema
+} from "./schemas";
 
 describe("contracts", () => {
   it("accepts valid kryptonite code payloads", () => {
@@ -60,5 +65,36 @@ describe("contracts", () => {
 
     expect(payload.transport).toBe("ts");
     expect(payload.variantGroupKey).toBe("star tv");
+  });
+
+  it("accepts native VOD playback payloads with audio metadata", () => {
+    const payload = nativeVodPlaybackResponseSchema.parse({
+      url: "https://example.com/vod/movie.m3u8",
+      transport: "hls",
+      headers: {},
+      cookie: null,
+      userAgent: "VLC/3.0.4 LibVLC/3.0.4",
+      allowInsecureHttp: false,
+      diagnosticsSessionId: "019d1643-7703-7a21-9311-823c383bc8e6",
+      variantGroupKey: null,
+      qualityRank: null,
+      isVerified: true,
+      lastCheckedAt: "2026-03-22T19:00:00.000Z",
+      deliveryMode: "hls_transcoded",
+      audioTracks: [
+        {
+          id: "a1",
+          language: "tr",
+          title: "Turkce",
+          channels: 2,
+          isDefault: true
+        }
+      ],
+      defaultAudioTrackId: "a1",
+      selectedAudioTrackId: "a1"
+    });
+
+    expect(payload.deliveryMode).toBe("hls_transcoded");
+    expect(payload.audioTracks).toHaveLength(1);
   });
 });

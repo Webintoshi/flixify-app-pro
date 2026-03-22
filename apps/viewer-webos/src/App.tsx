@@ -8,6 +8,7 @@ import type {
   LivePlaybackRecord,
   LiveTransport,
   MovieRecord,
+  NativeVodPlaybackSource,
   PaymentMethodId,
   PaymentMethodOption,
   PackageRecord,
@@ -75,6 +76,22 @@ type PlayerState =
   | "recovering"
   | "ended"
   | "failed";
+
+type ResolvedVodPlaybackState = {
+  itemId: string;
+  kind: "movie" | "episode";
+  url: string | null;
+  transport: NativeVodPlaybackSource["transport"] | VodPlaybackRecord["transport"];
+  deliveryMode: "direct" | VodPlaybackRecord["deliveryMode"];
+  audioTracks: VodPlaybackRecord["audioTracks"];
+  defaultAudioTrackId: string | null;
+  selectedAudioTrackId: string | null;
+  expiresAt: string | null;
+  canPlay: boolean;
+  isVerified: boolean;
+  errorMessage: string | null;
+  nativePlayerEngine?: "webos-media-pipeline" | null;
+};
 
 type PlaybackQueueItem = {
   id: string;
@@ -1244,7 +1261,55 @@ function detectVodTransport(url: string) {
   return "native" as const;
 }
 
-function shouldUseHlsForVodPlayback(playback: VodPlaybackRecord) {
+function isWebOsPlatform(platform: string) {
+  return platform.trim().toLowerCase().startsWith("webos");
+}
+
+function mapNativeVodPlaybackToResolvedState(
+  kind: "movie" | "episode",
+  itemId: string,
+  payload: NativeVodPlaybackSource
+): ResolvedVodPlaybackState {
+  return {
+    itemId,
+    kind,
+    url: payload.url,
+    transport: payload.transport,
+    deliveryMode: payload.deliveryMode,
+    audioTracks: payload.audioTracks,
+    defaultAudioTrackId: payload.defaultAudioTrackId,
+    selectedAudioTrackId: payload.selectedAudioTrackId,
+    expiresAt: null,
+    canPlay: true,
+    isVerified: payload.isVerified,
+    errorMessage: null,
+    nativePlayerEngine: "webos-media-pipeline"
+  };
+}
+
+function mapVodPlaybackToResolvedState(
+  kind: "movie" | "episode",
+  itemId: string,
+  payload: VodPlaybackRecord
+): ResolvedVodPlaybackState {
+  return {
+    ...payload,
+    kind,
+    itemId,
+    nativePlayerEngine: null
+  };
+}
+
+function normalizeVodSourceTransport(
+  transport: ResolvedVodPlaybackState["transport"] | null | undefined
+): "hls" | "mp4" | "mkv" | "avi" | "unknown" | null {
+  if (!transport || transport === "ts") {
+    return transport === "ts" ? "unknown" : null;
+  }
+  return transport;
+}
+
+function shouldUseHlsForVodPlayback(playback: ResolvedVodPlaybackState) {
   if (playback.deliveryMode.startsWith("hls_")) {
     return true;
   }
@@ -1261,7 +1326,14 @@ function shouldUseHlsForVodPlayback(playback: VodPlaybackRecord) {
   return detectVodTransport(url) === "hls";
 }
 
-function canUseVodCompatibilityRetry(playback: VodPlaybackRecord | null | undefined) {
+function canUseVodCompatibilityRetry(
+  playback: ResolvedVodPlaybackState | null | undefined,
+  useNativeWebOsPipeline = false
+) {
+  if (useNativeWebOsPipeline) {
+    return false;
+  }
+
   if (!playback || !playback.url) {
     return false;
   }
@@ -4224,17 +4296,21 @@ function PlayerOverlay({
   onClose,
   resolveLivePlayback,
   resolveVodPlayback,
+  resolveNativeVodPlayback,
   reportLivePlayback,
   reportVodPlayback,
-  clientRuntime
+  clientRuntime,
+  platform
 }: {
   item: PlaybackItem | null;
   onClose: () => void;
   resolveLivePlayback: ViewerCoreHandle["resolveLivePlayback"];
   resolveVodPlayback: ViewerCoreHandle["resolveVodPlayback"];
+  resolveNativeVodPlayback: ViewerCoreHandle["resolveNativeVodPlayback"];
   reportLivePlayback: ViewerCoreHandle["reportLivePlayback"];
   reportVodPlayback: ViewerCoreHandle["reportVodPlayback"];
   clientRuntime: ClientRuntime;
+  platform: string;
 }) {
   const [activeItem, setActiveItem] = useState<PlaybackItem | null>(item);
   const overlayToneClass =
@@ -4301,8 +4377,10 @@ function PlayerOverlay({
               key={activeItem.id}
               item={activeItem}
               resolveVodPlayback={resolveVodPlayback}
+              resolveNativeVodPlayback={resolveNativeVodPlayback}
               reportVodPlayback={reportVodPlayback}
               clientRuntime={clientRuntime}
+              platform={platform}
               onClose={onClose}
             />
           ) : (
@@ -4310,8 +4388,10 @@ function PlayerOverlay({
               key={activeItem.id}
               item={activeItem}
               resolveVodPlayback={resolveVodPlayback}
+              resolveNativeVodPlayback={resolveNativeVodPlayback}
               reportVodPlayback={reportVodPlayback}
               clientRuntime={clientRuntime}
+              platform={platform}
               onClose={onClose}
               onRequestNext={(nextItem, options) => {
                 const currentDepth = activeItem?.autoSkipDepth ?? 0;
@@ -5979,16 +6059,21 @@ function LivePlayerSurface({
 function useVodPlaybackController({
   item,
   resolveVodPlayback,
+  resolveNativeVodPlayback,
   reportVodPlayback,
   clientRuntime,
+  platform,
   onEnded
 }: {
   item: PlaybackItem;
   resolveVodPlayback: ViewerCoreHandle["resolveVodPlayback"];
+  resolveNativeVodPlayback: ViewerCoreHandle["resolveNativeVodPlayback"];
   reportVodPlayback: ViewerCoreHandle["reportVodPlayback"];
   clientRuntime: ClientRuntime;
+  platform: string;
   onEnded?: () => void;
 }) {
+  const useWebOsNativeVodPipeline = clientRuntime === "app" && isWebOsPlatform(platform);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const sessionRef = useRef(0);
@@ -6001,7 +6086,7 @@ function useVodPlaybackController({
   const waitingSinceRef = useRef(0);
   const lastRecoverAtRef = useRef(0);
   const playbackStartedAtRef = useRef(0);
-  const resolvedPlaybackRef = useRef<VodPlaybackRecord | null>(null);
+  const resolvedPlaybackRef = useRef<ResolvedVodPlaybackState | null>(null);
   const hlsControllerRef = useRef<{
     startLoad?: (startPosition?: number) => void;
     recoverMediaError?: () => void;
@@ -6021,18 +6106,18 @@ function useVodPlaybackController({
   const onEndedRef = useRef(onEnded);
   const preferredAudioTrackIdRef = useRef<string | null>(null);
   const activeAudioTrackIdRef = useRef<string | null>(null);
-  const audioTracksRef = useRef<VodPlaybackRecord["audioTracks"]>([]);
+  const audioTracksRef = useRef<ResolvedVodPlaybackState["audioTracks"]>([]);
 
   const [playerState, setPlayerState] = useState<PlayerState>("idle");
   const [playerError, setPlayerError] = useState<string | null>(null);
-  const [resolvedPlayback, setResolvedPlayback] = useState<VodPlaybackRecord | null>(null);
+  const [resolvedPlayback, setResolvedPlayback] = useState<ResolvedVodPlaybackState | null>(null);
   const [interactionRequired, setInteractionRequired] = useState(false);
   const [compatibilityRetrying, setCompatibilityRetrying] = useState(false);
   const [isPaused, setIsPaused] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [canSeek, setCanSeek] = useState(false);
-  const [audioTracks, setAudioTracks] = useState<VodPlaybackRecord["audioTracks"]>([]);
+  const [audioTracks, setAudioTracks] = useState<ResolvedVodPlaybackState["audioTracks"]>([]);
   const [selectedAudioTrackId, setSelectedAudioTrackId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -6143,7 +6228,7 @@ function useVodPlaybackController({
       }
     }
 
-    function setResolvedPlaybackSafe(nextPlayback: VodPlaybackRecord | null) {
+    function setResolvedPlaybackSafe(nextPlayback: ResolvedVodPlaybackState | null) {
       if (!disposed && sessionRef.current === sessionId) {
         resolvedPlaybackRef.current = nextPlayback;
         setResolvedPlayback(nextPlayback);
@@ -6220,6 +6305,9 @@ function useVodPlaybackController({
     }
 
     function getVodPlayerEngine() {
+      if (resolvedPlaybackRef.current?.nativePlayerEngine === "webos-media-pipeline" || useWebOsNativeVodPipeline) {
+        return "webos-media-pipeline" as const;
+      }
       if (hlsControllerRef.current) {
         return "hls.js" as const;
       }
@@ -6249,7 +6337,7 @@ function useVodPlaybackController({
         await reportVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
           event,
           deliveryMode: playback?.deliveryMode ?? null,
-          sourceTransport: playback?.transport ?? null,
+          sourceTransport: normalizeVodSourceTransport(playback?.transport),
           playerEngine: getVodPlayerEngine(),
           uptimeMs:
             playbackStartedAtRef.current > 0
@@ -6263,7 +6351,12 @@ function useVodPlaybackController({
           errorCode: input?.errorCode ?? null,
           upstreamStatus: input?.upstreamStatus ?? null,
           detail: {
-            startupStrategy: clientRuntime === "app" ? "app-fast-start" : "browser-transcode-first",
+            startupStrategy: useWebOsNativeVodPipeline
+              ? "webos-native-pipeline"
+              : clientRuntime === "app"
+                ? "app-platform-aware"
+                : "browser-transcode-first",
+            platform,
             ...(input?.detail ?? {})
           },
           errorMessage: input?.errorMessage ?? null
@@ -6383,12 +6476,26 @@ function useVodPlaybackController({
       setErrorSafe(null);
       setInteractionRequiredSafe(false);
       const requestedAudioTrackId = preferredAudioTrackIdRef.current;
-      const playback = await resolveVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
-        debugVod: vodDebugEnabledRef.current,
-        preferTranscode: options.preferTranscode === true,
-        audioTrackId: requestedAudioTrackId ?? undefined,
-        clientRuntime
-      });
+      const playback: ResolvedVodPlaybackState = useWebOsNativeVodPipeline
+        ? mapNativeVodPlaybackToResolvedState(
+            item.kind === "movie" ? "movie" : "episode",
+            item.id,
+            await resolveNativeVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
+              platform,
+              audioTrackId: requestedAudioTrackId ?? undefined
+            })
+          )
+        : mapVodPlaybackToResolvedState(
+            item.kind === "movie" ? "movie" : "episode",
+            item.id,
+            await resolveVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
+              debugVod: vodDebugEnabledRef.current,
+              preferTranscode: options.preferTranscode === true,
+              audioTrackId: requestedAudioTrackId ?? undefined,
+              clientRuntime,
+              platform
+            })
+          );
       if (!isActiveSession()) {
         return null;
       }
@@ -6434,7 +6541,7 @@ function useVodPlaybackController({
         return;
       }
 
-      if (!canUseVodCompatibilityRetry(resolvedPlaybackRef.current)) {
+      if (!canUseVodCompatibilityRetry(resolvedPlaybackRef.current, useWebOsNativeVodPipeline)) {
         return;
       }
 
@@ -6469,6 +6576,23 @@ function useVodPlaybackController({
         compatibilityRetryingRef.current = false;
         setCompatibilityRetryingSafe(false);
       }
+    }
+
+    function startAutoCompatibilityRetry(reason: string, resumeAt?: number) {
+      if (autoCompatibilityEscalatedRef.current || compatibilityRetryingRef.current) {
+        return false;
+      }
+
+      if (!canUseVodCompatibilityRetry(resolvedPlaybackRef.current, useWebOsNativeVodPipeline)) {
+        return false;
+      }
+
+      autoCompatibilityEscalatedRef.current = true;
+      void runCompatibilityRetry(reason, {
+        resumeAt,
+        trigger: "auto"
+      });
+      return true;
     }
 
     function scheduleSeekRecovery(timeToResume: number) {
@@ -6617,6 +6741,9 @@ function useVodPlaybackController({
           now - lastProgressAtRef.current >= waitingRecoveryThresholdMs &&
           getBufferRemaining() < 0.5
         ) {
+          if (startAutoCompatibilityRetry("Video bekleme durumunda uzun sure kaldi.", media.currentTime)) {
+            return;
+          }
           void recoverPlayback("Video bekleme durumunda uzun sure kaldi.", media.currentTime);
         }
       };
@@ -6625,6 +6752,9 @@ function useVodPlaybackController({
           return;
         }
         waitingSinceRef.current = Date.now();
+        if (startAutoCompatibilityRetry("Film veya bolum akisinda takilma algilandi.", media.currentTime)) {
+          return;
+        }
         void recoverPlayback("Film veya bolum akisinda takilma algilandi.", media.currentTime);
       };
       const onSeeking = () => {
@@ -6649,6 +6779,9 @@ function useVodPlaybackController({
       const onError = () => {
         if (media.seeking) {
           void recoverPlayback("Ileri sarma sonrasinda akis hata verdi.", media.currentTime);
+          return;
+        }
+        if (startAutoCompatibilityRetry("Video oynatici hata verdi.", media.currentTime)) {
           return;
         }
         void recoverPlayback("Video oynatici hata verdi.", media.currentTime);
@@ -6694,18 +6827,14 @@ function useVodPlaybackController({
             media.volume > 0 &&
             !media.muted &&
             !autoCompatibilityEscalatedRef.current &&
-            canUseVodCompatibilityRetry(resolvedPlaybackRef.current)
+            canUseVodCompatibilityRetry(resolvedPlaybackRef.current, useWebOsNativeVodPipeline)
           ) {
             if (audioDecodeUnavailableSinceRef.current === 0) {
               audioDecodeUnavailableSinceRef.current = now;
             }
 
             if (now - audioDecodeUnavailableSinceRef.current >= audioDecodeStallThresholdMs) {
-              autoCompatibilityEscalatedRef.current = true;
-              void runCompatibilityRetry("Ses akisi algilanmadi, uyumluluk modu devreye aliniyor.", {
-                resumeAt: media.currentTime,
-                trigger: "auto"
-              });
+              startAutoCompatibilityRetry("Ses akisi algilanmadi, uyumluluk modu devreye aliniyor.", media.currentTime);
               return;
             }
           }
@@ -6719,12 +6848,7 @@ function useVodPlaybackController({
         }
 
         const remaining = getBufferRemaining();
-        if (!autoCompatibilityEscalatedRef.current && canUseVodCompatibilityRetry(resolvedPlaybackRef.current)) {
-          autoCompatibilityEscalatedRef.current = true;
-          void runCompatibilityRetry("Video ilerlemesi durdu, uyumluluk modu devreye aliniyor.", {
-            resumeAt: media.currentTime,
-            trigger: "auto"
-          });
+        if (startAutoCompatibilityRetry("Video ilerlemesi durdu, uyumluluk modu devreye aliniyor.", media.currentTime)) {
           return;
         }
 
@@ -7106,7 +7230,7 @@ function useVodPlaybackController({
       };
     }
 
-    async function mountSource(playback: VodPlaybackRecord, resumeAt?: number) {
+    async function mountSource(playback: ResolvedVodPlaybackState, resumeAt?: number) {
       if (!isActiveSession()) {
         return;
       }
@@ -7117,6 +7241,15 @@ function useVodPlaybackController({
 
       setStateSafe("connecting");
       setErrorSafe(null);
+      if (playback.nativePlayerEngine === "webos-media-pipeline") {
+        debugVod("mount-webos-native-pipeline", {
+          url: playback.url,
+          transport: playback.transport,
+          deliveryMode: playback.deliveryMode
+        });
+        await mountNative(playback.url, resumeAt);
+        return;
+      }
       if (shouldUseHlsForVodPlayback(playback)) {
         await mountHls(playback.url, resumeAt);
         return;
@@ -7193,7 +7326,17 @@ function useVodPlaybackController({
       compatibilityRetryingRef.current = false;
       teardownPlayer();
     };
-  }, [clientRuntime, item.id, item.kind, item.playbackAllowed, reportVodPlayback, resolveVodPlayback]);
+  }, [
+    clientRuntime,
+    item.id,
+    item.kind,
+    item.playbackAllowed,
+    platform,
+    reportVodPlayback,
+    resolveNativeVodPlayback,
+    resolveVodPlayback,
+    useWebOsNativeVodPipeline
+  ]);
 
   const continuePlayback = useCallback(async () => {
     const mediaElement = videoRef.current;
@@ -7310,7 +7453,7 @@ function useVodPlaybackController({
             event: "audio-track-selected",
             audioTrackId: normalizedTrackId,
             deliveryMode: resolvedPlaybackRef.current?.deliveryMode ?? null,
-            sourceTransport: resolvedPlaybackRef.current?.transport ?? null,
+            sourceTransport: normalizeVodSourceTransport(resolvedPlaybackRef.current?.transport),
             playerEngine: "hls.js",
             errorMessage: null
           });
@@ -7348,7 +7491,7 @@ function useVodPlaybackController({
             event: "audio-track-selected",
             audioTrackId: normalizedTrackId,
             deliveryMode: resolvedPlaybackRef.current?.deliveryMode ?? null,
-            sourceTransport: resolvedPlaybackRef.current?.transport ?? null,
+            sourceTransport: normalizeVodSourceTransport(resolvedPlaybackRef.current?.transport),
             playerEngine: "native",
             errorMessage: null
           });
@@ -7361,11 +7504,25 @@ function useVodPlaybackController({
       const resumeAt = media && Number.isFinite(media.currentTime) ? media.currentTime : 0;
 
       try {
-        const refreshedPlayback = await resolveVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
-          debugVod: vodDebugEnabledRef.current,
-          audioTrackId: normalizedTrackId,
-          clientRuntime
-        });
+        const refreshedPlayback: ResolvedVodPlaybackState = useWebOsNativeVodPipeline
+          ? mapNativeVodPlaybackToResolvedState(
+              item.kind === "movie" ? "movie" : "episode",
+              item.id,
+              await resolveNativeVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
+                platform,
+                audioTrackId: normalizedTrackId
+              })
+            )
+          : mapVodPlaybackToResolvedState(
+              item.kind === "movie" ? "movie" : "episode",
+              item.id,
+              await resolveVodPlayback(item.kind === "movie" ? "movie" : "episode", item.id, {
+                debugVod: vodDebugEnabledRef.current,
+                audioTrackId: normalizedTrackId,
+                clientRuntime,
+                platform
+              })
+            );
 
         if (!refreshedPlayback.canPlay || !refreshedPlayback.url) {
           throw new Error(refreshedPlayback.errorMessage ?? "Ses track degistirilemedi.");
@@ -7374,22 +7531,30 @@ function useVodPlaybackController({
         resolvedPlaybackRef.current = refreshedPlayback;
         setResolvedPlayback(refreshedPlayback);
         const nextTracks = refreshedPlayback.audioTracks ?? [];
-        audioTracksRef.current = nextTracks;
-        setAudioTracks(nextTracks);
-        setSelectedAudioTrackId(
+        const nextSelectedTrackId =
           refreshedPlayback.selectedAudioTrackId ??
-            refreshedPlayback.defaultAudioTrackId ??
-            nextTracks.find((track) => track.isDefault)?.id ??
-            nextTracks[0]?.id ??
-            normalizedTrackId
-        );
+          refreshedPlayback.defaultAudioTrackId ??
+          nextTracks.find((track) => track.isDefault)?.id ??
+          nextTracks[0]?.id ??
+          normalizedTrackId;
+        audioTracksRef.current = nextTracks;
+        preferredAudioTrackIdRef.current = nextSelectedTrackId;
+        activeAudioTrackIdRef.current = nextSelectedTrackId;
+        setAudioTracks(nextTracks);
+        setSelectedAudioTrackId(nextSelectedTrackId);
 
         if (media) {
+          if (resumeAt > 0) {
+            media.addEventListener(
+              "loadedmetadata",
+              () => {
+                media.currentTime = resumeAt;
+              },
+              { once: true }
+            );
+          }
           media.src = refreshedPlayback.url;
           media.load();
-          if (resumeAt > 0 && Number.isFinite(media.duration) && media.duration > resumeAt + 0.1) {
-            media.currentTime = resumeAt;
-          }
           await media.play().catch(() => undefined);
         }
 
@@ -7397,8 +7562,13 @@ function useVodPlaybackController({
           event: "audio-track-selected",
           audioTrackId: normalizedTrackId,
           deliveryMode: refreshedPlayback.deliveryMode,
-          sourceTransport: refreshedPlayback.transport,
-          playerEngine: hlsControllerRef.current ? "hls.js" : "native",
+          sourceTransport: normalizeVodSourceTransport(refreshedPlayback.transport),
+          playerEngine:
+            refreshedPlayback.nativePlayerEngine === "webos-media-pipeline"
+              ? "webos-media-pipeline"
+              : hlsControllerRef.current
+                ? "hls.js"
+                : "native",
           errorMessage: null
         });
       } catch (error) {
@@ -7408,8 +7578,13 @@ function useVodPlaybackController({
             event: "audio-track-switch-failed",
             audioTrackId: normalizedTrackId,
             deliveryMode: resolvedPlaybackRef.current?.deliveryMode ?? null,
-            sourceTransport: resolvedPlaybackRef.current?.transport ?? null,
-            playerEngine: hlsControllerRef.current ? "hls.js" : "native",
+            sourceTransport: normalizeVodSourceTransport(resolvedPlaybackRef.current?.transport),
+            playerEngine:
+              resolvedPlaybackRef.current?.nativePlayerEngine === "webos-media-pipeline"
+                ? "webos-media-pipeline"
+                : hlsControllerRef.current
+                  ? "hls.js"
+                  : "native",
             errorCode: "manual-switch-failed",
             detail: {
               message: getMediaErrorMessage(error, "Ses track degistirilemedi.")
@@ -7421,10 +7596,23 @@ function useVodPlaybackController({
         }
       }
     },
-    [clientRuntime, item.id, item.kind, reportVodPlayback, resolveVodPlayback, selectedAudioTrackId]
+    [
+      clientRuntime,
+      item.id,
+      item.kind,
+      platform,
+      reportVodPlayback,
+      resolveNativeVodPlayback,
+      resolveVodPlayback,
+      selectedAudioTrackId,
+      useWebOsNativeVodPipeline
+    ]
   );
 
-  const canRetryWithCompatibilityMode = canUseVodCompatibilityRetry(resolvedPlayback);
+  const canRetryWithCompatibilityMode = canUseVodCompatibilityRetry(
+    resolvedPlayback,
+    useWebOsNativeVodPipeline
+  );
 
   return {
     videoRef,
@@ -7558,14 +7746,18 @@ function VodMiniControls({
 function MoviePlayerSurface({
   item,
   resolveVodPlayback,
+  resolveNativeVodPlayback,
   reportVodPlayback,
   clientRuntime,
+  platform,
   onClose
 }: {
   item: PlaybackItem;
   resolveVodPlayback: ViewerCoreHandle["resolveVodPlayback"];
+  resolveNativeVodPlayback: ViewerCoreHandle["resolveNativeVodPlayback"];
   reportVodPlayback: ViewerCoreHandle["reportVodPlayback"];
   clientRuntime: ClientRuntime;
+  platform: string;
   onClose: () => void;
 }) {
   const {
@@ -7578,8 +7770,10 @@ function MoviePlayerSurface({
   } = useVodPlaybackController({
     item,
     resolveVodPlayback,
+    resolveNativeVodPlayback,
     reportVodPlayback,
-    clientRuntime
+    clientRuntime,
+    platform
   });
 
   useVodMediaShortcuts({
@@ -7635,15 +7829,19 @@ function MoviePlayerSurface({
 function EpisodePlayerSurface({
   item,
   resolveVodPlayback,
+  resolveNativeVodPlayback,
   reportVodPlayback,
   clientRuntime,
+  platform,
   onClose,
   onRequestNext
 }: {
   item: PlaybackItem;
   resolveVodPlayback: ViewerCoreHandle["resolveVodPlayback"];
+  resolveNativeVodPlayback: ViewerCoreHandle["resolveNativeVodPlayback"];
   reportVodPlayback: ViewerCoreHandle["reportVodPlayback"];
   clientRuntime: ClientRuntime;
+  platform: string;
   onClose: () => void;
   onRequestNext: (nextItem: PlaybackItem, options?: { reason: "ended" | "failed" }) => void;
 }) {
@@ -7706,8 +7904,10 @@ function EpisodePlayerSurface({
   } = useVodPlaybackController({
     item,
     resolveVodPlayback,
+    resolveNativeVodPlayback,
     reportVodPlayback,
     clientRuntime,
+    platform,
     onEnded: () => {
       startNextCountdown("ended");
     }
@@ -8831,9 +9031,11 @@ function HomeShell({
         onClose={() => setPlayingItem(null)}
         resolveLivePlayback={core.resolveLivePlayback}
         resolveVodPlayback={core.resolveVodPlayback}
+        resolveNativeVodPlayback={core.resolveNativeVodPlayback}
         reportLivePlayback={core.reportLivePlayback}
         reportVodPlayback={core.reportVodPlayback}
         clientRuntime={runtimeClientContext.clientRuntime}
+        platform={runtimeClientContext.platform}
       />
     </div>
   );

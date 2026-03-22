@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createFfmpegArgs, resolveVodTranscodeDecision, selectVodAudioTrackId } from "./vod.js";
+import { createFfmpegArgs, parseVodMediaProfile, resolveVodTranscodeDecision, selectVodAudioTrackId } from "./vod.js";
 
 describe("resolveVodTranscodeDecision", () => {
   it("keeps browser runtime on transcode-first mode for mp4 sources", () => {
@@ -35,32 +35,150 @@ describe("resolveVodTranscodeDecision", () => {
     expect(debugDecision.needsTranscode).toBe(false);
   });
 
-  it("uses fast-start proxy modes for app runtime unless transcode is explicitly requested", () => {
-    const appFileProxyDecision = resolveVodTranscodeDecision({
-      transport: "mkv",
-      supportsByteRange: true,
-      preferTranscode: false,
-      clientRuntime: "app"
-    });
-    const appHlsDecision = resolveVodTranscodeDecision({
+  it("keeps webos HLS on direct mode", () => {
+    const decision = resolveVodTranscodeDecision({
       transport: "hls",
       supportsByteRange: true,
       preferTranscode: false,
-      clientRuntime: "app"
-    });
-    const appForcedTranscode = resolveVodTranscodeDecision({
-      transport: "mkv",
-      supportsByteRange: true,
-      preferTranscode: true,
-      clientRuntime: "app"
+      clientRuntime: "app",
+      platform: "webos-app"
     });
 
-    expect(appFileProxyDecision.deliveryMode).toBe("file_proxy");
-    expect(appFileProxyDecision.needsTranscode).toBe(false);
-    expect(appHlsDecision.deliveryMode).toBe("hls_proxy");
-    expect(appHlsDecision.needsTranscode).toBe(false);
-    expect(appForcedTranscode.deliveryMode).toBe("hls_transcoded");
-    expect(appForcedTranscode.needsTranscode).toBe(true);
+    expect(decision.deliveryMode).toBe("hls_proxy");
+    expect(decision.needsTranscode).toBe(false);
+  });
+
+  it("keeps Windows H.264/AAC MP4 on direct mode", () => {
+    const decision = resolveVodTranscodeDecision({
+      transport: "mp4",
+      supportsByteRange: true,
+      preferTranscode: false,
+      clientRuntime: "app",
+      platform: "windows-desktop",
+      mediaProfile: {
+        containerTransport: "mp4",
+        primaryVideoCodec: "h264",
+        audioCodecs: ["aac"],
+        audioTracks: []
+      }
+    });
+
+    expect(decision.deliveryMode).toBe("file_proxy");
+    expect(decision.needsTranscode).toBe(false);
+  });
+
+  it("transcodes unsupported desktop containers and codecs", () => {
+    const mkvDecision = resolveVodTranscodeDecision({
+      transport: "mkv",
+      supportsByteRange: true,
+      preferTranscode: false,
+      clientRuntime: "app",
+      platform: "windows-desktop",
+      mediaProfile: {
+        containerTransport: "mkv",
+        primaryVideoCodec: "h264",
+        audioCodecs: ["aac"],
+        audioTracks: []
+      }
+    });
+    const hevcDecision = resolveVodTranscodeDecision({
+      transport: "mp4",
+      supportsByteRange: true,
+      preferTranscode: false,
+      clientRuntime: "app",
+      platform: "windows-desktop",
+      mediaProfile: {
+        containerTransport: "mp4",
+        primaryVideoCodec: "hevc",
+        audioCodecs: ["aac"],
+        audioTracks: []
+      }
+    });
+
+    expect(mkvDecision.deliveryMode).toBe("hls_transcoded");
+    expect(mkvDecision.needsTranscode).toBe(true);
+    expect(hevcDecision.deliveryMode).toBe("hls_transcoded");
+    expect(hevcDecision.needsTranscode).toBe(true);
+  });
+
+  it("uses conservative transcode mode for unknown installed platforms", () => {
+    const decision = resolveVodTranscodeDecision({
+      transport: "avi",
+      supportsByteRange: true,
+      preferTranscode: false,
+      clientRuntime: "app",
+      platform: "android-tv-app",
+      mediaProfile: {
+        containerTransport: "avi",
+        primaryVideoCodec: "mpeg4",
+        audioCodecs: ["mp3"],
+        audioTracks: []
+      }
+    });
+
+    expect(decision.deliveryMode).toBe("hls_transcoded");
+    expect(decision.needsTranscode).toBe(true);
+  });
+
+  it("respects preferTranscode even for direct-safe app sources", () => {
+    const decision = resolveVodTranscodeDecision({
+      transport: "mp4",
+      supportsByteRange: true,
+      preferTranscode: true,
+      clientRuntime: "app",
+      platform: "windows-desktop",
+      mediaProfile: {
+        containerTransport: "mp4",
+        primaryVideoCodec: "h264",
+        audioCodecs: ["mp3"],
+        audioTracks: []
+      }
+    });
+
+    expect(decision.deliveryMode).toBe("hls_transcoded");
+    expect(decision.needsTranscode).toBe(true);
+  });
+});
+
+describe("parseVodMediaProfile", () => {
+  it("maps ffprobe container and codec metadata to a compatibility profile", () => {
+    const profile = parseVodMediaProfile(
+      {
+        format: {
+          format_name: "mov,mp4,m4a,3gp,3g2,mj2"
+        },
+        streams: [
+          {
+            index: 0,
+            codec_type: "video",
+            codec_name: "h264"
+          },
+          {
+            index: 1,
+            codec_type: "audio",
+            codec_name: "aac",
+            channels: 2,
+            disposition: { default: 1 },
+            tags: {
+              language: "tr",
+              title: "Turkce"
+            }
+          }
+        ]
+      },
+      "unknown"
+    );
+
+    expect(profile).not.toBeNull();
+    expect(profile?.containerTransport).toBe("mp4");
+    expect(profile?.primaryVideoCodec).toBe("h264");
+    expect(profile?.audioCodecs).toEqual(["aac"]);
+    expect(profile?.audioTracks[0]).toMatchObject({
+      id: "a1",
+      language: "tr",
+      title: "Turkce",
+      sourceDefault: true
+    });
   });
 });
 
