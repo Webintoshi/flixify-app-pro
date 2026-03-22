@@ -1,4 +1,5 @@
 #include <QGuiApplication>
+#include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 
@@ -11,6 +12,7 @@ int main(int argc, char *argv[]) {
   QCoreApplication::setOrganizationName(QStringLiteral("Flixify"));
   QCoreApplication::setApplicationName(QStringLiteral("Flixify Pro"));
   QCoreApplication::setApplicationVersion(QStringLiteral(FLIXIFY_APP_VERSION));
+  QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/branding/icon.png")));
 
   qmlRegisterType<NativeVideoSurface>("Flixify.Native", 1, 0, "NativeVideoSurface");
 

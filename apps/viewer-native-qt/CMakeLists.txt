@@ -11,6 +11,7 @@ set(CMAKE_AUTOUIC ON)
 option(FLIXIFY_ENABLE_INSTALL "Enable install targets for packaging" ON)
 set(FLIXIFY_API_BASE_URL "$ENV{FLIXIFY_API_BASE_URL}" CACHE STRING "Flixify API base URL")
 set(LIBVLC_ROOT "$ENV{LIBVLC_ROOT}" CACHE PATH "Path to the libVLC runtime root")
+set(FLIXIFY_WINDOWS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../viewer-windows/resources/icon.ico")
 if(FLIXIFY_API_BASE_URL STREQUAL "")
   set(FLIXIFY_API_BASE_URL "https://api.flixify.pro")
 endif()
@@ -31,6 +32,16 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Quick Qml QuickControls2 Netwo
 
 qt_standard_project_setup(REQUIRES 6.5)
 
+if(WIN32)
+  file(TO_NATIVE_PATH "${FLIXIFY_WINDOWS_ICON}" FLIXIFY_WINDOWS_ICON_NATIVE)
+  string(REPLACE "\\" "\\\\" FLIXIFY_WINDOWS_ICON_RC "${FLIXIFY_WINDOWS_ICON_NATIVE}")
+  configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/windows_app.rc.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/windows_app.rc"
+    @ONLY
+  )
+endif()
+
 qt_add_executable(FlixifyNativeQt
   src/main.cpp
   src/api_client.cpp
@@ -38,6 +49,7 @@ qt_add_executable(FlixifyNativeQt
   src/playback_controller.cpp
   src/native_video_surface.cpp
   src/resources.qrc
+  $<$<PLATFORM_ID:Windows>:${CMAKE_CURRENT_BINARY_DIR}/windows_app.rc>
 )
 
 target_include_directories(FlixifyNativeQt PRIVATE src)
@@ -104,6 +116,12 @@ if(WIN32)
   set(CPACK_PACKAGE_FILE_NAME "Flixify-Pro-Setup-${PROJECT_VERSION}-x64")
   set(CPACK_NSIS_DISPLAY_NAME "Flixify Pro")
   set(CPACK_NSIS_PACKAGE_NAME "Flixify Pro")
+  set(CPACK_NSIS_MUI_ICON "${FLIXIFY_WINDOWS_ICON}")
+  set(CPACK_NSIS_MUI_UNIICON "${FLIXIFY_WINDOWS_ICON}")
+  set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\Flixify Pro.exe")
+  set(CPACK_NSIS_EXECUTABLES_DIRECTORY "bin")
+  set(CPACK_PACKAGE_EXECUTABLES "Flixify Pro" "Flixify Pro")
+  set(CPACK_CREATE_DESKTOP_LINKS "Flixify Pro")
 endif()
 
 include(CPack)
