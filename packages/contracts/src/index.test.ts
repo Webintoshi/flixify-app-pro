@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loginByCodeInputSchema } from "./schemas";
+import { loginByCodeInputSchema, paginationQuerySchema } from "./schemas";
 
 describe("contracts", () => {
   it("accepts valid kryptonite code payloads", () => {
@@ -19,5 +19,13 @@ describe("contracts", () => {
       })
     ).toThrow();
   });
-});
 
+  it("accepts viewer catalog page sizes up to 300", () => {
+    const payload = paginationQuerySchema.parse({
+      page: "1",
+      pageSize: "300"
+    });
+
+    expect(payload.pageSize).toBe(300);
+  });
+});

@@ -120,7 +120,7 @@ export const appUpdateCheckResponseSchema = z.object({
 
 export const paginationQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
-  pageSize: z.coerce.number().int().positive().max(100).default(20),
+  pageSize: z.coerce.number().int().positive().max(300).default(20),
   search: z.string().trim().max(120).optional(),
   group: z.string().trim().max(120).optional()
 });
