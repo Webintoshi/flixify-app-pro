@@ -11,6 +11,7 @@ let pausedUntil = 0;
 const INSERT_BATCH_SIZE = 500;
 const HEALTH_SWEEP_INTERVAL_MS = 60_000;
 const HEALTH_PROBE_LIMIT = 24;
+const PLAYLIST_ACCESS_PROBE_TIMEOUT_MS = 5_000;
 let lastHealthSweepAt = 0;
 
 type SharedSourceRow = QueryResultRow & {
@@ -111,6 +112,32 @@ async function loadSharedSourceConfig(client: PoolClient) {
   );
 
   return result.rows[0] ?? null;
+}
+
+async function canRunSharedHealthSweep(config: PlaylistConfig) {
+  try {
+    const response = await fetch(buildPlaylistUrl(config), {
+      signal: AbortSignal.timeout(PLAYLIST_ACCESS_PROBE_TIMEOUT_MS)
+    });
+    const cancelPromise = response.body?.cancel?.();
+    cancelPromise?.catch(() => {});
+
+    if (!response.ok) {
+      console.warn(
+        `[worker] Shared health sweep atlandi: referans playlist erisimi basarisiz (${response.status}).`
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.warn(
+      `[worker] Shared health sweep atlandi: referans playlist probe hatasi -> ${
+        error instanceof Error ? error.message : "bilinmeyen hata"
+      }`
+    );
+    return false;
+  }
 }
 
 async function expireSubscriptions() {
@@ -685,6 +712,10 @@ async function probeHotLiveChannels() {
 
   const config = getSharedPlaylistConfig(configRow);
   if (!config) {
+    return;
+  }
+
+  if (!(await canRunSharedHealthSweep(config))) {
     return;
   }
 

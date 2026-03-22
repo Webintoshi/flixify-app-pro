@@ -125,6 +125,11 @@ import { pool } from "./db.js";
 import { buildStreamUrl } from "./iptv.js";
 import { probeLiveStream } from "./live.js";
 import { createLivePlaybackManager } from "./live-playback.js";
+import {
+  samePlaybackCredentials,
+  shouldHonorSharedLive404Cooldown,
+  type PlaybackCredentials
+} from "./playback-credentials.js";
 import { createVodPlaybackManager, probeVodStream, VodPlaybackUnavailableError } from "./vod.js";
 import { API_CORS_CONFIG } from "./cors-config.js";
 import { stripEmptyJsonContentType } from "./http-headers.js";
@@ -143,11 +148,6 @@ type UserRequest = {
 type AdminRequest = {
   adminId: string;
   email: string | null;
-};
-
-type PlaybackCredentials = {
-  username: string;
-  password: string;
 };
 
 type ClientRuntime = "browser" | "app";
@@ -320,17 +320,6 @@ function getBearerToken(authorization?: string) {
   return authorization.slice("Bearer ".length);
 }
 
-function sameCredentials(
-  left: PlaybackCredentials | null | undefined,
-  right: PlaybackCredentials | null | undefined
-) {
-  if (!left || !right) {
-    return false;
-  }
-
-  return left.username === right.username && left.password === right.password;
-}
-
 function buildStreamCandidates(
   baseUrl: string,
   streamPath: string,
@@ -343,7 +332,10 @@ function buildStreamCandidates(
     candidates.push(primaryCredentials);
   }
 
-  if (fallbackCredentials && !candidates.some((item) => sameCredentials(item, fallbackCredentials))) {
+  if (
+    fallbackCredentials &&
+    !candidates.some((item) => samePlaybackCredentials(item, fallbackCredentials))
+  ) {
     candidates.push(fallbackCredentials);
   }
 
@@ -1435,7 +1427,12 @@ export function buildServer() {
 
       const cooldownMs = 5 * 60 * 1000;
       const normalizedLastError = typeof channel.last_error === "string" ? channel.last_error.trim().toLowerCase() : "";
+      const shouldHonorRecent404Failure = shouldHonorSharedLive404Cooldown(
+        userContext.iptvCredentials,
+        userContext.sharedReferenceCredentials
+      );
       const isRecent404Failure =
+        shouldHonorRecent404Failure &&
         channel.health_status === "broken" &&
         normalizedLastError.includes("upstream 404") &&
         typeof channel.last_checked_at === "string" &&
