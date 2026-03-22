@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { PoolClient, QueryResultRow } from "pg";
+import { buildLiveVariantMetadata } from "@flixify/contracts";
 import { env } from "./env.js";
 import { pool } from "./db.js";
 import { buildPlaylistUrl, buildStreamUrl, extractStreamPath, type PlaylistConfig } from "./iptv.js";
@@ -13,6 +14,15 @@ const HEALTH_SWEEP_INTERVAL_MS = 60_000;
 const HEALTH_PROBE_LIMIT = 24;
 const PLAYLIST_ACCESS_PROBE_TIMEOUT_MS = 5_000;
 let lastHealthSweepAt = 0;
+
+const LIVE_VARIANT_COLUMNS_SQL = `
+  alter table public.shared_live_channels
+  add column if not exists variant_group_key text,
+  add column if not exists quality_rank integer;
+
+  create index if not exists idx_shared_live_channels_variant_lookup
+  on public.shared_live_channels(snapshot_version, variant_group_key, quality_rank desc, order_index asc);
+`;
 
 type SharedSourceRow = QueryResultRow & {
   shared_source_base_url: string | null;
@@ -242,6 +252,8 @@ async function insertSharedLiveChannels(
     stream_path: string;
     transport: "ts" | "hls" | "mp4" | "mkv" | "unknown";
     tvg_id: string | null;
+    variant_group_key: string | null;
+    quality_rank: number | null;
     country_code: string | null;
     country_confidence: "high" | "medium" | "unknown";
     country_match_reason: "prefix" | "tr_strong_group" | "tr_balanced_multi_signal" | "none";
@@ -275,6 +287,7 @@ async function insertSharedLiveChannels(
       groupTitle: channel.groupTitle,
       tvgId: channel.tvgId
     });
+    const variantMetadata = buildLiveVariantMetadata(channel.title);
     countryStats.total += 1;
     countryStats.byReason[country.reason] += 1;
     countryStats.byConfidence[country.confidence] += 1;
@@ -289,6 +302,8 @@ async function insertSharedLiveChannels(
       stream_path: streamPath,
       transport: detectLiveTransport(channel.streamUrl),
       tvg_id: channel.tvgId,
+      variant_group_key: variantMetadata.variantGroupKey,
+      quality_rank: variantMetadata.qualityRank,
       country_code: country.countryCode,
       country_confidence: country.confidence,
       country_match_reason: country.reason,
@@ -317,6 +332,8 @@ async function insertSharedLiveChannels(
           stream_path,
           transport,
           tvg_id,
+          variant_group_key,
+          quality_rank,
           country_code,
           country_confidence,
           country_match_reason,
@@ -330,6 +347,8 @@ async function insertSharedLiveChannels(
           item.stream_path,
           item.transport,
           item.tvg_id,
+          item.variant_group_key,
+          item.quality_rank,
           item.country_code,
           item.country_confidence,
           item.country_match_reason,
@@ -341,6 +360,8 @@ async function insertSharedLiveChannels(
           stream_path text,
           transport text,
           tvg_id text,
+          variant_group_key text,
+          quality_rank integer,
           country_code text,
           country_confidence text,
           country_match_reason text,
@@ -764,6 +785,7 @@ async function processJob(job: { id: string }) {
     const client = await pool.connect();
     try {
       await client.query("begin");
+      await client.query(LIVE_VARIANT_COLUMNS_SQL);
       await insertSharedLiveChannels(client, snapshotVersion, catalog.live, config);
       await insertSharedMovies(client, snapshotVersion, catalog.movies, config);
       await insertSharedSeriesAndEpisodes(client, snapshotVersion, catalog.series, config);

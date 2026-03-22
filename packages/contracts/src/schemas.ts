@@ -2,14 +2,18 @@ import { z } from "zod";
 import {
   adminAuditLogSchema,
   catalogGroupSchema,
+  clientRuntimeSchema,
+  decoderModeSchema,
   deviceSessionSchema,
   liveChannelSchema,
   livePlaybackSchema,
   m3uSyncJobRecordSchema,
   movieSchema,
+  nativePlaybackSourceSchema,
   packageSchema,
   paymentMethodOptionSchema,
   pagedResponseSchema,
+  playerEngineSchema,
   seriesSchema,
   subscriptionRecordSchema,
   userSummarySchema,
@@ -63,10 +67,12 @@ export const trialRequestInputSchema = z.object({
 
 export const livePlaybackEventInputSchema = z.object({
   event: z.enum(["playing", "stalled", "recovered", "failed"]),
+  clientRuntime: clientRuntimeSchema.nullable().optional(),
   diagnosticsSessionId: z.string().uuid().nullable().optional(),
   deliveryMode: z.enum(["hls_proxy", "hls_transmuxed", "hls_transcoded", "file_proxy"]).nullable().optional(),
   sourceTransport: z.enum(["ts", "hls", "mp4", "mkv", "unknown"]).nullable().optional(),
-  playerEngine: z.enum(["native", "hls.js", "mpegts.js", "relay", "unknown"]).nullable().optional(),
+  playerEngine: playerEngineSchema.nullable().optional(),
+  decoderMode: decoderModeSchema.nullable().optional(),
   uptimeMs: z.number().int().nonnegative().nullable().optional(),
   bufferedSeconds: z.number().nonnegative().nullable().optional(),
   currentTime: z.number().nonnegative().nullable().optional(),
@@ -74,6 +80,8 @@ export const livePlaybackEventInputSchema = z.object({
   networkState: z.number().int().min(0).max(3).nullable().optional(),
   stallReason: z.string().trim().max(500).nullable().optional(),
   errorCode: z.string().trim().max(120).nullable().optional(),
+  openErrorCode: z.string().trim().max(120).nullable().optional(),
+  nativeState: z.string().trim().max(120).nullable().optional(),
   upstreamStatus: z.number().int().min(100).max(599).nullable().optional(),
   detail: z.record(z.string(), z.unknown()).nullable().optional(),
   errorMessage: z.string().trim().max(500).nullable().optional()
@@ -90,10 +98,12 @@ export const vodPlaybackEventInputSchema = z.object({
     "playback-failed",
     "recovered"
   ]),
+  clientRuntime: clientRuntimeSchema.nullable().optional(),
   diagnosticsSessionId: z.string().uuid().nullable().optional(),
   deliveryMode: z.enum(["hls_proxy", "file_proxy", "hls_transcoded"]).nullable().optional(),
   sourceTransport: z.enum(["hls", "mp4", "mkv", "avi", "unknown"]).nullable().optional(),
-  playerEngine: z.enum(["native", "hls.js", "mpegts.js", "relay", "unknown"]).nullable().optional(),
+  playerEngine: playerEngineSchema.nullable().optional(),
+  decoderMode: decoderModeSchema.nullable().optional(),
   uptimeMs: z.number().int().nonnegative().nullable().optional(),
   bufferedSeconds: z.number().nonnegative().nullable().optional(),
   currentTime: z.number().nonnegative().nullable().optional(),
@@ -101,12 +111,12 @@ export const vodPlaybackEventInputSchema = z.object({
   networkState: z.number().int().min(0).max(3).nullable().optional(),
   audioTrackId: z.string().trim().max(120).nullable().optional(),
   errorCode: z.string().trim().max(120).nullable().optional(),
+  openErrorCode: z.string().trim().max(120).nullable().optional(),
+  nativeState: z.string().trim().max(120).nullable().optional(),
   upstreamStatus: z.number().int().min(100).max(599).nullable().optional(),
   detail: z.record(z.string(), z.unknown()).nullable().optional(),
   errorMessage: z.string().trim().max(500).nullable().optional()
 });
-
-export const clientRuntimeSchema = z.enum(["browser", "app"]);
 
 export const appUpdateCheckResponseSchema = z.object({
   platform: z.string().trim().min(1),
@@ -196,6 +206,8 @@ export const meResponseSchema = z.object({
 export const liveCatalogResponseSchema = pagedResponseSchema(liveChannelSchema).extend({
   groups: z.array(catalogGroupSchema)
 });
+export const nativeLivePlaybackResponseSchema = nativePlaybackSourceSchema;
+export const nativeVodPlaybackResponseSchema = nativePlaybackSourceSchema;
 export const movieCatalogResponseSchema = pagedResponseSchema(movieSchema).extend({
   groups: z.array(catalogGroupSchema)
 });

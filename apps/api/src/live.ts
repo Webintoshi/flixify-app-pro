@@ -107,7 +107,7 @@ async function probeUrl(url: string, redirects = 0, useRange = true, accumulated
       url,
       {
         headers: {
-          "user-agent": "VLC/3.0.20 LibVLC/3.0.20",
+          "user-agent": "VLC/3.0.4 LibVLC/3.0.4",
           accept: "*/*",
           ...(accumulatedCookies.length > 0 ? { cookie: accumulatedCookies.join("; ") } : {}),
           ...(useRange ? { range: "bytes=0-65535" } : {})

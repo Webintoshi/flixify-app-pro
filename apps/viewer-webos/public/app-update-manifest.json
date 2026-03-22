@@ -1,7 +1,7 @@
 {
   "platforms": {
     "windows-desktop": {
-      "latestVersion": "1.35.0",
+      "latestVersion": "2.1.0",
       "downloadUrl": "https://app.flixify.pro/downloads/flixify-windows.exe"
     }
   }

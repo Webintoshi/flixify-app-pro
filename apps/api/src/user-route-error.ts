@@ -1,3 +1,5 @@
+import { ZodError } from "zod";
+
 export class UnauthorizedUserRouteError extends Error {
   constructor(message = "Unauthorized") {
     super(message);
@@ -12,7 +14,7 @@ export class BlockedUserRouteError extends Error {
   }
 }
 
-export type UserRouteErrorClass = "auth-unauthorized" | "auth-blocked" | "runtime-error";
+export type UserRouteErrorClass = "auth-unauthorized" | "auth-blocked" | "validation-error" | "runtime-error";
 
 export function isUserRouteAuthError(error: unknown) {
   if (error instanceof UnauthorizedUserRouteError || error instanceof BlockedUserRouteError) {
@@ -26,7 +28,7 @@ export function isUserRouteAuthError(error: unknown) {
 }
 
 export function classifyUserRouteError(error: unknown): {
-  statusCode: 401 | 403 | 500;
+  statusCode: 400 | 401 | 403 | 500;
   statusClass: UserRouteErrorClass;
   message: string;
 } {
@@ -43,6 +45,14 @@ export function classifyUserRouteError(error: unknown): {
       statusCode: 401,
       statusClass: "auth-unauthorized",
       message: "Yetkisiz."
+    };
+  }
+
+  if (error instanceof ZodError) {
+    return {
+      statusCode: 400,
+      statusClass: "validation-error",
+      message: "Gecersiz istek verisi."
     };
   }
 

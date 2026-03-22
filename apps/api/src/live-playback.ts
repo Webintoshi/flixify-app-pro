@@ -14,7 +14,7 @@ import type {
 } from "@flixify/contracts";
 
 const DEFAULT_REQUEST_HEADERS = {
-  "user-agent": "VLC/3.0.20 LibVLC/3.0.20",
+  "user-agent": "VLC/3.0.4 LibVLC/3.0.4",
   accept: "*/*",
   "accept-encoding": "identity"
 };
@@ -443,8 +443,8 @@ function buildRelayDetail(session: LiveRelaySession, extra?: Record<string, unkn
   };
 }
 
-function createFfmpegArgs(sourceUrl: string, outputDir: string, transcode: boolean) {
-  const segmentPattern = path.join(outputDir, "segment-%05d.ts");
+function createFfmpegArgs(sourceUrl: string, outputDir: string, transcode: boolean, restartCount: number) {
+  const segmentPattern = path.join(outputDir, `segment-${restartCount}-%05d.ts`);
   const manifestPath = path.join(outputDir, "index.m3u8");
   const baseArgs = [
     "-hide_banner",
@@ -479,6 +479,10 @@ function createFfmpegArgs(sourceUrl: string, outputDir: string, transcode: boole
     "8M",
     "-probesize",
     "8M",
+    "-user_agent",
+    DEFAULT_REQUEST_HEADERS["user-agent"],
+    "-headers",
+    "Accept: */*\r\n",
     "-i",
     sourceUrl,
     "-map",
@@ -780,7 +784,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
     await removeDirectory(session.localState.tempDir);
     await fsp.mkdir(session.localState.tempDir, { recursive: true });
 
-    const args = createFfmpegArgs(session.sourceUrl, session.localState.tempDir, transcode);
+    const args = createFfmpegArgs(session.sourceUrl, session.localState.tempDir, transcode, session.localState.restartCount);
     let stderrOutput = "";
 
     const child = spawn(options.ffmpegBinary, args, {

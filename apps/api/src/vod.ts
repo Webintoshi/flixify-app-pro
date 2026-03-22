@@ -15,7 +15,7 @@ import type {
 } from "@flixify/contracts";
 
 const DEFAULT_REQUEST_HEADERS = {
-  "user-agent": "VLC/3.0.20 LibVLC/3.0.20",
+  "user-agent": "VLC/3.0.4 LibVLC/3.0.4",
   accept: "*/*",
   "accept-encoding": "identity"
 };
@@ -396,7 +396,7 @@ type CreateVodPlaybackInput = {
   itemId: string;
   kind: VodPlaybackKind;
   sourceUrl: string;
-  clientRuntime?: "browser" | "app";
+  clientRuntime?: "browser" | "app" | "native";
   allowUnverifiedSource?: boolean;
   sourceTransportHint?: VodTransport;
   baseOrigin: string;
@@ -653,6 +653,8 @@ async function probeSourceAudioTracks(ffmpegBinary: string, sourceUrl: string) {
     "stream=index,channels:stream_tags=language,title:stream_disposition=default",
     "-of",
     "json",
+    "-user_agent",
+    "VLC/3.0.4 LibVLC/3.0.4",
     sourceUrl
   ];
 
@@ -894,7 +896,7 @@ export type VodTranscodeDecisionInput = {
   transport: VodTransport;
   supportsByteRange: boolean;
   preferTranscode: boolean;
-  clientRuntime?: "browser" | "app";
+  clientRuntime?: "browser" | "app" | "native";
   debugPassthrough?: boolean;
 };
 
@@ -915,7 +917,7 @@ export function resolveVodTranscodeDecision(input: VodTranscodeDecisionInput): V
     };
   }
 
-  if (input.clientRuntime === "app") {
+  if (input.clientRuntime === "app" || input.clientRuntime === "native") {
     if (input.transport === "hls") {
       return {
         needsTranscode: false,

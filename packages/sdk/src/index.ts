@@ -8,6 +8,8 @@ import {
   liveCatalogResponseSchema,
   meResponseSchema,
   movieCatalogResponseSchema,
+  nativeLivePlaybackResponseSchema,
+  nativeVodPlaybackResponseSchema,
   paymentMethodsResponseSchema,
   packagesResponseSchema,
   paymentRequestInputSchema,
@@ -25,6 +27,8 @@ export type MeResponse = z.infer<typeof meResponseSchema>;
 export type LiveCatalogResponse = z.infer<typeof liveCatalogResponseSchema>;
 export type LivePlaybackResponse = z.infer<typeof livePlaybackResponseSchema>;
 export type VodPlaybackResponse = z.infer<typeof vodPlaybackResponseSchema>;
+export type NativeLivePlaybackResponse = z.infer<typeof nativeLivePlaybackResponseSchema>;
+export type NativeVodPlaybackResponse = z.infer<typeof nativeVodPlaybackResponseSchema>;
 export type AppUpdateCheckResponse = z.infer<typeof appUpdateCheckResponseSchema>;
 export type MovieCatalogResponse = z.infer<typeof movieCatalogResponseSchema>;
 export type SeriesCatalogResponse = z.infer<typeof seriesCatalogResponseSchema>;
@@ -48,14 +52,14 @@ export type ResolveLivePlaybackOptions = {
   debugFileProxy?: boolean;
   preferRelay?: boolean;
   preferTranscode?: boolean;
-  clientRuntime?: "browser" | "app";
+  clientRuntime?: "browser" | "app" | "native";
 };
 
 export type ResolveVodPlaybackOptions = {
   debugVod?: boolean;
   preferTranscode?: boolean;
   audioTrackId?: string;
-  clientRuntime?: "browser" | "app";
+  clientRuntime?: "browser" | "app" | "native";
 };
 
 export type AppUpdateCheckOptions = {
@@ -198,6 +202,14 @@ export class FlixifyClient {
     }
     const suffix = query.size > 0 ? `?${query.toString()}` : "";
     return this.request<VodPlaybackResponse>(`/me/vod/${kind}/${itemId}/playback${suffix}`);
+  }
+
+  resolveNativeLivePlayback(channelId: string) {
+    return this.request<NativeLivePlaybackResponse>(`/me/native/live/${channelId}/playback`);
+  }
+
+  resolveNativeVodPlayback(kind: "movie" | "episode", itemId: string) {
+    return this.request<NativeVodPlaybackResponse>(`/me/native/vod/${kind}/${itemId}/playback`);
   }
 
   checkAppUpdate(options: AppUpdateCheckOptions = {}) {

@@ -1,6 +1,6 @@
 {
   "name": "@flixify/viewer-webos",
-  "version": "1.35.0",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
   "scripts": {

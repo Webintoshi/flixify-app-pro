@@ -9,6 +9,7 @@ import {
   adminUpdateUserStatusInputSchema,
   adminUsersQuerySchema,
   appSettingsSchema,
+  buildLiveVariantMetadata,
   livePlaybackEventInputSchema,
   loginByCodeInputSchema,
   paginationQuerySchema,
@@ -123,7 +124,7 @@ import {
 } from "./security.js";
 import { pool } from "./db.js";
 import { buildStreamUrl } from "./iptv.js";
-import { probeLiveStream } from "./live.js";
+import { detectLiveTransport, probeLiveStream } from "./live.js";
 import { createLivePlaybackManager } from "./live-playback.js";
 import { canUseAppDirectPlaybackFallback } from "./app-direct-fallback.js";
 import {
@@ -140,6 +141,7 @@ import {
   isUserRouteAuthError,
   UnauthorizedUserRouteError
 } from "./user-route-error.js";
+import { buildNativePlaybackSource } from "./native-playback.js";
 
 type UserRequest = {
   userId: string;
@@ -151,7 +153,7 @@ type AdminRequest = {
   email: string | null;
 };
 
-type ClientRuntime = "browser" | "app";
+type ClientRuntime = "browser" | "app" | "native";
 type VodTransport = "hls" | "mp4" | "mkv" | "avi" | "unknown";
 
 type AppUpdateManifestEntry = {
@@ -368,6 +370,10 @@ function normalizeClientRuntime(value: unknown): ClientRuntime {
     return "app";
   }
 
+  if (normalized === "native") {
+    return "native";
+  }
+
   return "browser";
 }
 
@@ -404,7 +410,9 @@ async function resolveLiveSourceUrl(input: {
       ok: false,
       sourceUrl: null,
       transport: input.fallbackTransport,
-      errorMessage: "Canli yayin kimlik bilgileri eksik."
+      errorMessage: "Canli yayin kimlik bilgileri eksik.",
+      cookie: null,
+      isVerified: false
     };
   }
 
@@ -425,7 +433,8 @@ async function resolveLiveSourceUrl(input: {
         sourceUrl: candidate.url,
         transport: probe.transport === "unknown" ? input.fallbackTransport : probe.transport,
         cookie: probe.cookie,
-        errorMessage: null
+        errorMessage: null,
+        isVerified: true
       };
     }
     if (probe.statusCode === 0) {
@@ -445,7 +454,8 @@ async function resolveLiveSourceUrl(input: {
       sourceUrl: firstCandidateUrl,
       transport: lastTransport === "unknown" ? input.fallbackTransport : lastTransport,
       cookie: null,
-      errorMessage: lastError
+      errorMessage: lastError,
+      isVerified: false
     };
   }
 
@@ -454,7 +464,8 @@ async function resolveLiveSourceUrl(input: {
     sourceUrl: firstCandidateUrl,
     transport: lastTransport === "unknown" ? input.fallbackTransport : lastTransport,
     cookie: null,
-    errorMessage: lastError
+    errorMessage: lastError,
+    isVerified: false
   };
 }
 
@@ -641,6 +652,54 @@ function buildDirectVodPlaybackFallback(input: {
     isVerified: input.isVerified,
     errorMessage: null
   };
+}
+
+function replyWithNativePlaybackError(
+  reply: FastifyReply,
+  statusCode: number,
+  message: string
+) {
+  return reply.status(statusCode).send({ message });
+}
+
+function buildNativeLivePlaybackResponse(input: {
+  url: string;
+  transport: LiveTransport;
+  cookie?: string | null;
+  diagnosticsSessionId?: string | null;
+  variantGroupKey?: string | null;
+  qualityRank?: number | null;
+  isVerified: boolean;
+  lastCheckedAt?: string | null;
+}) {
+  return buildNativePlaybackSource({
+    url: input.url,
+    transport: input.transport,
+    cookie: input.cookie ?? null,
+    diagnosticsSessionId: input.diagnosticsSessionId ?? null,
+    variantGroupKey: input.variantGroupKey ?? null,
+    qualityRank: input.qualityRank ?? null,
+    isVerified: input.isVerified,
+    lastCheckedAt: input.lastCheckedAt ?? null
+  });
+}
+
+function buildNativeVodPlaybackResponse(input: {
+  url: string;
+  transport: VodTransport;
+  cookie?: string | null;
+  diagnosticsSessionId?: string | null;
+  isVerified: boolean;
+  lastCheckedAt?: string | null;
+}) {
+  return buildNativePlaybackSource({
+    url: input.url,
+    transport: input.transport,
+    cookie: input.cookie ?? null,
+    diagnosticsSessionId: input.diagnosticsSessionId ?? null,
+    isVerified: input.isVerified,
+    lastCheckedAt: input.lastCheckedAt ?? null
+  });
 }
 
 function normalizeOptionalText(value: unknown, maxLength = 2000) {
@@ -1326,7 +1385,7 @@ export function buildServer() {
         rawQuery?.debugFileProxy === "1";
       const preferRelay =
         rawQuery?.preferRelay === undefined
-          ? clientRuntime !== "app"
+          ? clientRuntime === "browser"
           : rawQuery?.preferRelay === true ||
             rawQuery?.preferRelay === "true" ||
             rawQuery?.preferRelay === "1";
@@ -1534,7 +1593,7 @@ export function buildServer() {
           healthStatus,
           lastCheckedAt: checkedAt,
           canPlay,
-          isVerified: resolved.ok,
+          isVerified: resolved.isVerified,
           errorMessage: canPlay ? null : errorMessage ?? "Canli yayin gecici olarak kullanilamiyor.",
           forceRelayRestart,
           allowFileProxyFallback: debugFileProxy || optimisticProbeFallback,
@@ -1556,7 +1615,7 @@ export function buildServer() {
           transport,
           healthStatus,
           lastCheckedAt: checkedAt,
-          isVerified: resolved.ok,
+          isVerified: resolved.isVerified,
           errorMessage: "Canli yayin gecici olarak kullanilamiyor."
         });
       }
@@ -1574,7 +1633,7 @@ export function buildServer() {
           transport,
           healthStatus,
           lastCheckedAt: checkedAt,
-          isVerified: resolved.ok
+          isVerified: resolved.isVerified
         });
       }
 
@@ -1587,6 +1646,115 @@ export function buildServer() {
       }
 
       return playback;
+    } catch (error) {
+      return sendUserRouteError(request, reply, error);
+    }
+  });
+
+  app.get("/me/native/live/:channelId/playback", async (request, reply) => {
+    try {
+      const auth = await authenticateUser(request.headers.authorization);
+      const { channelId } = request.params as { channelId: string };
+
+      if (isDemoMode) {
+        const me = getDemoMe(auth.userId);
+        if (!me?.user.hasAssignedLink) {
+          return replyWithNativePlaybackError(reply, 403, "Icerik baglantisi atanmadi.");
+        }
+
+        const liveCatalog = listDemoLiveCatalog(auth.userId, 1, 200, undefined, undefined);
+        const channel = liveCatalog.items.find((item) => item.id === channelId);
+        if (!channel) {
+          return replyWithNativePlaybackError(reply, 404, "Canli kanal bulunamadi.");
+        }
+        if (!channel.playbackAllowed || typeof channel.streamUrl !== "string") {
+          return replyWithNativePlaybackError(reply, 403, "Bu icerigi oynatmak icin aktif paket gerekir.");
+        }
+
+        const variantMetadata = buildLiveVariantMetadata(channel.title);
+        const transport =
+          channel.transport ?? detectLiveTransport(channel.streamUrl) ?? "unknown";
+
+        return buildNativeLivePlaybackResponse({
+          url: channel.streamUrl,
+          transport,
+          variantGroupKey: channel.variantGroupKey ?? variantMetadata.variantGroupKey,
+          qualityRank: channel.qualityRank ?? variantMetadata.qualityRank,
+          isVerified: channel.isVerified ?? true,
+          lastCheckedAt: channel.lastCheckedAt ?? null
+        });
+      }
+
+      const userContext = await getUserContext(auth.userId);
+      if (!userContext.canViewCatalog) {
+        return replyWithNativePlaybackError(reply, 403, "Icerik baglantisi atanmadi.");
+      }
+      if (!userContext.canPlay) {
+        return replyWithNativePlaybackError(reply, 403, "Bu icerigi oynatmak icin aktif paket gerekir.");
+      }
+
+      const channel = await getLiveChannelForPlayback(userContext.snapshotVersion, channelId);
+      if (!channel) {
+        return replyWithNativePlaybackError(reply, 404, "Canli kanal bulunamadi.");
+      }
+
+      if (
+        !userContext.playbackBaseUrl ||
+        (!userContext.iptvCredentials && !userContext.sharedReferenceCredentials)
+      ) {
+        return replyWithNativePlaybackError(reply, 503, "Canli yayin kaynagi hazir degil.");
+      }
+
+      const resolved = await resolveLiveSourceUrl({
+        baseUrl: userContext.playbackBaseUrl,
+        streamPath: channel.stream_path,
+        primaryCredentials: userContext.iptvCredentials,
+        fallbackCredentials: userContext.sharedReferenceCredentials,
+        fallbackTransport: channel.transport
+      });
+      const checkedAt = new Date().toISOString();
+      const errorMessage = resolved.errorMessage;
+      const upstreamStatus = extractUpstreamStatus(errorMessage);
+      const skipFailureCountIncrement =
+        typeof upstreamStatus === "number" && [405, 416, 429].includes(upstreamStatus);
+      const currentFailureCount = channel.failure_count ?? 0;
+      const nextFailureCount =
+        resolved.ok || skipFailureCountIncrement ? currentFailureCount : currentFailureCount + 1;
+      const healthStatus = resolved.ok
+        ? "healthy"
+        : skipFailureCountIncrement
+          ? channel.health_status ?? "unknown"
+          : nextFailureCount >= 5
+            ? "broken"
+            : "degraded";
+
+      await updateLiveChannelHealth(channel.id, channel.snapshot_version, {
+        status: healthStatus,
+        errorMessage,
+        resetFailureCount: resolved.ok,
+        markSuccess: resolved.ok,
+        touchPlaybackRequest: true,
+        skipFailureCountIncrement
+      });
+
+      if (!resolved.ok || !resolved.sourceUrl) {
+        return replyWithNativePlaybackError(
+          reply,
+          resolved.sourceUrl ? 502 : 503,
+          resolved.errorMessage ?? "Canli yayin kaynagi dogrudan acilamadi."
+        );
+      }
+
+      const variantMetadata = buildLiveVariantMetadata(channel.title);
+      return buildNativeLivePlaybackResponse({
+        url: resolved.sourceUrl,
+        transport: resolved.transport,
+        cookie: resolved.cookie,
+        variantGroupKey: channel.variant_group_key ?? variantMetadata.variantGroupKey,
+        qualityRank: channel.quality_rank ?? variantMetadata.qualityRank,
+        isVerified: resolved.isVerified,
+        lastCheckedAt: checkedAt
+      });
     } catch (error) {
       return sendUserRouteError(request, reply, error);
     }
@@ -1701,7 +1869,7 @@ export function buildServer() {
         rawQuery?.debugVod === "1";
       const preferTranscode =
         rawQuery?.preferTranscode === undefined
-          ? clientRuntime !== "app"
+          ? clientRuntime === "browser"
           : rawQuery?.preferTranscode === true ||
             rawQuery?.preferTranscode === "true" ||
             rawQuery?.preferTranscode === "1";
@@ -1887,6 +2055,93 @@ export function buildServer() {
       }
 
       return playback;
+    } catch (error) {
+      return sendUserRouteError(request, reply, error);
+    }
+  });
+
+  app.get("/me/native/vod/:kind/:itemId/playback", async (request, reply) => {
+    try {
+      const auth = await authenticateUser(request.headers.authorization);
+      const { kind, itemId } = request.params as { kind: string; itemId: string };
+
+      if (kind !== "movie" && kind !== "episode") {
+        return replyWithNativePlaybackError(reply, 400, "VOD turu gecersiz.");
+      }
+
+      if (isDemoMode) {
+        const me = getDemoMe(auth.userId);
+        if (!me?.user.hasAssignedLink) {
+          return replyWithNativePlaybackError(reply, 403, "Icerik baglantisi atanmadi.");
+        }
+
+        const playback = resolveDemoVodPlayback(auth.userId, kind, itemId, getRequestBaseOrigin(request));
+        if (!playback.canPlay || typeof playback.url !== "string") {
+          return replyWithNativePlaybackError(
+            reply,
+            playback.errorMessage?.includes("aktif paket") ? 403 : 503,
+            playback.errorMessage ?? "VOD kaynagi dogrudan acilamadi."
+          );
+        }
+
+        return buildNativeVodPlaybackResponse({
+          url: playback.url,
+          transport: playback.transport,
+          isVerified: playback.isVerified,
+          lastCheckedAt: null
+        });
+      }
+
+      const userContext = await getUserContext(auth.userId);
+      if (!userContext.canViewCatalog) {
+        return replyWithNativePlaybackError(reply, 403, "Icerik baglantisi atanmadi.");
+      }
+      if (!userContext.canPlay) {
+        return replyWithNativePlaybackError(reply, 403, "Bu icerigi oynatmak icin aktif paket gerekir.");
+      }
+
+      const record =
+        kind === "movie"
+          ? await getMovieForPlayback(userContext.snapshotVersion, itemId)
+          : await getEpisodeForPlayback(userContext.snapshotVersion, itemId);
+
+      if (!record) {
+        return replyWithNativePlaybackError(
+          reply,
+          404,
+          kind === "movie" ? "Film bulunamadi." : "Bolum bulunamadi."
+        );
+      }
+
+      if (
+        !userContext.playbackBaseUrl ||
+        (!userContext.iptvCredentials && !userContext.sharedReferenceCredentials)
+      ) {
+        return replyWithNativePlaybackError(reply, 503, "VOD kaynagi hazir degil.");
+      }
+
+      const resolved = await resolveVodSourceUrl({
+        baseUrl: userContext.playbackBaseUrl,
+        streamPath: record.stream_path,
+        primaryCredentials: userContext.iptvCredentials,
+        fallbackCredentials: userContext.sharedReferenceCredentials
+      });
+
+      if (!resolved.ok || !resolved.sourceUrl) {
+        return replyWithNativePlaybackError(
+          reply,
+          resolved.sourceUrl ? 502 : 503,
+          resolved.errorMessage ?? "VOD kaynagi dogrudan acilamadi."
+        );
+      }
+
+      return buildNativeVodPlaybackResponse({
+        url: resolved.sourceUrl,
+        transport: resolved.transport,
+        cookie: resolved.cookie,
+        isVerified: resolved.isVerified,
+        lastCheckedAt: new Date().toISOString()
+      });
     } catch (error) {
       return sendUserRouteError(request, reply, error);
     }

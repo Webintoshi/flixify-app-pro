@@ -27,6 +27,9 @@ export type CatalogKind = z.infer<typeof catalogKindSchema>;
 export const liveTransportSchema = z.enum(["ts", "hls", "mp4", "mkv", "unknown"]);
 export type LiveTransport = z.infer<typeof liveTransportSchema>;
 
+export const nativePlaybackTransportSchema = z.enum(["ts", "hls", "mp4", "mkv", "avi", "unknown"]);
+export type NativePlaybackTransport = z.infer<typeof nativePlaybackTransportSchema>;
+
 export const liveDeliveryModeSchema = z.enum(["hls_proxy", "hls_transmuxed", "hls_transcoded", "file_proxy"]);
 export type LiveDeliveryMode = z.infer<typeof liveDeliveryModeSchema>;
 
@@ -50,6 +53,15 @@ export type VodAudioTrack = z.infer<typeof vodAudioTrackSchema>;
 
 export const liveHealthStatusSchema = z.enum(["unknown", "healthy", "degraded", "broken"]);
 export type LiveHealthStatus = z.infer<typeof liveHealthStatusSchema>;
+
+export const clientRuntimeSchema = z.enum(["browser", "app", "native"]);
+export type ClientRuntime = z.infer<typeof clientRuntimeSchema>;
+
+export const playerEngineSchema = z.enum(["native", "hls.js", "mpegts.js", "relay", "libvlc", "unknown"]);
+export type PlayerEngine = z.infer<typeof playerEngineSchema>;
+
+export const decoderModeSchema = z.enum(["hardware", "software"]);
+export type DecoderMode = z.infer<typeof decoderModeSchema>;
 
 export const userSummarySchema = z.object({
   id: z.string().uuid(),
@@ -126,7 +138,9 @@ export const liveChannelSchema = z.object({
   transport: liveTransportSchema,
   healthStatus: liveHealthStatusSchema,
   isVerified: z.boolean(),
-  lastCheckedAt: z.string().nullable()
+  lastCheckedAt: z.string().nullable(),
+  variantGroupKey: z.string().nullable().optional(),
+  qualityRank: z.number().int().nullable().optional()
 });
 export type LiveChannel = z.infer<typeof liveChannelSchema>;
 
@@ -161,6 +175,21 @@ export const vodPlaybackSchema = z.object({
   errorMessage: z.string().nullable()
 });
 export type VodPlaybackRecord = z.infer<typeof vodPlaybackSchema>;
+
+export const nativePlaybackSourceSchema = z.object({
+  url: z.string().url(),
+  transport: nativePlaybackTransportSchema,
+  headers: z.record(z.string(), z.string()),
+  cookie: z.string().nullable(),
+  userAgent: z.string().trim().min(1).nullable(),
+  allowInsecureHttp: z.boolean(),
+  diagnosticsSessionId: z.string().uuid(),
+  variantGroupKey: z.string().nullable(),
+  qualityRank: z.number().int().nullable(),
+  isVerified: z.boolean(),
+  lastCheckedAt: z.string().nullable()
+});
+export type NativePlaybackSource = z.infer<typeof nativePlaybackSourceSchema>;
 
 export const movieSchema = z.object({
   id: z.string().uuid(),

@@ -14,6 +14,8 @@
     "dev:ops": "npm run dev -w @flixify/ops-web",
     "dev:ops:turbo": "npm run dev:turbo -w @flixify/ops-web",
     "dev:webos": "npm run dev -w @flixify/viewer-webos",
+    "configure:native-qt": "npm run configure -w @flixify/viewer-native-qt",
+    "build:native-qt": "npm run build -w @flixify/viewer-native-qt",
     "typecheck:native": "npm run typecheck -w @flixify/viewer-native",
     "smoke:p0": "node scripts/smoke-p0.mjs",
     "telegram:vscode": "node scripts/telegram-vscode.mjs",
@@ -28,5 +30,5 @@
     "dotenv": "^17.3.1",
     "node-telegram-bot-api": "^0.67.0"
   },
-  "version": "1.35.0"
+  "version": "2.1.0"
 }

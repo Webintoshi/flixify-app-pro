@@ -1279,3 +1279,38 @@
   background: linear-gradient(180deg, #ff424c, #d90a12);
   box-shadow: 0 20px 48px rgba(0, 0, 0, 0.58);
 }
+
+/* Missing Video Track Warning */
+.live-player-video-warning-overlay {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(80%, 480px);
+  padding: 18px 22px;
+  background: rgba(244, 6, 18, 0.12);
+  border: 1px solid rgba(244, 6, 18, 0.28);
+  border-radius: 20px;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  display: grid;
+  gap: 8px;
+  text-align: center;
+  z-index: 10;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.4);
+}
+
+.live-player-video-warning-overlay strong {
+  display: block;
+  font-family: var(--font-display, inherit);
+  font-size: 1.15rem;
+  color: #f40612;
+  letter-spacing: -0.02em;
+}
+
+.live-player-video-warning-overlay span {
+  display: block;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.85);
+}

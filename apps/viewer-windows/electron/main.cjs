@@ -291,6 +291,8 @@ async function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: false,
+      allowRunningInsecureContent: true,
       backgroundThrottling: false,
       spellcheck: false
     }

@@ -1,6 +1,6 @@
 export function canUseAppDirectPlaybackFallback(
-  clientRuntime: "browser" | "app",
+  clientRuntime: "browser" | "app" | "native",
   sourceUrl: string | null | undefined
 ) {
-  return clientRuntime === "app" && typeof sourceUrl === "string" && sourceUrl.trim().length > 0;
+  return clientRuntime !== "browser" && typeof sourceUrl === "string" && sourceUrl.trim().length > 0;
 }

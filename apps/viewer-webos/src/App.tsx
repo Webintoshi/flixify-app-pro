@@ -1742,6 +1742,64 @@ function getPreferredLiveItem(items: PlaybackItem[], options?: { preferSports?: 
     .sort((left, right) => getLiveSelectionScore(right, preferSports) - getLiveSelectionScore(left, preferSports))[0] ?? null;
 }
 
+function getLiveVariantBaseTitle(title: string | null | undefined) {
+  return normalizeAsciiText(title)
+    .replace(/^[a-z]{2,3}\s*[•|:\-]+\s*/, "")
+    .replace(/\b(?:4k|uhd|2160p|fhd|full\s*hd|1080p|hd|720p|sd|raw|hevc|h\.?265|x265)\b/g, " ")
+    .replace(/[()[\]{}|/\\]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getLiveVariantQualityTier(item: PlaybackItem) {
+  const title = normalizeAsciiText(item.title);
+  if (/\bhevc\b|\bh\.?265\b|\bx265\b/.test(title)) {
+    return 5;
+  }
+  if (/\b4k\b|\buhd\b|\b2160p\b/.test(title)) {
+    return 4;
+  }
+  if (/\bfhd\b|\bfull\s*hd\b|\b1080p\b/.test(title)) {
+    return 3;
+  }
+  if (/\bhd\b|\b720p\b/.test(title)) {
+    return 2;
+  }
+  if (/\braw\b/.test(title)) {
+    return 1;
+  }
+  return 0;
+}
+
+function getLiveVariantCompatibilityScore(item: PlaybackItem) {
+  const title = normalizeAsciiText(item.title);
+  const qualityTier = getLiveVariantQualityTier(item);
+  const hevcPenalty = /\bhevc\b|\bh\.?265\b|\bx265\b/.test(title) ? 180 : 0;
+  const rawPenalty = /\braw\b/.test(title) ? 20 : 0;
+  const qualityBonus = qualityTier === 3 ? 140 : qualityTier === 2 ? 110 : qualityTier === 1 ? 90 : qualityTier === 0 ? 70 : 40;
+  return getLiveSelectionScore(item) + qualityBonus - hevcPenalty - rawPenalty;
+}
+
+function getLiveSiblingFallbackCandidates(currentItem: PlaybackItem, items: PlaybackItem[]) {
+  const currentBaseTitle = getLiveVariantBaseTitle(currentItem.title);
+  if (!currentBaseTitle) {
+    return [];
+  }
+
+  const currentTier = getLiveVariantQualityTier(currentItem);
+  return items
+    .filter((item) => {
+      if (item.id === currentItem.id || !item.playbackAllowed) {
+        return false;
+      }
+      if (getLiveVariantBaseTitle(item.title) !== currentBaseTitle) {
+        return false;
+      }
+      return getLiveVariantQualityTier(item) < currentTier;
+    })
+    .sort((left, right) => getLiveVariantCompatibilityScore(right) - getLiveVariantCompatibilityScore(left));
+}
+
 function buildEditorialSelection<T extends PlaybackItem>(
   items: T[],
   limit: number,
@@ -3502,10 +3560,12 @@ function LiveTvPage({
                   <LivePlayerSurface
                     key={activeChannel.id}
                     item={activeChannel}
+                    siblingItems={items}
                     compact
                     resolveLivePlayback={resolveLivePlayback}
                     reportLivePlayback={reportLivePlayback}
                     clientRuntime={clientRuntime}
+                    onRequestSiblingFallback={setSelectedChannelId}
                   />
                 ) : (
                   <div className="live-tv-player-empty">
@@ -4231,6 +4291,7 @@ function PlayerOverlay({
             <LivePlayerSurface
               key={activeItem.id}
               item={activeItem}
+              siblingItems={[activeItem]}
               resolveLivePlayback={resolveLivePlayback}
               reportLivePlayback={reportLivePlayback}
               clientRuntime={clientRuntime}
@@ -4272,16 +4333,20 @@ function PlayerOverlay({
 
 function LivePlayerSurface({
   item,
+  siblingItems,
   compact = false,
   resolveLivePlayback,
   reportLivePlayback,
-  clientRuntime
+  clientRuntime,
+  onRequestSiblingFallback
 }: {
   item: PlaybackItem;
+  siblingItems: PlaybackItem[];
   compact?: boolean;
   resolveLivePlayback: ViewerCoreHandle["resolveLivePlayback"];
   reportLivePlayback: ViewerCoreHandle["reportLivePlayback"];
   clientRuntime: ClientRuntime;
+  onRequestSiblingFallback?: (channelId: string) => void;
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -4346,12 +4411,17 @@ function LivePlayerSurface({
 
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [playerState, setPlayerState] = useState<PlayerState>("idle");
+  const [videoTrackError, setVideoTrackError] = useState(false);
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [interactionRequired, setInteractionRequired] = useState(false);
   const [livePlayback, setLivePlayback] = useState<LivePlaybackRecord | null>(initialLivePlayback);
+  const siblingFallbackCandidates = useMemo(
+    () => getLiveSiblingFallbackCandidates(item, siblingItems),
+    [item, siblingItems]
+  );
 
   function clearControlsHideTimer() {
     if (controlsHideTimerRef.current !== null) {
@@ -4506,6 +4576,12 @@ function LivePlayerSurface({
     function setInteractionRequiredSafe(nextValue: boolean) {
       if (!disposed && sessionRef.current === sessionId) {
         setInteractionRequired(nextValue);
+      }
+    }
+
+    function setVideoTrackErrorSafe(value: boolean) {
+      if (!disposed && sessionRef.current === sessionId) {
+        setVideoTrackError(value);
       }
     }
 
@@ -4693,6 +4769,30 @@ function LivePlayerSurface({
       recoveryInFlightRef.current = false;
       pendingRecoveryReportRef.current = false;
       teardownPlayer();
+      const siblingFallbackTarget =
+        !input?.sessionReason && onRequestSiblingFallback ? siblingFallbackCandidates[0] ?? null : null;
+
+      if (siblingFallbackTarget) {
+        setStateSafe("resolving");
+        setErrorSafe(null);
+        setInteractionRequiredSafe(false);
+        await reportEvent("failed", {
+          errorMessage: message,
+          errorCode: "playback-failed-auto-fallback",
+          detail: {
+            lastKnownPosition: lastPlaybackPositionRef.current,
+            relayAttempted: relayFallbackAttemptCountRef.current > 0,
+            relayAttemptCount: relayFallbackAttemptCountRef.current,
+            relayResult: lastRelayFallbackResultRef.current,
+            sessionReason: null,
+            autoFallbackChannelId: siblingFallbackTarget.id,
+            autoFallbackChannelTitle: siblingFallbackTarget.title
+          }
+        });
+        onRequestSiblingFallback?.(siblingFallbackTarget.id);
+        return;
+      }
+
       setStateSafe("failed");
       setErrorSafe(message);
       setInteractionRequiredSafe(false);
@@ -4731,6 +4831,7 @@ function LivePlayerSurface({
       if (media.videoWidth > 0 && media.videoHeight > 0) {
         videoTrackMissingSinceRef.current = 0;
         videoTrackMissingRecoveryCountRef.current = 0;
+        setVideoTrackErrorSafe(false);
       }
 
       const shouldReportInitialPlay = !playbackReportedRef.current;
@@ -4998,21 +5099,30 @@ function LivePlayerSurface({
             }
 
             const missingForMs = now - videoTrackMissingSinceRef.current;
+            if (missingForMs >= 3_500) {
+              setVideoTrackErrorSafe(true);
+            }
+
             if (
               startedPlayingRef.current &&
               !recoveryInFlightRef.current &&
-              missingForMs >= 7_000 &&
+              missingForMs >= 15_000 &&
               now - lastRecoverAtRef.current > 10_000
             ) {
-              void recoverPlayback(
-                "Canli yayinda ses var ancak goruntu olusmadi. Transcode fallback denenecek.",
-                "video-track-missing"
-              );
-              return;
+              // Note: Only recover if it's TS and eligible for relay fallback, otherwise just keep warning.
+              const srcTransport = playbackSnapshotRef.current?.sourceTransport ?? "unknown";
+              if (srcTransport === "ts") {
+                void recoverPlayback(
+                  "Canli yayinda ses var ancak goruntu olusmadi. Transcode fallback denenecek.",
+                  "video-track-missing"
+                );
+                return;
+              }
             }
           } else {
             videoTrackMissingSinceRef.current = 0;
             videoTrackMissingRecoveryCountRef.current = 0;
+            setVideoTrackErrorSafe(false);
           }
           markPlaybackHealthy(media.currentTime);
           return;
@@ -5612,6 +5722,7 @@ function LivePlayerSurface({
       lastFragmentBufferedAtRef.current = Date.now();
       lastManifestAdvanceAtRef.current = Date.now();
       setInteractionRequiredSafe(false);
+      setVideoTrackErrorSafe(false);
       setPlaybackSafe(initialLivePlayback);
       debugLog("playback-start", {
         sourceTransport: item.transport ?? "unknown",
@@ -5649,7 +5760,7 @@ function LivePlayerSurface({
       clearStartupTimer();
       teardownPlayer();
     };
-  }, [clientRuntime, item.id, reportLivePlayback, resolveLivePlayback]);
+  }, [clientRuntime, item, reportLivePlayback, resolveLivePlayback, siblingFallbackCandidates, onRequestSiblingFallback]);
 
   async function continuePlayback() {
     const media = videoRef.current;
@@ -5756,17 +5867,27 @@ function LivePlayerSurface({
               playsInline
               disablePictureInPicture
               controls={false}
-              poster={LIVE_PLAYER_POSTER_URL}
+              poster={videoTrackError ? undefined : LIVE_PLAYER_POSTER_URL}
               className="player-video live-player-video"
             >
               Tarayici video elementini desteklemiyor.
             </video>
 
+            {videoTrackError && playerState === "playing" ? (
+              <div className="live-player-video-warning-overlay">
+                <strong>Görüntü Formatı Desteklenmiyor</strong>
+                <span>
+                  Bu kanal bilgisayarınızın donanımı tarafından desteklenmeyen bir
+                  kodek (HEVC/H.265) ile yayın yapıyor. Şu anda sadece ses duyuyorsunuz.
+                  Görüntü almak için Fluxify Masaüstü Uygulamasını veya Akıllı TV'nizi kullanın.
+                </span>
+              </div>
+            ) : null}
+
             <div
               className={`live-player-controls is-volume${controlsVisible ? "" : " is-hidden"}`}
               role="group"
               aria-label="Ses kontrolleri"
-              onFocusCapture={revealControls}
             >
               <button
                 type="button"
