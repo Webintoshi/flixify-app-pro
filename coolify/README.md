@@ -23,6 +23,8 @@ Bu klasor, sistemi Coolify'da `api + worker + ops-web + viewer-webos` olarak can
   - `PUBLIC_API_BASE_URL=https://api.<domain>`
   - `NEXT_PUBLIC_API_BASE_URL=https://api.<domain>`
   - `VITE_API_BASE_URL=https://api.<domain>`
+- Soft-update manifest:
+  - `APP_UPDATE_MANIFEST_URL=https://app.<domain>/app-update-manifest.json`
 - VOD transcode icin `FFMPEG_BINARY=ffmpeg` tanimla.
 
 ## 3) Deploy Sirasi
@@ -47,7 +49,10 @@ Not:
 ## 5) Windows EXE Paketleme
 
 - Canli API ile paketle:
-  - `FLIXIFY_API_BASE_URL=https://api.<domain> npm run dist:win:installer:x64 -w @flixify/viewer-windows`
-- Surum: `1.33.0`
+  - `FLIXIFY_API_BASE_URL=https://api.<domain> FLIXIFY_WEB_APP_URL=https://app.<domain> npm run dist:win:installer:x64 -w @flixify/viewer-windows`
+- Surum: `1.35.0`
 - Dagitim dosyasi:
-  - `apps/viewer-windows/dist-electron/Flixify-Pro-Setup-1.33.0-x64.exe`
+  - `apps/viewer-windows/dist-electron/Flixify-Pro-Setup-1.35.0-x64.exe`
+- Web indirme dosyasi ve update manifest otomatik guncellenir:
+  - `apps/viewer-webos/public/downloads/flixify-windows.exe`
+  - `apps/viewer-webos/public/app-update-manifest.json`

@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { Menu, app, BrowserWindow, shell } = require("electron");
+const localHostnames = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
 
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
@@ -30,6 +31,37 @@ function canOpenExternalUrl(value) {
   }
 }
 
+function isLocalHttpUrl(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(value);
+    return localHostnames.has(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function shouldAllowLocalRuntimeOverride() {
+  const raw = String(process.env.FLIXIFY_ALLOW_LOCAL_RUNTIME_OVERRIDE ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
+function sanitizeRuntimeOverrideUrl(value, source, label) {
+  if (!value) {
+    return null;
+  }
+
+  if (!shouldAllowLocalRuntimeOverride() && isLocalHttpUrl(value)) {
+    console.warn(`[runtime-config] local ${label} ignored from ${source}: ${value}`);
+    return null;
+  }
+
+  return value;
+}
+
 function normalizeApiBaseUrl(value) {
   if (typeof value !== "string") {
     return null;
@@ -51,9 +83,8 @@ function normalizeApiBaseUrl(value) {
   }
 }
 
-function readExternalRuntimeConfig() {
+function readRuntimeConfig(configPath) {
   try {
-    const configPath = path.join(app.getPath("userData"), "app-config.json");
     if (!fs.existsSync(configPath)) {
       return null;
     }
@@ -72,6 +103,14 @@ function readExternalRuntimeConfig() {
   } catch {
     return null;
   }
+}
+
+function readExternalRuntimeConfig() {
+  return readRuntimeConfig(path.join(app.getPath("userData"), "app-config.json"));
+}
+
+function readPackagedRuntimeConfig() {
+  return readRuntimeConfig(path.join(__dirname, "..", "web-dist", "app-config.json"));
 }
 
 function normalizeWebAppUrl(value) {
@@ -96,15 +135,54 @@ function normalizeWebAppUrl(value) {
 }
 
 function resolveRuntimeOverrides() {
-  const fromEnv = normalizeApiBaseUrl(process.env.FLIXIFY_API_BASE_URL);
-  const fromWebEnv = normalizeWebAppUrl(process.env.FLIXIFY_WEB_APP_URL);
-  const fromPublicWebEnv = normalizeWebAppUrl(process.env.PUBLIC_APP_BASE_URL);
-  const fromViewerWebosEnv = normalizeWebAppUrl(process.env.VITE_WEB_APP_URL);
-  const fromConfig = readExternalRuntimeConfig();
+  const fromEnv = sanitizeRuntimeOverrideUrl(
+    normalizeApiBaseUrl(process.env.FLIXIFY_API_BASE_URL),
+    "FLIXIFY_API_BASE_URL",
+    "apiBaseUrl"
+  );
+  const fromWebEnv = sanitizeRuntimeOverrideUrl(
+    normalizeWebAppUrl(process.env.FLIXIFY_WEB_APP_URL),
+    "FLIXIFY_WEB_APP_URL",
+    "webAppUrl"
+  );
+  const fromPublicWebEnv = sanitizeRuntimeOverrideUrl(
+    normalizeWebAppUrl(process.env.PUBLIC_APP_BASE_URL),
+    "PUBLIC_APP_BASE_URL",
+    "webAppUrl"
+  );
+  const fromViewerWebosEnv = sanitizeRuntimeOverrideUrl(
+    normalizeWebAppUrl(process.env.VITE_WEB_APP_URL),
+    "VITE_WEB_APP_URL",
+    "webAppUrl"
+  );
+  const fromExternalConfig = readExternalRuntimeConfig();
+  const fromPackagedConfig = readPackagedRuntimeConfig();
 
   return {
-    apiBaseUrl: fromEnv ?? fromConfig?.apiBaseUrl ?? null,
-    webAppUrl: fromWebEnv ?? fromPublicWebEnv ?? fromViewerWebosEnv ?? fromConfig?.webAppUrl ?? null
+    apiBaseUrl:
+      fromEnv ??
+      sanitizeRuntimeOverrideUrl(
+        fromExternalConfig?.apiBaseUrl ?? null,
+        "userData/app-config.json",
+        "apiBaseUrl"
+      ) ??
+      fromPackagedConfig?.apiBaseUrl ??
+      null,
+    webAppUrl:
+      fromWebEnv ??
+      fromPublicWebEnv ??
+      fromViewerWebosEnv ??
+      sanitizeRuntimeOverrideUrl(
+        fromExternalConfig?.webAppUrl ?? null,
+        "userData/app-config.json",
+        "webAppUrl"
+      ) ??
+      sanitizeRuntimeOverrideUrl(
+        fromPackagedConfig?.webAppUrl ?? null,
+        "web-dist/app-config.json",
+        "webAppUrl"
+      ) ??
+      null
   };
 }
 

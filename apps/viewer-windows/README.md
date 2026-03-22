@@ -44,9 +44,12 @@ Not: build once `apps/viewer-webos` derlenir ve `dist` icerigi otomatik olarak b
 
 - Paketleme sirasinda `web-dist/app-config.json` otomatik olusturulur.
 - Production paket icin public API adresi zorunludur (`FLIXIFY_API_BASE_URL` veya `PUBLIC_API_BASE_URL`).
+- Production paket icin public web uygulama adresi de zorunludur (`FLIXIFY_WEB_APP_URL` veya `PUBLIC_APP_BASE_URL`).
 - Production build `localhost` API ile bilerek hata verir; yanlis EXE dagitimi engellenir.
 - Ornek:
-  - `FLIXIFY_API_BASE_URL=https://api.example.com npm run dist:win:installer:x64 -w @flixify/viewer-windows`
+  - `FLIXIFY_API_BASE_URL=https://api.example.com FLIXIFY_WEB_APP_URL=https://app.example.com npm run dist:win:installer:x64 -w @flixify/viewer-windows`
+- Windows `dist:win*` komutlari tamamlandiginda secilen x64/generic artifact otomatik olarak `apps/viewer-webos/public/downloads/flixify-windows.exe` altina kopyalanir.
+- Ayni publish adimi `apps/viewer-webos/public/app-update-manifest.json` dosyasini da uretir; soft-update prompt site uzerindeki dogrudan indirme linkini kullanir.
 
 Son kullanici tarafinda ekstra ayar gerekmez. API adresi EXE icine gomulu gelir.
 
@@ -63,6 +66,10 @@ Oncelik sirasi:
 1. `FLIXIFY_API_BASE_URL` (process env)
 2. `%APPDATA%\\Flixify Pro\\app-config.json`
 3. Paket icindeki `web-dist/app-config.json`
+
+Not:
+- `localhost` tabanli runtime override'lar production pakette varsayilan olarak yok sayilir.
+- Gerekirse sadece destek amacli lokal override icin `FLIXIFY_ALLOW_LOCAL_RUNTIME_OVERRIDE=1` kullanin.
 
 Video decode sorunu yasarsan opsiyonel olarak donanim hizlandirma kapatilabilir:
 - `FLIXIFY_DISABLE_HARDWARE_ACCELERATION=1`
@@ -87,5 +94,5 @@ Canli commitleri yeniden kurulum olmadan almak icin:
 2. veya kurulu istemcide `app-config.json` icine `webAppUrl` ekleyin:
    - `{ "apiBaseUrl": "https://api.flixify.pro", "webAppUrl": "https://app.flixify.pro" }`
 
-Bu ayarda desktop shell uzaktaki web uygulamasini acar ve `app.flixify.pro` deploylari guncellemeleri aninda yansitir.
+Bu ayarda desktop shell uzaktaki web uygulamasini acar ve `app.flixify.pro` deploylari guncellemeleri aninda yansitir. Production `dist:*` komutlari bu davranisi artik varsayilan ve zorunlu olarak uygular.
 Not: Electron shell kodu degisirse yine yeni `.exe/.dmg` paket yayinlamak gerekir.

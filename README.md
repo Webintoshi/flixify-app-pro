@@ -50,4 +50,4 @@ ve `coolify/.env.production.example` dosyalarini kullan.
 - `viewer-native` ve `viewer-windows` kaynaklari bu repoda hazirdir; native shell ve SDK kurulumlari platform makinesinde tamamlanmalidir.
 - Apple TV / Android TV / LG webOS / Windows derlemeleri ilgili vendor SDK'larina baglidir.
 - `viewer-webos` runtime API adresi `public/app-config.json` dosyasindan okunur (`apiBaseUrl`).
-- Windows production paketlerinde `FLIXIFY_API_BASE_URL` zorunludur.
+- Windows production paketlerinde `FLIXIFY_API_BASE_URL` ve `FLIXIFY_WEB_APP_URL` zorunludur.

@@ -9,6 +9,7 @@ const sourceDist = path.resolve(appRoot, "../viewer-webos/dist");
 const targetDist = path.resolve(appRoot, "web-dist");
 const args = new Set(process.argv.slice(2));
 const requireApiBaseUrl = args.has("--require-api-base-url");
+const requireWebAppUrl = args.has("--require-web-app-url");
 const localHostnames = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
 const envFilePaths = [".env.production.local", ".env.production", ".env.local", ".env"].map((name) =>
   path.resolve(workspaceRoot, name)
@@ -106,7 +107,7 @@ async function readEnvFiles() {
   return merged;
 }
 
-function isLocalApiBaseUrl(value) {
+function isLocalUrl(value) {
   try {
     const parsed = new URL(value);
     return localHostnames.has(parsed.hostname.toLowerCase());
@@ -178,9 +179,21 @@ if (requireApiBaseUrl && !resolvedApiBase?.value) {
   );
 }
 
-if (requireApiBaseUrl && resolvedApiBase?.value && isLocalApiBaseUrl(resolvedApiBase.value)) {
+if (requireApiBaseUrl && resolvedApiBase?.value && isLocalUrl(resolvedApiBase.value)) {
   throw new Error(
     `Production packaging local API ile yapilamaz (${resolvedApiBase.value}). Gecerli public API girin.`
+  );
+}
+
+if (requireWebAppUrl && !resolvedWebAppUrl?.value) {
+  throw new Error(
+    "Production packaging icin FLIXIFY_WEB_APP_URL veya PUBLIC_APP_BASE_URL zorunludur. Ornek: https://app.example.com"
+  );
+}
+
+if (requireWebAppUrl && resolvedWebAppUrl?.value && isLocalUrl(resolvedWebAppUrl.value)) {
+  throw new Error(
+    `Production packaging local web app ile yapilamaz (${resolvedWebAppUrl.value}). Gecerli public web URL girin.`
   );
 }
 
