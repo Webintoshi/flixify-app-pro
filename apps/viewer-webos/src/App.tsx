@@ -46,8 +46,8 @@ const AUTH_ROUTE_PATHS = new Set<string>([
   registerRoute,
   ...Object.keys(legacyAuthRedirects)
 ]);
-const DEFAULT_DOWNLOAD_ANDROID_URL = "/downloads/flixify-android.apk";
-const DEFAULT_DOWNLOAD_ANDROID_TV_URL = "/downloads/flixify-android.apk";
+const DEFAULT_DOWNLOAD_ANDROID_URL = "";
+const DEFAULT_DOWNLOAD_ANDROID_TV_URL = "";
 const DEFAULT_DOWNLOAD_WINDOWS_URL = "/downloads/flixify-windows.exe";
 const DEFAULT_DOWNLOAD_MACOS_URL = "";
 const ENV_APP_VERSION = import.meta.env.VITE_APP_VERSION as string | undefined;
