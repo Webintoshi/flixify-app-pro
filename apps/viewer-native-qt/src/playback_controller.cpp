@@ -8,6 +8,7 @@
 #include <QUrl>
 #include <QUrlQuery>
 #include <QtGlobal>
+#include <array>
 #include <algorithm>
 #include <cstdint>
 
@@ -303,13 +304,9 @@ void PlaybackController::setVolume(double value) {
     m_lastAudibleVolume = normalized;
   }
 
-  if (m_player) {
-    libvlc_audio_set_volume(m_player, qRound(normalized * 100.0));
-    libvlc_audio_set_mute(m_player, normalized <= 0.0 ? 1 : 0);
-  }
-
   setVolumeLevel(normalized);
   setMuted(normalized <= 0.0);
+  applyAudioState(normalized > 0.0);
 }
 
 void PlaybackController::toggleMuted() {
@@ -318,21 +315,16 @@ void PlaybackController::toggleMuted() {
     if (m_volume > 0.0) {
       m_lastAudibleVolume = m_volume;
     }
-    if (m_player) {
-      libvlc_audio_set_mute(m_player, 1);
-    }
     setVolumeLevel(0.0);
     setMuted(true);
+    applyAudioState();
     return;
   }
 
   const double restoredVolume = m_lastAudibleVolume > 0.0 ? m_lastAudibleVolume : 1.0;
-  if (m_player) {
-    libvlc_audio_set_volume(m_player, qRound(restoredVolume * 100.0));
-    libvlc_audio_set_mute(m_player, 0);
-  }
   setVolumeLevel(restoredVolume);
   setMuted(false);
+  applyAudioState(true);
 }
 
 void PlaybackController::seekTo(double seconds) {
@@ -861,6 +853,7 @@ void PlaybackController::openResolvedSource(const QJsonObject &source) {
     return;
   }
 
+  applyAudioState(true);
   setBusy(false);
   setPaused(false);
 }
@@ -961,6 +954,53 @@ bool PlaybackController::ensurePlayerReady() {
   return true;
 }
 
+bool PlaybackController::ensureAudioOutputReady() {
+  if (!m_player) {
+    return false;
+  }
+
+#if defined(Q_OS_WIN)
+  static constexpr std::array<const char *, 4> preferredOutputs = {
+    "mmdevice",
+    "wasapi",
+    "directsound",
+    "waveout"
+  };
+
+  for (const char *outputName : preferredOutputs) {
+    if (libvlc_audio_output_set(m_player, outputName) == 0) {
+      return true;
+    }
+  }
+#endif
+
+  return true;
+}
+
+void PlaybackController::applyAudioState(bool recoverOutput) {
+  if (!m_player) {
+    return;
+  }
+
+  if (recoverOutput) {
+    ensureAudioOutputReady();
+  }
+
+  const double baseVolume = m_muted ? (m_lastAudibleVolume > 0.0 ? m_lastAudibleVolume : 1.0) : m_volume;
+  const int targetVolume = qRound(std::clamp(baseVolume, 0.0, 1.0) * 100.0);
+  libvlc_audio_set_volume(m_player, targetVolume);
+  libvlc_audio_set_mute(m_player, m_muted ? 1 : 0);
+
+  if (!m_muted) {
+    if (libvlc_audio_get_mute(m_player) != 0) {
+      libvlc_audio_set_mute(m_player, 0);
+    }
+    if (targetVolume > 0 && libvlc_audio_get_volume(m_player) <= 0) {
+      libvlc_audio_set_volume(m_player, targetVolume);
+    }
+  }
+}
+
 void PlaybackController::recreatePlayer() {
   if (!m_vlc) {
     return;
@@ -972,11 +1012,7 @@ void PlaybackController::recreatePlayer() {
 
   m_player = libvlc_media_player_new(m_vlc);
   attachPlayerEvents();
-  if (m_player) {
-    const double baseVolume = m_muted ? (m_lastAudibleVolume > 0.0 ? m_lastAudibleVolume : 1.0) : m_volume;
-    libvlc_audio_set_volume(m_player, qRound(std::clamp(baseVolume, 0.0, 1.0) * 100.0));
-    libvlc_audio_set_mute(m_player, m_muted ? 1 : 0);
-  }
+  applyAudioState(true);
   bindVideoSurface();
 }
 
@@ -1186,6 +1222,7 @@ void PlaybackController::handlePlaying() {
   setState(QStringLiteral("playing"));
   setPaused(false);
   m_waitingForVideoSurface = false;
+  applyAudioState(true);
   if (!m_timelineTimer.isActive()) {
     m_timelineTimer.start();
   }

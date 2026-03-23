@@ -30,6 +30,7 @@ struct LibVlcRuntimeState {
   using AudioSetVolumeFn = int (*)(libvlc_media_player_t *, int);
   using AudioGetMuteFn = int (*)(libvlc_media_player_t *);
   using AudioSetMuteFn = void (*)(libvlc_media_player_t *, int);
+  using AudioOutputSetFn = int (*)(libvlc_media_player_t *, const char *);
   using MediaPlayerSetHwndFn = void (*)(libvlc_media_player_t *, void *);
   using MediaPlayerSetNSObjectFn = void (*)(libvlc_media_player_t *, void *);
   using MediaPlayerSetXWindowFn = void (*)(libvlc_media_player_t *, uint32_t);
@@ -64,6 +65,7 @@ struct LibVlcRuntimeState {
   AudioSetVolumeFn audioSetVolume = nullptr;
   AudioGetMuteFn audioGetMute = nullptr;
   AudioSetMuteFn audioSetMute = nullptr;
+  AudioOutputSetFn audioOutputSet = nullptr;
   MediaPlayerSetHwndFn mediaPlayerSetHwnd = nullptr;
   MediaPlayerSetNSObjectFn mediaPlayerSetNSObject = nullptr;
   MediaPlayerSetXWindowFn mediaPlayerSetXWindow = nullptr;
@@ -230,6 +232,7 @@ struct LibVlcRuntimeState {
            resolve("libvlc_audio_set_volume", audioSetVolume) &&
            resolve("libvlc_audio_get_mute", audioGetMute) &&
            resolve("libvlc_audio_set_mute", audioSetMute) &&
+           resolve("libvlc_audio_output_set", audioOutputSet) &&
            resolve("libvlc_media_player_set_hwnd", mediaPlayerSetHwnd) &&
            resolve("libvlc_media_player_set_nsobject", mediaPlayerSetNSObject) &&
            resolve("libvlc_media_player_set_xwindow", mediaPlayerSetXWindow) &&
@@ -423,6 +426,13 @@ void libvlc_audio_set_mute(libvlc_media_player_t *player, int mute) {
   if (state.ensureLoaded() && state.audioSetMute && player) {
     state.audioSetMute(player, mute);
   }
+}
+
+int libvlc_audio_output_set(libvlc_media_player_t *player, const char *name) {
+  auto &state = runtime();
+  return state.ensureLoaded() && state.audioOutputSet && player && name
+           ? state.audioOutputSet(player, name)
+           : -1;
 }
 
 void libvlc_media_player_set_hwnd(libvlc_media_player_t *player, void *windowHandle) {

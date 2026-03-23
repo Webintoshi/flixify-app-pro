@@ -140,6 +140,8 @@ private:
   void retryCurrentSourceInSoftwareMode(const QString &reason);
   void retryResolvedVodSource(const QString &reason);
   bool ensurePlayerReady();
+  bool ensureAudioOutputReady();
+  void applyAudioState(bool recoverOutput = false);
   void recreatePlayer();
   void attachPlayerEvents();
   void bindVideoSurface();
