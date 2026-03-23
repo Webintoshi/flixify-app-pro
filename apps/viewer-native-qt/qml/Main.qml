@@ -1917,7 +1917,19 @@ ApplicationWindow {
         }
 
         Rectangle {
-            anchors.fill: parent; color: "#d9030508"; visible: shouldShowPremiumPopup(); z: 25
+            anchors.fill: parent; color: "#d9030508"; visible: shouldShowPremiumPopup(); z: 25; focus: visible
+            Keys.onPressed: function(event) { event.accepted = true }
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.AllButtons
+                hoverEnabled: true
+                propagateComposedEvents: false
+                onPressed: function(mouse) { mouse.accepted = true }
+                onReleased: function(mouse) { mouse.accepted = true }
+                onClicked: function(mouse) { mouse.accepted = true }
+                onDoubleClicked: function(mouse) { mouse.accepted = true }
+                onWheel: function(wheel) { wheel.accepted = true }
+            }
             GlassCard {
                 width: 700; height: premiumContent.implicitHeight + 40; anchors.centerIn: parent; color: "#0b0f17"; z: 26
                 Column {
