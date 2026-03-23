@@ -226,7 +226,7 @@ ApplicationWindow {
     }
 
     function artworkLabel(kind) {
-        if (kind === "live") return "Canli Yayin"
+        if (kind === "live") return "Canlı Yayın"
         if (kind === "episode") return "Dizi"
         return "Film"
     }
@@ -614,7 +614,7 @@ ApplicationWindow {
         }
         if ((apiClient.liveChannels || []).length) {
             const live = apiClient.liveChannels[0]
-            return { id: live.id, kind: "live", title: live.title, subtitle: live.groupTitle || "Canli TV", logoUrl: live.logoUrl }
+            return { id: live.id, kind: "live", title: live.title, subtitle: live.groupTitle || "Canlı TV", logoUrl: live.logoUrl }
         }
         return null
     }
@@ -749,7 +749,7 @@ ApplicationWindow {
     function playLive(channel, forceRestart) {
         if (!channel || !channel.id) return
         selectedLiveId = channel.id
-        playerSubtitle = channel.groupTitle || "Canli TV"
+        playerSubtitle = channel.groupTitle || "Canlı TV"
         playerImageUrl = channel.logoUrl || ""
         if (channel.playbackAllowed === false) {
             if (playbackController.activeContentKind === "live") {
@@ -1999,7 +1999,7 @@ ApplicationWindow {
                                     }
 
                                     Text {
-                                        text: registerRevealComplete() ? "Kod hazir. Kopyalayin veya kaydedin." : "16 hane tek tek dogrulaniyor..."
+                                        text: registerRevealComplete() ? "Kod hazır. Kopyalayın veya kaydedin." : "16 hane tek tek doğrulanıyor..."
                                         width: parent.width
                                         horizontalAlignment: Text.AlignHCenter
                                         color: window.textMuted
@@ -2189,7 +2189,7 @@ ApplicationWindow {
 
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            text: "Oturum geri yukleniyor"
+                            text: "Oturum geri yükleniyor"
                             color: window.textPrimary
                             font.pixelSize: 32
                             font.family: "Space Grotesk"
@@ -2198,7 +2198,7 @@ ApplicationWindow {
 
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            text: "Kayitli cihaz oturumu dogrulaniyor."
+                            text: "Kayıtlı cihaz oturumu doğrulanıyor."
                             color: window.textMuted
                             font.pixelSize: 15
                         }
@@ -2244,21 +2244,22 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Flickable {
                                 anchors.fill: parent
-                                contentWidth: navRow.width
+                                contentWidth: navRow.implicitWidth
                                 contentHeight: height
                                 clip: true
-                                interactive: navRow.width > width
+                                interactive: navRow.implicitWidth > width
 
                                 Row {
                                     id: navRow
+                                    width: implicitWidth
                                     anchors.verticalCenter: parent.verticalCenter
-                                    x: window.compactWindow ? 0 : Math.max(0, (parent.width - width) / 2)
+                                    x: window.compactWindow ? 0 : Math.max(0, (parent.width - implicitWidth) / 2)
                                     spacing: window.compactWindow ? 22 : 32
                                 
                                 Repeater {
                                     model: [
                                         { key: "home", label: "Ana Sayfa" },
-                                        { key: "live", label: "Canli TV" },
+                                        { key: "live", label: "Canlı TV" },
                                         { key: "movies", label: "Filmler" },
                                         { key: "series", label: "Diziler" }
                                     ]
@@ -2283,7 +2284,7 @@ ApplicationWindow {
                             MouseArea { anchors.fill: parent; onClicked: openScreen("profile") }
                         }
 
-                        AppButton { text: "Cikis"; secondary: true; implicitWidth: 110; onClicked: apiClient.logout() }
+                        AppButton { text: "Çıkış"; secondary: true; implicitWidth: 110; onClicked: apiClient.logout() }
                     }
                 }
 
@@ -2307,10 +2308,10 @@ ApplicationWindow {
                                 spacing: 4
                                 Text {
                                     text: apiClient.updateInProgress
-                                          ? `Guncelleme indiriliyor... %${updateProgressPercent()}`
+                                          ? `Güncelleme indiriliyor... %${updateProgressPercent()}`
                                           : (apiClient.updateError.length
-                                             ? "Guncelleme baslatilamadi"
-                                             : `Yeni surum hazir: v${appUpdatePayload().latestVersion || ""}`)
+                                             ? "Güncelleme başlatılamadı"
+                                             : `Yeni sürüm hazır: v${appUpdatePayload().latestVersion || ""}`)
                                     color: window.textPrimary
                                     font.pixelSize: 16
                                     font.family: "Space Grotesk"
@@ -2318,10 +2319,10 @@ ApplicationWindow {
                                 }
                                 Text {
                                     text: apiClient.updateInProgress
-                                          ? "Installer indiriliyor. Hazir olunca uygulama kapanip yeni surum kurulumu baslayacak."
+                                          ? "Installer indiriliyor. Hazır olunca uygulama kapanıp yeni sürüm kurulumu başlayacak."
                                           : (apiClient.updateError.length
                                              ? apiClient.updateError
-                                             : (appUpdatePayload().notes || "Guncelleme uygulama icinden indirilebilir durumda."))
+                                             : (appUpdatePayload().notes || "Güncelleme uygulama içinden indirilebilir durumda."))
                                     width: parent.width
                                     wrapMode: Text.WordWrap
                                     color: window.textMuted
@@ -2343,7 +2344,7 @@ ApplicationWindow {
                             }
                             AppButton {
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: apiClient.updateInProgress ? "Indiriliyor..." : "Guncelle ve Yeniden Baslat"
+                                text: apiClient.updateInProgress ? "İndiriliyor..." : "Güncelle ve Yeniden Başlat"
                                 secondary: true
                                 implicitWidth: 220
                                 enabled: !apiClient.updateInProgress && Boolean(appUpdatePayload().downloadUrl)
@@ -2388,14 +2389,14 @@ ApplicationWindow {
                                             anchors.fill: parent; anchors.margins: window.compactWindow ? 22 : 34; spacing: window.compactWindow ? 18 : 24
                                             Column {
                                                 width: window.compactWindow ? parent.width * 0.6 : parent.width * 0.62; anchors.verticalCenter: parent.verticalCenter; spacing: 14
-                                                Rectangle { width: 180; height: 34; radius: 17; color: "#14ffffff"; Text { anchors.centerIn: parent; text: homeHeroItem() && homeHeroItem().kind === "movie" ? "Flixify Film Selection" : homeHeroItem() && homeHeroItem().kind === "live" ? "Canli Yayin Spotlight" : "Binge-Worthy Series"; color: "#d8ffffff"; font.pixelSize: 12; font.bold: true } }
+                                                Rectangle { width: 180; height: 34; radius: 17; color: "#14ffffff"; Text { anchors.centerIn: parent; text: homeHeroItem() && homeHeroItem().kind === "movie" ? "Flixify Film Selection" : homeHeroItem() && homeHeroItem().kind === "live" ? "Canlı Yayın Spotlight" : "Binge-Worthy Series"; color: "#d8ffffff"; font.pixelSize: 12; font.bold: true } }
                                                 Text { width: parent.width; wrapMode: Text.WordWrap; text: homeHeroItem() ? homeHeroItem().title : ""; color: window.textPrimary; font.pixelSize: window.compactWindow ? 44 : window.mediumWindow ? 54 : 64; font.family: "Space Grotesk"; font.bold: true }
                                                 Row { spacing: 10; Rectangle { width: subscriptionPill.implicitWidth + 28; height: 34; radius: 17; color: "#33e50914"; Text { id: subscriptionPill; anchors.centerIn: parent; text: subscriptionLabel(); color: "#ffd7da"; font.pixelSize: 12; font.bold: true } } }
-                                                Text { width: parent.width * (window.compactWindow ? 0.95 : 0.82); wrapMode: Text.WordWrap; text: homeHeroItem() && homeHeroItem().kind === "movie" ? "Poster odakli premium film secimi ve native player deneyimi." : homeHeroItem() && homeHeroItem().kind === "live" ? "Canli spor, haber ve premium yayinlar branded shell icinde yonetilir." : "Yeni sezonlar ve otomatik sonraki bolum akisi ile premium dizi deneyimi."; color: "#d7dce6"; font.pixelSize: window.compactWindow ? 15 : 16 }
+                                                Text { width: parent.width * (window.compactWindow ? 0.95 : 0.82); wrapMode: Text.WordWrap; text: homeHeroItem() && homeHeroItem().kind === "movie" ? "Poster odaklı premium film seçimi ve native player deneyimi." : homeHeroItem() && homeHeroItem().kind === "live" ? "Canlı spor, haber ve premium yayınlar branded shell içinde yönetilir." : "Yeni sezonlar ve otomatik sonraki bölüm akışı ile premium dizi deneyimi."; color: "#d7dce6"; font.pixelSize: window.compactWindow ? 15 : 16 }
                                                 Row {
                                                     spacing: 12
-                                                    AppButton { text: homeHeroItem() && homeHeroItem().kind === "live" ? "Canliyi Ac" : homeHeroItem() && homeHeroItem().kind === "movie" ? "Filmi Oynat" : "Diziyi Baslat"; implicitWidth: 180; onClicked: { if (homeHeroItem().kind === "movie") playMovie(apiClient.movieById(homeHeroItem().id)); else if (homeHeroItem().kind === "episode") playEpisode(apiClient.episodeById(homeHeroItem().id), apiClient.seriesById(homeHeroItem().seriesId)); else playLive(apiClient.liveChannelById(homeHeroItem().id)) } }
-                                                    AppButton { text: "Filmleri Kesfet"; secondary: true; implicitWidth: 180; onClicked: openScreen("movies") }
+                                                    AppButton { text: homeHeroItem() && homeHeroItem().kind === "live" ? "Canlıyı Aç" : homeHeroItem() && homeHeroItem().kind === "movie" ? "Filmi Oynat" : "Diziyi Başlat"; implicitWidth: 180; onClicked: { if (homeHeroItem().kind === "movie") playMovie(apiClient.movieById(homeHeroItem().id)); else if (homeHeroItem().kind === "episode") playEpisode(apiClient.episodeById(homeHeroItem().id), apiClient.seriesById(homeHeroItem().seriesId)); else playLive(apiClient.liveChannelById(homeHeroItem().id)) } }
+                                                    AppButton { text: "Filmleri Keşfet"; secondary: true; implicitWidth: 180; onClicked: openScreen("movies") }
                                                 }
                                             }
                                             Column {
@@ -2404,10 +2405,10 @@ ApplicationWindow {
                                                     width: parent.width; height: 188; color: "#d8080b10"
                                                     Column {
                                                         anchors.fill: parent; anchors.margins: 20; spacing: 10
-                                                        Text { text: "Canli Spor Odagi"; color: "#d8ffffff"; font.pixelSize: 12; font.bold: true }
-                                                        Text { text: (apiClient.liveChannels || []).length ? apiClient.liveChannels[0].title : "Canli TV Vitrini"; color: window.textPrimary; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 28; font.family: "Space Grotesk"; font.bold: true }
-                                                        Text { text: "Canli rail uzerinden premium spor ve haber yayinlarina hizli gecis."; color: window.textMuted; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 14 }
-                                                        AppButton { width: parent.width; text: (apiClient.liveChannels || []).length ? "Canli Kanali Ac" : "Canli TV'ye Git"; secondary: true; onClicked: { if ((apiClient.liveChannels || []).length) playLive(apiClient.liveChannels[0]); else openScreen("live") } }
+                                                        Text { text: "Canlı Spor Odağı"; color: "#d8ffffff"; font.pixelSize: 12; font.bold: true }
+                                                        Text { text: (apiClient.liveChannels || []).length ? apiClient.liveChannels[0].title : "Canlı TV Vitrini"; color: window.textPrimary; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 28; font.family: "Space Grotesk"; font.bold: true }
+                                                        Text { text: "Canlı rail üzerinden premium spor ve haber yayınlarına hızlı geçiş."; color: window.textMuted; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 14 }
+                                                        AppButton { width: parent.width; text: (apiClient.liveChannels || []).length ? "Canlı Kanalı Aç" : "Canlı TV'ye Git"; secondary: true; onClicked: { if ((apiClient.liveChannels || []).length) playLive(apiClient.liveChannels[0]); else openScreen("live") } }
                                                     }
                                                 }
                                             }
@@ -2419,14 +2420,14 @@ ApplicationWindow {
                                     model: [
                                         { title: "Filmler", kind: "movie", items: (apiClient.movies || []).slice(0, 10) },
                                         { title: "Diziler", kind: "episode", items: featuredSeriesEpisodes().slice(0, 10) },
-                                        { title: "Canli TV", kind: "live", items: (apiClient.liveChannels || []).slice(0, 10) }
+                                        { title: "Canlı TV", kind: "live", items: (apiClient.liveChannels || []).slice(0, 10) }
                                     ]
                                     Column {
                                         required property var modelData
                                         width: parent.width
                                         spacing: 14
                                         visible: modelData.items.length > 0
-                                        Row { width: parent.width; Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 34; font.family: "Space Grotesk"; font.bold: true } Item { width: 1; height: 1 } AppButton { text: "Tumunu Ac"; secondary: true; implicitWidth: 128; onClicked: openScreen(modelData.title === "Filmler" ? "movies" : modelData.title === "Diziler" ? "series" : "live") } }
+                                        Row { width: parent.width; Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 34; font.family: "Space Grotesk"; font.bold: true } Item { width: 1; height: 1 } AppButton { text: "Tümünü Aç"; secondary: true; implicitWidth: 128; onClicked: openScreen(modelData.title === "Filmler" ? "movies" : modelData.title === "Diziler" ? "series" : "live") } }
                                         ListView {
                                             width: parent.width; height: 430; orientation: ListView.Horizontal; spacing: 18; clip: true; model: modelData.items
                                             delegate: RailCard {
@@ -2450,7 +2451,7 @@ ApplicationWindow {
                                 anchors.margins: 24
                                 spacing: 18
                                 Text {
-                                    text: "Canli TV"
+                                    text: "Canlı TV"
                                     color: window.textPrimary
                                     font.pixelSize: 42
                                     font.family: "Space Grotesk"
@@ -2614,9 +2615,9 @@ ApplicationWindow {
                                                         id: inlineStateText
                                                         anchors.centerIn: parent
                                                         text: playbackController.state === "buffering" ? "Buffer dolduruluyor" :
-                                                              playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazirlaniyor" :
-                                                              playbackController.state === "error" ? "Yayin acilamadi" :
-                                                              playbackController.state === "playing" ? "Yayin acik" : "Kanal bekliyor"
+                                                              playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazırlanıyor" :
+                                                              playbackController.state === "error" ? "Yayın açılamadı" :
+                                                              playbackController.state === "playing" ? "Yayın açık" : "Kanal bekliyor"
                                                         color: window.textPrimary
                                                         font.pixelSize: 13
                                                         font.bold: true
@@ -2938,7 +2939,7 @@ ApplicationWindow {
 
                                                 Text {
                                                     text: apiClient.liveLoadingMore
-                                                        ? "Daha fazla yukleniyor"
+                                                        ? "Daha fazla yükleniyor"
                                                         : (filteredLiveItems().length ? `${filteredLiveItems().length} kanal` : "Bos")
                                                     color: window.textMuted
                                                     font.pixelSize: 13
@@ -3001,7 +3002,7 @@ ApplicationWindow {
                                                             ArtworkPanel {
                                                                 anchors.fill: parent
                                                                 title: modelData.title || ""
-                                                                subtitle: modelData.groupTitle || "Canli TV"
+                                                                subtitle: modelData.groupTitle || "Canlı TV"
                                                                 sourceUrl: modelData.logoUrl || ""
                                                                 kind: "live"
                                                                 mode: "logo"
@@ -3025,7 +3026,7 @@ ApplicationWindow {
                                                             }
 
                                                             Text {
-                                                                text: modelData.groupTitle || "Canli TV"
+                                                                text: modelData.groupTitle || "Canlı TV"
                                                                 width: parent.width
                                                                 elide: Text.ElideRight
                                                                 color: selectedLiveId === modelData.id ? "#ffe8eb" : window.textMuted
@@ -3058,7 +3059,7 @@ ApplicationWindow {
                                                         Text {
                                                             id: liveLoadingLabel
                                                             anchors.centerIn: parent
-                                                            text: apiClient.liveLoadingMore ? "Kanallar yukleniyor" : "Daha fazla kanal icin kaydirin"
+                                                            text: apiClient.liveLoadingMore ? "Kanallar yükleniyor" : "Daha fazla kanal için kaydırın"
                                                             color: window.textMuted
                                                             font.pixelSize: 12
                                                             font.bold: true
@@ -3138,7 +3139,7 @@ ApplicationWindow {
 
                                     Text {
                                         anchors.centerIn: parent
-                                        text: apiClient.movieLoadingMore ? "Filmler yukleniyor" : "Daha fazla film yukle"
+                                        text: apiClient.movieLoadingMore ? "Filmler yükleniyor" : "Daha fazla film yükle"
                                         color: window.textMuted
                                         font.pixelSize: 13
                                         font.bold: true
@@ -3198,7 +3199,7 @@ ApplicationWindow {
                                 topPadding: window.compactWindow ? 18 : 20
                                 bottomPadding: window.compactWindow ? 24 : 28
                                 spacing: window.sectionSpacing
-                                AppButton { text: "Dizilere Don"; secondary: true; implicitWidth: 140; onClicked: openScreen("series") }
+                                AppButton { text: "Dizilere Dön"; secondary: true; implicitWidth: 140; onClicked: openScreen("series") }
                                 Flow {
                                     width: parent.width; spacing: window.cardGap
                                     GlassCard { width: window.compactWindow ? parent.width : 320; height: window.compactWindow ? 380 : 460; color: "#090c13"; ArtworkPanel { anchors.fill: parent; title: selectedSeries() ? selectedSeries().title : "Dizi"; subtitle: selectedSeries() ? (selectedSeries().groupTitle || "Premium Dizi") : "Premium Dizi"; sourceUrl: selectedSeries() ? (selectedSeries().posterUrl || "") : ""; kind: "episode"; mode: "poster"; cornerRadius: 28 } }
@@ -3255,7 +3256,7 @@ ApplicationWindow {
                                             { title: "Profil Ayarlari", copy: "Kullanici ve baglanti bilgilerini goruntuleyin.", action: "Ayarlar", screen: "settings" },
                                             { title: "Paketler", copy: "Aktif paketleri gorup satin alim talebi olusturun.", action: "Paketleri Gor", screen: "packages" },
                                             { title: "Odeme Bildirimi", copy: "Odeme taleplerinin durumunu takip edin.", action: "Bildirimleri Gor", screen: "payments" },
-                                            { title: "Iletisim", copy: "Destek ekibine WhatsApp veya Telegram uzerinden ulasin.", action: "Iletisime Gec", screen: "contact" }
+                                            { title: "İletişim", copy: "Destek ekibine WhatsApp veya Telegram üzerinden ulaşın.", action: "İletişime Geç", screen: "contact" }
                                         ]
                                         GlassCard {
                                             width: window.compactWindow ? parent.width : window.gridCardWidth(parent.width, 280, 2); height: 210; color: "#090c13"
@@ -3325,7 +3326,7 @@ ApplicationWindow {
                                         GlassCard { width: window.compactWindow ? parent.width : window.gridCardWidth(parent.width, 280, 2); height: 126; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 8; Text { text: modelData.label; color: window.textMuted; font.pixelSize: 13 } Text { text: modelData.value; width: parent.width; wrapMode: Text.WordWrap; color: window.textPrimary; font.pixelSize: 22; font.family: "Space Grotesk"; font.bold: true } } }
                                     }
                                 }
-                                Row { spacing: 12; AppButton { text: "Paketler"; implicitWidth: 128; onClicked: openScreen("packages") } AppButton { text: "Odemeler"; secondary: true; implicitWidth: 128; onClicked: openScreen("payments") } AppButton { text: "Iletisim"; secondary: true; implicitWidth: 128; onClicked: openScreen("contact") } }
+                                Row { spacing: 12; AppButton { text: "Paketler"; implicitWidth: 128; onClicked: openScreen("packages") } AppButton { text: "Ödemeler"; secondary: true; implicitWidth: 128; onClicked: openScreen("payments") } AppButton { text: "İletişim"; secondary: true; implicitWidth: 128; onClicked: openScreen("contact") } }
                             }
                         }
 
@@ -3337,7 +3338,7 @@ ApplicationWindow {
                                 topPadding: window.compactWindow ? 18 : 20
                                 bottomPadding: window.compactWindow ? 24 : 28
                                 spacing: window.sectionSpacing
-                                Row { spacing: 12; AppButton { text: "Geri"; secondary: true; implicitWidth: 110; onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "Iletisim"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
+                                Row { spacing: 12; AppButton { text: "Geri"; secondary: true; implicitWidth: 110; onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "İletişim"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
                                 GlassCard {
                                     width: parent.width; height: 200; color: "#090c13"
                                     Column {
@@ -3365,7 +3366,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: window.shortWindow ? 220 : 250
                     color: "#0a0d14"
-                    Column { anchors.fill: parent; anchors.margins: 28; spacing: 14; Text { text: "Erisim Durdu"; color: window.textPrimary; font.pixelSize: 44; font.family: "Space Grotesk"; font.bold: true } Text { text: "Hesabiniz su anda engelli. Destek ekibi ile iletisime gecerek tekrar aktivasyon talep edebilirsiniz."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 16 } Row { spacing: 12; AppButton { text: "WhatsApp"; implicitWidth: 144; onClicked: Qt.openUrlExternally(contactData().whatsapp || "") } AppButton { text: "Telegram"; secondary: true; implicitWidth: 144; onClicked: Qt.openUrlExternally(contactData().telegram || "") } AppButton { text: "Cikis"; secondary: true; implicitWidth: 120; onClicked: apiClient.logout() } } }
+                    Column { anchors.fill: parent; anchors.margins: 28; spacing: 14; Text { text: "Erişim Durdu"; color: window.textPrimary; font.pixelSize: 44; font.family: "Space Grotesk"; font.bold: true } Text { text: "Hesabınız şu anda engelli. Destek ekibi ile iletişime geçerek tekrar aktivasyon talep edebilirsiniz."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 16 } Row { spacing: 12; AppButton { text: "WhatsApp"; implicitWidth: 144; onClicked: Qt.openUrlExternally(contactData().whatsapp || "") } AppButton { text: "Telegram"; secondary: true; implicitWidth: 144; onClicked: Qt.openUrlExternally(contactData().telegram || "") } AppButton { text: "Çıkış"; secondary: true; implicitWidth: 120; onClicked: apiClient.logout() } } }
                 }
             }
         }
@@ -3376,13 +3377,13 @@ ApplicationWindow {
                 anchors.fill: parent; anchors.margins: 18; color: "#f2080a0e"; z: 21
                 ColumnLayout {
                     anchors.fill: parent; anchors.margins: 18; spacing: 14
-                    RowLayout { Layout.fillWidth: true; ColumnLayout { Layout.fillWidth: true; spacing: 4; Text { text: playbackController.activeContentKind === "live" ? "Canli TV" : playbackController.activeContentKind === "movie" ? "Film" : "Dizi"; color: "#c7ffffff"; font.pixelSize: 12; font.bold: true } Text { text: playbackController.activeTitle.length ? playbackController.activeTitle : "Player Hazir"; color: window.textPrimary; font.pixelSize: 28; font.family: "Space Grotesk"; font.bold: true } Text { text: playerSubtitle; color: window.textMuted; font.pixelSize: 14; visible: text.length > 0 } } AppButton { text: "Kapat"; secondary: true; implicitWidth: 120; onClicked: closePlayer() } }
+                    RowLayout { Layout.fillWidth: true; ColumnLayout { Layout.fillWidth: true; spacing: 4; Text { text: playbackController.activeContentKind === "live" ? "Canlı TV" : playbackController.activeContentKind === "movie" ? "Film" : "Dizi"; color: "#c7ffffff"; font.pixelSize: 12; font.bold: true } Text { text: playbackController.activeTitle.length ? playbackController.activeTitle : "Player Hazır"; color: window.textPrimary; font.pixelSize: 28; font.family: "Space Grotesk"; font.bold: true } Text { text: playerSubtitle; color: window.textMuted; font.pixelSize: 14; visible: text.length > 0 } } AppButton { text: "Kapat"; secondary: true; implicitWidth: 120; onClicked: closePlayer() } }
                     RowLayout {
                         Layout.fillWidth: true; Layout.fillHeight: true; spacing: 16
                         GlassCard {
                             Layout.fillWidth: true; Layout.fillHeight: true; color: "#000000"
                             Loader { anchors.fill: parent; anchors.margins: 6; active: overlayPlayerVisible(); sourceComponent: nativeVideoSurfaceComponent }
-                            Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 18; width: stateLabel.implicitWidth + 28; height: 40; radius: 20; color: "#c7070a0f"; border.width: 1; border.color: "#12ffffff"; Text { id: stateLabel; anchors.centerIn: parent; text: playbackController.state === "buffering" ? "Buffer dolduruluyor" : playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazirlaniyor" : playbackController.state === "error" ? "Yayin acilamadi" : "Yayin hazir"; color: window.textPrimary; font.pixelSize: 13; font.bold: true } }
+                            Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 18; width: stateLabel.implicitWidth + 28; height: 40; radius: 20; color: "#c7070a0f"; border.width: 1; border.color: "#12ffffff"; Text { id: stateLabel; anchors.centerIn: parent; text: playbackController.state === "buffering" ? "Buffer dolduruluyor" : playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazırlanıyor" : playbackController.state === "error" ? "Yayın açılamadı" : "Yayın hazır"; color: window.textPrimary; font.pixelSize: 13; font.bold: true } }
                             Rectangle {
                                 anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 16; height: 78; radius: 22; color: "#c7070a0f"; border.width: 1; border.color: "#12ffffff"
                                 Row {
@@ -3397,7 +3398,7 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        GlassCard { Layout.preferredWidth: window.compactWindow ? 260 : 320; Layout.fillHeight: true; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 12; Text { text: "Yayin Bilgisi"; color: window.textPrimary; font.pixelSize: 20; font.family: "Space Grotesk"; font.bold: true } Rectangle { width: parent.width; height: window.compactWindow ? 148 : 180; radius: 22; color: "#08ffffff"; border.width: 1; border.color: window.borderSoft; ArtworkPanel { anchors.fill: parent; title: playbackController.activeTitle.length ? playbackController.activeTitle : "Flixify"; subtitle: playerSubtitle; sourceUrl: playerImageUrl; kind: playbackController.activeContentKind || "movie"; mode: playbackController.activeContentKind === "live" ? "logo" : "poster"; cornerRadius: 22 } } Text { text: playbackController.lastError.length ? playbackController.lastError : "Native player branded shell icinde hazir."; width: parent.width; wrapMode: Text.WordWrap; color: playbackController.lastError.length ? "#ffb2b8" : window.textMuted; font.pixelSize: 14 } } }
+                        GlassCard { Layout.preferredWidth: window.compactWindow ? 260 : 320; Layout.fillHeight: true; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 12; Text { text: "Yayın Bilgisi"; color: window.textPrimary; font.pixelSize: 20; font.family: "Space Grotesk"; font.bold: true } Rectangle { width: parent.width; height: window.compactWindow ? 148 : 180; radius: 22; color: "#08ffffff"; border.width: 1; border.color: window.borderSoft; ArtworkPanel { anchors.fill: parent; title: playbackController.activeTitle.length ? playbackController.activeTitle : "Flixify"; subtitle: playerSubtitle; sourceUrl: playerImageUrl; kind: playbackController.activeContentKind || "movie"; mode: playbackController.activeContentKind === "live" ? "logo" : "poster"; cornerRadius: 22 } } Text { text: playbackController.lastError.length ? playbackController.lastError : "Native player branded shell içinde hazır."; width: parent.width; wrapMode: Text.WordWrap; color: playbackController.lastError.length ? "#ffb2b8" : window.textMuted; font.pixelSize: 14 } } }
                     }
                 }
             }
@@ -3455,7 +3456,7 @@ ApplicationWindow {
                             onClicked: apiClient.requestTrial("Windows native cihazindan test talebi")
                         }
                         AppButton {
-                            text: "WhatsApp ile Iletisime Gec"
+                            text: "WhatsApp ile İletişime Geç"
                             secondary: true
                             implicitWidth: 220
                             onClicked: openScreen("contact")
