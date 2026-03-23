@@ -493,6 +493,26 @@ ApplicationWindow {
         apiClient.fetchLiveCatalog(1, 300, normalizedSearch, normalizedGroup)
     }
 
+    function movieGroupOptions() {
+        const options = [""]
+        const groups = apiClient.movieGroups || []
+        for (let index = 0; index < groups.length; index += 1) {
+            const title = safeText(groups[index].title)
+            if (title.length) {
+                options.push(title)
+            }
+        }
+        return options
+    }
+
+    function applyMovieFilters(search, group) {
+        const normalizedSearch = safeText(search)
+        const normalizedGroup = safeText(group)
+        moviesSearchText = normalizedSearch
+        selectedMovieGroup = normalizedGroup
+        apiClient.fetchMovieCatalog(1, 18, normalizedSearch, normalizedGroup)
+    }
+
     function filterItems(items, search, group) {
         const searchText = normalizeText(search)
         const groupText = normalizeText(group)
@@ -511,7 +531,7 @@ ApplicationWindow {
         return output
     }
 
-    function filteredMovies() { return filterItems(apiClient.movies || [], moviesSearchText, selectedMovieGroup) }
+    function filteredMovies() { return apiClient.movies || [] }
     function filteredSeries() { return filterItems(apiClient.series || [], seriesSearchText, selectedSeriesGroup) }
     function filteredLiveItems() { return apiClient.liveChannels || [] }
 
@@ -787,6 +807,13 @@ ApplicationWindow {
             interval = revealedCount < 4 ? 138 : revealedCount < 8 ? 154 : revealedCount < 12 ? 170 : 184
             revealedCount += 1
         }
+    }
+
+    Timer {
+        id: movieSearchDebounceTimer
+        interval: 280
+        repeat: false
+        onTriggered: applyMovieFilters(moviesSearchText, selectedMovieGroup)
     }
 
     Timer {
@@ -1482,8 +1509,12 @@ ApplicationWindow {
 
     component PosterGridCard: Item {
         id: posterCard
-        required property var item
-        required property string cardKind
+        property string titleText: ""
+        property string subtitleText: ""
+        property string artworkUrl: ""
+        property bool playbackAllowed: false
+        property var payload: ({})
+        property string cardKind: "movie"
         signal activated(var item)
         width: window.posterCardWidth
         height: Math.round(window.posterCardWidth * 1.72)
@@ -1499,9 +1530,9 @@ ApplicationWindow {
 
         ArtworkPanel {
             anchors.fill: parent
-            title: posterCard.item.title || ""
-            subtitle: posterCard.item.subtitle || posterCard.item.groupTitle || ""
-            sourceUrl: posterCard.item.posterUrl || posterCard.item.logoUrl || ""
+            title: posterCard.titleText
+            subtitle: posterCard.subtitleText
+            sourceUrl: posterCard.artworkUrl
             mode: posterCard.cardKind === "live" ? "logo" : "poster"
             kind: posterCard.cardKind
             cornerRadius: 24
@@ -1543,12 +1574,12 @@ ApplicationWindow {
                     width: playbackBadge.implicitWidth + 22
                     height: 30
                     radius: 15
-                    color: posterCard.item.playbackAllowed ? "#2b30d19d" : "#16ffffff"
+                    color: posterCard.playbackAllowed ? "#2b30d19d" : "#16ffffff"
                     Text {
                         id: playbackBadge
                         anchors.centerIn: parent
-                        text: posterCard.item.playbackAllowed ? "Hazir" : "Paket Gerekli"
-                        color: posterCard.item.playbackAllowed ? "#82ecc4" : window.textPrimary
+                        text: posterCard.playbackAllowed ? "Hazir" : "Paket Gerekli"
+                        color: posterCard.playbackAllowed ? "#82ecc4" : window.textPrimary
                         font.pixelSize: 11
                         font.bold: true
                     }
@@ -1556,7 +1587,7 @@ ApplicationWindow {
             }
 
             Text {
-                text: posterCard.item.title || ""
+                text: posterCard.titleText
                 width: parent.width
                 wrapMode: Text.WordWrap
                 maximumLineCount: 2
@@ -1568,7 +1599,7 @@ ApplicationWindow {
             }
 
             Text {
-                text: posterCard.item.subtitle || posterCard.item.groupTitle || ""
+                text: posterCard.subtitleText
                 width: parent.width
                 wrapMode: Text.WordWrap
                 maximumLineCount: 2
@@ -1581,7 +1612,7 @@ ApplicationWindow {
 
         MouseArea {
             anchors.fill: parent
-            onClicked: posterCard.activated(posterCard.item)
+            onClicked: posterCard.activated(posterCard.payload)
         }
     }
 
@@ -3042,6 +3073,7 @@ ApplicationWindow {
                         }
 
                         ScrollView {
+                            id: moviesScrollView
                             clip: true
                             Column {
                                 width: window.pageWidth(pageStack.width)
@@ -3050,18 +3082,72 @@ ApplicationWindow {
                                 bottomPadding: window.compactWindow ? 24 : 28
                                 spacing: window.sectionSpacing
                                 Text { text: "Filmler"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true }
-                                AppField { width: parent.width; placeholderText: "Film ara..."; text: moviesSearchText; onTextChanged: moviesSearchText = text }
-                                Flickable { width: parent.width; height: 52; contentWidth: movieChipRow.width; clip: true; Row { id: movieChipRow; spacing: 10; Repeater { model: [""] .concat(uniqueGroups(apiClient.movies || [])); ChipButton { required property var modelData; text: modelData.length ? modelData : "Tum Filmler"; active: selectedMovieGroup === modelData; width: Math.max(112, implicitContentWidth + 28); onClicked: selectedMovieGroup = modelData } } } }
+                                AppField {
+                                    width: parent.width
+                                    placeholderText: "Film ara..."
+                                    text: moviesSearchText
+                                    onTextChanged: {
+                                        moviesSearchText = text
+                                        movieSearchDebounceTimer.restart()
+                                    }
+                                }
+                                Flickable {
+                                    width: parent.width
+                                    height: 52
+                                    contentWidth: movieChipRow.width
+                                    clip: true
+                                    Row {
+                                        id: movieChipRow
+                                        spacing: 10
+                                        Repeater {
+                                            model: movieGroupOptions()
+                                            ChipButton {
+                                                required property var modelData
+                                                text: modelData.length ? modelData : "Tum Filmler"
+                                                active: selectedMovieGroup === modelData
+                                                width: Math.max(112, implicitContentWidth + 28)
+                                                onClicked: applyMovieFilters(moviesSearchText, modelData)
+                                            }
+                                        }
+                                    }
+                                }
                                 Flow {
                                     width: parent.width
                                     spacing: window.cardGap
                                     Repeater {
                                         model: filteredMovies()
                                         PosterGridCard {
-                                            item: modelData
+                                            titleText: (modelData && modelData["title"] ? modelData["title"] : "").toString()
+                                            subtitleText: (modelData && modelData["groupTitle"] ? modelData["groupTitle"] : "").toString()
+                                            artworkUrl: window.artworkSource(modelData && modelData["posterUrl"] ? modelData["posterUrl"] : "")
+                                            playbackAllowed: Boolean(modelData && modelData["playbackAllowed"])
+                                            payload: modelData
                                             cardKind: "movie"
                                             onActivated: playMovie(item)
                                         }
+                                    }
+                                }
+                                Rectangle {
+                                    width: parent.width
+                                    height: 54
+                                    radius: 18
+                                    color: "#10ffffff"
+                                    border.width: 1
+                                    border.color: "#18ffffff"
+                                    visible: apiClient.movieHasMore || apiClient.movieLoadingMore
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: apiClient.movieLoadingMore ? "Filmler yukleniyor" : "Daha fazla film yukle"
+                                        color: window.textMuted
+                                        font.pixelSize: 13
+                                        font.bold: true
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        enabled: apiClient.movieHasMore && !apiClient.movieLoadingMore
+                                        onClicked: apiClient.loadMoreMovies()
                                     }
                                 }
                                 GlassCard {

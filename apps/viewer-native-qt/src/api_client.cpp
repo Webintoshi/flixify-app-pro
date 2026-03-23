@@ -258,6 +258,18 @@ QVariantList ApiClient::movies() const {
   return m_movies;
 }
 
+QVariantList ApiClient::movieGroups() const {
+  return m_movieGroups;
+}
+
+bool ApiClient::movieHasMore() const {
+  return m_movieHasMore;
+}
+
+bool ApiClient::movieLoadingMore() const {
+  return m_movieLoadingMore;
+}
+
 QVariantList ApiClient::series() const {
   return m_series;
 }
@@ -880,12 +892,16 @@ void ApiClient::loadMoreLive() {
   fetchLiveCatalog(nextPage, m_livePageSize > 0 ? m_livePageSize : 300, m_liveSearch, m_liveGroup);
 }
 
-void ApiClient::fetchMovieCatalog(int page, int pageSize, const QString &search) {
+void ApiClient::fetchMovieCatalog(int page, int pageSize, const QString &search, const QString &group) {
   const int safePage = page > 0 ? page : 1;
-  const int safePageSize = qBound(1, pageSize, 300);
+  const int safePageSize = qBound(1, pageSize, 60);
   const QString safeSearch = search;
+  const QString safeGroup = group;
 
   beginRequest();
+  if (safePage > 1) {
+    setMovieLoadingMore(true);
+  }
   QUrl url = resolvedUrl(QStringLiteral("/me/catalog/movies"));
   QUrlQuery query(url);
   query.addQueryItem(QStringLiteral("page"), QString::number(safePage));
@@ -893,20 +909,24 @@ void ApiClient::fetchMovieCatalog(int page, int pageSize, const QString &search)
   if (!safeSearch.trimmed().isEmpty()) {
     query.addQueryItem(QStringLiteral("search"), safeSearch.trimmed());
   }
+  if (!safeGroup.trimmed().isEmpty()) {
+    query.addQueryItem(QStringLiteral("group"), safeGroup.trimmed());
+  }
   url.setQuery(query);
 
   QNetworkReply *reply = m_network.get(makeJsonRequest(url, m_accessToken));
-  connect(reply, &QNetworkReply::finished, this, [this, reply, safePage, safePageSize, safeSearch]() {
+  connect(reply, &QNetworkReply::finished, this, [this, reply, safePage, safePageSize, safeSearch, safeGroup]() {
     const QByteArray body = reply->readAll();
     const bool ok = reply->error() == QNetworkReply::NoError;
     const bool authFailed = isAuthStatus(reply);
     reply->deleteLater();
     endRequest();
+    setMovieLoadingMore(false);
 
     if (!ok) {
       if (authFailed) {
-        handleAuthFailure(QStringLiteral("movies"), [this, safePage, safePageSize, safeSearch]() {
-          fetchMovieCatalog(safePage, safePageSize, safeSearch);
+        handleAuthFailure(QStringLiteral("movies"), [this, safePage, safePageSize, safeSearch, safeGroup]() {
+          fetchMovieCatalog(safePage, safePageSize, safeSearch, safeGroup);
         });
         return;
       }
@@ -917,9 +937,24 @@ void ApiClient::fetchMovieCatalog(int page, int pageSize, const QString &search)
       return;
     }
 
-    const QJsonDocument document = QJsonDocument::fromJson(body);
-    updateMoviesFromJson(document.object().value(QStringLiteral("items")).toArray());
+    const QJsonObject payload = QJsonDocument::fromJson(body).object();
+    updateMoviesCatalogFromJson(payload, safePage > 1);
+    m_moviePage = safePage;
+    m_moviePageSize = safePageSize;
+    m_movieTotal = payload.value(QStringLiteral("total")).toInt(m_movies.size());
+    m_movieSearch = safeSearch;
+    m_movieGroup = safeGroup;
+    setMovieHasMore(m_movies.size() < m_movieTotal);
   });
+}
+
+void ApiClient::loadMoreMovies() {
+  if (m_movieLoadingMore || !m_movieHasMore) {
+    return;
+  }
+
+  const int nextPage = m_moviePage > 0 ? m_moviePage + 1 : 2;
+  fetchMovieCatalog(nextPage, m_moviePageSize > 0 ? m_moviePageSize : 18, m_movieSearch, m_movieGroup);
 }
 
 void ApiClient::fetchSeriesCatalog(int page, int pageSize, const QString &search) {
@@ -966,7 +1001,7 @@ void ApiClient::fetchSeriesCatalog(int page, int pageSize, const QString &search
 
 void ApiClient::fetchAllCatalogs(const QString &search, int livePageSize) {
   fetchLiveCatalog(1, livePageSize, search);
-  fetchMovieCatalog(1, 300, search);
+  fetchMovieCatalog(1, 18, search);
   fetchSeriesCatalog(1, 200, search);
 }
 
@@ -1326,6 +1361,24 @@ void ApiClient::setLiveLoadingMore(bool value) {
   emit liveLoadingMoreChanged();
 }
 
+void ApiClient::setMovieHasMore(bool value) {
+  if (value == m_movieHasMore) {
+    return;
+  }
+
+  m_movieHasMore = value;
+  emit movieHasMoreChanged();
+}
+
+void ApiClient::setMovieLoadingMore(bool value) {
+  if (value == m_movieLoadingMore) {
+    return;
+  }
+
+  m_movieLoadingMore = value;
+  emit movieLoadingMoreChanged();
+}
+
 void ApiClient::beginRequest() {
   m_activeRequests += 1;
   setBusy(m_activeRequests > 0);
@@ -1342,10 +1395,16 @@ void ApiClient::clearAuthenticatedData() {
   setAppUpdate({});
   setLiveHasMore(false);
   setLiveLoadingMore(false);
+  setMovieHasMore(false);
+  setMovieLoadingMore(false);
   m_livePage = 0;
   m_liveTotal = 0;
   m_liveSearch.clear();
   m_liveGroup.clear();
+  m_moviePage = 0;
+  m_movieTotal = 0;
+  m_movieSearch.clear();
+  m_movieGroup.clear();
   m_liveCatalogGeneration += 1;
 
   if (!m_liveChannels.isEmpty()) {
@@ -1359,6 +1418,10 @@ void ApiClient::clearAuthenticatedData() {
   if (!m_movies.isEmpty()) {
     m_movies.clear();
     emit moviesChanged();
+  }
+  if (!m_movieGroups.isEmpty()) {
+    m_movieGroups.clear();
+    emit movieGroupsChanged();
   }
   if (!m_series.isEmpty()) {
     m_series.clear();
@@ -1511,9 +1574,36 @@ QVariantMap ApiClient::mapSeriesFromJson(const QJsonObject &item) {
   return row;
 }
 
-void ApiClient::updateMoviesFromJson(const QJsonArray &items) {
+void ApiClient::updateMoviesCatalogFromJson(const QJsonObject &payload, bool append) {
+  updateMovieGroupsFromJson(payload.value(QStringLiteral("groups")).toArray());
+  updateMoviesFromJson(payload.value(QStringLiteral("items")).toArray(), append);
+}
+
+void ApiClient::updateMovieGroupsFromJson(const QJsonArray &groups) {
+  QVariantList nextGroups;
+  nextGroups.reserve(groups.size());
+
+  for (const QJsonValue &value : groups) {
+    const QJsonObject item = value.toObject();
+    QVariantMap row;
+    row.insert(QStringLiteral("title"), item.value(QStringLiteral("title")).toString());
+    row.insert(QStringLiteral("count"), item.value(QStringLiteral("count")).toInt());
+    row.insert(QStringLiteral("kind"), item.value(QStringLiteral("kind")).toString());
+    nextGroups.push_back(row);
+  }
+
+  m_movieGroups = nextGroups;
+  emit movieGroupsChanged();
+}
+
+void ApiClient::updateMoviesFromJson(const QJsonArray &items, bool append) {
   QVariantList nextItems;
-  nextItems.reserve(items.size());
+  if (append) {
+    nextItems = m_movies;
+    nextItems.reserve(m_movies.size() + items.size());
+  } else {
+    nextItems.reserve(items.size());
+  }
 
   for (const QJsonValue &value : items) {
     const QJsonObject item = value.toObject();
@@ -1524,6 +1614,21 @@ void ApiClient::updateMoviesFromJson(const QJsonArray &items) {
     row.insert(QStringLiteral("groupTitle"), item.value(QStringLiteral("groupTitle")).toString());
     row.insert(QStringLiteral("streamUrl"), item.value(QStringLiteral("streamUrl")).toString());
     row.insert(QStringLiteral("playbackAllowed"), item.value(QStringLiteral("playbackAllowed")).toBool());
+
+    if (append) {
+      const QString rowId = row.value(QStringLiteral("id")).toString();
+      bool alreadyPresent = false;
+      for (const QVariant &existingValue : nextItems) {
+        if (existingValue.toMap().value(QStringLiteral("id")).toString() == rowId) {
+          alreadyPresent = true;
+          break;
+        }
+      }
+      if (alreadyPresent) {
+        continue;
+      }
+    }
+
     nextItems.push_back(row);
   }
 
