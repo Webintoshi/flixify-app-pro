@@ -1,6 +1,6 @@
 {
   "name": "@flixify/viewer-native-qt",
-  "version": "2.2.14",
+  "version": "2.2.15",
   "private": true,
   "type": "module",
   "scripts": {

@@ -83,6 +83,7 @@ ApplicationWindow {
     property string liveSearchText: ""
     property string playerSubtitle: ""
     property string playerImageUrl: ""
+    property bool liveControlsVisible: false
     property var pendingPackage: null
     property string selectedPaymentMethodId: ""
     property string toastMessage: ""
@@ -417,6 +418,12 @@ ApplicationWindow {
     function appUpdateVisible() { return Boolean(appUpdatePayload().updateAvailable && appUpdatePayload().latestVersion && appUpdatePayload().latestVersion !== dismissedUpdateVersion) }
     function appUpdateBannerVisible() { return appUpdateVisible() || apiClient.updateInProgress || apiClient.updateError.length > 0 }
     function updateProgressPercent() { return Math.max(0, Math.min(100, Math.round((apiClient.updateProgress || 0) * 100))) }
+    function showLiveControls() {
+        liveControlsVisible = true
+        if (currentScreen === "live" && playerVisible && selectedLiveItem() !== null && selectedLiveItem().playbackAllowed !== false) {
+            liveControlsHideTimer.restart()
+        }
+    }
 
     function openScreen(screenName) {
         if (currentScreen === "live" && screenName !== "live" && playbackController.activeContentKind === "live" && playerVisible) {
@@ -467,9 +474,11 @@ ApplicationWindow {
                 playbackController.stop()
             }
             playerVisible = false
+            liveControlsVisible = false
             return
         }
         playerVisible = true
+        showLiveControls()
         const sameChannel = playbackController.activeContentKind === "live" && playbackController.activeChannelId === channel.id
         if (sameChannel && !forceRestart) {
             return
@@ -490,6 +499,7 @@ ApplicationWindow {
 
     function closePlayer() {
         playerVisible = false
+        liveControlsVisible = false
         playbackController.stop()
     }
 
@@ -529,6 +539,23 @@ ApplicationWindow {
         interval: 120
         repeat: false
         onTriggered: ensureLiveAutoplay(false)
+    }
+
+    Timer {
+        id: liveControlsHideTimer
+        interval: 3000
+        repeat: false
+        onTriggered: {
+            if (currentScreen !== "live" || !inlineLivePlayerVisible()) {
+                liveControlsVisible = false
+                return
+            }
+            if (liveVolumeSlider.pressed) {
+                restart()
+                return
+            }
+            liveControlsVisible = false
+        }
     }
 
     Timer {
@@ -2197,6 +2224,19 @@ ApplicationWindow {
                                                     }
                                                 }
 
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    acceptedButtons: Qt.NoButton
+                                                    enabled: selectedLiveItem() !== null && filteredLiveItems().length > 0 && selectedLiveItem().playbackAllowed !== false
+                                                    onEntered: showLiveControls()
+                                                    onPositionChanged: showLiveControls()
+                                                    onWheel: function(wheel) {
+                                                        wheel.accepted = false
+                                                        showLiveControls()
+                                                    }
+                                                }
+
                                                 Rectangle {
                                                     anchors.top: parent.top
                                                     anchors.left: parent.left
@@ -2222,86 +2262,218 @@ ApplicationWindow {
                                                     }
                                                 }
 
-                                                Rectangle {
+                                                Item {
                                                     anchors.left: parent.left
                                                     anchors.right: parent.right
                                                     anchors.bottom: parent.bottom
                                                     anchors.margins: 16
-                                                    height: 74
-                                                    radius: 22
-                                                    color: "#c7070a0f"
-                                                    border.width: 1
-                                                    border.color: "#12ffffff"
+                                                    height: 64
                                                     visible: selectedLiveItem() !== null && filteredLiveItems().length > 0 && selectedLiveItem().playbackAllowed !== false
+                                                    opacity: liveControlsVisible ? 1.0 : 0.0
+                                                    z: 4
+                                                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
-                                                    RowLayout {
+                                                    MouseArea {
                                                         anchors.fill: parent
-                                                        anchors.margins: 14
-                                                        spacing: 12
+                                                        hoverEnabled: true
+                                                        acceptedButtons: Qt.NoButton
+                                                        onEntered: showLiveControls()
+                                                        onPositionChanged: showLiveControls()
+                                                    }
 
-                                                        AppButton {
-                                                            text: playbackController.muted || playbackController.volume <= 0 ? "Sesi Ac" : "Sesi Kapat"
-                                                            secondary: true
-                                                            implicitWidth: 118
-                                                            onClicked: playbackController.toggleMuted()
-                                                        }
+                                                    Rectangle {
+                                                        anchors.left: parent.left
+                                                        anchors.bottom: parent.bottom
+                                                        width: window.compactWindow ? 246 : 276
+                                                        height: 58
+                                                        radius: 29
+                                                        color: "#d10a0e15"
+                                                        border.width: 1
+                                                        border.color: "#18ffffff"
 
-                                                        Slider {
-                                                            id: liveVolumeSlider
-                                                            Layout.preferredWidth: window.compactWindow ? 144 : 180
-                                                            Layout.alignment: Qt.AlignVCenter
-                                                            from: 0
-                                                            to: 1
-                                                            value: 1
-                                                            stepSize: 0.01
-                                                            Component.onCompleted: value = playbackController.muted ? 0 : playbackController.volume
-                                                            onMoved: playbackController.setVolume(value)
+                                                        Row {
+                                                            anchors.fill: parent
+                                                            anchors.margins: 10
+                                                            spacing: 10
 
-                                                            background: Rectangle {
-                                                                x: liveVolumeSlider.leftPadding
-                                                                y: liveVolumeSlider.topPadding + liveVolumeSlider.availableHeight / 2 - height / 2
-                                                                implicitWidth: 180
-                                                                implicitHeight: 6
-                                                                width: liveVolumeSlider.availableWidth
-                                                                height: implicitHeight
-                                                                radius: 3
-                                                                color: "#20ffffff"
+                                                            Rectangle {
+                                                                width: 38
+                                                                height: 38
+                                                                radius: 19
+                                                                anchors.verticalCenter: parent.verticalCenter
+                                                                color: liveVolumeMouse.containsMouse ? "#24ffffff" : "#18ffffff"
+                                                                border.width: 1
+                                                                border.color: liveVolumeMouse.containsMouse ? "#34ffffff" : "#1effffff"
 
-                                                                Rectangle {
-                                                                    width: liveVolumeSlider.visualPosition * parent.width
-                                                                    height: parent.height
-                                                                    radius: 3
-                                                                    color: window.accent
+                                                                Canvas {
+                                                                    anchors.fill: parent
+                                                                    anchors.margins: 9
+                                                                    antialiasing: true
+                                                                    onPaint: {
+                                                                        const ctx = getContext("2d")
+                                                                        ctx.reset()
+                                                                        ctx.clearRect(0, 0, width, height)
+                                                                        ctx.fillStyle = "#ffffff"
+                                                                        ctx.strokeStyle = "#ffffff"
+                                                                        ctx.lineWidth = 2.2
+                                                                        ctx.lineCap = "round"
+                                                                        ctx.lineJoin = "round"
+
+                                                                        ctx.beginPath()
+                                                                        ctx.moveTo(width * 0.12, height * 0.38)
+                                                                        ctx.lineTo(width * 0.34, height * 0.38)
+                                                                        ctx.lineTo(width * 0.54, height * 0.18)
+                                                                        ctx.lineTo(width * 0.54, height * 0.82)
+                                                                        ctx.lineTo(width * 0.34, height * 0.62)
+                                                                        ctx.lineTo(width * 0.12, height * 0.62)
+                                                                        ctx.closePath()
+                                                                        ctx.fill()
+
+                                                                        if (!(playbackController.muted || playbackController.volume <= 0)) {
+                                                                            ctx.beginPath()
+                                                                            ctx.arc(width * 0.58, height * 0.5, width * 0.12, -0.75, 0.75)
+                                                                            ctx.stroke()
+                                                                            ctx.beginPath()
+                                                                            ctx.arc(width * 0.62, height * 0.5, width * 0.2, -0.75, 0.75)
+                                                                            ctx.stroke()
+                                                                        } else {
+                                                                            ctx.beginPath()
+                                                                            ctx.moveTo(width * 0.64, height * 0.28)
+                                                                            ctx.lineTo(width * 0.88, height * 0.72)
+                                                                            ctx.stroke()
+                                                                        }
+                                                                    }
+                                                                }
+
+                                                                MouseArea {
+                                                                    id: liveVolumeMouse
+                                                                    anchors.fill: parent
+                                                                    hoverEnabled: true
+                                                                    cursorShape: Qt.PointingHandCursor
+                                                                    onEntered: showLiveControls()
+                                                                    onClicked: {
+                                                                        showLiveControls()
+                                                                        playbackController.toggleMuted()
+                                                                    }
                                                                 }
                                                             }
 
-                                                            handle: Rectangle {
-                                                                x: liveVolumeSlider.leftPadding + liveVolumeSlider.visualPosition * (liveVolumeSlider.availableWidth - width)
-                                                                y: liveVolumeSlider.topPadding + liveVolumeSlider.availableHeight / 2 - height / 2
-                                                                implicitWidth: 18
-                                                                implicitHeight: 18
-                                                                radius: 9
-                                                                color: "#ffffff"
-                                                                border.width: 1
-                                                                border.color: "#40ffffff"
+                                                            Slider {
+                                                                id: liveVolumeSlider
+                                                                width: window.compactWindow ? 126 : 152
+                                                                anchors.verticalCenter: parent.verticalCenter
+                                                                from: 0
+                                                                to: 1
+                                                                value: 1
+                                                                stepSize: 0.01
+                                                                Component.onCompleted: value = playbackController.muted ? 0 : playbackController.volume
+                                                                onMoved: {
+                                                                    showLiveControls()
+                                                                    playbackController.setVolume(value)
+                                                                }
+                                                                onPressedChanged: {
+                                                                    if (pressed) showLiveControls()
+                                                                    else liveControlsHideTimer.restart()
+                                                                }
+
+                                                                background: Rectangle {
+                                                                    x: liveVolumeSlider.leftPadding
+                                                                    y: liveVolumeSlider.topPadding + liveVolumeSlider.availableHeight / 2 - height / 2
+                                                                    implicitWidth: 150
+                                                                    implicitHeight: 6
+                                                                    width: liveVolumeSlider.availableWidth
+                                                                    height: implicitHeight
+                                                                    radius: 3
+                                                                    color: "#24ffffff"
+
+                                                                    Rectangle {
+                                                                        width: liveVolumeSlider.visualPosition * parent.width
+                                                                        height: parent.height
+                                                                        radius: 3
+                                                                        color: window.accentStrong
+                                                                    }
+                                                                }
+
+                                                                handle: Rectangle {
+                                                                    x: liveVolumeSlider.leftPadding + liveVolumeSlider.visualPosition * (liveVolumeSlider.availableWidth - width)
+                                                                    y: liveVolumeSlider.topPadding + liveVolumeSlider.availableHeight / 2 - height / 2
+                                                                    implicitWidth: 16
+                                                                    implicitHeight: 16
+                                                                    radius: 8
+                                                                    color: "#ffffff"
+                                                                    border.width: 1
+                                                                    border.color: "#44ffffff"
+                                                                }
+                                                            }
+
+                                                            Text {
+                                                                anchors.verticalCenter: parent.verticalCenter
+                                                                text: `${Math.round((playbackController.muted ? 0 : playbackController.volume) * 100)}%`
+                                                                color: window.textPrimary
+                                                                font.pixelSize: 12
+                                                                font.bold: true
+                                                            }
+                                                        }
+                                                    }
+
+                                                    Rectangle {
+                                                        anchors.right: parent.right
+                                                        anchors.bottom: parent.bottom
+                                                        width: 58
+                                                        height: 58
+                                                        radius: 29
+                                                        color: "#d10a0e15"
+                                                        border.width: 1
+                                                        border.color: liveFullscreenMouse.containsMouse ? "#34ffffff" : "#18ffffff"
+
+                                                        Canvas {
+                                                            anchors.fill: parent
+                                                            anchors.margins: 16
+                                                            antialiasing: true
+                                                            onPaint: {
+                                                                const ctx = getContext("2d")
+                                                                ctx.reset()
+                                                                ctx.clearRect(0, 0, width, height)
+                                                                ctx.strokeStyle = "#ffffff"
+                                                                ctx.lineWidth = 2.2
+                                                                ctx.lineCap = "round"
+
+                                                                ctx.beginPath()
+                                                                ctx.moveTo(width * 0.18, height * 0.38)
+                                                                ctx.lineTo(width * 0.18, height * 0.18)
+                                                                ctx.lineTo(width * 0.38, height * 0.18)
+                                                                ctx.stroke()
+
+                                                                ctx.beginPath()
+                                                                ctx.moveTo(width * 0.62, height * 0.18)
+                                                                ctx.lineTo(width * 0.82, height * 0.18)
+                                                                ctx.lineTo(width * 0.82, height * 0.38)
+                                                                ctx.stroke()
+
+                                                                ctx.beginPath()
+                                                                ctx.moveTo(width * 0.18, height * 0.62)
+                                                                ctx.lineTo(width * 0.18, height * 0.82)
+                                                                ctx.lineTo(width * 0.38, height * 0.82)
+                                                                ctx.stroke()
+
+                                                                ctx.beginPath()
+                                                                ctx.moveTo(width * 0.62, height * 0.82)
+                                                                ctx.lineTo(width * 0.82, height * 0.82)
+                                                                ctx.lineTo(width * 0.82, height * 0.62)
+                                                                ctx.stroke()
                                                             }
                                                         }
 
-                                                        Text {
-                                                            text: `${Math.round((playbackController.muted ? 0 : playbackController.volume) * 100)}%`
-                                                            color: window.textPrimary
-                                                            font.pixelSize: 13
-                                                            font.bold: true
-                                                            Layout.alignment: Qt.AlignVCenter
-                                                        }
-
-                                                        Item { Layout.fillWidth: true }
-
-                                                        AppButton {
-                                                            text: window.visibility === Window.FullScreen ? "Pencereden Cik" : "Tam Ekran"
-                                                            secondary: true
-                                                            implicitWidth: 148
-                                                            onClicked: toggleWindowFullscreen()
+                                                        MouseArea {
+                                                            id: liveFullscreenMouse
+                                                            anchors.fill: parent
+                                                            hoverEnabled: true
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onEntered: showLiveControls()
+                                                            onClicked: {
+                                                                showLiveControls()
+                                                                toggleWindowFullscreen()
+                                                            }
                                                         }
                                                     }
                                                 }
