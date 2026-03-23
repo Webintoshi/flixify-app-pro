@@ -25,8 +25,9 @@ ApplicationWindow {
     readonly property color danger: "#ff7d86"
     readonly property color info: "#7cb6ff"
 
-    property string currentScreen: "home"
+    property string currentScreen: "login"
     property string authCode: ""
+    property bool showAuthCode: false
     property string authDeviceName: "Flixify Native Qt"
     property string registerDeviceName: "Flixify Native Qt"
     property string issuedCode: ""
@@ -344,16 +345,19 @@ ApplicationWindow {
                 currentScreen = "login"
             }
         }
-        function onLoginSucceeded() { currentScreen = "home"; premiumPopupDismissed = false }
+        function onLoginSucceeded() { currentScreen = "home"; premiumPopupDismissed = false; showAuthCode = false }
         function onAnonCodeIssued(code) { issuedCode = sanitizeCode(code); revealedCount = 0; scrambleSeed = 0; registerAcknowledged = false; currentScreen = "register"; revealTimer.restart() }
         function onSeriesChanged() { if (!selectedSeriesId && (apiClient.series || []).length) selectedSeriesId = apiClient.series[0].id }
         function onLiveChannelsChanged() { if (!selectedLiveId && (apiClient.liveChannels || []).length) selectedLiveId = apiClient.liveChannels[0].id }
-        function onLogoutCompleted() { currentScreen = "login"; authCode = ""; issuedCode = ""; closePlayer(); pendingPackage = null; selectedPaymentMethodId = "" }
+        function onLogoutCompleted() { currentScreen = "login"; authCode = ""; issuedCode = ""; showAuthCode = false; closePlayer(); pendingPackage = null; selectedPaymentMethodId = "" }
         function onNoticeChanged() { if (apiClient.notice && apiClient.notice.length) showToast(apiClient.notice, success) }
         function onRequestFailed(context, message) { showToast(message, danger) }
     }
 
-    Component.onCompleted: apiClient.bootstrap()
+    Component.onCompleted: {
+        currentScreen = apiClient.authenticated ? "home" : "login"
+        apiClient.bootstrap()
+    }
 
     component AppButton: Button {
         id: control
@@ -566,7 +570,7 @@ ApplicationWindow {
 
             ColumnLayout {
                 anchors.centerIn: parent
-                width: 620
+                width: currentScreen === "register" ? 560 : 460
                 spacing: 18
 
                 GlassCard {
@@ -582,6 +586,7 @@ ApplicationWindow {
                         spacing: 18
 
                         Row {
+                            anchors.horizontalCenter: parent.horizontalCenter
                             spacing: 12
                             Image { width: 42; height: 42; source: "qrc:/branding/icon.png"; fillMode: Image.PreserveAspectFit }
                             Text { text: "FLIXIFY"; color: window.textPrimary; font.pixelSize: 34; font.family: "Space Grotesk"; font.bold: true }
@@ -595,9 +600,11 @@ ApplicationWindow {
                         Text {
                             text: currentScreen === "register"
                                   ? (issuedCode.length ? "Hesabiniz olusturuldu" : "Yeni bir hesap numarasi olusturun")
-                                  : "16 haneli erisim kodunuzla giris yapin"
+                                  : "16 haneli erisim kodunuzu girin"
                             color: "#d7dce6"
                             font.pixelSize: 18
+                            width: parent.width
+                            horizontalAlignment: Text.AlignHCenter
                         }
 
                         Column {
@@ -605,13 +612,63 @@ ApplicationWindow {
                             spacing: 14
                             visible: currentScreen === "login"
 
-                            AppField {
+                            Text {
+                                text: "Erisim Kodu"
+                                color: window.textPrimary
+                                font.pixelSize: 16
+                                font.bold: true
+                            }
+
+                            Item {
                                 width: parent.width
-                                placeholderText: "X7F2 A9B1 C4D8 E6F0"
-                                text: formatCode(authCode)
-                                onTextChanged: {
-                                    const normalized = sanitizeCode(text)
-                                    if (normalized !== authCode) authCode = normalized
+                                height: 68
+
+                                AppField {
+                                    id: authCodeField
+                                    anchors.fill: parent
+                                    placeholderText: "X7F2 A9B1 C4D8 E6F0"
+                                    text: formatCode(authCode)
+                                    echoMode: showAuthCode ? TextInput.Normal : TextInput.Password
+                                    font.pixelSize: 18
+                                    font.family: "Consolas"
+                                    font.letterSpacing: 2
+                                    leftPadding: 24
+                                    rightPadding: 80
+                                    background: Rectangle {
+                                        radius: 16
+                                        color: "#141419"
+                                        border.width: 2
+                                        border.color: authCodeField.activeFocus ? window.accent : "#26ffffff"
+                                    }
+                                    onTextChanged: {
+                                        const normalized = sanitizeCode(text)
+                                        if (normalized !== authCode) authCode = normalized
+                                    }
+                                }
+
+                                Rectangle {
+                                    width: 48
+                                    height: 48
+                                    radius: 12
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 12
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: "#22ffffff"
+                                    border.width: 1
+                                    border.color: "#26ffffff"
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: showAuthCode ? "Gizle" : "Goster"
+                                        color: "#d7dce6"
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        onClicked: showAuthCode = !showAuthCode
+                                    }
                                 }
                             }
 
@@ -630,8 +687,34 @@ ApplicationWindow {
                             }
 
                             Text { text: `${sanitizeCode(authCode).length}/16`; color: window.textMuted; width: parent.width; horizontalAlignment: Text.AlignRight }
+                            Text {
+                                width: parent.width
+                                visible: apiClient.lastError.length > 0
+                                text: apiClient.lastError
+                                color: window.danger
+                                wrapMode: Text.WordWrap
+                                font.pixelSize: 13
+                            }
                             AppButton { width: parent.width; text: apiClient.busy ? "Giris Yapiliyor..." : "Giris Yap"; enabled: !apiClient.busy && sanitizeCode(authCode).length === 16; onClicked: apiClient.loginByCode(sanitizeCode(authCode), authDeviceName) }
-                            AppButton { width: parent.width; text: "Hesap Olustur"; secondary: true; onClicked: currentScreen = "register" }
+                            Row {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                spacing: 6
+                                Text { text: "Hesabiniz yok mu?"; color: window.textMuted; font.pixelSize: 15 }
+                                Text {
+                                    text: "Hesap Olustur"
+                                    color: window.accentStrong
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            showAuthCode = false
+                                            currentScreen = "register"
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         Column {
@@ -689,13 +772,14 @@ ApplicationWindow {
                                 MouseArea { anchors.fill: parent; enabled: !revealTimer.running; onClicked: registerAcknowledged = !registerAcknowledged }
                             }
 
-                            AppButton { width: parent.width; text: "Giris Ekranina Gec"; visible: issuedCode.length > 0; enabled: !revealTimer.running && registerAcknowledged; onClicked: { authCode = issuedCode; currentScreen = "login" } }
-                            AppButton { width: parent.width; text: "Zaten Hesabim Var"; secondary: true; onClicked: currentScreen = "login" }
+                            AppButton { width: parent.width; text: "Giris Ekranina Gec"; visible: issuedCode.length > 0; enabled: !revealTimer.running && registerAcknowledged; onClicked: { authCode = issuedCode; showAuthCode = false; currentScreen = "login" } }
+                            AppButton { width: parent.width; text: "Zaten Hesabim Var"; secondary: true; onClicked: { showAuthCode = false; currentScreen = "login" } }
                         }
 
                         Row {
                             width: parent.width
                             spacing: 12
+                            visible: currentScreen === "register"
                             Repeater {
                                 model: [
                                     { title: "Guvenli Erisim", copy: "Kodu kaydet, oturumu native uygulamadan ac." },
