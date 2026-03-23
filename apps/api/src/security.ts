@@ -63,7 +63,7 @@ export async function signAccessToken(payload: { userId: string; sessionId: stri
   })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime("15m")
+    .setExpirationTime("365d")
     .sign(jwtKey);
 }
 

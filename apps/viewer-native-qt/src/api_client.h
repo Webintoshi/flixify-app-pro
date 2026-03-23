@@ -6,6 +6,7 @@
 #include <QPointer>
 #include <QNetworkRequest>
 #include <QFile>
+#include <QTimer>
 #include <functional>
 #include <QVariantList>
 #include <QVariantMap>
@@ -138,6 +139,7 @@ private:
   void clearAuthenticatedData();
   void setRefreshToken(const QString &value);
   void setSessionTokens(const QString &accessToken, const QString &refreshToken);
+  void updateSessionPersistence();
   void handleAuthFailure(const QString &context, std::function<void()> retry);
   void updateLiveChannelsFromJson(const QJsonArray &items);
   void updateMoviesFromJson(const QJsonArray &items);
@@ -150,6 +152,7 @@ private:
   QString m_refreshToken;
   bool m_restoringSession = false;
   bool m_refreshInFlight = false;
+  bool m_lastRefreshAuthInvalid = false;
   bool m_busy = false;
   int m_activeRequests = 0;
   QString m_lastError;
@@ -169,5 +172,6 @@ private:
   QVariantList m_movies;
   QVariantList m_series;
   QList<std::function<void(bool)>> m_refreshCompletions;
+  QTimer m_sessionRefreshRetryTimer;
   QNetworkAccessManager m_network;
 };

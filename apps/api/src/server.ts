@@ -1303,7 +1303,12 @@ export function buildServer() {
     await revokeSession(session.id);
     const refreshToken = generateRefreshToken();
     const refreshTokenHash = await hashSecret(refreshToken);
-    const newSessionId = await createDeviceSession(session.user_id, refreshTokenHash);
+    const newSessionId = await createDeviceSession(
+      session.user_id,
+      refreshTokenHash,
+      session.device_name ?? undefined,
+      session.platform ?? undefined
+    );
     if (!newSessionId) {
       return reply.status(500).send({ message: "Yeni oturum acilamadi." });
     }

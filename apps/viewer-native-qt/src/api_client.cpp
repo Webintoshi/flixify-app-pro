@@ -33,9 +33,33 @@ QString extractApiErrorMessage(const QByteArray &body, const QString &fallback) 
   return text.isEmpty() ? fallback : text;
 }
 
+QString extractApiErrorReason(const QByteArray &body) {
+  const QJsonDocument document = QJsonDocument::fromJson(body);
+  if (!document.isObject()) {
+    return {};
+  }
+
+  return document.object().value(QStringLiteral("reason")).toString().trimmed();
+}
+
 bool isAuthStatus(const QNetworkReply *reply) {
   const int status = reply ? reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() : 0;
   return status == 401 || status == 403;
+}
+
+bool isTerminalRefreshFailure(int status, const QByteArray &body) {
+  if (status == 403) {
+    return true;
+  }
+
+  if (status != 401) {
+    return false;
+  }
+
+  const QString reason = extractApiErrorReason(body);
+  return reason == QStringLiteral("invalid-refresh")
+    || reason == QStringLiteral("revoked")
+    || reason == QStringLiteral("expired");
 }
 
 QNetworkRequest makeJsonRequest(const QUrl &url, const QString &accessToken = QString()) {
@@ -76,6 +100,15 @@ QVariantList mapJsonArray(const QJsonArray &items) {
 
 ApiClient::ApiClient(QObject *parent)
   : QObject(parent) {
+  m_sessionRefreshRetryTimer.setInterval(15'000);
+  m_sessionRefreshRetryTimer.setSingleShot(true);
+  connect(&m_sessionRefreshRetryTimer, &QTimer::timeout, this, [this]() {
+    if (m_refreshInFlight || m_refreshToken.trimmed().isEmpty()) {
+      return;
+    }
+    refreshSession();
+  });
+
   QSettings settings;
   const QString storedAccessToken = settings.value(QStringLiteral("session/accessToken")).toString().trimmed();
   const QString storedRefreshToken = settings.value(QStringLiteral("session/refreshToken")).toString().trimmed();
@@ -85,6 +118,7 @@ ApiClient::ApiClient(QObject *parent)
   if (!storedRefreshToken.isEmpty()) {
     m_refreshToken = storedRefreshToken;
   }
+  updateSessionPersistence();
 }
 
 QString ApiClient::apiBaseUrl() const {
@@ -138,11 +172,18 @@ void ApiClient::setRefreshToken(const QString &value) {
   } else {
     settings.setValue(QStringLiteral("session/refreshToken"), m_refreshToken);
   }
+  updateSessionPersistence();
 }
 
 void ApiClient::setSessionTokens(const QString &accessToken, const QString &refreshToken) {
   setRefreshToken(refreshToken);
   setAccessToken(accessToken);
+}
+
+void ApiClient::updateSessionPersistence() {
+  if (m_refreshToken.trimmed().isEmpty()) {
+    m_sessionRefreshRetryTimer.stop();
+  }
 }
 
 bool ApiClient::authenticated() const {
@@ -341,6 +382,8 @@ void ApiClient::loginByCode(const QString &code, const QString &deviceName, cons
 }
 
 void ApiClient::logout() {
+  m_lastRefreshAuthInvalid = false;
+  m_sessionRefreshRetryTimer.stop();
   setSessionTokens(QString(), QString());
   clearAuthenticatedData();
   setLastError(QString());
@@ -361,6 +404,7 @@ void ApiClient::refreshSession(std::function<void(bool)> completion) {
   }
 
   if (m_refreshToken.trimmed().isEmpty()) {
+    m_lastRefreshAuthInvalid = true;
     const auto completions = std::move(m_refreshCompletions);
     m_refreshCompletions.clear();
     for (const auto &callback : completions) {
@@ -371,6 +415,8 @@ void ApiClient::refreshSession(std::function<void(bool)> completion) {
     return;
   }
 
+  m_lastRefreshAuthInvalid = false;
+  m_sessionRefreshRetryTimer.stop();
   m_refreshInFlight = true;
   beginRequest();
 
@@ -385,6 +431,7 @@ void ApiClient::refreshSession(std::function<void(bool)> completion) {
   connect(reply, &QNetworkReply::finished, this, [this, reply]() {
     const QByteArray body = reply->readAll();
     const bool ok = reply->error() == QNetworkReply::NoError;
+    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     reply->deleteLater();
     m_refreshInFlight = false;
     endRequest();
@@ -393,8 +440,14 @@ void ApiClient::refreshSession(std::function<void(bool)> completion) {
     m_refreshCompletions.clear();
 
     if (!ok) {
-      setSessionTokens(QString(), QString());
-      clearAuthenticatedData();
+      m_lastRefreshAuthInvalid = isTerminalRefreshFailure(status, body);
+      if (m_lastRefreshAuthInvalid) {
+        setSessionTokens(QString(), QString());
+        clearAuthenticatedData();
+      } else {
+        setNotice(QStringLiteral("Baglanti sorunu nedeniyle oturum korunuyor. Yeniden denenecek."));
+        m_sessionRefreshRetryTimer.start();
+      }
       for (const auto &callback : completions) {
         if (callback) {
           callback(false);
@@ -408,6 +461,8 @@ void ApiClient::refreshSession(std::function<void(bool)> completion) {
       root.value(QStringLiteral("accessToken")).toString(),
       root.value(QStringLiteral("refreshToken")).toString()
     );
+    m_lastRefreshAuthInvalid = false;
+    setLastError(QString());
 
     const QJsonObject user = root.value(QStringLiteral("user")).toObject();
     if (!user.isEmpty()) {
@@ -1239,9 +1294,16 @@ void ApiClient::handleAuthFailure(const QString &context, std::function<void()> 
     }
 
     setRestoringSession(false);
-    setLastError(QStringLiteral("Oturum suresi doldu. Lutfen tekrar giris yapin."));
-    emit requestFailed(context, m_lastError);
-    logout();
+    if (m_lastRefreshAuthInvalid) {
+      setLastError(QStringLiteral("Oturum suresi doldu. Lutfen tekrar giris yapin."));
+      emit requestFailed(context, m_lastError);
+      logout();
+      return;
+    }
+
+    const QString message = QStringLiteral("Baglanti sorunu nedeniyle oturum korunuyor. Tekrar denenecek.");
+    setLastError(message);
+    emit requestFailed(context, message);
   });
 }
 

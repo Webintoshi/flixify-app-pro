@@ -671,7 +671,7 @@ export async function createDeviceSession(
         platform,
         refresh_token_hash,
         expires_at
-      ) values ($1, $2, $3, $4, timezone('utc', now()) + interval '30 days')
+      ) values ($1, $2, $3, $4, timezone('utc', now()) + interval '10 years')
       returning id
     `,
     [userId, deviceName ?? null, platform ?? null, refreshTokenHash]
@@ -686,10 +686,12 @@ export async function getSessionById(sessionId: string) {
     user_id: string;
     refresh_token_hash: string;
     expires_at: string;
+    device_name: string | null;
+    platform: string | null;
     revoked_at: string | null;
   }>(
     `
-      select id, user_id, refresh_token_hash, expires_at, revoked_at
+      select id, user_id, refresh_token_hash, expires_at, device_name, platform, revoked_at
       from public.device_sessions
       where id = $1
       limit 1
@@ -811,7 +813,7 @@ export async function getUserStatus(userId: string) {
 
 export async function touchDeviceSession(sessionId: string) {
   await query(
-    "update public.device_sessions set last_seen_at = timezone('utc', now()) where id = $1",
+    "update public.device_sessions set last_seen_at = timezone('utc', now()), expires_at = timezone('utc', now()) + interval '10 years' where id = $1",
     [sessionId]
   );
 }
