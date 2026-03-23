@@ -125,6 +125,14 @@ bool PlaybackController::paused() const {
   return m_paused;
 }
 
+double PlaybackController::volume() const {
+  return m_volume;
+}
+
+bool PlaybackController::muted() const {
+  return m_muted;
+}
+
 double PlaybackController::positionSeconds() const {
   return m_positionSeconds;
 }
@@ -289,6 +297,44 @@ void PlaybackController::togglePause() {
   pause();
 }
 
+void PlaybackController::setVolume(double value) {
+  const double normalized = std::clamp(value, 0.0, 1.0);
+  if (normalized > 0.0) {
+    m_lastAudibleVolume = normalized;
+  }
+
+  if (m_player) {
+    libvlc_audio_set_volume(m_player, qRound(normalized * 100.0));
+    libvlc_audio_set_mute(m_player, normalized <= 0.0 ? 1 : 0);
+  }
+
+  setVolumeLevel(normalized);
+  setMuted(normalized <= 0.0);
+}
+
+void PlaybackController::toggleMuted() {
+  const bool nextMuted = !m_muted;
+  if (nextMuted) {
+    if (m_volume > 0.0) {
+      m_lastAudibleVolume = m_volume;
+    }
+    if (m_player) {
+      libvlc_audio_set_mute(m_player, 1);
+    }
+    setVolumeLevel(0.0);
+    setMuted(true);
+    return;
+  }
+
+  const double restoredVolume = m_lastAudibleVolume > 0.0 ? m_lastAudibleVolume : 1.0;
+  if (m_player) {
+    libvlc_audio_set_volume(m_player, qRound(restoredVolume * 100.0));
+    libvlc_audio_set_mute(m_player, 0);
+  }
+  setVolumeLevel(restoredVolume);
+  setMuted(false);
+}
+
 void PlaybackController::seekTo(double seconds) {
   if (!m_player || !isActiveVod()) {
     return;
@@ -411,6 +457,22 @@ void PlaybackController::setPaused(bool value) {
   }
   m_paused = value;
   emit pausedChanged();
+}
+
+void PlaybackController::setVolumeLevel(double value) {
+  if (qFuzzyCompare(value + 1.0, m_volume + 1.0)) {
+    return;
+  }
+  m_volume = value;
+  emit volumeChanged();
+}
+
+void PlaybackController::setMuted(bool value) {
+  if (value == m_muted) {
+    return;
+  }
+  m_muted = value;
+  emit mutedChanged();
 }
 
 void PlaybackController::setPositionSeconds(double value) {
@@ -800,6 +862,11 @@ void PlaybackController::recreatePlayer() {
 
   m_player = libvlc_media_player_new(m_vlc);
   attachPlayerEvents();
+  if (m_player) {
+    const double baseVolume = m_muted ? (m_lastAudibleVolume > 0.0 ? m_lastAudibleVolume : 1.0) : m_volume;
+    libvlc_audio_set_volume(m_player, qRound(std::clamp(baseVolume, 0.0, 1.0) * 100.0));
+    libvlc_audio_set_mute(m_player, m_muted ? 1 : 0);
+  }
   bindVideoSurface();
 }
 

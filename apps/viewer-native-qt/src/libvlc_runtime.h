@@ -66,6 +66,10 @@ int libvlc_event_attach(
   libvlc_callback_t callback,
   void *opaque
 );
+int libvlc_audio_get_volume(libvlc_media_player_t *player);
+int libvlc_audio_set_volume(libvlc_media_player_t *player, int volume);
+int libvlc_audio_get_mute(libvlc_media_player_t *player);
+void libvlc_audio_set_mute(libvlc_media_player_t *player, int mute);
 
 void libvlc_media_player_set_hwnd(libvlc_media_player_t *player, void *windowHandle);
 void libvlc_media_player_set_nsobject(libvlc_media_player_t *player, void *objectHandle);

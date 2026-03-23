@@ -24,6 +24,8 @@ class PlaybackController : public QObject {
   Q_PROPERTY(QString decoderMode READ decoderMode NOTIFY decoderModeChanged)
   Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
   Q_PROPERTY(bool paused READ paused NOTIFY pausedChanged)
+  Q_PROPERTY(double volume READ volume NOTIFY volumeChanged)
+  Q_PROPERTY(bool muted READ muted NOTIFY mutedChanged)
   Q_PROPERTY(double positionSeconds READ positionSeconds NOTIFY positionSecondsChanged)
   Q_PROPERTY(double durationSeconds READ durationSeconds NOTIFY durationSecondsChanged)
   Q_PROPERTY(QVariantList audioTracks READ audioTracks NOTIFY audioTracksChanged)
@@ -44,6 +46,8 @@ public:
   QString decoderMode() const;
   bool busy() const;
   bool paused() const;
+  double volume() const;
+  bool muted() const;
   double positionSeconds() const;
   double durationSeconds() const;
   QVariantList audioTracks() const;
@@ -57,6 +61,8 @@ public:
   Q_INVOKABLE void pause();
   Q_INVOKABLE void resume();
   Q_INVOKABLE void togglePause();
+  Q_INVOKABLE void setVolume(double value);
+  Q_INVOKABLE void toggleMuted();
   Q_INVOKABLE void seekTo(double seconds);
   Q_INVOKABLE void seekBy(double seconds);
   Q_INVOKABLE void selectAudioTrack(const QString &trackId);
@@ -74,6 +80,8 @@ signals:
   void decoderModeChanged();
   void busyChanged();
   void pausedChanged();
+  void volumeChanged();
+  void mutedChanged();
   void positionSecondsChanged();
   void durationSecondsChanged();
   void audioTracksChanged();
@@ -109,6 +117,8 @@ private:
   void setDecoderMode(const QString &value);
   void setBusy(bool value);
   void setPaused(bool value);
+  void setVolumeLevel(double value);
+  void setMuted(bool value);
   void setPositionSeconds(double value);
   void setDurationSeconds(double value);
   void setAudioTracks(const QVariantList &value);
@@ -155,6 +165,7 @@ private:
   int m_candidateIndex = -1;
   bool m_busy = false;
   bool m_paused = true;
+  bool m_muted = false;
   bool m_retryingSoftwareDecode = false;
   bool m_retryingVodResolve = false;
   bool m_autoSelectingPreferredAudioTrack = false;
@@ -164,6 +175,8 @@ private:
   PlaybackTarget m_activeTarget;
   QString m_diagnosticsSessionId;
   QString m_decoderMode = QStringLiteral("hardware");
+  double m_volume = 1.0;
+  double m_lastAudibleVolume = 1.0;
   double m_positionSeconds = 0.0;
   double m_durationSeconds = 0.0;
   double m_pendingResumeSeconds = 0.0;

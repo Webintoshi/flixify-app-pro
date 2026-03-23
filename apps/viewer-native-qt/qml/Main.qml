@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import Flixify.Native 1.0
 
 ApplicationWindow {
@@ -355,12 +356,33 @@ ApplicationWindow {
             !pendingPackage &&
             !playerVisible
     }
+    function inlineLivePlayerVisible() {
+        return currentScreen === "live" &&
+            playerVisible &&
+            playbackController.activeContentKind === "live" &&
+            playbackController.activeChannelId === selectedLiveId &&
+            selectedLiveItem() !== null &&
+            selectedLiveItem().playbackAllowed !== false
+    }
+    function overlayPlayerVisible() {
+        return playerVisible && !inlineLivePlayerVisible()
+    }
+    function toggleWindowFullscreen() {
+        if (window.visibility === Window.FullScreen) {
+            window.showNormal()
+            return
+        }
+        window.showFullScreen()
+    }
     function appUpdatePayload() { return apiClient.appUpdate || ({}) }
     function appUpdateVisible() { return Boolean(appUpdatePayload().updateAvailable && appUpdatePayload().latestVersion && appUpdatePayload().latestVersion !== dismissedUpdateVersion) }
     function appUpdateBannerVisible() { return appUpdateVisible() || apiClient.updateInProgress || apiClient.updateError.length > 0 }
     function updateProgressPercent() { return Math.max(0, Math.min(100, Math.round((apiClient.updateProgress || 0) * 100))) }
 
     function openScreen(screenName) {
+        if (currentScreen === "live" && screenName !== "live" && playbackController.activeContentKind === "live" && playerVisible) {
+            closePlayer()
+        }
         currentScreen = screenName
         if (screenName === "live") {
             syncSelectedLiveSelection()
@@ -401,6 +423,13 @@ ApplicationWindow {
         selectedLiveId = channel.id
         playerSubtitle = channel.groupTitle || "Canli TV"
         playerImageUrl = channel.logoUrl || ""
+        if (channel.playbackAllowed === false) {
+            if (playbackController.activeContentKind === "live") {
+                playbackController.stop()
+            }
+            playerVisible = false
+            return
+        }
         playerVisible = true
         const sameChannel = playbackController.activeContentKind === "live" && playbackController.activeChannelId === channel.id
         if (sameChannel && !forceRestart) {
@@ -894,6 +923,15 @@ ApplicationWindow {
         MouseArea {
             anchors.fill: parent
             onClicked: posterCard.activated(posterCard.item)
+        }
+    }
+
+    Component {
+        id: nativeVideoSurfaceComponent
+        NativeVideoSurface {
+            anchors.fill: parent
+            anchors.margins: 0
+            onSurfaceHandleChanged: playbackController.setVideoSurfaceHandle(surfaceHandle)
         }
     }
 
@@ -1728,68 +1766,443 @@ ApplicationWindow {
                         }
 
                         Item {
-                            RowLayout {
+                            ColumnLayout {
                                 anchors.fill: parent
                                 anchors.margins: 24
-                                spacing: 20
-                                GlassCard {
+                                spacing: 18
+                                Text {
+                                    text: "Canli TV"
+                                    color: window.textPrimary
+                                    font.pixelSize: 42
+                                    font.family: "Space Grotesk"
+                                    font.bold: true
+                                }
+
+                                Flickable {
                                     Layout.fillWidth: true
-                                    Layout.fillHeight: true
-                                    color: "#090c13"
-                                    Column {
-                                        anchors.fill: parent; anchors.margins: 24; spacing: 18
-                                        Text { text: "Canli TV"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true }
-                                        AppField { width: parent.width; placeholderText: "Kanal ara..."; text: liveSearchText; onTextChanged: { liveSearchText = text; syncSelectedLiveSelection(); liveAutoplayTimer.restart() } }
-                                        Flickable {
-                                            width: parent.width; height: 52; contentWidth: liveChipRow.width; clip: true
-                                            Row {
-                                                id: liveChipRow
-                                                spacing: 10
-                                                Repeater {
-                                                    model: [""] .concat(uniqueGroups(apiClient.liveChannels || []))
-                                                    ChipButton { required property var modelData; text: modelData.length ? modelData : "Tumu"; active: selectedLiveGroup === modelData; width: Math.max(96, implicitContentWidth + 28); onClicked: { selectedLiveGroup = modelData; syncSelectedLiveSelection(); liveAutoplayTimer.restart() } }
-                                                }
-                                            }
-                                        }
-                                        GlassCard {
-                                            width: parent.width; height: parent.height - 188; color: "#cc05070d"; visible: selectedLiveItem() !== null
-                                            Item {
-                                                anchors.fill: parent
-                                                ArtworkPanel { anchors.fill: parent; title: selectedLiveItem() ? selectedLiveItem().title : "Canli TV"; subtitle: selectedLiveItem() ? (selectedLiveItem().groupTitle || "Canli TV") : ""; sourceUrl: selectedLiveItem() ? (selectedLiveItem().logoUrl || "") : ""; kind: "live"; mode: "logo"; cornerRadius: 28 }
-                                                Rectangle { anchors.fill: parent; radius: 28; gradient: Gradient { GradientStop { position: 0.0; color: "#1405070b" } GradientStop { position: 0.56; color: "#6c05070b" } GradientStop { position: 1.0; color: "#f005070b" } } }
-                                                Column {
-                                                    anchors.left: parent.left
-                                                    anchors.right: parent.right
-                                                    anchors.bottom: parent.bottom
-                                                    anchors.margins: 26
-                                                    spacing: 16
-                                                    Text { text: selectedLiveItem() ? selectedLiveItem().title : "Kanal secin"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap }
-                                                    Text { text: selectedLiveItem() ? (selectedLiveItem().groupTitle || "Canli TV") : ""; color: window.textMuted; font.pixelSize: 16 }
-                                                    Row {
-                                                        spacing: 10
-                                                        Rectangle { width: autoPlayLabel.implicitWidth + 24; height: 34; radius: 17; color: "#26e50914"; border.width: 1; border.color: "#22ffffff"; Text { id: autoPlayLabel; anchors.centerIn: parent; text: "Otomatik Baslatma"; color: "#ffd7da"; font.pixelSize: 12; font.bold: true } }
-                                                        Rectangle { width: activeLiveLabel.implicitWidth + 24; height: 34; radius: 17; color: playbackController.activeContentKind === "live" && playbackController.activeChannelId === selectedLiveId && playerVisible ? "#2b30d19d" : "#14ffffff"; border.width: 1; border.color: "#18ffffff"; Text { id: activeLiveLabel; anchors.centerIn: parent; text: playbackController.activeContentKind === "live" && playbackController.activeChannelId === selectedLiveId && playerVisible ? "Yayin Acik" : "Kanal Sec"; color: playbackController.activeContentKind === "live" && playbackController.activeChannelId === selectedLiveId && playerVisible ? "#82ecc4" : window.textPrimary; font.pixelSize: 12; font.bold: true } }
-                                                    }
-                                                    Text { width: parent.width * 0.82; wrapMode: Text.WordWrap; color: "#d7dce6"; font.pixelSize: 15; text: playbackController.activeContentKind === "live" && playbackController.activeChannelId === selectedLiveId && playerVisible ? "Sag panelden secilen kanal tek tikla otomatik baslatildi." : "Sag panelden bir kanal sectiginizde canli yayin otomatik acilir; ayrica ayri bir Ac butonuna basmaniz gerekmez." }
+                                    Layout.preferredHeight: 52
+                                    contentWidth: liveChipRow.width
+                                    clip: true
+
+                                    Row {
+                                        id: liveChipRow
+                                        spacing: 10
+
+                                        Repeater {
+                                            model: [""] .concat(uniqueGroups(apiClient.liveChannels || []))
+                                            ChipButton {
+                                                required property var modelData
+                                                text: modelData.length ? modelData : "Tumu"
+                                                active: selectedLiveGroup === modelData
+                                                width: Math.max(96, implicitContentWidth + 28)
+                                                onClicked: {
+                                                    selectedLiveGroup = modelData
+                                                    syncSelectedLiveSelection()
+                                                    liveAutoplayTimer.restart()
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                GlassCard {
-                                    Layout.preferredWidth: 420
+
+                                RowLayout {
+                                    Layout.fillWidth: true
                                     Layout.fillHeight: true
-                                    color: "#0a0f18"
-                                    Column {
-                                        anchors.fill: parent; anchors.margins: 18; spacing: 14
-                                        Text { text: "Kanallar"; color: window.textPrimary; font.pixelSize: 22; font.family: "Space Grotesk"; font.bold: true }
-                                        ListView {
-                                            width: parent.width; height: parent.height - 56; clip: true; spacing: 12; model: filteredLiveItems()
-                                            delegate: Rectangle {
-                                                required property var modelData
-                                                width: parent.width; height: 88; radius: 22; color: selectedLiveId === modelData.id ? "#e50914" : "#131923"; border.width: 1; border.color: selectedLiveId === modelData.id ? "#ff5d74" : "#2a3140"
-                                                Row { anchors.fill: parent; anchors.margins: 14; spacing: 14; Rectangle { width: 54; height: 54; radius: 18; color: "#14ffffff"; anchors.verticalCenter: parent.verticalCenter; ArtworkPanel { anchors.fill: parent; anchors.margins: 0; title: modelData.title || ""; subtitle: modelData.groupTitle || "Canli TV"; sourceUrl: modelData.logoUrl || ""; kind: "live"; mode: "logo"; compact: true; cornerRadius: 18 } } Column { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 82; spacing: 4; Text { text: modelData.title; width: parent.width; elide: Text.ElideRight; color: "#ffffff"; font.pixelSize: 18; font.bold: true } Text { text: modelData.groupTitle || "Canli TV"; width: parent.width; elide: Text.ElideRight; color: selectedLiveId === modelData.id ? "#ffe8eb" : window.textMuted; font.pixelSize: 13 } } }
-                                                MouseArea { anchors.fill: parent; onClicked: playLive(modelData) }
+                                    spacing: 20
+                                    GlassCard {
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        color: "#090c13"
+
+                                        ColumnLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: 24
+                                            spacing: 16
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 18
+
+                                                ColumnLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 6
+
+                                                    Text {
+                                                        text: selectedLiveItem() ? selectedLiveItem().title : "Kanal secin"
+                                                        color: window.textPrimary
+                                                        font.pixelSize: 34
+                                                        font.family: "Space Grotesk"
+                                                        font.bold: true
+                                                        elide: Text.ElideRight
+                                                    }
+
+                                                    Text {
+                                                        text: selectedLiveItem() ? (selectedLiveItem().groupTitle || "Canli TV") : "Sag panelden kanal secin"
+                                                        color: window.textMuted
+                                                        font.pixelSize: 14
+                                                    }
+                                                }
+
+                                                Rectangle {
+                                                    Layout.alignment: Qt.AlignTop
+                                                    width: liveStateLabel.implicitWidth + 24
+                                                    height: 34
+                                                    radius: 17
+                                                    color: playbackController.state === "playing" ? "#2b30d19d" : playbackController.state === "error" ? "#24ff7d86" : "#16ffffff"
+                                                    border.width: 1
+                                                    border.color: playbackController.state === "playing" ? "#2282ecc4" : "#1effffff"
+
+                                                    Text {
+                                                        id: liveStateLabel
+                                                        anchors.centerIn: parent
+                                                        text: playbackController.state === "buffering" ? "Buffer" :
+                                                              playbackController.state === "resolving" || playbackController.state === "opening" ? "Hazirlaniyor" :
+                                                              playbackController.state === "error" ? "Hata" :
+                                                              playbackController.state === "playing" ? "Canli" : "Beklemede"
+                                                        color: "#ffffff"
+                                                        font.pixelSize: 12
+                                                        font.bold: true
+                                                    }
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                Layout.fillWidth: true
+                                                Layout.fillHeight: true
+                                                radius: 28
+                                                color: "#000000"
+                                                border.width: 1
+                                                border.color: "#14ffffff"
+                                                clip: true
+                                                
+                                                Loader {
+                                                    anchors.fill: parent
+                                                    active: inlineLivePlayerVisible()
+                                                    sourceComponent: nativeVideoSurfaceComponent
+                                                }
+
+                                                Item {
+                                                    anchors.fill: parent
+                                                    visible: filteredLiveItems().length === 0
+
+                                                    Column {
+                                                        anchors.centerIn: parent
+                                                        width: Math.min(parent.width * 0.6, 420)
+                                                        spacing: 12
+
+                                                        Text {
+                                                            width: parent.width
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                            text: "Filtreye uyan kanal bulunamadi"
+                                                            color: window.textPrimary
+                                                            font.pixelSize: 28
+                                                            font.family: "Space Grotesk"
+                                                            font.bold: true
+                                                            wrapMode: Text.WordWrap
+                                                        }
+
+                                                        Text {
+                                                            width: parent.width
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                            text: "Aramayi temizleyin veya baska bir kategori secin."
+                                                            color: window.textMuted
+                                                            font.pixelSize: 14
+                                                            wrapMode: Text.WordWrap
+                                                        }
+                                                    }
+                                                }
+
+                                                Item {
+                                                    anchors.fill: parent
+                                                    visible: filteredLiveItems().length > 0 && selectedLiveItem() !== null && selectedLiveItem().playbackAllowed === false
+
+                                                    Column {
+                                                        anchors.centerIn: parent
+                                                        width: Math.min(parent.width * 0.62, 460)
+                                                        spacing: 12
+
+                                                        Text {
+                                                            width: parent.width
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                            text: "Bu kanali acmak icin aktif paket gerekiyor"
+                                                            color: window.textPrimary
+                                                            font.pixelSize: 30
+                                                            font.family: "Space Grotesk"
+                                                            font.bold: true
+                                                            wrapMode: Text.WordWrap
+                                                        }
+
+                                                        Text {
+                                                            width: parent.width
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                            text: "Sag listeden baska kanal secin ya da paket durumunuzu guncelleyin."
+                                                            color: window.textMuted
+                                                            font.pixelSize: 14
+                                                            wrapMode: Text.WordWrap
+                                                        }
+                                                    }
+                                                }
+
+                                                Rectangle {
+                                                    anchors.top: parent.top
+                                                    anchors.left: parent.left
+                                                    anchors.margins: 18
+                                                    width: inlineStateText.implicitWidth + 28
+                                                    height: 40
+                                                    radius: 20
+                                                    color: "#c7070a0f"
+                                                    border.width: 1
+                                                    border.color: "#12ffffff"
+                                                    visible: selectedLiveItem() !== null && filteredLiveItems().length > 0 && selectedLiveItem().playbackAllowed !== false
+
+                                                    Text {
+                                                        id: inlineStateText
+                                                        anchors.centerIn: parent
+                                                        text: playbackController.state === "buffering" ? "Buffer dolduruluyor" :
+                                                              playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazirlaniyor" :
+                                                              playbackController.state === "error" ? "Yayin acilamadi" :
+                                                              playbackController.state === "playing" ? "Yayin acik" : "Kanal bekliyor"
+                                                        color: window.textPrimary
+                                                        font.pixelSize: 13
+                                                        font.bold: true
+                                                    }
+                                                }
+
+                                                Rectangle {
+                                                    anchors.left: parent.left
+                                                    anchors.right: parent.right
+                                                    anchors.bottom: parent.bottom
+                                                    anchors.margins: 16
+                                                    height: 74
+                                                    radius: 22
+                                                    color: "#c7070a0f"
+                                                    border.width: 1
+                                                    border.color: "#12ffffff"
+                                                    visible: selectedLiveItem() !== null && filteredLiveItems().length > 0 && selectedLiveItem().playbackAllowed !== false
+
+                                                    RowLayout {
+                                                        anchors.fill: parent
+                                                        anchors.margins: 14
+                                                        spacing: 12
+
+                                                        AppButton {
+                                                            text: playbackController.muted || playbackController.volume <= 0 ? "Sesi Ac" : "Sesi Kapat"
+                                                            secondary: true
+                                                            implicitWidth: 118
+                                                            onClicked: playbackController.toggleMuted()
+                                                        }
+
+                                                        Slider {
+                                                            id: liveVolumeSlider
+                                                            Layout.preferredWidth: 180
+                                                            Layout.alignment: Qt.AlignVCenter
+                                                            from: 0
+                                                            to: 1
+                                                            value: 1
+                                                            stepSize: 0.01
+                                                            Component.onCompleted: value = playbackController.muted ? 0 : playbackController.volume
+                                                            onMoved: playbackController.setVolume(value)
+
+                                                            background: Rectangle {
+                                                                x: liveVolumeSlider.leftPadding
+                                                                y: liveVolumeSlider.topPadding + liveVolumeSlider.availableHeight / 2 - height / 2
+                                                                implicitWidth: 180
+                                                                implicitHeight: 6
+                                                                width: liveVolumeSlider.availableWidth
+                                                                height: implicitHeight
+                                                                radius: 3
+                                                                color: "#20ffffff"
+
+                                                                Rectangle {
+                                                                    width: liveVolumeSlider.visualPosition * parent.width
+                                                                    height: parent.height
+                                                                    radius: 3
+                                                                    color: window.accent
+                                                                }
+                                                            }
+
+                                                            handle: Rectangle {
+                                                                x: liveVolumeSlider.leftPadding + liveVolumeSlider.visualPosition * (liveVolumeSlider.availableWidth - width)
+                                                                y: liveVolumeSlider.topPadding + liveVolumeSlider.availableHeight / 2 - height / 2
+                                                                implicitWidth: 18
+                                                                implicitHeight: 18
+                                                                radius: 9
+                                                                color: "#ffffff"
+                                                                border.width: 1
+                                                                border.color: "#40ffffff"
+                                                            }
+                                                        }
+
+                                                        Text {
+                                                            text: `${Math.round((playbackController.muted ? 0 : playbackController.volume) * 100)}%`
+                                                            color: window.textPrimary
+                                                            font.pixelSize: 13
+                                                            font.bold: true
+                                                            Layout.alignment: Qt.AlignVCenter
+                                                        }
+
+                                                        Item { Layout.fillWidth: true }
+
+                                                        AppButton {
+                                                            text: window.visibility === Window.FullScreen ? "Pencereden Cik" : "Tam Ekran"
+                                                            secondary: true
+                                                            implicitWidth: 148
+                                                            onClicked: toggleWindowFullscreen()
+                                                        }
+                                                    }
+                                                }
+
+                                                Connections {
+                                                    target: playbackController
+                                                    function onVolumeChanged() { liveVolumeSlider.value = playbackController.muted ? 0 : playbackController.volume }
+                                                    function onMutedChanged() { liveVolumeSlider.value = playbackController.muted ? 0 : playbackController.volume }
+                                                }
+
+                                                Rectangle {
+                                                    anchors.horizontalCenter: parent.horizontalCenter
+                                                    anchors.bottom: parent.bottom
+                                                    anchors.bottomMargin: 102
+                                                    width: Math.min(parent.width - 36, inlineErrorLabel.implicitWidth + 36)
+                                                    height: inlineErrorLabel.implicitHeight + 22
+                                                    radius: 20
+                                                    color: "#cc20070b"
+                                                    border.width: 1
+                                                    border.color: "#28ff7d86"
+                                                    visible: playbackController.lastError.length > 0 && playbackController.activeContentKind === "live"
+
+                                                    Text {
+                                                        id: inlineErrorLabel
+                                                        anchors.centerIn: parent
+                                                        width: parent.width - 26
+                                                        wrapMode: Text.WordWrap
+                                                        horizontalAlignment: Text.AlignHCenter
+                                                        text: playbackController.lastError
+                                                        color: "#ffd5da"
+                                                        font.pixelSize: 13
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    GlassCard {
+                                        Layout.preferredWidth: 420
+                                        Layout.fillHeight: true
+                                        color: "#0a0f18"
+
+                                        ColumnLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: 18
+                                            spacing: 14
+
+                                            AppField {
+                                                Layout.fillWidth: true
+                                                placeholderText: "Kanal ara..."
+                                                text: liveSearchText
+                                                onTextChanged: {
+                                                    liveSearchText = text
+                                                    syncSelectedLiveSelection()
+                                                    liveAutoplayTimer.restart()
+                                                }
+                                            }
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+
+                                                Text {
+                                                    text: "Kanallar"
+                                                    color: window.textPrimary
+                                                    font.pixelSize: 22
+                                                    font.family: "Space Grotesk"
+                                                    font.bold: true
+                                                }
+
+                                                Item { Layout.fillWidth: true }
+
+                                                Text {
+                                                    text: filteredLiveItems().length ? `${filteredLiveItems().length} kanal` : "Bos"
+                                                    color: window.textMuted
+                                                    font.pixelSize: 13
+                                                }
+                                            }
+
+                                            ListView {
+                                                Layout.fillWidth: true
+                                                Layout.fillHeight: true
+                                                clip: true
+                                                spacing: 12
+                                                model: filteredLiveItems()
+
+                                                delegate: Rectangle {
+                                                    required property var modelData
+                                                    width: ListView.view.width
+                                                    height: 88
+                                                    radius: 22
+                                                    color: selectedLiveId === modelData.id ? "#e50914" : "#131923"
+                                                    border.width: 1
+                                                    border.color: selectedLiveId === modelData.id ? "#ff5d74" : "#2a3140"
+
+                                                    Row {
+                                                        anchors.fill: parent
+                                                        anchors.margins: 14
+                                                        spacing: 14
+
+                                                        Text {
+                                                            anchors.verticalCenter: parent.verticalCenter
+                                                            text: index + 1
+                                                            color: selectedLiveId === modelData.id ? "#ffffff" : "#9eabba"
+                                                            font.pixelSize: 15
+                                                            font.bold: true
+                                                        }
+
+                                                        Rectangle {
+                                                            width: 54
+                                                            height: 54
+                                                            radius: 18
+                                                            color: "#14ffffff"
+                                                            anchors.verticalCenter: parent.verticalCenter
+
+                                                            ArtworkPanel {
+                                                                anchors.fill: parent
+                                                                title: modelData.title || ""
+                                                                subtitle: modelData.groupTitle || "Canli TV"
+                                                                sourceUrl: modelData.logoUrl || ""
+                                                                kind: "live"
+                                                                mode: "logo"
+                                                                compact: true
+                                                                cornerRadius: 18
+                                                            }
+                                                        }
+
+                                                        Column {
+                                                            anchors.verticalCenter: parent.verticalCenter
+                                                            width: parent.width - 120
+                                                            spacing: 4
+
+                                                            Text {
+                                                                text: modelData.title
+                                                                width: parent.width
+                                                                elide: Text.ElideRight
+                                                                color: "#ffffff"
+                                                                font.pixelSize: 18
+                                                                font.bold: true
+                                                            }
+
+                                                            Text {
+                                                                text: modelData.groupTitle || "Canli TV"
+                                                                width: parent.width
+                                                                elide: Text.ElideRight
+                                                                color: selectedLiveId === modelData.id ? "#ffe8eb" : window.textMuted
+                                                                font.pixelSize: 13
+                                                            }
+                                                        }
+                                                    }
+
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        onClicked: playLive(modelData)
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -2041,7 +2454,7 @@ ApplicationWindow {
         }
 
         Rectangle {
-            anchors.fill: parent; color: "#d9030508"; visible: playerVisible; z: 20
+            anchors.fill: parent; color: "#d9030508"; visible: overlayPlayerVisible(); z: 20
             GlassCard {
                 anchors.fill: parent; anchors.margins: 18; color: "#f2080a0e"; z: 21
                 ColumnLayout {
@@ -2051,7 +2464,7 @@ ApplicationWindow {
                         Layout.fillWidth: true; Layout.fillHeight: true; spacing: 16
                         GlassCard {
                             Layout.fillWidth: true; Layout.fillHeight: true; color: "#000000"
-                            NativeVideoSurface { anchors.fill: parent; anchors.margins: 6; onSurfaceHandleChanged: playbackController.setVideoSurfaceHandle(surfaceHandle) }
+                            Loader { anchors.fill: parent; anchors.margins: 6; active: overlayPlayerVisible(); sourceComponent: nativeVideoSurfaceComponent }
                             Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 18; width: stateLabel.implicitWidth + 28; height: 40; radius: 20; color: "#c7070a0f"; border.width: 1; border.color: "#12ffffff"; Text { id: stateLabel; anchors.centerIn: parent; text: playbackController.state === "buffering" ? "Buffer dolduruluyor" : playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazirlaniyor" : playbackController.state === "error" ? "Yayin acilamadi" : "Yayin hazir"; color: window.textPrimary; font.pixelSize: 13; font.bold: true } }
                             Rectangle {
                                 anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 16; height: 78; radius: 22; color: "#c7070a0f"; border.width: 1; border.color: "#12ffffff"
