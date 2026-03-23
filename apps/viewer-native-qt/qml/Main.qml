@@ -1735,7 +1735,7 @@ ApplicationWindow {
                                                     font.pixelSize: 23
                                                     font.family: "Space Grotesk"
                                                     font.bold: true
-                                                    letterSpacing: 2
+                                                    font.letterSpacing: 2
                                                 }
                                             }
                                         }
