@@ -81,6 +81,30 @@ ApplicationWindow {
         return Math.min(Math.ceil(sanitizeCode(authCode).length / 4), 4)
     }
 
+    function safeText(value) {
+        return (value || "").toString().trim()
+    }
+
+    function artworkSource(value) {
+        const trimmed = safeText(value)
+        return trimmed.length ? trimmed : ""
+    }
+
+    function artworkMonogram(value) {
+        const parts = safeText(value).split(/\s+/).slice(0, 2)
+        let output = ""
+        for (let index = 0; index < parts.length; index += 1) {
+            output += (parts[index][0] || "").toUpperCase()
+        }
+        return output.length ? output : "FX"
+    }
+
+    function artworkLabel(kind) {
+        if (kind === "live") return "Canli Yayin"
+        if (kind === "episode") return "Dizi"
+        return "Film"
+    }
+
     function showToast(message, color) {
         if (!message || !message.toString().trim().length) {
             return
@@ -146,6 +170,22 @@ ApplicationWindow {
     function filteredMovies() { return filterItems(apiClient.movies || [], moviesSearchText, selectedMovieGroup) }
     function filteredSeries() { return filterItems(apiClient.series || [], seriesSearchText, selectedSeriesGroup) }
     function filteredLiveItems() { return filterItems(apiClient.liveChannels || [], liveSearchText, selectedLiveGroup) }
+
+    function syncSelectedLiveSelection() {
+        const items = filteredLiveItems()
+        if (!items.length) {
+            selectedLiveId = ""
+            return
+        }
+
+        for (let index = 0; index < items.length; index += 1) {
+            if (items[index].id === selectedLiveId) {
+                return
+            }
+        }
+
+        selectedLiveId = items[0].id
+    }
 
     function selectedSeries() {
         const items = apiClient.series || []
@@ -268,7 +308,10 @@ ApplicationWindow {
 
     function openScreen(screenName) {
         currentScreen = screenName
-        if (screenName === "packages") {
+        if (screenName === "live") {
+            syncSelectedLiveSelection()
+            liveAutoplayTimer.restart()
+        } else if (screenName === "packages") {
             apiClient.fetchPackages()
             apiClient.fetchPaymentMethods()
         } else if (screenName === "payments") {
@@ -299,13 +342,28 @@ ApplicationWindow {
         playbackController.playVod("episode", episode.id, episode.title)
     }
 
-    function playLive(channel) {
+    function playLive(channel, forceRestart) {
         if (!channel || !channel.id) return
         selectedLiveId = channel.id
         playerSubtitle = channel.groupTitle || "Canli TV"
         playerImageUrl = channel.logoUrl || ""
         playerVisible = true
+        const sameChannel = playbackController.activeContentKind === "live" && playbackController.activeChannelId === channel.id
+        if (sameChannel && !forceRestart) {
+            return
+        }
         playbackController.playChannel(channel.id)
+    }
+
+    function ensureLiveAutoplay(forceRestart) {
+        if (currentScreen !== "live") {
+            return
+        }
+        const channel = selectedLiveItem()
+        if (!channel || !channel.id) {
+            return
+        }
+        playLive(channel, forceRestart)
     }
 
     function closePlayer() {
@@ -334,6 +392,25 @@ ApplicationWindow {
         onTriggered: toastMessage = ""
     }
 
+    Timer {
+        id: liveAutoplayTimer
+        interval: 120
+        repeat: false
+        onTriggered: ensureLiveAutoplay(false)
+    }
+
+    Timer {
+        id: updatePollTimer
+        interval: 900000
+        repeat: true
+        running: apiClient.authenticated
+        onTriggered: {
+            if (!apiClient.updateInProgress) {
+                apiClient.checkAppUpdate()
+            }
+        }
+    }
+
     Connections {
         target: apiClient
         function onAuthenticatedChanged() {
@@ -350,7 +427,7 @@ ApplicationWindow {
         function onLoginSucceeded() { currentScreen = "home"; premiumPopupDismissed = false; showAuthCode = false }
         function onAnonCodeIssued(code) { issuedCode = sanitizeCode(code); revealedCount = 0; scrambleSeed = 0; registerAcknowledged = false; currentScreen = "register"; revealTimer.restart() }
         function onSeriesChanged() { if (!selectedSeriesId && (apiClient.series || []).length) selectedSeriesId = apiClient.series[0].id }
-        function onLiveChannelsChanged() { if (!selectedLiveId && (apiClient.liveChannels || []).length) selectedLiveId = apiClient.liveChannels[0].id }
+        function onLiveChannelsChanged() { syncSelectedLiveSelection(); if (currentScreen === "live") liveAutoplayTimer.restart() }
         function onLogoutCompleted() { currentScreen = "login"; authCode = ""; issuedCode = ""; showAuthCode = false; closePlayer(); pendingPackage = null; selectedPaymentMethodId = "" }
         function onNoticeChanged() { if (apiClient.notice && apiClient.notice.length) showToast(apiClient.notice, success) }
         function onRequestFailed(context, message) { showToast(message, danger) }
@@ -432,6 +509,127 @@ ApplicationWindow {
         border.color: window.borderSoft
     }
 
+    component ArtworkPanel: Item {
+        id: artwork
+        required property string title
+        property string subtitle: ""
+        property string sourceUrl: ""
+        property string kind: "movie"
+        property string mode: "poster"
+        property real cornerRadius: 28
+        property bool compact: false
+        readonly property string normalizedSource: window.artworkSource(sourceUrl)
+        readonly property bool fallbackVisible: normalizedSource.length === 0 || artworkImage.status === Image.Null || artworkImage.status === Image.Loading || artworkImage.status === Image.Error
+
+        Rectangle {
+            anchors.fill: parent
+            radius: artwork.cornerRadius
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "#1de50914" }
+                GradientStop { position: 0.44; color: "#11224dff" }
+                GradientStop { position: 1.0; color: "#f0080b11" }
+            }
+        }
+
+        Image {
+            id: artworkImage
+            anchors.fill: parent
+            anchors.margins: artwork.mode === "logo" ? (artwork.compact ? 10 : 22) : 1
+            source: artwork.normalizedSource
+            fillMode: artwork.mode === "logo" ? Image.PreserveAspectFit : Image.PreserveAspectCrop
+            asynchronous: true
+            cache: false
+            visible: artwork.normalizedSource.length > 0 && status === Image.Ready
+            clip: true
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: artwork.cornerRadius
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: artwork.compact ? "#1205070b" : "#1805070b" }
+                GradientStop { position: 0.58; color: artwork.compact ? "#3205070b" : "#6405070b" }
+                GradientStop { position: 1.0; color: "#f005070b" }
+            }
+        }
+
+        Item {
+            anchors.fill: parent
+            visible: artwork.fallbackVisible && artwork.compact
+
+            Rectangle {
+                width: Math.min(parent.width - 8, parent.height - 8)
+                height: width
+                radius: Math.max(16, width / 3)
+                anchors.centerIn: parent
+                color: "#1affffff"
+                border.width: 1
+                border.color: "#2affffff"
+
+                Text {
+                    anchors.centerIn: parent
+                    text: window.artworkMonogram(artwork.title)
+                    color: window.textPrimary
+                    font.pixelSize: Math.max(16, parent.width * 0.34)
+                    font.family: "Space Grotesk"
+                    font.bold: true
+                }
+            }
+        }
+
+        Item {
+            anchors.fill: parent
+            visible: artwork.fallbackVisible && !artwork.compact
+
+            Column {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: 20
+                spacing: 10
+
+                Rectangle {
+                    width: 72
+                    height: 72
+                    radius: 22
+                    color: "#16ffffff"
+                    border.width: 1
+                    border.color: "#26ffffff"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: window.artworkMonogram(artwork.title)
+                        color: window.textPrimary
+                        font.pixelSize: 28
+                        font.family: "Space Grotesk"
+                        font.bold: true
+                    }
+                }
+
+                Text {
+                    text: artwork.title
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: artwork.mode === "logo" ? 3 : 2
+                    elide: Text.ElideRight
+                    color: window.textPrimary
+                    font.pixelSize: artwork.mode === "logo" ? 24 : 28
+                    font.family: "Space Grotesk"
+                    font.bold: true
+                }
+
+                Text {
+                    text: artwork.subtitle.length ? artwork.subtitle : window.artworkLabel(artwork.kind)
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    color: "#d4dbe8"
+                    font.pixelSize: 13
+                    visible: text.length > 0
+                }
+            }
+        }
+    }
+
     component RailCard: Item {
         id: rail
         required property var item
@@ -448,14 +646,14 @@ ApplicationWindow {
             border.color: "#14ffffff"
         }
 
-        Image {
+        ArtworkPanel {
             anchors.fill: parent
-            anchors.margins: 1
-            source: rail.item.posterUrl || rail.item.logoUrl || ""
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            visible: source.length > 0
-            clip: true
+            title: rail.item.title || ""
+            subtitle: rail.item.subtitle || rail.item.groupTitle || ""
+            sourceUrl: rail.item.posterUrl || rail.item.logoUrl || ""
+            mode: rail.cardKind === "live" ? "logo" : "poster"
+            kind: rail.cardKind
+            cornerRadius: 28
         }
 
         Rectangle {
@@ -1017,7 +1215,7 @@ ApplicationWindow {
                                     visible: homeHeroItem() !== null
                                     Item {
                                         anchors.fill: parent
-                                        Image { anchors.fill: parent; anchors.margins: 1; source: homeHeroItem() ? (homeHeroItem().posterUrl || homeHeroItem().logoUrl || "") : ""; fillMode: Image.PreserveAspectCrop; asynchronous: true; visible: source.length > 0; clip: true }
+                                        ArtworkPanel { anchors.fill: parent; title: homeHeroItem() ? homeHeroItem().title : "Flixify"; subtitle: homeHeroItem() ? (homeHeroItem().subtitle || "") : ""; sourceUrl: homeHeroItem() ? (homeHeroItem().posterUrl || homeHeroItem().logoUrl || "") : ""; kind: homeHeroItem() ? homeHeroItem().kind : "movie"; mode: homeHeroItem() && homeHeroItem().kind === "live" ? "logo" : "poster"; cornerRadius: 28 }
                                         Rectangle { anchors.fill: parent; radius: 28; gradient: Gradient { GradientStop { position: 0.0; color: "#3305070b" } GradientStop { position: 0.48; color: "#8a05070b" } GradientStop { position: 1.0; color: "#f005070b" } } }
                                         Row {
                                             anchors.fill: parent; anchors.margins: 34; spacing: 24
@@ -1091,7 +1289,7 @@ ApplicationWindow {
                                     Column {
                                         anchors.fill: parent; anchors.margins: 24; spacing: 18
                                         Text { text: "Canli TV"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true }
-                                        AppField { width: parent.width; placeholderText: "Kanal ara..."; text: liveSearchText; onTextChanged: liveSearchText = text }
+                                        AppField { width: parent.width; placeholderText: "Kanal ara..."; text: liveSearchText; onTextChanged: { liveSearchText = text; syncSelectedLiveSelection(); liveAutoplayTimer.restart() } }
                                         Flickable {
                                             width: parent.width; height: 52; contentWidth: liveChipRow.width; clip: true
                                             Row {
@@ -1099,17 +1297,31 @@ ApplicationWindow {
                                                 spacing: 10
                                                 Repeater {
                                                     model: [""] .concat(uniqueGroups(apiClient.liveChannels || []))
-                                                    ChipButton { required property var modelData; text: modelData.length ? modelData : "Tumu"; active: selectedLiveGroup === modelData; width: Math.max(96, implicitContentWidth + 28); onClicked: selectedLiveGroup = modelData }
+                                                    ChipButton { required property var modelData; text: modelData.length ? modelData : "Tumu"; active: selectedLiveGroup === modelData; width: Math.max(96, implicitContentWidth + 28); onClicked: { selectedLiveGroup = modelData; syncSelectedLiveSelection(); liveAutoplayTimer.restart() } }
                                                 }
                                             }
                                         }
                                         GlassCard {
                                             width: parent.width; height: parent.height - 188; color: "#cc05070d"; visible: selectedLiveItem() !== null
-                                            Column {
-                                                anchors.fill: parent; anchors.margins: 26; spacing: 18
-                                                Text { text: selectedLiveItem() ? selectedLiveItem().title : "Kanal secin"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap }
-                                                Text { text: selectedLiveItem() ? (selectedLiveItem().groupTitle || "Canli TV") : ""; color: window.textMuted; font.pixelSize: 16 }
-                                                AppButton { text: "Canli Yayini Ac"; implicitWidth: 180; onClicked: playLive(selectedLiveItem()) }
+                                            Item {
+                                                anchors.fill: parent
+                                                ArtworkPanel { anchors.fill: parent; title: selectedLiveItem() ? selectedLiveItem().title : "Canli TV"; subtitle: selectedLiveItem() ? (selectedLiveItem().groupTitle || "Canli TV") : ""; sourceUrl: selectedLiveItem() ? (selectedLiveItem().logoUrl || "") : ""; kind: "live"; mode: "logo"; cornerRadius: 28 }
+                                                Rectangle { anchors.fill: parent; radius: 28; gradient: Gradient { GradientStop { position: 0.0; color: "#1405070b" } GradientStop { position: 0.56; color: "#6c05070b" } GradientStop { position: 1.0; color: "#f005070b" } } }
+                                                Column {
+                                                    anchors.left: parent.left
+                                                    anchors.right: parent.right
+                                                    anchors.bottom: parent.bottom
+                                                    anchors.margins: 26
+                                                    spacing: 16
+                                                    Text { text: selectedLiveItem() ? selectedLiveItem().title : "Kanal secin"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap }
+                                                    Text { text: selectedLiveItem() ? (selectedLiveItem().groupTitle || "Canli TV") : ""; color: window.textMuted; font.pixelSize: 16 }
+                                                    Row {
+                                                        spacing: 10
+                                                        Rectangle { width: autoPlayLabel.implicitWidth + 24; height: 34; radius: 17; color: "#26e50914"; border.width: 1; border.color: "#22ffffff"; Text { id: autoPlayLabel; anchors.centerIn: parent; text: "Otomatik Baslatma"; color: "#ffd7da"; font.pixelSize: 12; font.bold: true } }
+                                                        Rectangle { width: activeLiveLabel.implicitWidth + 24; height: 34; radius: 17; color: playbackController.activeContentKind === "live" && playbackController.activeChannelId === selectedLiveId && playerVisible ? "#2b30d19d" : "#14ffffff"; border.width: 1; border.color: "#18ffffff"; Text { id: activeLiveLabel; anchors.centerIn: parent; text: playbackController.activeContentKind === "live" && playbackController.activeChannelId === selectedLiveId && playerVisible ? "Yayin Acik" : "Kanal Sec"; color: playbackController.activeContentKind === "live" && playbackController.activeChannelId === selectedLiveId && playerVisible ? "#82ecc4" : window.textPrimary; font.pixelSize: 12; font.bold: true } }
+                                                    }
+                                                    Text { width: parent.width * 0.82; wrapMode: Text.WordWrap; color: "#d7dce6"; font.pixelSize: 15; text: playbackController.activeContentKind === "live" && playbackController.activeChannelId === selectedLiveId && playerVisible ? "Sag panelden secilen kanal tek tikla otomatik baslatildi." : "Sag panelden bir kanal sectiginizde canli yayin otomatik acilir; ayrica ayri bir Ac butonuna basmaniz gerekmez." }
+                                                }
                                             }
                                         }
                                     }
@@ -1126,8 +1338,8 @@ ApplicationWindow {
                                             delegate: Rectangle {
                                                 required property var modelData
                                                 width: parent.width; height: 88; radius: 22; color: selectedLiveId === modelData.id ? "#e50914" : "#131923"; border.width: 1; border.color: selectedLiveId === modelData.id ? "#ff5d74" : "#2a3140"
-                                                Row { anchors.fill: parent; anchors.margins: 14; spacing: 14; Rectangle { width: 54; height: 54; radius: 18; color: "#14ffffff"; anchors.verticalCenter: parent.verticalCenter; Image { anchors.fill: parent; anchors.margins: 8; source: modelData.logoUrl || ""; fillMode: Image.PreserveAspectFit; visible: source.length > 0; asynchronous: true } } Column { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 82; spacing: 4; Text { text: modelData.title; width: parent.width; elide: Text.ElideRight; color: "#ffffff"; font.pixelSize: 18; font.bold: true } Text { text: modelData.groupTitle || "Canli TV"; width: parent.width; elide: Text.ElideRight; color: selectedLiveId === modelData.id ? "#ffe8eb" : window.textMuted; font.pixelSize: 13 } } }
-                                                MouseArea { anchors.fill: parent; onClicked: selectedLiveId = modelData.id; onDoubleClicked: playLive(modelData) }
+                                                Row { anchors.fill: parent; anchors.margins: 14; spacing: 14; Rectangle { width: 54; height: 54; radius: 18; color: "#14ffffff"; anchors.verticalCenter: parent.verticalCenter; ArtworkPanel { anchors.fill: parent; anchors.margins: 0; title: modelData.title || ""; subtitle: modelData.groupTitle || "Canli TV"; sourceUrl: modelData.logoUrl || ""; kind: "live"; mode: "logo"; compact: true; cornerRadius: 18 } } Column { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 82; spacing: 4; Text { text: modelData.title; width: parent.width; elide: Text.ElideRight; color: "#ffffff"; font.pixelSize: 18; font.bold: true } Text { text: modelData.groupTitle || "Canli TV"; width: parent.width; elide: Text.ElideRight; color: selectedLiveId === modelData.id ? "#ffe8eb" : window.textMuted; font.pixelSize: 13 } } }
+                                                MouseArea { anchors.fill: parent; onClicked: playLive(modelData) }
                                             }
                                         }
                                     }
@@ -1176,7 +1388,7 @@ ApplicationWindow {
                                 AppButton { text: "Dizilere Don"; secondary: true; implicitWidth: 140; onClicked: openScreen("series") }
                                 Row {
                                     width: parent.width; spacing: 24
-                                    GlassCard { width: 320; height: 460; color: "#090c13"; Image { anchors.fill: parent; anchors.margins: 1; source: selectedSeries() ? (selectedSeries().posterUrl || "") : ""; fillMode: Image.PreserveAspectCrop; asynchronous: true; visible: source.length > 0; clip: true } }
+                                    GlassCard { width: 320; height: 460; color: "#090c13"; ArtworkPanel { anchors.fill: parent; title: selectedSeries() ? selectedSeries().title : "Dizi"; subtitle: selectedSeries() ? (selectedSeries().groupTitle || "Premium Dizi") : "Premium Dizi"; sourceUrl: selectedSeries() ? (selectedSeries().posterUrl || "") : ""; kind: "episode"; mode: "poster"; cornerRadius: 28 } }
                                     GlassCard {
                                         width: parent.width - 344; height: 460; color: "#090c13"
                                         Column {
@@ -1372,7 +1584,7 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        GlassCard { Layout.preferredWidth: 320; Layout.fillHeight: true; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 12; Text { text: "Yayin Bilgisi"; color: window.textPrimary; font.pixelSize: 20; font.family: "Space Grotesk"; font.bold: true } Rectangle { width: parent.width; height: 180; radius: 22; color: "#08ffffff"; border.width: 1; border.color: window.borderSoft; Image { anchors.fill: parent; anchors.margins: 1; source: playerImageUrl; fillMode: Image.PreserveAspectCrop; asynchronous: true; visible: source.length > 0; clip: true } Text { anchors.centerIn: parent; visible: !playerImageUrl.length; text: "FLIXIFY"; color: "#77ffffff"; font.pixelSize: 28; font.family: "Space Grotesk"; font.bold: true } } Text { text: playbackController.lastError.length ? playbackController.lastError : "Native player branded shell icinde hazir."; width: parent.width; wrapMode: Text.WordWrap; color: playbackController.lastError.length ? "#ffb2b8" : window.textMuted; font.pixelSize: 14 } } }
+                        GlassCard { Layout.preferredWidth: 320; Layout.fillHeight: true; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 12; Text { text: "Yayin Bilgisi"; color: window.textPrimary; font.pixelSize: 20; font.family: "Space Grotesk"; font.bold: true } Rectangle { width: parent.width; height: 180; radius: 22; color: "#08ffffff"; border.width: 1; border.color: window.borderSoft; ArtworkPanel { anchors.fill: parent; title: playbackController.activeTitle.length ? playbackController.activeTitle : "Flixify"; subtitle: playerSubtitle; sourceUrl: playerImageUrl; kind: playbackController.activeContentKind || "movie"; mode: playbackController.activeContentKind === "live" ? "logo" : "poster"; cornerRadius: 22 } } Text { text: playbackController.lastError.length ? playbackController.lastError : "Native player branded shell icinde hazir."; width: parent.width; wrapMode: Text.WordWrap; color: playbackController.lastError.length ? "#ffb2b8" : window.textMuted; font.pixelSize: 14 } } }
                     }
                 }
             }
