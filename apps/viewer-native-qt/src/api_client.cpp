@@ -87,6 +87,52 @@ QString sanitizeFileStem(const QString &value) {
   return stem.isEmpty() ? QStringLiteral("flixify") : stem.left(48);
 }
 
+QString normalizeStoredUpdateVersion(const QString &value) {
+  return value.trimmed().split(QLatin1Char('+')).value(0).split(QLatin1Char('-')).value(0).trimmed();
+}
+
+QList<int> parseVersionParts(const QString &value) {
+  const QString normalized = normalizeStoredUpdateVersion(value);
+  static const QRegularExpression pattern(QStringLiteral("^\\d+(?:\\.\\d+){0,4}$"));
+  if (!pattern.match(normalized).hasMatch()) {
+    return {};
+  }
+
+  QList<int> parts;
+  const QStringList tokens = normalized.split(QLatin1Char('.'));
+  parts.reserve(tokens.size());
+  for (const QString &token : tokens) {
+    parts.push_back(token.toInt());
+  }
+  return parts;
+}
+
+bool isUpdateAvailable(const QString &currentVersion, const QString &latestVersion) {
+  if (currentVersion.trimmed().isEmpty() || latestVersion.trimmed().isEmpty()) {
+    return false;
+  }
+
+  const QList<int> currentParts = parseVersionParts(currentVersion);
+  const QList<int> latestParts = parseVersionParts(latestVersion);
+  if (currentParts.isEmpty() || latestParts.isEmpty()) {
+    return currentVersion.trimmed() != latestVersion.trimmed();
+  }
+
+  const int length = qMax(currentParts.size(), latestParts.size());
+  for (int index = 0; index < length; index += 1) {
+    const int current = index < currentParts.size() ? currentParts[index] : 0;
+    const int latest = index < latestParts.size() ? latestParts[index] : 0;
+    if (latest > current) {
+      return true;
+    }
+    if (latest < current) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
 QVariantList mapJsonArray(const QJsonArray &items) {
   QVariantList mapped;
   mapped.reserve(items.size());
@@ -112,6 +158,9 @@ ApiClient::ApiClient(QObject *parent)
   QSettings settings;
   const QString storedAccessToken = settings.value(QStringLiteral("session/accessToken")).toString().trimmed();
   const QString storedRefreshToken = settings.value(QStringLiteral("session/refreshToken")).toString().trimmed();
+  m_suppressedUpdateVersion = normalizeStoredUpdateVersion(
+    settings.value(QStringLiteral("updates/suppressedVersion")).toString()
+  );
   if (!storedAccessToken.isEmpty()) {
     m_accessToken = storedAccessToken;
   }
@@ -204,6 +253,11 @@ QString ApiClient::lastError() const {
 
 QString ApiClient::notice() const {
   return m_notice;
+}
+
+QString ApiClient::appVersion() const {
+  const QString runtimeVersion = QCoreApplication::applicationVersion().trimmed();
+  return runtimeVersion.isEmpty() ? QStringLiteral(FLIXIFY_APP_VERSION) : runtimeVersion;
 }
 
 QVariantMap ApiClient::me() const {
@@ -625,7 +679,7 @@ void ApiClient::checkAppUpdate() {
   QUrl url = resolvedUrl(QStringLiteral("/me/app-update/check"));
   QUrlQuery query(url);
   query.addQueryItem(QStringLiteral("platform"), normalizedPlatformName());
-  query.addQueryItem(QStringLiteral("appVersion"), QStringLiteral(FLIXIFY_APP_VERSION));
+  query.addQueryItem(QStringLiteral("appVersion"), appVersion());
   url.setQuery(query);
 
   QNetworkReply *reply = m_network.get(makeJsonRequest(url, m_accessToken));
@@ -646,12 +700,39 @@ void ApiClient::checkAppUpdate() {
     }
 
     const QVariantMap payload = QJsonDocument::fromJson(body).object().toVariantMap();
-    if (payload.value(QStringLiteral("updateAvailable")).toBool()) {
-      setAppUpdate(payload);
-    } else {
+    const QString latestVersion = normalizeStoredUpdateVersion(
+      payload.value(QStringLiteral("latestVersion")).toString()
+    );
+    const QString currentVersion = normalizeStoredUpdateVersion(appVersion());
+    const bool newerThanCurrent = isUpdateAvailable(currentVersion, latestVersion);
+    const bool suppressedSameOrNewer = !m_suppressedUpdateVersion.isEmpty() &&
+      !isUpdateAvailable(m_suppressedUpdateVersion, latestVersion);
+    if (!newerThanCurrent) {
+      setSuppressedUpdateVersion(QString());
       setAppUpdate({});
+      return;
     }
+    if (!payload.value(QStringLiteral("updateAvailable")).toBool() || suppressedSameOrNewer) {
+      setAppUpdate({});
+      return;
+    }
+    setAppUpdate(payload);
   });
+}
+
+void ApiClient::dismissAppUpdate(const QString &version) {
+  const QString resolvedVersion = normalizeStoredUpdateVersion(
+    version.trimmed().isEmpty()
+      ? m_appUpdate.value(QStringLiteral("latestVersion")).toString()
+      : version
+  );
+  if (resolvedVersion.isEmpty()) {
+    return;
+  }
+
+  setSuppressedUpdateVersion(resolvedVersion);
+  setUpdateError(QString());
+  setAppUpdate({});
 }
 
 void ApiClient::installAppUpdate() {
@@ -747,7 +828,7 @@ void ApiClient::installAppUpdate() {
     }
   });
 
-  connect(m_updateReply, &QNetworkReply::finished, this, [this]() {
+  connect(m_updateReply, &QNetworkReply::finished, this, [this, latestVersion]() {
     const QByteArray tail = m_updateReply ? m_updateReply->readAll() : QByteArray();
     const bool ok = m_updateReply && m_updateReply->error() == QNetworkReply::NoError;
     const int status = m_updateReply
@@ -796,6 +877,8 @@ void ApiClient::installAppUpdate() {
       return;
     }
 
+    setSuppressedUpdateVersion(normalizeStoredUpdateVersion(latestVersion));
+    setAppUpdate({});
     setUpdateError(QString());
     setNotice(QStringLiteral("Guncelleme indirildi. Installer baslatiliyor."));
     QTimer::singleShot(300, QCoreApplication::instance(), &QCoreApplication::quit);
@@ -1268,6 +1351,21 @@ void ApiClient::setNotice(const QString &value) {
 
   m_notice = value;
   emit noticeChanged();
+}
+
+void ApiClient::setSuppressedUpdateVersion(const QString &value) {
+  const QString normalized = normalizeStoredUpdateVersion(value);
+  if (normalized == m_suppressedUpdateVersion) {
+    return;
+  }
+
+  m_suppressedUpdateVersion = normalized;
+  QSettings settings;
+  if (m_suppressedUpdateVersion.isEmpty()) {
+    settings.remove(QStringLiteral("updates/suppressedVersion"));
+  } else {
+    settings.setValue(QStringLiteral("updates/suppressedVersion"), m_suppressedUpdateVersion);
+  }
 }
 
 void ApiClient::setMe(const QVariantMap &value) {

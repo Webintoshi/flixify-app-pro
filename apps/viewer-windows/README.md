@@ -48,7 +48,7 @@ Not: build once `apps/viewer-webos` derlenir ve `dist` icerigi otomatik olarak b
 - Production build `localhost` API ile bilerek hata verir; yanlis EXE dagitimi engellenir.
 - Ornek:
   - `FLIXIFY_API_BASE_URL=https://api.example.com FLIXIFY_WEB_APP_URL=https://app.example.com npm run dist:win:installer:x64 -w @flixify/viewer-windows`
-- Windows `dist:win*` komutlari tamamlandiginda secilen x64/generic artifact otomatik olarak `apps/viewer-webos/public/downloads/flixify-windows.exe` altina kopyalanir.
+- Windows Electron build'leri artik public web dagitimina kopyalanmaz; public Windows indirmesi yalnizca Qt native kanalindan yayinlanir.
 - Ayni publish adimi `apps/viewer-webos/public/app-update-manifest.json` dosyasini da uretir; soft-update prompt site uzerindeki dogrudan indirme linkini kullanir.
 
 Son kullanici tarafinda ekstra ayar gerekmez. API adresi EXE icine gomulu gelir.

@@ -778,8 +778,30 @@ ApplicationWindow {
         }
         window.showFullScreen()
     }
+    function parseVersionParts(version) {
+        const normalized = (version || "").toString().trim().split("+")[0].split("-")[0].trim()
+        if (!normalized.length || !/^\d+(\.\d+){0,4}$/.test(normalized)) {
+            return null
+        }
+        return normalized.split(".").map(part => Number(part))
+    }
+    function isUpdateNewerThanCurrent(latestVersion) {
+        const currentParts = parseVersionParts(apiClient.appVersion || "")
+        const latestParts = parseVersionParts(latestVersion || "")
+        if (!currentParts || !latestParts) {
+            return (latestVersion || "").toString().trim() !== (apiClient.appVersion || "").toString().trim()
+        }
+        const length = Math.max(currentParts.length, latestParts.length)
+        for (let index = 0; index < length; index += 1) {
+            const currentValue = currentParts[index] || 0
+            const latestValue = latestParts[index] || 0
+            if (latestValue > currentValue) return true
+            if (latestValue < currentValue) return false
+        }
+        return false
+    }
     function appUpdatePayload() { return apiClient.appUpdate || ({}) }
-    function appUpdateVisible() { return Boolean(appUpdatePayload().updateAvailable && appUpdatePayload().latestVersion && appUpdatePayload().latestVersion !== dismissedUpdateVersion) }
+    function appUpdateVisible() { return Boolean(appUpdatePayload().updateAvailable && appUpdatePayload().latestVersion && isUpdateNewerThanCurrent(appUpdatePayload().latestVersion) && appUpdatePayload().latestVersion !== dismissedUpdateVersion) }
     function appUpdateBannerVisible() { return appUpdateVisible() || apiClient.updateInProgress || apiClient.updateError.length > 0 }
     function updateProgressPercent() { return Math.max(0, Math.min(100, Math.round((apiClient.updateProgress || 0) * 100))) }
     function showLiveControls() {
@@ -1015,63 +1037,94 @@ ApplicationWindow {
     component AppButton: Button {
         id: control
         property bool secondary: false
+        property bool glow: false
         hoverEnabled: control.enabled
         focusPolicy: Qt.NoFocus
-        implicitHeight: 52
-        leftPadding: 22
-        rightPadding: 22
+        implicitHeight: 56
+        leftPadding: 28
+        rightPadding: 28
         topPadding: 0
         bottomPadding: 0
         font.pixelSize: 15
         font.bold: true
-        opacity: control.enabled ? 1.0 : 0.42
-        scale: control.down ? 0.988 : control.hovered ? 1.012 : 1.0
-        Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+        font.family: "Space Grotesk"
+        opacity: control.enabled ? 1.0 : 0.45
+        scale: control.down ? 0.97 : control.hovered ? 1.02 : 1.0
+        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+        
+        // Glow efekti (primary butonlar için)
+        Rectangle {
+            visible: !control.secondary && control.glow
+            anchors.fill: parent
+            anchors.margins: -4
+            radius: parent.radius + 4
+            color: "transparent"
+            border.width: 2
+            border.color: "#ff3b48"
+            opacity: control.hovered && control.enabled ? 0.25 : 0
+            Behavior on opacity { NumberAnimation { duration: 200 } }
+        }
+        
         background: Rectangle {
+            id: btnBg
             readonly property bool hoverState: control.hovered && control.enabled
             readonly property bool pressedState: control.down && control.enabled
             radius: height / 2
             border.width: 1
             border.color: control.secondary
-                ? (pressedState ? "#41506a" : hoverState ? "#5a708b" : "#324155")
-                : (pressedState ? "#8f1018" : hoverState ? "#ff7f8a" : "#c91722")
+                ? (pressedState ? "#4a5568" : hoverState ? "#5a708b" : "#2d3748")
+                : (pressedState ? "#ff1a25" : hoverState ? "#ff5a65" : "#e50914")
+            
+            // Gradient - BEYAZ OVERLAY YOK!
             gradient: Gradient {
                 GradientStop {
                     position: 0.0
                     color: control.secondary
-                        ? (pressedState ? "#1b2230" : hoverState ? "#253041" : "#1a2230")
-                        : (pressedState ? "#a30d16" : hoverState ? "#ff3b48" : window.accentStrong)
+                        ? (pressedState ? "#252f3f" : hoverState ? "#2d3a4f" : "#1e293b")
+                        : (pressedState ? "#b91c1c" : hoverState ? "#ef4444" : "#dc2626")
                 }
                 GradientStop {
                     position: 1.0
                     color: control.secondary
-                        ? (pressedState ? "#121923" : hoverState ? "#1a2230" : "#141b26")
-                        : (pressedState ? "#850913" : hoverState ? "#d7101d" : window.accent)
+                        ? (pressedState ? "#1a2230" : hoverState ? "#252f3f" : "#131923")
+                        : (pressedState ? "#991b1b" : hoverState ? "#dc2626" : "#b91c1c")
                 }
             }
-            Rectangle {
-                anchors.fill: parent
-                radius: parent.radius
-                color: control.secondary ? "#0a1018" : "#ffffff"
-                opacity: control.secondary ? (pressedState ? 0.1 : hoverState ? 0.06 : 0.0) : (pressedState ? 0.12 : hoverState ? 0.08 : 0.0)
-            }
+            
+            // İnce iç glow (sadece üstte, beyaz değil açık renk)
             Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.margins: 1
-                height: parent.height * 0.46
+                height: parent.height * 0.4
                 radius: parent.radius
-                color: "#ffffff"
-                opacity: control.secondary ? (hoverState ? 0.09 : 0.05) : (hoverState ? 0.16 : 0.08)
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: control.secondary ? "#30ffffff" : "#40ff7f8a" }
+                    GradientStop { position: 1.0; color: "#00ffffff" }
+                }
+                visible: !control.secondary || hoverState
+            }
+            
+            // Shadow layer
+            layer.enabled: true
+            layer.effect: DropShadow {
+                transparentBorder: true
+                horizontalOffset: 0
+                verticalOffset: control.pressedState ? 2 : 4
+                radius: control.pressedState ? 8 : 12
+                samples: control.pressedState ? 17 : 25
+                color: control.secondary ? "#40000000" : "#80e50914"
             }
         }
+        
         contentItem: Text {
             text: control.text
             color: control.secondary ? "#f4f6fb" : "#ffffff"
             font: control.font
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
+            opacity: control.enabled ? 1.0 : 0.5
         }
     }
 
@@ -1110,46 +1163,51 @@ ApplicationWindow {
         Rectangle {
             anchors.fill: parent
             radius: 18
-            color: segmentCard.complete
-                ? "#111a28"
-                : segmentCard.active
-                    ? "#111726"
-                    : "#0d131d"
             border.width: 1
             border.color: segmentCard.complete
-                ? "#2f4e70"
+                ? "#3b82f6"
                 : segmentCard.active
-                    ? "#3f5d7d"
-                    : "#243141"
+                    ? "#60a5fa"
+                    : "#1e293b"
             gradient: Gradient {
                 GradientStop {
                     position: 0.0
                     color: segmentCard.complete
-                        ? "#182335"
+                        ? "#1e3a5f"
                         : segmentCard.active
-                            ? "#172133"
-                            : "#111826"
+                            ? "#1e3a5f"
+                            : "#1e293b"
                 }
                 GradientStop {
                     position: 1.0
                     color: segmentCard.complete
-                        ? "#0c121b"
+                        ? "#0f172a"
                         : segmentCard.active
-                            ? "#0d141f"
-                            : "#0a1018"
+                            ? "#0f172a"
+                            : "#0f172a"
                 }
             }
-        }
-
-        Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.margins: 1
-            height: parent.height * 0.46
-            radius: parent.radius
-            color: "#ffffff"
-            opacity: segmentCard.complete ? 0.12 : segmentCard.active ? 0.1 : 0.04
+            
+            // İnce iç glow (beyaz değil, açık mavi/beyaz tonlu)
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 1
+                height: parent.height * 0.4
+                radius: parent.radius
+                gradient: Gradient {
+                    GradientStop { 
+                        position: 0.0 
+                        color: segmentCard.complete 
+                            ? "#4060a5fa" 
+                            : segmentCard.active 
+                                ? "#4060a5fa" 
+                                : "#20ffffff" 
+                    }
+                    GradientStop { position: 1.0; color: "#00ffffff" }
+                }
+            }
         }
 
         Rectangle {
@@ -1209,29 +1267,41 @@ ApplicationWindow {
             id: supportSurface
             anchors.fill: parent
             radius: 20
-            color: supportMouse.containsMouse && supportLink.interactive ? "#141d2a" : "#0d131d"
+            color: supportMouse.containsMouse && supportLink.interactive ? "#1a2332" : "#131923"
             border.width: 1
-            border.color: supportMouse.containsMouse && supportLink.interactive ? supportLink.accentColor : window.borderSoft
-
-            Rectangle {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: 1
-                height: parent.height * 0.46
-                radius: parent.radius
-                color: supportMouse.containsMouse && supportLink.interactive ? "#16ffffff" : "#0effffff"
-            }
+            border.color: supportMouse.containsMouse && supportLink.interactive ? supportLink.accentColor : "#ffffff10"
             
-            // Subtle glow effect on hover
+            // Gradient overlay
             Rectangle {
                 anchors.fill: parent
                 radius: parent.radius
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: "#08ffffff" }
+                    GradientStop { position: 1.0; color: "#00ffffff" }
+                }
+            }
+            
+            // Glow border on hover
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -2
+                radius: parent.radius + 2
                 color: "transparent"
                 border.width: 2
                 border.color: supportLink.accentColor
-                opacity: supportMouse.containsMouse && supportLink.interactive ? 0.15 : 0
+                opacity: supportMouse.containsMouse && supportLink.interactive ? 0.2 : 0
                 Behavior on opacity { NumberAnimation { duration: 200 } }
+            }
+            
+            // Shadow
+            layer.enabled: true
+            layer.effect: DropShadow {
+                transparentBorder: true
+                horizontalOffset: 0
+                verticalOffset: 4
+                radius: 8
+                samples: 17
+                color: "#40000000"
             }
         }
 
@@ -1361,30 +1431,50 @@ ApplicationWindow {
         rightPadding: 18
         topPadding: 0
         bottomPadding: 0
-        scale: chip.down ? 0.988 : chip.hovered ? 1.01 : 1.0
-        Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+        scale: chip.down ? 0.97 : chip.hovered ? 1.02 : 1.0
+        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
         background: Rectangle {
             readonly property bool hoverState: chip.hovered && chip.enabled
+            readonly property bool pressedState: chip.down && chip.enabled
             radius: 21
-            color: chip.active
-                ? (chip.down ? "#8f0e16" : hoverState ? "#d41520" : "#b20d16")
-                : (chip.down ? "#131a24" : hoverState ? "#1b2330" : "#101620")
             border.width: 1
-            border.color: chip.active ? (hoverState ? "#42ffffff" : "#28ffffff") : (hoverState ? "#3a495f" : "#293646")
+            border.color: chip.active 
+                ? (pressedState ? "#ff4757" : hoverState ? "#ff6b7a" : "#e50914")
+                : (pressedState ? "#4a5568" : hoverState ? "#5a708b" : "#2d3748")
+            
+            // Gradient - BEYAZ OVERLAY YOK!
+            gradient: Gradient {
+                GradientStop {
+                    position: 0.0
+                    color: chip.active
+                        ? (pressedState ? "#b91c1c" : hoverState ? "#dc2626" : "#991b1b")
+                        : (pressedState ? "#252f3f" : hoverState ? "#2d3a4f" : "#1e293b")
+                }
+                GradientStop {
+                    position: 1.0
+                    color: chip.active
+                        ? (pressedState ? "#991b1b" : hoverState ? "#b91c1c" : "#7f1d1d")
+                        : (pressedState ? "#1a2230" : hoverState ? "#252f3f" : "#131923")
+                }
+            }
+            
+            // İnce iç glow (sadece üstte)
             Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.margins: 1
-                height: parent.height * 0.48
+                height: parent.height * 0.4
                 radius: parent.radius
-                color: "#ffffff"
-                opacity: chip.active ? (hoverState ? 0.16 : 0.1) : (hoverState ? 0.08 : 0.04)
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: chip.active ? "#40ff7f8a" : "#30ffffff" }
+                    GradientStop { position: 1.0; color: "#00ffffff" }
+                }
             }
         }
         contentItem: Text {
             text: chip.text
-            color: chip.active ? "#ffffff" : window.textPrimary
+            color: chip.active ? "#ffffff" : "#f8fafc"
             font.pixelSize: 13
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
@@ -2255,16 +2345,31 @@ ApplicationWindow {
                             }
                         }
 
-                        Text {
-                            text: currentScreen === "register"
-                                  ? (issuedCode.length ? "Hesabınız oluşturuldu" : "Anonim ve takip edilemez.\nGüvenliğiniz için tasarlandı.")
-                                  : "16 haneli erişim kodunuzu girin"
-                            color: "#d7dce6"
-                            font.pixelSize: currentScreen === "register" && !issuedCode.length ? 16 : 18
-                            font.letterSpacing: 0.3
+                        Column {
                             width: parent.width
-                            horizontalAlignment: Text.AlignHCenter
-                            lineHeight: 1.4
+                            spacing: 8
+                            
+                            Text {
+                                text: currentScreen === "register"
+                                      ? (issuedCode.length ? "Hesabınız Oluşturuldu" : "Anonim ve Takip Edilemez")
+                                      : "Güvenli Erişim"
+                                color: "#ffffff"
+                                font.pixelSize: 24
+                                font.bold: true
+                                font.family: "Space Grotesk"
+                                width: parent.width
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                            
+                            Text {
+                                text: currentScreen === "register" && !issuedCode.length
+                                      ? "Hiçbir veriniz saklanmaz. %100 gizlilik garantisi."
+                                      : "16 haneli özel erişim kodunuzu girin"
+                                color: "#94a3b8"
+                                font.pixelSize: 14
+                                width: parent.width
+                                horizontalAlignment: Text.AlignHCenter
+                            }
                         }
 
                         Column {
@@ -2409,7 +2514,13 @@ ApplicationWindow {
                                 wrapMode: Text.WordWrap
                                 font.pixelSize: 13
                             }
-                            AppButton { width: parent.width; text: apiClient.busy ? "Giriş Yapılıyor..." : "Giriş Yap"; enabled: !apiClient.busy && sanitizeCode(authCode).length === 16; onClicked: apiClient.loginByCode(sanitizeCode(authCode), authDeviceName) }
+                            AppButton { 
+                                width: parent.width; 
+                                text: apiClient.busy ? "Giriş Yapılıyor..." : "OTURUM AÇ"; 
+                                glow: true;
+                                enabled: !apiClient.busy && sanitizeCode(authCode).length === 16; 
+                                onClicked: apiClient.loginByCode(sanitizeCode(authCode), authDeviceName) 
+                            }
                             Row {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 spacing: 6
@@ -2477,13 +2588,12 @@ ApplicationWindow {
                                     }
 
                                     Text {
-                                        text: "Kimsenin bilmediği, sadece size özel anahtar"
+                                        text: "Şifrelenmiş erişim anahtarınız"
                                         width: parent.width
                                         horizontalAlignment: Text.AlignHCenter
-                                        color: "#9fb0c9"
-                                        font.pixelSize: 14
-                                        font.letterSpacing: 0.4
-                                        font.italic: true
+                                        color: "#64748b"
+                                        font.pixelSize: 13
+                                        font.letterSpacing: 0.5
                                     }
                                 }
                             }
@@ -2491,22 +2601,11 @@ ApplicationWindow {
                             AppButton {
                                 id: createAccountBtn
                                 width: parent.width
-                                implicitHeight: 62
-                                text: apiClient.busy ? "🔐 Şifreli Anahtar Üretiliyor..." : "🔒 Güvenli Hesap Oluştur"
+                                implicitHeight: 60
+                                text: apiClient.busy ? "Şifreli Anahtar Üretiliyor..." : "GÜVENLİ HESAP OLUŞTUR"
+                                glow: true
                                 enabled: !apiClient.busy
                                 onClicked: apiClient.issueAnonCode(registerDeviceName)
-                                
-                                // Glow efekti için ek layer
-                                Rectangle {
-                                    anchors.fill: parent
-                                    anchors.margins: -4
-                                    radius: parent.radius + 4
-                                    color: "transparent"
-                                    border.width: 1
-                                    border.color: "#30e50914"
-                                    opacity: createAccountBtn.hovered && createAccountBtn.enabled ? 1 : 0
-                                    Behavior on opacity { NumberAnimation { duration: 200 } }
-                                }
                             }
 
                             AppButton {
@@ -3012,7 +3111,10 @@ ApplicationWindow {
                                 implicitWidth: 120
                                 enabled: !apiClient.updateInProgress
                                 visible: appUpdateVisible()
-                                onClicked: dismissedUpdateVersion = appUpdatePayload().latestVersion || ""
+                                onClicked: {
+                                    dismissedUpdateVersion = appUpdatePayload().latestVersion || ""
+                                    apiClient.dismissAppUpdate(dismissedUpdateVersion)
+                                }
                             }
                         }
                     }

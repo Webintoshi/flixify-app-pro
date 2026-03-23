@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,16 +7,19 @@ const appRoot = path.resolve(__dirname, "..");
 const workspaceRoot = path.resolve(appRoot, "../..");
 const distDir = path.join(appRoot, "dist", "windows-x64-release");
 const targetDir = path.resolve(appRoot, "../viewer-webos/public/downloads");
-const targetPath = path.join(targetDir, "flixify-windows.exe");
+const targetFilename = "flixify-windows.exe";
+const targetPath = path.join(targetDir, targetFilename);
 const updateManifestPath = path.resolve(appRoot, "../viewer-webos/public/app-update-manifest.json");
 const packageJsonPath = path.join(appRoot, "package.json");
+const platformKey = "windows-native-qt";
 const envFilePaths = [".env.production.local", ".env.production", ".env.local", ".env"].map((name) =>
   path.resolve(workspaceRoot, name)
 );
 
 async function readPackageVersion() {
   const raw = await readFile(packageJsonPath, "utf8");
-  return JSON.parse(raw).version?.trim() ?? null;
+  const version = JSON.parse(raw).version;
+  return typeof version === "string" && version.trim().length > 0 ? version.trim() : null;
 }
 
 function normalizeWebAppUrl(value) {
@@ -83,62 +86,69 @@ async function resolveWebAppUrl() {
   return "https://app.flixify.pro/";
 }
 
-async function resolveInstallerArtifact() {
-  const version = await readPackageVersion();
-  const entries = await readdir(distDir, { withFileTypes: true });
-  const candidates = [];
-
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".exe")) {
-      continue;
-    }
-
-    const fullPath = path.join(distDir, entry.name);
-    const fileStats = await stat(fullPath);
-    candidates.push({
-      name: entry.name,
-      path: fullPath,
-      score:
-        (entry.name.includes(version ?? "") ? 100 : 0) +
-        (entry.name.toLowerCase().includes("setup") ? 50 : 0) +
-        (entry.name.toLowerCase().includes("native") ? 10 : 0),
-      mtimeMs: fileStats.mtimeMs
-    });
-  }
-
-  candidates.sort((left, right) => {
-    if (right.score !== left.score) {
-      return right.score - left.score;
-    }
-    return right.mtimeMs - left.mtimeMs;
-  });
-
-  return candidates[0] ?? null;
+function createEmptyManifest() {
+  return { platforms: {} };
 }
 
-const artifact = await resolveInstallerArtifact();
+async function readManifest() {
+  try {
+    const raw = await readFile(updateManifestPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const platforms =
+      parsed && typeof parsed === "object" && parsed.platforms && typeof parsed.platforms === "object"
+        ? parsed.platforms
+        : null;
+
+    return platforms ? { platforms: { ...platforms } } : createEmptyManifest();
+  } catch {
+    return createEmptyManifest();
+  }
+}
+
+async function resolveInstallerArtifact(version) {
+  if (!version) {
+    throw new Error(`Native Qt package version okunamadi: ${packageJsonPath}`);
+  }
+
+  const filename = `Flixify-Pro-Setup-${version}-x64.exe`;
+  const artifactPath = path.join(distDir, filename);
+  const fileStats = await stat(artifactPath).catch(() => null);
+  if (!fileStats?.isFile() || fileStats.size <= 0) {
+    throw new Error(
+      `Native Qt installer bulunamadi veya bos. Beklenen exact artifact: ${artifactPath}`
+    );
+  }
+
+  return {
+    name: filename,
+    path: artifactPath
+  };
+}
+
+function buildDownloadUrl(webAppUrl, version) {
+  const downloadUrl = new URL(`/downloads/${targetFilename}`, webAppUrl);
+  downloadUrl.searchParams.set("v", version);
+  return downloadUrl.toString();
+}
+
+const packageVersion = await readPackageVersion();
+const artifact = await resolveInstallerArtifact(packageVersion);
 if (!artifact) {
   throw new Error(`Native Windows installer bulunamadi: ${distDir}`);
 }
 
 await mkdir(targetDir, { recursive: true });
 await copyFile(artifact.path, targetPath);
+console.log(`Published Qt native web download: ${artifact.name} -> ${targetPath}`);
 
-const packageVersion = await readPackageVersion();
 const webAppUrl = await resolveWebAppUrl();
 if (packageVersion && webAppUrl) {
-  const downloadUrl = new URL("/downloads/flixify-windows.exe", webAppUrl).toString();
-  const manifest = {
-    platforms: {
-      "windows-desktop": {
-        latestVersion: packageVersion,
-        downloadUrl
-      },
-      "windows-native-qt": {
-        latestVersion: packageVersion,
-        downloadUrl
-      }
-    }
+  const manifest = await readManifest();
+  delete manifest.platforms["windows-desktop"];
+  manifest.platforms[platformKey] = {
+    latestVersion: packageVersion,
+    downloadUrl: buildDownloadUrl(webAppUrl, packageVersion)
   };
   await writeFile(updateManifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  console.log(`Updated app update manifest entry: ${platformKey}`);
 }

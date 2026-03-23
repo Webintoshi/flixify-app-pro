@@ -1353,6 +1353,7 @@ export function buildServer() {
 
   app.get("/me/app-update/check", async (request, reply) => {
     try {
+      reply.header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
       await authenticateUser(request.headers.authorization);
       const rawQuery = request.query as Record<string, unknown> | undefined;
       const rawPlatform = normalizeOptionalText(rawQuery?.platform, 80) ?? "unknown";

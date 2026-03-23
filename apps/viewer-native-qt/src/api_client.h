@@ -21,6 +21,7 @@ class ApiClient : public QObject {
   Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
   Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
   Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
+  Q_PROPERTY(QString appVersion READ appVersion CONSTANT)
   Q_PROPERTY(QVariantMap me READ me NOTIFY meChanged)
   Q_PROPERTY(QVariantList packages READ packages NOTIFY packagesChanged)
   Q_PROPERTY(QVariantList paymentMethods READ paymentMethods NOTIFY paymentMethodsChanged)
@@ -53,6 +54,7 @@ public:
   bool busy() const;
   QString lastError() const;
   QString notice() const;
+  QString appVersion() const;
   QVariantMap me() const;
   QVariantList packages() const;
   QVariantList paymentMethods() const;
@@ -88,6 +90,7 @@ public:
   Q_INVOKABLE void fetchPaymentRequests();
   Q_INVOKABLE void fetchShellData(const QString &search = QString());
   Q_INVOKABLE void checkAppUpdate();
+  Q_INVOKABLE void dismissAppUpdate(const QString &version = QString());
   Q_INVOKABLE void installAppUpdate();
   Q_INVOKABLE void fetchLiveCatalog(
     int page = 1,
@@ -156,6 +159,7 @@ private:
   void setRestoringSession(bool value);
   void setLastError(const QString &value);
   void setNotice(const QString &value);
+  void setSuppressedUpdateVersion(const QString &value);
   void setMe(const QVariantMap &value);
   void setPackages(const QVariantList &value);
   void setPaymentMethods(const QVariantList &value);
@@ -195,6 +199,7 @@ private:
   int m_activeRequests = 0;
   QString m_lastError;
   QString m_notice;
+  QString m_suppressedUpdateVersion;
   QVariantMap m_me;
   QVariantList m_packages;
   QVariantList m_paymentMethods;
