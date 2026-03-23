@@ -30,6 +30,9 @@ class ApiClient : public QObject {
   Q_PROPERTY(double updateProgress READ updateProgress NOTIFY updateProgressChanged)
   Q_PROPERTY(QString updateError READ updateError NOTIFY updateErrorChanged)
   Q_PROPERTY(QVariantList liveChannels READ liveChannels NOTIFY liveChannelsChanged)
+  Q_PROPERTY(QVariantList liveGroups READ liveGroups NOTIFY liveGroupsChanged)
+  Q_PROPERTY(bool liveHasMore READ liveHasMore NOTIFY liveHasMoreChanged)
+  Q_PROPERTY(bool liveLoadingMore READ liveLoadingMore NOTIFY liveLoadingMoreChanged)
   Q_PROPERTY(QVariantList movies READ movies NOTIFY moviesChanged)
   Q_PROPERTY(QVariantList series READ series NOTIFY seriesChanged)
 
@@ -56,6 +59,9 @@ public:
   double updateProgress() const;
   QString updateError() const;
   QVariantList liveChannels() const;
+  QVariantList liveGroups() const;
+  bool liveHasMore() const;
+  bool liveLoadingMore() const;
   QVariantList movies() const;
   QVariantList series() const;
 
@@ -77,7 +83,13 @@ public:
   Q_INVOKABLE void fetchShellData(const QString &search = QString());
   Q_INVOKABLE void checkAppUpdate();
   Q_INVOKABLE void installAppUpdate();
-  Q_INVOKABLE void fetchLiveCatalog(int page = 1, int pageSize = 300, const QString &search = QString());
+  Q_INVOKABLE void fetchLiveCatalog(
+    int page = 1,
+    int pageSize = 300,
+    const QString &search = QString(),
+    const QString &group = QString()
+  );
+  Q_INVOKABLE void loadMoreLive();
   Q_INVOKABLE void fetchMovieCatalog(int page = 1, int pageSize = 300, const QString &search = QString());
   Q_INVOKABLE void fetchSeriesCatalog(int page = 1, int pageSize = 200, const QString &search = QString());
   Q_INVOKABLE void fetchAllCatalogs(const QString &search = QString(), int livePageSize = 300);
@@ -114,6 +126,9 @@ signals:
   void updateProgressChanged();
   void updateErrorChanged();
   void liveChannelsChanged();
+  void liveGroupsChanged();
+  void liveHasMoreChanged();
+  void liveLoadingMoreChanged();
   void moviesChanged();
   void seriesChanged();
   void anonCodeIssued(const QString &code);
@@ -134,6 +149,8 @@ private:
   void setUpdateInProgress(bool value);
   void setUpdateProgress(double value);
   void setUpdateError(const QString &value);
+  void setLiveHasMore(bool value);
+  void setLiveLoadingMore(bool value);
   void beginRequest();
   void endRequest();
   void clearAuthenticatedData();
@@ -141,7 +158,9 @@ private:
   void setSessionTokens(const QString &accessToken, const QString &refreshToken);
   void updateSessionPersistence();
   void handleAuthFailure(const QString &context, std::function<void()> retry);
-  void updateLiveChannelsFromJson(const QJsonArray &items);
+  void updateLiveCatalogFromJson(const QJsonObject &payload, bool append);
+  void updateLiveChannelsFromJson(const QJsonArray &items, bool append);
+  void updateLiveGroupsFromJson(const QJsonArray &groups);
   void updateMoviesFromJson(const QJsonArray &items);
   void updateSeriesFromJson(const QJsonArray &items);
   static QVariantMap mapEpisodeFromJson(const QJsonObject &item);
@@ -169,6 +188,15 @@ private:
   QPointer<QNetworkReply> m_updateReply;
   QFile *m_updateFile = nullptr;
   QVariantList m_liveChannels;
+  QVariantList m_liveGroups;
+  bool m_liveHasMore = false;
+  bool m_liveLoadingMore = false;
+  int m_livePage = 0;
+  int m_livePageSize = 300;
+  int m_liveTotal = 0;
+  QString m_liveSearch;
+  QString m_liveGroup;
+  quint64 m_liveCatalogGeneration = 0;
   QVariantList m_movies;
   QVariantList m_series;
   QList<std::function<void(bool)>> m_refreshCompletions;

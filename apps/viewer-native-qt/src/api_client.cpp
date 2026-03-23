@@ -242,6 +242,18 @@ QVariantList ApiClient::liveChannels() const {
   return m_liveChannels;
 }
 
+QVariantList ApiClient::liveGroups() const {
+  return m_liveGroups;
+}
+
+bool ApiClient::liveHasMore() const {
+  return m_liveHasMore;
+}
+
+bool ApiClient::liveLoadingMore() const {
+  return m_liveLoadingMore;
+}
+
 QVariantList ApiClient::movies() const {
   return m_movies;
 }
@@ -778,33 +790,61 @@ void ApiClient::installAppUpdate() {
   });
 }
 
-void ApiClient::fetchLiveCatalog(int page, int pageSize, const QString &search) {
+void ApiClient::fetchLiveCatalog(int page, int pageSize, const QString &search, const QString &group) {
   const int safePage = page > 0 ? page : 1;
   const int safePageSize = qBound(1, pageSize, 300);
-  const QString safeSearch = search;
+  const QString safeSearch = search.trimmed();
+  const QString safeGroup = group.trimmed();
+  const bool append = safePage > 1;
+  const quint64 generation = append ? m_liveCatalogGeneration : (m_liveCatalogGeneration + 1);
+
+  if (!append) {
+    m_liveCatalogGeneration = generation;
+    m_livePage = 0;
+    m_livePageSize = safePageSize;
+    m_liveTotal = 0;
+    m_liveSearch = safeSearch;
+    m_liveGroup = safeGroup;
+    setLiveHasMore(false);
+    setLiveLoadingMore(false);
+  } else {
+    if (m_liveLoadingMore || !m_liveHasMore) {
+      return;
+    }
+    if (safeSearch != m_liveSearch || safeGroup != m_liveGroup) {
+      return;
+    }
+    setLiveLoadingMore(true);
+  }
 
   beginRequest();
   QUrl url = resolvedUrl(QStringLiteral("/me/catalog/live"));
   QUrlQuery query(url);
   query.addQueryItem(QStringLiteral("page"), QString::number(safePage));
   query.addQueryItem(QStringLiteral("pageSize"), QString::number(safePageSize));
-  if (!safeSearch.trimmed().isEmpty()) {
-    query.addQueryItem(QStringLiteral("search"), safeSearch.trimmed());
+  if (!safeSearch.isEmpty()) {
+    query.addQueryItem(QStringLiteral("search"), safeSearch);
+  }
+  if (!safeGroup.isEmpty()) {
+    query.addQueryItem(QStringLiteral("group"), safeGroup);
   }
   url.setQuery(query);
 
   QNetworkReply *reply = m_network.get(makeJsonRequest(url, m_accessToken));
-  connect(reply, &QNetworkReply::finished, this, [this, reply, safePage, safePageSize, safeSearch]() {
+  connect(reply, &QNetworkReply::finished, this, [this, reply, safePage, safePageSize, safeSearch, safeGroup, append, generation]() {
     const QByteArray body = reply->readAll();
     const bool ok = reply->error() == QNetworkReply::NoError;
     const bool authFailed = isAuthStatus(reply);
     reply->deleteLater();
     endRequest();
+    if (append) {
+      setLiveLoadingMore(false);
+    }
 
     if (!ok) {
       if (authFailed) {
-        handleAuthFailure(QStringLiteral("catalog"), [this, safePage, safePageSize, safeSearch]() {
-          fetchLiveCatalog(safePage, safePageSize, safeSearch);
+        handleAuthFailure(QStringLiteral("catalog"), [this, safePage, safePageSize, safeSearch, safeGroup]() {
+          fetchLiveCatalog(safePage, safePageSize, safeSearch, safeGroup);
         });
         return;
       }
@@ -816,8 +856,28 @@ void ApiClient::fetchLiveCatalog(int page, int pageSize, const QString &search) 
     }
 
     const QJsonDocument document = QJsonDocument::fromJson(body);
-    updateLiveChannelsFromJson(document.object().value(QStringLiteral("items")).toArray());
+    const QJsonObject payload = document.object();
+    if (generation != m_liveCatalogGeneration) {
+      return;
+    }
+
+    updateLiveCatalogFromJson(payload, append);
+    m_livePage = safePage;
+    m_livePageSize = safePageSize;
+    m_liveTotal = payload.value(QStringLiteral("total")).toInt(m_liveChannels.size());
+    m_liveSearch = safeSearch;
+    m_liveGroup = safeGroup;
+    setLiveHasMore(m_liveChannels.size() < m_liveTotal);
   });
+}
+
+void ApiClient::loadMoreLive() {
+  if (m_liveLoadingMore || !m_liveHasMore) {
+    return;
+  }
+
+  const int nextPage = m_livePage > 0 ? m_livePage + 1 : 2;
+  fetchLiveCatalog(nextPage, m_livePageSize > 0 ? m_livePageSize : 300, m_liveSearch, m_liveGroup);
 }
 
 void ApiClient::fetchMovieCatalog(int page, int pageSize, const QString &search) {
@@ -1248,6 +1308,24 @@ void ApiClient::setUpdateError(const QString &value) {
   emit updateErrorChanged();
 }
 
+void ApiClient::setLiveHasMore(bool value) {
+  if (value == m_liveHasMore) {
+    return;
+  }
+
+  m_liveHasMore = value;
+  emit liveHasMoreChanged();
+}
+
+void ApiClient::setLiveLoadingMore(bool value) {
+  if (value == m_liveLoadingMore) {
+    return;
+  }
+
+  m_liveLoadingMore = value;
+  emit liveLoadingMoreChanged();
+}
+
 void ApiClient::beginRequest() {
   m_activeRequests += 1;
   setBusy(m_activeRequests > 0);
@@ -1262,10 +1340,21 @@ void ApiClient::clearAuthenticatedData() {
   setMe({});
   setPaymentRequests({});
   setAppUpdate({});
+  setLiveHasMore(false);
+  setLiveLoadingMore(false);
+  m_livePage = 0;
+  m_liveTotal = 0;
+  m_liveSearch.clear();
+  m_liveGroup.clear();
+  m_liveCatalogGeneration += 1;
 
   if (!m_liveChannels.isEmpty()) {
     m_liveChannels.clear();
     emit liveChannelsChanged();
+  }
+  if (!m_liveGroups.isEmpty()) {
+    m_liveGroups.clear();
+    emit liveGroupsChanged();
   }
   if (!m_movies.isEmpty()) {
     m_movies.clear();
@@ -1307,9 +1396,19 @@ void ApiClient::handleAuthFailure(const QString &context, std::function<void()> 
   });
 }
 
-void ApiClient::updateLiveChannelsFromJson(const QJsonArray &items) {
+void ApiClient::updateLiveCatalogFromJson(const QJsonObject &payload, bool append) {
+  updateLiveGroupsFromJson(payload.value(QStringLiteral("groups")).toArray());
+  updateLiveChannelsFromJson(payload.value(QStringLiteral("items")).toArray(), append);
+}
+
+void ApiClient::updateLiveChannelsFromJson(const QJsonArray &items, bool append) {
   QVariantList nextItems;
-  nextItems.reserve(items.size());
+  if (append) {
+    nextItems = m_liveChannels;
+    nextItems.reserve(m_liveChannels.size() + items.size());
+  } else {
+    nextItems.reserve(items.size());
+  }
 
   for (const QJsonValue &value : items) {
     const QJsonObject item = value.toObject();
@@ -1326,11 +1425,39 @@ void ApiClient::updateLiveChannelsFromJson(const QJsonArray &items) {
     row.insert(QStringLiteral("healthStatus"), item.value(QStringLiteral("healthStatus")).toString());
     row.insert(QStringLiteral("isVerified"), item.value(QStringLiteral("isVerified")).toBool());
     row.insert(QStringLiteral("lastCheckedAt"), item.value(QStringLiteral("lastCheckedAt")).toString());
+    if (append) {
+      const QString rowId = row.value(QStringLiteral("id")).toString();
+      bool alreadyPresent = false;
+      for (const QVariant &existingValue : nextItems) {
+        if (existingValue.toMap().value(QStringLiteral("id")).toString() == rowId) {
+          alreadyPresent = true;
+          break;
+        }
+      }
+      if (alreadyPresent) {
+        continue;
+      }
+    }
     nextItems.push_back(row);
   }
 
   m_liveChannels = nextItems;
   emit liveChannelsChanged();
+}
+
+void ApiClient::updateLiveGroupsFromJson(const QJsonArray &groups) {
+  QVariantList nextGroups;
+  nextGroups.reserve(groups.size());
+  for (const QJsonValue &value : groups) {
+    nextGroups.push_back(value.toObject().toVariantMap());
+  }
+
+  if (nextGroups == m_liveGroups) {
+    return;
+  }
+
+  m_liveGroups = nextGroups;
+  emit liveGroupsChanged();
 }
 
 QVariantMap ApiClient::mapEpisodeFromJson(const QJsonObject &item) {

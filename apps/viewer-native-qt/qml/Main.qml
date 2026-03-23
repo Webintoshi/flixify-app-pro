@@ -77,7 +77,7 @@ ApplicationWindow {
     property string selectedLiveId: ""
     property string selectedMovieGroup: ""
     property string selectedSeriesGroup: ""
-    property string selectedLiveGroup: ""
+    property string selectedLiveGroup: "country:TR"
     property string moviesSearchText: ""
     property string seriesSearchText: ""
     property string liveSearchText: ""
@@ -91,6 +91,14 @@ ApplicationWindow {
 
     function normalizeText(value) {
         return (value || "").toString().toLocaleLowerCase()
+    }
+
+    function normalizeAsciiText(value) {
+        const text = (value || "").toString()
+        if (!text.length) {
+            return ""
+        }
+        return text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase()
     }
 
     function sanitizeCode(value) {
@@ -239,6 +247,224 @@ ApplicationWindow {
         return output
     }
 
+    function normalizeLiveCountryCode(value) {
+        const sanitized = safeText(value).replace(/[^a-z]/gi, "").toUpperCase()
+        if (sanitized.length < 2 || sanitized.length > 3) {
+            return null
+        }
+        return sanitized
+    }
+
+    function buildLiveCountryFilter(code) {
+        const normalizedCode = normalizeLiveCountryCode(code)
+        return normalizedCode ? `country:${normalizedCode}` : "country:TR"
+    }
+
+    function parseLiveCountryCodeFromFilter(group) {
+        const normalized = normalizeAsciiText(group)
+        if (!normalized.length) {
+            return null
+        }
+        if (normalized === "turkiye") {
+            return "TR"
+        }
+        const prefixes = ["country:", "ulke:"]
+        for (let index = 0; index < prefixes.length; index += 1) {
+            const prefix = prefixes[index]
+            if (normalized.indexOf(prefix) === 0) {
+                return normalizeLiveCountryCode(normalized.slice(prefix.length).trim())
+            }
+        }
+        return null
+    }
+
+    function parseLiveCountryCodeFromGroupPrefix(title) {
+        const normalizedTitle = normalizeAsciiText(title)
+        const match = normalizedTitle.match(/^([a-z]{2,3})\s*[:\-]/)
+        if (!match || !match[1]) {
+            return null
+        }
+        return normalizeLiveCountryCode(match[1])
+    }
+
+    function parseLiveCountryCodeFromExplicitGroupTitle(title) {
+        const normalizedTitle = normalizeAsciiText(title)
+        if (!/^[a-z]{2,3}$/.test(normalizedTitle)) {
+            return null
+        }
+        return normalizeLiveCountryCode(normalizedTitle)
+    }
+
+    function getLiveCountryLabel(code) {
+        const normalizedCode = normalizeLiveCountryCode(code)
+        if (!normalizedCode) {
+            return safeText(code)
+        }
+        if (normalizedCode === "TR") {
+            return "Turkiye"
+        }
+        return normalizedCode
+    }
+
+    function liveGroupsData() {
+        return apiClient.liveGroups || []
+    }
+
+    function liveCountryChips() {
+        const groups = liveGroupsData()
+        const counts = {}
+        const prefixFallbackBuckets = []
+
+        for (let index = 0; index < groups.length; index += 1) {
+            const group = groups[index]
+            const explicitCountryCode = parseLiveCountryCodeFromExplicitGroupTitle(group.title)
+            if (explicitCountryCode) {
+                counts[explicitCountryCode] = (counts[explicitCountryCode] || 0) + Number(group.count || 0)
+            }
+        }
+
+        for (let index = 0; index < groups.length; index += 1) {
+            const group = groups[index]
+            if (parseLiveCountryCodeFromExplicitGroupTitle(group.title)) {
+                continue
+            }
+            const countryCodeFromPrefix = parseLiveCountryCodeFromGroupPrefix(group.title)
+            if (countryCodeFromPrefix) {
+                prefixFallbackBuckets.push({ code: countryCodeFromPrefix, count: Number(group.count || 0) })
+            }
+        }
+
+        for (let index = 0; index < prefixFallbackBuckets.length; index += 1) {
+            const bucket = prefixFallbackBuckets[index]
+            if (counts[bucket.code]) {
+                continue
+            }
+            counts[bucket.code] = (counts[bucket.code] || 0) + bucket.count
+        }
+
+        const chips = []
+        const codes = Object.keys(counts)
+        for (let index = 0; index < codes.length; index += 1) {
+            const code = codes[index]
+            chips.push({
+                code,
+                count: counts[code],
+                filter: buildLiveCountryFilter(code),
+                label: getLiveCountryLabel(code)
+            })
+        }
+
+        chips.sort((left, right) => {
+            if (left.code === "TR" && right.code !== "TR") return -1
+            if (right.code === "TR" && left.code !== "TR") return 1
+            if (right.count !== left.count) return right.count - left.count
+            return left.label.localeCompare(right.label, "tr-TR")
+        })
+
+        const activeCountryCode = parseLiveCountryCodeFromFilter(selectedLiveGroup)
+        if (activeCountryCode) {
+            let exists = false
+            for (let index = 0; index < chips.length; index += 1) {
+                if (chips[index].code === activeCountryCode) {
+                    exists = true
+                    break
+                }
+            }
+            if (!exists) {
+                chips.unshift({
+                    code: activeCountryCode,
+                    count: 0,
+                    filter: buildLiveCountryFilter(activeCountryCode),
+                    label: getLiveCountryLabel(activeCountryCode)
+                })
+            }
+        }
+
+        return chips
+    }
+
+    function liveGroupChips() {
+        const groups = liveGroupsData()
+        const output = []
+        for (let index = 0; index < groups.length; index += 1) {
+            const group = groups[index]
+            if (parseLiveCountryCodeFromExplicitGroupTitle(group.title)) {
+                continue
+            }
+            if (parseLiveCountryCodeFromGroupPrefix(group.title)) {
+                continue
+            }
+            output.push(group)
+        }
+        output.sort((left, right) => Number(right.count || 0) - Number(left.count || 0) || safeText(left.title).localeCompare(safeText(right.title), "tr-TR"))
+        if (safeText(selectedLiveGroup).length && !parseLiveCountryCodeFromFilter(selectedLiveGroup)) {
+            let exists = false
+            for (let index = 0; index < output.length; index += 1) {
+                if (output[index].title === selectedLiveGroup) {
+                    exists = true
+                    break
+                }
+            }
+            if (!exists) {
+                output.unshift({ title: selectedLiveGroup, count: 0, kind: "live" })
+            }
+        }
+        return output
+    }
+
+    function countKeywordMatches(text, keywords) {
+        let score = 0
+        for (let index = 0; index < keywords.length; index += 1) {
+            if (text.indexOf(keywords[index]) !== -1) {
+                score += 1
+            }
+        }
+        return score
+    }
+
+    function isBeinVipChannel(item) {
+        const text = normalizeText(`${item.title || ""} ${item.groupTitle || ""}`)
+        return /be[\s.-]*in/.test(text) && /(spor|sport|sports)/.test(text) && /vip/.test(text)
+    }
+
+    function isBeinSportsChannel(item) {
+        const text = normalizeText(`${item.title || ""} ${item.groupTitle || ""}`)
+        return /be[\s.-]*in/.test(text) && /(spor|sport|sports)/.test(text)
+    }
+
+    function getLiveSelectionScore(item, preferSports) {
+        const text = normalizeText(`${item.title || ""} ${item.groupTitle || ""}`)
+        const playbackScore = item.playbackAllowed ? 180 : -220
+        const healthScore = item.healthStatus === "healthy"
+            ? 90
+            : item.healthStatus === "degraded"
+                ? 24
+                : !item.healthStatus || item.healthStatus === "unknown"
+                    ? 8
+                    : -320
+        const verifiedScore = item.isVerified ? 18 : 0
+        const artworkScore = item.logoUrl ? 8 : 0
+        const sportsScore = preferSports ? countKeywordMatches(text, ["spor", "sports", "sport", "futbol", "mac", "lig"]) * 24 : 0
+        const beinScore = preferSports ? (isBeinVipChannel(item) ? 260 : isBeinSportsChannel(item) ? 140 : 0) : 0
+        return playbackScore + healthScore + verifiedScore + artworkScore + sportsScore + beinScore
+    }
+
+    function getPreferredLiveItem(items) {
+        if (!items.length) {
+            return null
+        }
+        const ranked = items.slice().sort((left, right) => getLiveSelectionScore(right, true) - getLiveSelectionScore(left, true))
+        return ranked.length ? ranked[0] : null
+    }
+
+    function applyLiveFilters(search, group) {
+        const normalizedSearch = safeText(search)
+        const normalizedGroup = safeText(group).length ? safeText(group) : buildLiveCountryFilter("TR")
+        liveSearchText = normalizedSearch
+        selectedLiveGroup = normalizedGroup
+        apiClient.fetchLiveCatalog(1, 300, normalizedSearch, normalizedGroup)
+    }
+
     function filterItems(items, search, group) {
         const searchText = normalizeText(search)
         const groupText = normalizeText(group)
@@ -259,7 +485,7 @@ ApplicationWindow {
 
     function filteredMovies() { return filterItems(apiClient.movies || [], moviesSearchText, selectedMovieGroup) }
     function filteredSeries() { return filterItems(apiClient.series || [], seriesSearchText, selectedSeriesGroup) }
-    function filteredLiveItems() { return filterItems(apiClient.liveChannels || [], liveSearchText, selectedLiveGroup) }
+    function filteredLiveItems() { return apiClient.liveChannels || [] }
 
     function syncSelectedLiveSelection() {
         const items = filteredLiveItems()
@@ -272,6 +498,12 @@ ApplicationWindow {
             if (items[index].id === selectedLiveId) {
                 return
             }
+        }
+
+        const preferred = getPreferredLiveItem(items)
+        if (!safeText(liveSearchText).length && preferred && preferred.id) {
+            selectedLiveId = preferred.id
+            return
         }
 
         selectedLiveId = items[0].id
@@ -432,6 +664,7 @@ ApplicationWindow {
         }
         currentScreen = screenName
         if (screenName === "live") {
+            applyLiveFilters(liveSearchText, selectedLiveGroup)
             syncSelectedLiveSelection()
             liveAutoplayTimer.restart()
         } else if (screenName === "packages") {
@@ -543,6 +776,13 @@ ApplicationWindow {
     }
 
     Timer {
+        id: liveFilterDebounceTimer
+        interval: 240
+        repeat: false
+        onTriggered: applyLiveFilters(liveSearchText, selectedLiveGroup)
+    }
+
+    Timer {
         id: liveControlsHideTimer
         interval: 3000
         repeat: false
@@ -587,7 +827,12 @@ ApplicationWindow {
         function onLoginSucceeded() { currentScreen = "home"; premiumPopupDismissed = false; showAuthCode = false; authCode = "" }
         function onAnonCodeIssued(code) { issuedCode = sanitizeCode(code); revealedCount = 0; scrambleSeed = 0; revealWarmupTicks = 6; registerAcknowledged = false; authCode = ""; showAuthCode = false; currentScreen = "register"; revealTimer.interval = 88; revealTimer.restart() }
         function onSeriesChanged() { if (!selectedSeriesId && (apiClient.series || []).length) selectedSeriesId = apiClient.series[0].id }
-        function onLiveChannelsChanged() { syncSelectedLiveSelection(); if (currentScreen === "live") liveAutoplayTimer.restart() }
+        function onLiveChannelsChanged() {
+            syncSelectedLiveSelection()
+            if (currentScreen === "live") {
+                liveAutoplayTimer.restart()
+            }
+        }
         function onLogoutCompleted() { currentScreen = "login"; authCode = ""; issuedCode = ""; showAuthCode = false; closePlayer(); pendingPackage = null; selectedPaymentMethodId = "" }
         function onNoticeChanged() { if (apiClient.notice && apiClient.notice.length) showToast(apiClient.notice, success) }
         function onRequestFailed(context, message) { showToast(message, danger) }
@@ -2071,17 +2316,24 @@ ApplicationWindow {
                                         spacing: 10
 
                                         Repeater {
-                                            model: [""] .concat(uniqueGroups(apiClient.liveChannels || []))
+                                            model: liveCountryChips()
                                             ChipButton {
                                                 required property var modelData
-                                                text: modelData.length ? modelData : "Tumu"
-                                                active: selectedLiveGroup === modelData
+                                                text: modelData.count > 0 ? `${modelData.label} ${modelData.count}` : modelData.label
+                                                active: parseLiveCountryCodeFromFilter(selectedLiveGroup) === modelData.code
                                                 width: Math.max(96, implicitContentWidth + 28)
-                                                onClicked: {
-                                                    selectedLiveGroup = modelData
-                                                    syncSelectedLiveSelection()
-                                                    liveAutoplayTimer.restart()
-                                                }
+                                                onClicked: applyLiveFilters(liveSearchText, modelData.filter)
+                                            }
+                                        }
+
+                                        Repeater {
+                                            model: liveGroupChips()
+                                            ChipButton {
+                                                required property var modelData
+                                                text: Number(modelData.count || 0) > 0 ? `${modelData.title} ${modelData.count}` : modelData.title
+                                                active: selectedLiveGroup === modelData.title
+                                                width: Math.max(96, implicitContentWidth + 28)
+                                                onClicked: applyLiveFilters(liveSearchText, modelData.title)
                                             }
                                         }
                                     }
@@ -2522,14 +2774,44 @@ ApplicationWindow {
                                             anchors.margins: 18
                                             spacing: 14
 
-                                            AppField {
+                                            RowLayout {
                                                 Layout.fillWidth: true
-                                                placeholderText: "Kanal ara..."
-                                                text: liveSearchText
-                                                onTextChanged: {
-                                                    liveSearchText = text
-                                                    syncSelectedLiveSelection()
-                                                    liveAutoplayTimer.restart()
+                                                spacing: 10
+
+                                                AppField {
+                                                    Layout.fillWidth: true
+                                                    placeholderText: "Kanal ara..."
+                                                    text: liveSearchText
+                                                    onTextChanged: {
+                                                        liveSearchText = text
+                                                        liveFilterDebounceTimer.restart()
+                                                    }
+                                                    onAccepted: {
+                                                        liveFilterDebounceTimer.stop()
+                                                        applyLiveFilters(text, selectedLiveGroup)
+                                                    }
+                                                }
+
+                                                AppButton {
+                                                    text: "Ara"
+                                                    secondary: true
+                                                    implicitWidth: 86
+                                                    onClicked: {
+                                                        liveFilterDebounceTimer.stop()
+                                                        applyLiveFilters(liveSearchText, selectedLiveGroup)
+                                                    }
+                                                }
+
+                                                AppButton {
+                                                    visible: liveSearchText.length > 0
+                                                    enabled: visible
+                                                    text: "Temizle"
+                                                    secondary: true
+                                                    implicitWidth: 108
+                                                    onClicked: {
+                                                        liveFilterDebounceTimer.stop()
+                                                        applyLiveFilters("", selectedLiveGroup)
+                                                    }
                                                 }
                                             }
 
@@ -2547,18 +2829,37 @@ ApplicationWindow {
                                                 Item { Layout.fillWidth: true }
 
                                                 Text {
-                                                    text: filteredLiveItems().length ? `${filteredLiveItems().length} kanal` : "Bos"
+                                                    text: apiClient.liveLoadingMore
+                                                        ? "Daha fazla yukleniyor"
+                                                        : (filteredLiveItems().length ? `${filteredLiveItems().length} kanal` : "Bos")
                                                     color: window.textMuted
                                                     font.pixelSize: 13
                                                 }
                                             }
 
                                             ListView {
+                                                id: liveChannelListView
                                                 Layout.fillWidth: true
                                                 Layout.fillHeight: true
                                                 clip: true
                                                 spacing: 12
+                                                cacheBuffer: 960
+                                                boundsBehavior: Flickable.StopAtBounds
                                                 model: filteredLiveItems()
+
+                                                function requestMoreIfNeeded() {
+                                                    if (!apiClient.liveHasMore || apiClient.liveLoadingMore) {
+                                                        return
+                                                    }
+                                                    if (contentHeight <= height + 8 || contentY + height >= contentHeight - 320) {
+                                                        apiClient.loadMoreLive()
+                                                    }
+                                                }
+
+                                                onContentYChanged: requestMoreIfNeeded()
+                                                onContentHeightChanged: requestMoreIfNeeded()
+                                                onHeightChanged: requestMoreIfNeeded()
+                                                Component.onCompleted: requestMoreIfNeeded()
 
                                                 delegate: Rectangle {
                                                     required property var modelData
@@ -2628,6 +2929,32 @@ ApplicationWindow {
                                                     MouseArea {
                                                         anchors.fill: parent
                                                         onClicked: playLive(modelData)
+                                                    }
+                                                }
+
+                                                footer: Item {
+                                                    width: liveChannelListView.width
+                                                    height: apiClient.liveHasMore || apiClient.liveLoadingMore ? 58 : 12
+
+                                                    Rectangle {
+                                                        anchors.horizontalCenter: parent.horizontalCenter
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                        width: liveLoadingLabel.implicitWidth + 24
+                                                        height: 34
+                                                        radius: 17
+                                                        color: "#10ffffff"
+                                                        border.width: 1
+                                                        border.color: "#18ffffff"
+                                                        visible: apiClient.liveHasMore || apiClient.liveLoadingMore
+
+                                                        Text {
+                                                            id: liveLoadingLabel
+                                                            anchors.centerIn: parent
+                                                            text: apiClient.liveLoadingMore ? "Kanallar yukleniyor" : "Daha fazla kanal icin kaydirin"
+                                                            color: window.textMuted
+                                                            font.pixelSize: 12
+                                                            font.bold: true
+                                                        }
                                                     }
                                                 }
                                             }
