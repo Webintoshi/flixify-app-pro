@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(FlixifyNativeQt VERSION 2.2.18 LANGUAGES CXX)
+project(FlixifyNativeQt VERSION 2.2.20 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -81,9 +81,20 @@ set_target_properties(FlixifyNativeQt PROPERTIES
 
 if(FLIXIFY_ENABLE_INSTALL)
   include(GNUInstallDirs)
+  if(WIN32)
+    set(CMAKE_INSTALL_BINDIR "." CACHE STRING "Install binary directory" FORCE)
+  endif()
+  set(FLIXIFY_INSTALL_RUNTIME_DESTINATION "${CMAKE_INSTALL_BINDIR}")
+  if(WIN32)
+    set(FLIXIFY_INSTALL_PLUGIN_DESTINATION "plugins")
+    set(FLIXIFY_INSTALL_LUA_DESTINATION "lua")
+  else()
+    set(FLIXIFY_INSTALL_PLUGIN_DESTINATION "${CMAKE_INSTALL_BINDIR}/plugins")
+    set(FLIXIFY_INSTALL_LUA_DESTINATION "${CMAKE_INSTALL_BINDIR}/lua")
+  endif()
   install(TARGETS FlixifyNativeQt
     BUNDLE DESTINATION .
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    RUNTIME DESTINATION ${FLIXIFY_INSTALL_RUNTIME_DESTINATION}
   )
   qt_generate_deploy_qml_app_script(
     TARGET FlixifyNativeQt
@@ -93,17 +104,28 @@ if(FLIXIFY_ENABLE_INSTALL)
     NO_UNSUPPORTED_PLATFORM_ERROR
   )
   install(SCRIPT ${deploy_qt_runtime})
+  if(WIN32)
+    install(CODE [[
+      file(GLOB flixify_runtime_files
+        "${CMAKE_INSTALL_PREFIX}/bin/*.dll"
+        "${CMAKE_INSTALL_PREFIX}/bin/qt.conf"
+      )
+      foreach(runtime_file IN LISTS flixify_runtime_files)
+        file(COPY "${runtime_file}" DESTINATION "${CMAKE_INSTALL_PREFIX}")
+      endforeach()
+    ]])
+  endif()
   if(EXISTS "${LIBVLC_ROOT}/libvlc.dll")
-    install(FILES "${LIBVLC_ROOT}/libvlc.dll" DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES "${LIBVLC_ROOT}/libvlc.dll" DESTINATION ${FLIXIFY_INSTALL_RUNTIME_DESTINATION})
   endif()
   if(EXISTS "${LIBVLC_ROOT}/libvlccore.dll")
-    install(FILES "${LIBVLC_ROOT}/libvlccore.dll" DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES "${LIBVLC_ROOT}/libvlccore.dll" DESTINATION ${FLIXIFY_INSTALL_RUNTIME_DESTINATION})
   endif()
   if(EXISTS "${LIBVLC_ROOT}/plugins")
-    install(DIRECTORY "${LIBVLC_ROOT}/plugins/" DESTINATION "${CMAKE_INSTALL_BINDIR}/plugins")
+    install(DIRECTORY "${LIBVLC_ROOT}/plugins/" DESTINATION "${FLIXIFY_INSTALL_PLUGIN_DESTINATION}")
   endif()
   if(EXISTS "${LIBVLC_ROOT}/lua")
-    install(DIRECTORY "${LIBVLC_ROOT}/lua/" DESTINATION "${CMAKE_INSTALL_BINDIR}/lua")
+    install(DIRECTORY "${LIBVLC_ROOT}/lua/" DESTINATION "${FLIXIFY_INSTALL_LUA_DESTINATION}")
   endif()
 endif()
 
@@ -118,13 +140,13 @@ if(WIN32)
   set(CPACK_NSIS_PACKAGE_NAME "Flixify Pro")
   set(CPACK_NSIS_MUI_ICON "${FLIXIFY_WINDOWS_ICON}")
   set(CPACK_NSIS_MUI_UNIICON "${FLIXIFY_WINDOWS_ICON}")
-  set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\Flixify Pro.exe")
-  set(CPACK_NSIS_EXECUTABLES_DIRECTORY "bin")
+  set(CPACK_NSIS_INSTALLED_ICON_NAME "Flixify Pro.exe")
+  set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
   set(CPACK_NSIS_MUI_FINISHPAGE_RUN "Flixify Pro.exe")
   set(CPACK_PACKAGE_EXECUTABLES "Flixify Pro" "Flixify Pro")
   set(
     CPACK_NSIS_EXTRA_INSTALL_COMMANDS
-    "CreateShortCut \\\"$DESKTOP\\\\Flixify Pro.lnk\\\" \\\"$INSTDIR\\\\bin\\\\Flixify Pro.exe\\\""
+    "CreateShortCut \\\"$DESKTOP\\\\Flixify Pro.lnk\\\" \\\"$INSTDIR\\\\Flixify Pro.exe\\\" \\\"\\\" \\\"$INSTDIR\\\\Flixify Pro.exe\\\" 0"
   )
   set(
     CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
