@@ -3859,7 +3859,7 @@ ApplicationWindow {
         }
 
         Rectangle {
-            anchors.fill: parent; color: "#d9030508"; visible: false && overlayPlayerVisible(); z: 20
+            anchors.fill: parent; color: "#d9030508"; visible: overlayPlayerVisible(); z: 29
             GlassCard {
                 anchors.fill: parent; anchors.margins: 18; color: "#f2080a0e"; z: 21
                 ColumnLayout {
@@ -3894,7 +3894,7 @@ ApplicationWindow {
         Rectangle {
             anchors.fill: parent
             color: "#f004070b"
-            visible: overlayPlayerVisible()
+            visible: false && overlayPlayerVisible()
             z: 29
 
             Rectangle {
