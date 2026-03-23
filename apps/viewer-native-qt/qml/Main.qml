@@ -13,19 +13,19 @@ ApplicationWindow {
     title: "Flixify Pro"
     color: "#05070b"
 
-    readonly property color panel: "#0d121ccc"
+    readonly property color panel: "#cc0d121c"
     readonly property color panelSoft: "#131923"
-    readonly property color panelStrong: "#080b11f0"
+    readonly property color panelStrong: "#f0080b11"
     readonly property color textPrimary: "#f7f8fb"
     readonly property color textMuted: "#b1bac9"
     readonly property color accent: "#e50914"
     readonly property color accentStrong: "#ff2432"
-    readonly property color borderSoft: "#ffffff1a"
+    readonly property color borderSoft: "#1affffff"
     readonly property color success: "#30d19d"
     readonly property color danger: "#ff7d86"
     readonly property color info: "#7cb6ff"
 
-    property string currentScreen: apiClient.authenticated ? "home" : "login"
+    property string currentScreen: "home"
     property string authCode: ""
     property string authDeviceName: "Flixify Native Qt"
     property string registerDeviceName: "Flixify Native Qt"
@@ -97,10 +97,15 @@ ApplicationWindow {
         return apiClient.me && apiClient.me.contact ? apiClient.me.contact : ({})
     }
 
+    function hasLoadedUser() {
+        const user = userData()
+        return Boolean(user && user.id)
+    }
+
     function subscriptionLabel() {
         const user = userData()
         if (user.hasActiveSubscription && user.activePackage) {
-            return `${user.activePackage.title} • ${user.activePackage.remainingDays} gun`
+            return `${user.activePackage.title} - ${user.activePackage.remainingDays} gun`
         }
         return "Paket aktif degil"
     }
@@ -178,7 +183,7 @@ ApplicationWindow {
                 id: episode.id,
                 kind: "episode",
                 title: item.title,
-                subtitle: `${item.seasonCount} sezon • ${item.episodeCount} bolum`,
+                subtitle: `${item.seasonCount} sezon - ${item.episodeCount} bolum`,
                 posterUrl: item.posterUrl,
                 playbackAllowed: episode.playbackAllowed,
                 seriesId: item.id
@@ -241,8 +246,20 @@ ApplicationWindow {
         return tracks.length ? 0 : -1
     }
 
-    function shouldShowBlocked() { return apiClient.authenticated && userData().status === "blocked" }
-    function shouldShowPremiumPopup() { return apiClient.authenticated && userData() && !userData().hasActiveSubscription && !premiumPopupDismissed && !pendingPackage && !playerVisible }
+    function shouldShowBlocked() {
+        const user = userData()
+        return apiClient.authenticated && Boolean(user.id) && user.status === "blocked"
+    }
+
+    function shouldShowPremiumPopup() {
+        const user = userData()
+        return apiClient.authenticated &&
+            Boolean(user.id) &&
+            !user.hasActiveSubscription &&
+            !premiumPopupDismissed &&
+            !pendingPackage &&
+            !playerVisible
+    }
     function appUpdatePayload() { return apiClient.appUpdate || ({}) }
     function appUpdateVisible() { return Boolean(appUpdatePayload().updateAvailable && appUpdatePayload().latestVersion && appUpdatePayload().latestVersion !== dismissedUpdateVersion) }
 
@@ -316,6 +333,17 @@ ApplicationWindow {
 
     Connections {
         target: apiClient
+        function onAuthenticatedChanged() {
+            if (apiClient.authenticated) {
+                if (currentScreen === "login" || currentScreen === "register") {
+                    currentScreen = "home"
+                }
+                return
+            }
+            if (!apiClient.restoringSession && currentScreen !== "register") {
+                currentScreen = "login"
+            }
+        }
         function onLoginSucceeded() { currentScreen = "home"; premiumPopupDismissed = false }
         function onAnonCodeIssued(code) { issuedCode = sanitizeCode(code); revealedCount = 0; scrambleSeed = 0; registerAcknowledged = false; currentScreen = "register"; revealTimer.restart() }
         function onSeriesChanged() { if (!selectedSeriesId && (apiClient.series || []).length) selectedSeriesId = apiClient.series[0].id }
@@ -339,8 +367,8 @@ ApplicationWindow {
             border.width: 1
             border.color: control.secondary ? window.borderSoft : "#00000000"
             gradient: Gradient {
-                GradientStop { position: 0.0; color: control.secondary ? "#ffffff12" : window.accentStrong }
-                GradientStop { position: 1.0; color: control.secondary ? "#ffffff12" : window.accent }
+                GradientStop { position: 0.0; color: control.secondary ? "#12ffffff" : window.accentStrong }
+                GradientStop { position: 1.0; color: control.secondary ? "#12ffffff" : window.accent }
             }
             opacity: control.enabled ? 1.0 : 0.45
         }
@@ -357,16 +385,16 @@ ApplicationWindow {
         implicitHeight: 54
         color: window.textPrimary
         selectedTextColor: window.textPrimary
-        selectionColor: "#e5091455"
+        selectionColor: "#55e50914"
         placeholderTextColor: "#8f98a8"
         font.pixelSize: 15
         leftPadding: 16
         rightPadding: 16
         background: Rectangle {
             radius: 16
-            color: "#ffffff0d"
+            color: "#0dffffff"
             border.width: 1
-            border.color: parent.activeFocus ? "#ffffff40" : window.borderSoft
+            border.color: parent.activeFocus ? "#40ffffff" : window.borderSoft
         }
     }
 
@@ -377,9 +405,9 @@ ApplicationWindow {
         padding: 0
         background: Rectangle {
             radius: 21
-            color: chip.active ? "#e5091430" : "#ffffff0a"
+            color: chip.active ? "#30e50914" : "#0affffff"
             border.width: 1
-            border.color: chip.active ? "#ffffff28" : window.borderSoft
+            border.color: chip.active ? "#28ffffff" : window.borderSoft
         }
         contentItem: Text {
             text: chip.text
@@ -411,7 +439,7 @@ ApplicationWindow {
             radius: 28
             color: "#0a0e16"
             border.width: 1
-            border.color: "#ffffff14"
+            border.color: "#14ffffff"
         }
 
         Image {
@@ -428,9 +456,9 @@ ApplicationWindow {
             anchors.fill: parent
             radius: 28
             gradient: Gradient {
-                GradientStop { position: 0.0; color: "#05070b11" }
-                GradientStop { position: 0.62; color: "#05070b66" }
-                GradientStop { position: 1.0; color: "#05070bf0" }
+                GradientStop { position: 0.0; color: "#1105070b" }
+                GradientStop { position: 0.62; color: "#6605070b" }
+                GradientStop { position: 1.0; color: "#f005070b" }
             }
         }
 
@@ -443,7 +471,7 @@ ApplicationWindow {
                 width: 64
                 height: 32
                 radius: 16
-                color: "#ffffff14"
+                color: "#14ffffff"
                 visible: rail.cardKind !== "live"
                 Text {
                     anchors.centerIn: parent
@@ -479,7 +507,7 @@ ApplicationWindow {
                 width: 132
                 height: 34
                 radius: 17
-                color: rail.item.playbackAllowed ? "#30d19d2b" : "#ffffff14"
+                color: rail.item.playbackAllowed ? "#2b30d19d" : "#14ffffff"
                 Text {
                     anchors.centerIn: parent
                     text: rail.item.playbackAllowed ? "Hazir" : "Paket Gerekli"
@@ -506,7 +534,7 @@ ApplicationWindow {
             x: -width * 0.25
             y: -height * 0.28
             radius: width / 2
-            color: "#e5091422"
+            color: "#22e50914"
         }
 
         Rectangle {
@@ -515,7 +543,7 @@ ApplicationWindow {
             x: parent.width * 0.76
             y: parent.height * 0.06
             radius: width / 2
-            color: "#6e4dff22"
+            color: "#226e4dff"
         }
 
         Rectangle {
@@ -534,7 +562,7 @@ ApplicationWindow {
 
         Item {
             anchors.fill: parent
-            visible: !apiClient.authenticated
+            visible: !apiClient.authenticated && !apiClient.restoringSession
 
             ColumnLayout {
                 anchors.centerIn: parent
@@ -596,7 +624,7 @@ ApplicationWindow {
                                         width: (parent.width - 24) / 4
                                         height: 8
                                         radius: 4
-                                        color: index < progressSegments() ? window.accent : "#ffffff14"
+                                        color: index < progressSegments() ? window.accent : "#14ffffff"
                                     }
                                 }
                             }
@@ -615,13 +643,13 @@ ApplicationWindow {
                             AppButton { width: parent.width; text: apiClient.busy ? "Kod Uretiliyor..." : "Hesap Numarasi Olustur"; visible: !issuedCode.length; enabled: !apiClient.busy; onClicked: apiClient.issueAnonCode(registerDeviceName) }
 
                             Rectangle {
-                                width: parent.width; height: 154; radius: 22; color: "#0b0f17"; border.width: 1; border.color: issuedCode.length ? "#e5091442" : window.borderSoft; visible: issuedCode.length > 0
+                                width: parent.width; height: 154; radius: 22; color: "#0b0f17"; border.width: 1; border.color: issuedCode.length ? "#42e50914" : window.borderSoft; visible: issuedCode.length > 0
                                 Column {
                                     anchors.fill: parent; anchors.margins: 20; spacing: 12
                                     Text { text: "Erisim Kodunuz"; color: window.textMuted; font.pixelSize: 13; font.bold: true }
                                     Text { text: animatedIssuedCode(); color: window.textPrimary; width: parent.width; horizontalAlignment: Text.AlignHCenter; font.pixelSize: 32; font.family: "Space Grotesk"; font.bold: true }
                                     Rectangle {
-                                        width: parent.width; height: 8; radius: 4; color: "#ffffff14"
+                                        width: parent.width; height: 8; radius: 4; color: "#14ffffff"
                                         Rectangle { width: parent.width * (issuedCode.length ? revealedCount / issuedCode.length : 0); height: parent.height; radius: 4; color: window.accent }
                                     }
                                 }
@@ -652,10 +680,10 @@ ApplicationWindow {
                             }
 
                             Rectangle {
-                                width: parent.width; height: 56; radius: 16; visible: issuedCode.length > 0; color: registerAcknowledged ? "#30d19d22" : "#ffffff0c"; border.width: 1; border.color: registerAcknowledged ? "#30d19d55" : window.borderSoft
+                                width: parent.width; height: 56; radius: 16; visible: issuedCode.length > 0; color: registerAcknowledged ? "#2230d19d" : "#0cffffff"; border.width: 1; border.color: registerAcknowledged ? "#5530d19d" : window.borderSoft
                                 Row {
                                     anchors.fill: parent; anchors.margins: 16; spacing: 12
-                                    Rectangle { width: 22; height: 22; radius: 11; color: registerAcknowledged ? window.success : "#ffffff18"; anchors.verticalCenter: parent.verticalCenter; Text { anchors.centerIn: parent; text: registerAcknowledged ? "✓" : ""; color: "#04140d"; font.bold: true } }
+                                    Rectangle { width: 22; height: 22; radius: 11; color: registerAcknowledged ? window.success : "#18ffffff"; anchors.verticalCenter: parent.verticalCenter; Text { anchors.centerIn: parent; text: registerAcknowledged ? "OK" : ""; color: "#04140d"; font.bold: true } }
                                     Text { anchors.verticalCenter: parent.verticalCenter; text: "Hesap numarami kaydettigimi onayliyorum"; color: window.textPrimary; font.pixelSize: 14 }
                                 }
                                 MouseArea { anchors.fill: parent; enabled: !revealTimer.running; onClicked: registerAcknowledged = !registerAcknowledged }
@@ -674,7 +702,7 @@ ApplicationWindow {
                                     { title: "Premium Deneyim", copy: "Film, dizi ve canli icerikler branded shell icinde acilir." }
                                 ]
                                 Rectangle {
-                                    width: (parent.width - 12) / 2; height: 96; radius: 18; color: "#ffffff0a"; border.width: 1; border.color: window.borderSoft
+                                    width: (parent.width - 12) / 2; height: 96; radius: 18; color: "#0affffff"; border.width: 1; border.color: window.borderSoft
                                     Column {
                                         anchors.fill: parent; anchors.margins: 16; spacing: 6
                                         Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 15; font.family: "Space Grotesk"; font.bold: true }
@@ -682,6 +710,58 @@ ApplicationWindow {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        Item {
+            anchors.fill: parent
+            visible: apiClient.restoringSession
+
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: 520
+                spacing: 18
+
+                GlassCard {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 220
+                    color: window.panelStrong
+
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: 18
+
+                        Image {
+                            width: 54
+                            height: 54
+                            source: "qrc:/branding/icon.png"
+                            fillMode: Image.PreserveAspectFit
+                        }
+
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: "Oturum geri yukleniyor"
+                            color: window.textPrimary
+                            font.pixelSize: 32
+                            font.family: "Space Grotesk"
+                            font.bold: true
+                        }
+
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: "Kayitli cihaz oturumu dogrulaniyor."
+                            color: window.textMuted
+                            font.pixelSize: 15
+                        }
+
+                        BusyIndicator {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            running: apiClient.restoringSession
+                            width: 44
+                            height: 44
                         }
                     }
                 }
@@ -699,7 +779,7 @@ ApplicationWindow {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 104
-                    color: "#010204ee"
+                    color: "#ee010204"
 
                     RowLayout {
                         anchors.fill: parent
@@ -733,7 +813,7 @@ ApplicationWindow {
                                         onClicked: openScreen(modelData.key)
                                         contentItem: Column {
                                             spacing: 6
-                                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: parent.parent.text; color: currentScreen === parent.parent.modelData.key ? window.textPrimary : "#ffffff9f"; font.pixelSize: 18; font.bold: true }
+                                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: parent.parent.text; color: currentScreen === parent.parent.modelData.key ? window.textPrimary : "#9fffffff"; font.pixelSize: 18; font.bold: true }
                                             Rectangle { anchors.horizontalCenter: parent.horizontalCenter; width: 56; height: 4; radius: 2; color: window.accent; visible: currentScreen === parent.parent.modelData.key }
                                         }
                                         background: Item {}
@@ -743,10 +823,10 @@ ApplicationWindow {
                         }
 
                         Rectangle {
-                            width: 232; height: 62; radius: 31; color: "#ffffff0a"; border.width: 1; border.color: window.borderSoft
+                            width: 232; height: 62; radius: 31; color: "#0affffff"; border.width: 1; border.color: window.borderSoft
                             Row {
                                 anchors.fill: parent; anchors.margins: 6; spacing: 12
-                                Rectangle { width: 50; height: 50; radius: 25; color: "#ffffff10"; anchors.verticalCenter: parent.verticalCenter; Text { anchors.centerIn: parent; text: "•"; color: window.textPrimary; font.pixelSize: 28 } }
+                                Rectangle { width: 50; height: 50; radius: 25; color: "#10ffffff"; anchors.verticalCenter: parent.verticalCenter; Text { anchors.centerIn: parent; text: "-"; color: window.textPrimary; font.pixelSize: 28 } }
                                 Text { anchors.verticalCenter: parent.verticalCenter; width: 150; elide: Text.ElideRight; text: userData().kryptoniteCode || "Profil"; color: window.textPrimary; font.pixelSize: 14; font.bold: true }
                             }
                             MouseArea { anchors.fill: parent; onClicked: openScreen("profile") }
@@ -764,9 +844,9 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: appUpdateVisible() ? 94 : 0
-                        color: "#7cb6ff16"
+                        color: "#167cb6ff"
                         border.width: appUpdateVisible() ? 1 : 0
-                        border.color: "#7cb6ff30"
+                        border.color: "#307cb6ff"
                         visible: appUpdateVisible()
                         Row {
                             anchors.fill: parent; anchors.margins: 18; spacing: 16
@@ -803,14 +883,14 @@ ApplicationWindow {
                                     Item {
                                         anchors.fill: parent
                                         Image { anchors.fill: parent; anchors.margins: 1; source: homeHeroItem() ? (homeHeroItem().posterUrl || homeHeroItem().logoUrl || "") : ""; fillMode: Image.PreserveAspectCrop; asynchronous: true; visible: source.length > 0; clip: true }
-                                        Rectangle { anchors.fill: parent; radius: 28; gradient: Gradient { GradientStop { position: 0.0; color: "#05070b33" } GradientStop { position: 0.48; color: "#05070b8a" } GradientStop { position: 1.0; color: "#05070bf0" } } }
+                                        Rectangle { anchors.fill: parent; radius: 28; gradient: Gradient { GradientStop { position: 0.0; color: "#3305070b" } GradientStop { position: 0.48; color: "#8a05070b" } GradientStop { position: 1.0; color: "#f005070b" } } }
                                         Row {
                                             anchors.fill: parent; anchors.margins: 34; spacing: 24
                                             Column {
                                                 width: parent.width * 0.62; anchors.verticalCenter: parent.verticalCenter; spacing: 14
-                                                Rectangle { width: 180; height: 34; radius: 17; color: "#ffffff14"; Text { anchors.centerIn: parent; text: homeHeroItem() && homeHeroItem().kind === "movie" ? "Flixify Film Selection" : homeHeroItem() && homeHeroItem().kind === "live" ? "Canli Yayin Spotlight" : "Binge-Worthy Series"; color: "#ffffffd8"; font.pixelSize: 12; font.bold: true } }
+                                                Rectangle { width: 180; height: 34; radius: 17; color: "#14ffffff"; Text { anchors.centerIn: parent; text: homeHeroItem() && homeHeroItem().kind === "movie" ? "Flixify Film Selection" : homeHeroItem() && homeHeroItem().kind === "live" ? "Canli Yayin Spotlight" : "Binge-Worthy Series"; color: "#d8ffffff"; font.pixelSize: 12; font.bold: true } }
                                                 Text { width: parent.width; wrapMode: Text.WordWrap; text: homeHeroItem() ? homeHeroItem().title : ""; color: window.textPrimary; font.pixelSize: 64; font.family: "Space Grotesk"; font.bold: true }
-                                                Row { spacing: 10; Rectangle { width: subscriptionPill.implicitWidth + 28; height: 34; radius: 17; color: "#e5091433"; Text { id: subscriptionPill; anchors.centerIn: parent; text: subscriptionLabel(); color: "#ffd7da"; font.pixelSize: 12; font.bold: true } } }
+                                                Row { spacing: 10; Rectangle { width: subscriptionPill.implicitWidth + 28; height: 34; radius: 17; color: "#33e50914"; Text { id: subscriptionPill; anchors.centerIn: parent; text: subscriptionLabel(); color: "#ffd7da"; font.pixelSize: 12; font.bold: true } } }
                                                 Text { width: parent.width * 0.82; wrapMode: Text.WordWrap; text: homeHeroItem() && homeHeroItem().kind === "movie" ? "Poster odakli premium film secimi ve native player deneyimi." : homeHeroItem() && homeHeroItem().kind === "live" ? "Canli spor, haber ve premium yayinlar branded shell icinde yonetilir." : "Yeni sezonlar ve otomatik sonraki bolum akisi ile premium dizi deneyimi."; color: "#d7dce6"; font.pixelSize: 16 }
                                                 Row {
                                                     spacing: 12
@@ -821,10 +901,10 @@ ApplicationWindow {
                                             Column {
                                                 width: parent.width * 0.28; anchors.verticalCenter: parent.verticalCenter; spacing: 14
                                                 GlassCard {
-                                                    width: parent.width; height: 188; color: "#080b10d8"
+                                                    width: parent.width; height: 188; color: "#d8080b10"
                                                     Column {
                                                         anchors.fill: parent; anchors.margins: 20; spacing: 10
-                                                        Text { text: "Canli Spor Odagi"; color: "#ffffffd8"; font.pixelSize: 12; font.bold: true }
+                                                        Text { text: "Canli Spor Odagi"; color: "#d8ffffff"; font.pixelSize: 12; font.bold: true }
                                                         Text { text: (apiClient.liveChannels || []).length ? apiClient.liveChannels[0].title : "Canli TV Vitrini"; color: window.textPrimary; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 28; font.family: "Space Grotesk"; font.bold: true }
                                                         Text { text: "Canli rail uzerinden premium spor ve haber yayinlarina hizli gecis."; color: window.textMuted; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 14 }
                                                         AppButton { width: parent.width; text: (apiClient.liveChannels || []).length ? "Canli Kanali Ac" : "Canli TV'ye Git"; secondary: true; onClicked: { if ((apiClient.liveChannels || []).length) playLive(apiClient.liveChannels[0]); else openScreen("live") } }
@@ -889,7 +969,7 @@ ApplicationWindow {
                                             }
                                         }
                                         GlassCard {
-                                            width: parent.width; height: parent.height - 188; color: "#05070dcc"; visible: selectedLiveItem() !== null
+                                            width: parent.width; height: parent.height - 188; color: "#cc05070d"; visible: selectedLiveItem() !== null
                                             Column {
                                                 anchors.fill: parent; anchors.margins: 26; spacing: 18
                                                 Text { text: selectedLiveItem() ? selectedLiveItem().title : "Kanal secin"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap }
@@ -911,7 +991,7 @@ ApplicationWindow {
                                             delegate: Rectangle {
                                                 required property var modelData
                                                 width: parent.width; height: 88; radius: 22; color: selectedLiveId === modelData.id ? "#e50914" : "#131923"; border.width: 1; border.color: selectedLiveId === modelData.id ? "#ff5d74" : "#2a3140"
-                                                Row { anchors.fill: parent; anchors.margins: 14; spacing: 14; Rectangle { width: 54; height: 54; radius: 18; color: "#ffffff14"; anchors.verticalCenter: parent.verticalCenter; Image { anchors.fill: parent; anchors.margins: 8; source: modelData.logoUrl || ""; fillMode: Image.PreserveAspectFit; visible: source.length > 0; asynchronous: true } } Column { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 82; spacing: 4; Text { text: modelData.title; width: parent.width; elide: Text.ElideRight; color: "#ffffff"; font.pixelSize: 18; font.bold: true } Text { text: modelData.groupTitle || "Canli TV"; width: parent.width; elide: Text.ElideRight; color: selectedLiveId === modelData.id ? "#ffe8eb" : window.textMuted; font.pixelSize: 13 } } }
+                                                Row { anchors.fill: parent; anchors.margins: 14; spacing: 14; Rectangle { width: 54; height: 54; radius: 18; color: "#14ffffff"; anchors.verticalCenter: parent.verticalCenter; Image { anchors.fill: parent; anchors.margins: 8; source: modelData.logoUrl || ""; fillMode: Image.PreserveAspectFit; visible: source.length > 0; asynchronous: true } } Column { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 82; spacing: 4; Text { text: modelData.title; width: parent.width; elide: Text.ElideRight; color: "#ffffff"; font.pixelSize: 18; font.bold: true } Text { text: modelData.groupTitle || "Canli TV"; width: parent.width; elide: Text.ElideRight; color: selectedLiveId === modelData.id ? "#ffe8eb" : window.textMuted; font.pixelSize: 13 } } }
                                                 MouseArea { anchors.fill: parent; onClicked: selectedLiveId = modelData.id; onDoubleClicked: playLive(modelData) }
                                             }
                                         }
@@ -946,7 +1026,7 @@ ApplicationWindow {
                                 Text { text: "Diziler"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true }
                                 AppField { width: parent.width; placeholderText: "Dizi ara..."; text: seriesSearchText; onTextChanged: seriesSearchText = text }
                                 Flickable { width: parent.width; height: 52; contentWidth: seriesChipRow.width; clip: true; Row { id: seriesChipRow; spacing: 10; Repeater { model: [""] .concat(uniqueGroups(apiClient.series || [])); ChipButton { required property var modelData; text: modelData.length ? modelData : "Tum Diziler"; active: selectedSeriesGroup === modelData; width: Math.max(112, implicitContentWidth + 28); onClicked: selectedSeriesGroup = modelData } } } }
-                                Flow { width: parent.width; spacing: 20; Repeater { model: filteredSeries(); RailCard { width: 282; height: 430; item: ({ id: modelData.id, title: modelData.title, subtitle: `${modelData.seasonCount} sezon • ${modelData.episodeCount} bolum`, posterUrl: modelData.posterUrl, playbackAllowed: Boolean(modelData.featuredEpisode && modelData.featuredEpisode.playbackAllowed) }); cardKind: "episode"; onActivated: openSeriesDetail(modelData.id) } } }
+                                Flow { width: parent.width; spacing: 20; Repeater { model: filteredSeries(); RailCard { width: 282; height: 430; item: ({ id: modelData.id, title: modelData.title, subtitle: `${modelData.seasonCount} sezon - ${modelData.episodeCount} bolum`, posterUrl: modelData.posterUrl, playbackAllowed: Boolean(modelData.featuredEpisode && modelData.featuredEpisode.playbackAllowed) }); cardKind: "episode"; onActivated: openSeriesDetail(modelData.id) } } }
                             }
                         }
 
@@ -980,14 +1060,14 @@ ApplicationWindow {
                                         Column {
                                             id: seasonContent
                                             anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 18; spacing: 14
-                                            Text { text: `${modelData.title} • ${modelData.episodeCount} bolum`; color: window.textPrimary; font.pixelSize: 26; font.family: "Space Grotesk"; font.bold: true }
+                                            Text { text: `${modelData.title} - ${modelData.episodeCount} bolum`; color: window.textPrimary; font.pixelSize: 26; font.family: "Space Grotesk"; font.bold: true }
                                             Repeater {
                                                 model: modelData.episodes || []
                                                 Rectangle {
                                                     width: seasonContent.width; height: 80; radius: 20; color: "#131923"; border.width: 1; border.color: "#2a3140"
                                                     Row {
                                                         anchors.fill: parent; anchors.margins: 16; spacing: 18
-                                                        Text { anchors.verticalCenter: parent.verticalCenter; text: `B${modelData.episodeNumber}`; color: "#ffffffa6"; font.pixelSize: 14; font.bold: true }
+                                                        Text { anchors.verticalCenter: parent.verticalCenter; text: `B${modelData.episodeNumber}`; color: "#a6ffffff"; font.pixelSize: 14; font.bold: true }
                                                         Column { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 170; spacing: 4; Text { text: modelData.title; width: parent.width; elide: Text.ElideRight; color: window.textPrimary; font.pixelSize: 18; font.bold: true } Text { text: modelData.playbackAllowed ? "Hazir" : "Paket Gerekli"; color: modelData.playbackAllowed ? "#82ecc4" : window.textMuted; font.pixelSize: 13 } }
                                                         AppButton { anchors.verticalCenter: parent.verticalCenter; text: "Oynat"; implicitWidth: 110; enabled: modelData.playbackAllowed; onClicked: playEpisode(modelData, selectedSeries()) }
                                                     }
@@ -1041,7 +1121,7 @@ ApplicationWindow {
                                         model: apiClient.packages
                                         GlassCard {
                                             width: (parent.width - 36) / 3; height: 240; color: "#090c13"
-                                            Column { anchors.fill: parent; anchors.margins: 22; spacing: 10; Rectangle { width: 82; height: 34; radius: 17; color: "#ffffff14"; Text { anchors.centerIn: parent; text: `${modelData.durationMonths} ay`; color: window.textPrimary; font.pixelSize: 12; font.bold: true } } Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 30; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap } Text { text: modelData.priceLabel || "Fiyat bilgisi destek ekibinden alinir."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 14 } AppButton { text: "Paket Al"; implicitWidth: 132; onClicked: { pendingPackage = modelData; selectedPaymentMethodId = ""; apiClient.fetchPaymentMethods() } } }
+                                            Column { anchors.fill: parent; anchors.margins: 22; spacing: 10; Rectangle { width: 82; height: 34; radius: 17; color: "#14ffffff"; Text { anchors.centerIn: parent; text: `${modelData.durationMonths} ay`; color: window.textPrimary; font.pixelSize: 12; font.bold: true } } Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 30; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap } Text { text: modelData.priceLabel || "Fiyat bilgisi destek ekibinden alinir."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 14 } AppButton { text: "Paket Al"; implicitWidth: 132; onClicked: { pendingPackage = modelData; selectedPaymentMethodId = ""; apiClient.fetchPaymentMethods() } } }
                                         }
                                     }
                                 }
@@ -1131,20 +1211,20 @@ ApplicationWindow {
         }
 
         Rectangle {
-            anchors.fill: parent; color: "#030508d9"; visible: playerVisible; z: 20
+            anchors.fill: parent; color: "#d9030508"; visible: playerVisible; z: 20
             GlassCard {
-                anchors.fill: parent; anchors.margins: 18; color: "#080a0ef2"; z: 21
+                anchors.fill: parent; anchors.margins: 18; color: "#f2080a0e"; z: 21
                 ColumnLayout {
                     anchors.fill: parent; anchors.margins: 18; spacing: 14
-                    RowLayout { Layout.fillWidth: true; ColumnLayout { Layout.fillWidth: true; spacing: 4; Text { text: playbackController.activeContentKind === "live" ? "Canli TV" : playbackController.activeContentKind === "movie" ? "Film" : "Dizi"; color: "#ffffffc7"; font.pixelSize: 12; font.bold: true } Text { text: playbackController.activeTitle.length ? playbackController.activeTitle : "Player Hazir"; color: window.textPrimary; font.pixelSize: 28; font.family: "Space Grotesk"; font.bold: true } Text { text: playerSubtitle; color: window.textMuted; font.pixelSize: 14; visible: text.length > 0 } } AppButton { text: "Kapat"; secondary: true; implicitWidth: 120; onClicked: closePlayer() } }
+                    RowLayout { Layout.fillWidth: true; ColumnLayout { Layout.fillWidth: true; spacing: 4; Text { text: playbackController.activeContentKind === "live" ? "Canli TV" : playbackController.activeContentKind === "movie" ? "Film" : "Dizi"; color: "#c7ffffff"; font.pixelSize: 12; font.bold: true } Text { text: playbackController.activeTitle.length ? playbackController.activeTitle : "Player Hazir"; color: window.textPrimary; font.pixelSize: 28; font.family: "Space Grotesk"; font.bold: true } Text { text: playerSubtitle; color: window.textMuted; font.pixelSize: 14; visible: text.length > 0 } } AppButton { text: "Kapat"; secondary: true; implicitWidth: 120; onClicked: closePlayer() } }
                     RowLayout {
                         Layout.fillWidth: true; Layout.fillHeight: true; spacing: 16
                         GlassCard {
                             Layout.fillWidth: true; Layout.fillHeight: true; color: "#000000"
                             NativeVideoSurface { anchors.fill: parent; anchors.margins: 6; onSurfaceHandleChanged: playbackController.setVideoSurfaceHandle(surfaceHandle) }
-                            Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 18; width: stateLabel.implicitWidth + 28; height: 40; radius: 20; color: "#070a0fc7"; border.width: 1; border.color: "#ffffff12"; Text { id: stateLabel; anchors.centerIn: parent; text: playbackController.state === "buffering" ? "Buffer dolduruluyor" : playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazirlaniyor" : playbackController.state === "error" ? "Yayin acilamadi" : "Yayin hazir"; color: window.textPrimary; font.pixelSize: 13; font.bold: true } }
+                            Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 18; width: stateLabel.implicitWidth + 28; height: 40; radius: 20; color: "#c7070a0f"; border.width: 1; border.color: "#12ffffff"; Text { id: stateLabel; anchors.centerIn: parent; text: playbackController.state === "buffering" ? "Buffer dolduruluyor" : playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazirlaniyor" : playbackController.state === "error" ? "Yayin acilamadi" : "Yayin hazir"; color: window.textPrimary; font.pixelSize: 13; font.bold: true } }
                             Rectangle {
-                                anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 16; height: 78; radius: 22; color: "#070a0fc7"; border.width: 1; border.color: "#ffffff12"
+                                anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 16; height: 78; radius: 22; color: "#c7070a0f"; border.width: 1; border.color: "#12ffffff"
                                 Row {
                                     anchors.fill: parent; anchors.margins: 14; spacing: 10
                                     AppButton { text: playbackController.paused ? "Play" : "Pause"; secondary: true; implicitWidth: 104; onClicked: playbackController.togglePause() }
@@ -1157,26 +1237,26 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        GlassCard { Layout.preferredWidth: 320; Layout.fillHeight: true; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 12; Text { text: "Yayin Bilgisi"; color: window.textPrimary; font.pixelSize: 20; font.family: "Space Grotesk"; font.bold: true } Rectangle { width: parent.width; height: 180; radius: 22; color: "#ffffff08"; border.width: 1; border.color: window.borderSoft; Image { anchors.fill: parent; anchors.margins: 1; source: playerImageUrl; fillMode: Image.PreserveAspectCrop; asynchronous: true; visible: source.length > 0; clip: true } Text { anchors.centerIn: parent; visible: !playerImageUrl.length; text: "FLIXIFY"; color: "#ffffff77"; font.pixelSize: 28; font.family: "Space Grotesk"; font.bold: true } } Text { text: playbackController.lastError.length ? playbackController.lastError : "Native player branded shell icinde hazir."; width: parent.width; wrapMode: Text.WordWrap; color: playbackController.lastError.length ? "#ffb2b8" : window.textMuted; font.pixelSize: 14 } } }
+                        GlassCard { Layout.preferredWidth: 320; Layout.fillHeight: true; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 12; Text { text: "Yayin Bilgisi"; color: window.textPrimary; font.pixelSize: 20; font.family: "Space Grotesk"; font.bold: true } Rectangle { width: parent.width; height: 180; radius: 22; color: "#08ffffff"; border.width: 1; border.color: window.borderSoft; Image { anchors.fill: parent; anchors.margins: 1; source: playerImageUrl; fillMode: Image.PreserveAspectCrop; asynchronous: true; visible: source.length > 0; clip: true } Text { anchors.centerIn: parent; visible: !playerImageUrl.length; text: "FLIXIFY"; color: "#77ffffff"; font.pixelSize: 28; font.family: "Space Grotesk"; font.bold: true } } Text { text: playbackController.lastError.length ? playbackController.lastError : "Native player branded shell icinde hazir."; width: parent.width; wrapMode: Text.WordWrap; color: playbackController.lastError.length ? "#ffb2b8" : window.textMuted; font.pixelSize: 14 } } }
                     }
                 }
             }
         }
 
         Rectangle {
-            anchors.fill: parent; color: "#030508d9"; visible: pendingPackage !== null; z: 30
+            anchors.fill: parent; color: "#d9030508"; visible: pendingPackage !== null; z: 30
             GlassCard {
                 width: 740; height: paymentContent.implicitHeight + 40; anchors.centerIn: parent; color: "#0b0f17"; z: 31
                 Column {
                     id: paymentContent
                     anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 16
-                    Row { width: parent.width; Text { text: "Odeme Yontemi"; color: "#ffffffd8"; font.pixelSize: 12; font.bold: true } Item { width: 1; height: 1 } AppButton { text: "Kapat"; secondary: true; implicitWidth: 96; onClicked: { pendingPackage = null; selectedPaymentMethodId = "" } } }
+                    Row { width: parent.width; Text { text: "Odeme Yontemi"; color: "#d8ffffff"; font.pixelSize: 12; font.bold: true } Item { width: 1; height: 1 } AppButton { text: "Kapat"; secondary: true; implicitWidth: 96; onClicked: { pendingPackage = null; selectedPaymentMethodId = "" } } }
                     Text { text: pendingPackage ? `${pendingPackage.title} paketi icin odeme yontemi secin` : ""; color: window.textPrimary; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 34; font.family: "Space Grotesk"; font.bold: true }
                     Flow {
                         width: parent.width; spacing: 12
                         Repeater {
                             model: paymentMethods()
-                            GlassCard { width: (parent.width - 12) / 2; height: 94; color: selectedPaymentMethodId === modelData.id ? "#e5091422" : "#131923"; border.color: selectedPaymentMethodId === modelData.id ? "#ffffff30" : "#2a3140"; Column { anchors.fill: parent; anchors.margins: 16; spacing: 6; Text { text: modelData.label || modelData.id; color: window.textPrimary; font.pixelSize: 18; font.bold: true } Text { text: modelData.details || "Onay sureci destek ekibi tarafindan baslatilir."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 13 } } MouseArea { anchors.fill: parent; onClicked: selectedPaymentMethodId = modelData.id } }
+                            GlassCard { width: (parent.width - 12) / 2; height: 94; color: selectedPaymentMethodId === modelData.id ? "#22e50914" : "#131923"; border.color: selectedPaymentMethodId === modelData.id ? "#30ffffff" : "#2a3140"; Column { anchors.fill: parent; anchors.margins: 16; spacing: 6; Text { text: modelData.label || modelData.id; color: window.textPrimary; font.pixelSize: 18; font.bold: true } Text { text: modelData.details || "Onay sureci destek ekibi tarafindan baslatilir."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 13 } } MouseArea { anchors.fill: parent; onClicked: selectedPaymentMethodId = modelData.id } }
                         }
                     }
                     AppButton { width: parent.width; text: "Odeme Bildir"; enabled: selectedPaymentMethod() !== null && !apiClient.busy; onClicked: { apiClient.requestPayment(pendingPackage.slug); if (contactData().whatsapp) Qt.openUrlExternally(contactData().whatsapp); pendingPackage = null; selectedPaymentMethodId = ""; openScreen("payments") } }
@@ -1186,13 +1266,13 @@ ApplicationWindow {
         }
 
         Rectangle {
-            anchors.fill: parent; color: "#030508d9"; visible: shouldShowPremiumPopup(); z: 25
+            anchors.fill: parent; color: "#d9030508"; visible: shouldShowPremiumPopup(); z: 25
             GlassCard {
                 width: 700; height: premiumContent.implicitHeight + 40; anchors.centerIn: parent; color: "#0b0f17"; z: 26
                 Column {
                     id: premiumContent
                     anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 22; spacing: 16
-                    Row { width: parent.width; Rectangle { width: 112; height: 34; radius: 17; color: "#e5091433"; Text { anchors.centerIn: parent; text: "Premium Erisim"; color: "#ffd7da"; font.pixelSize: 12; font.bold: true } } Item { width: 1; height: 1 } AppButton { text: "Kapat"; secondary: true; implicitWidth: 96; onClicked: premiumPopupDismissed = true } }
+                    Row { width: parent.width; Rectangle { width: 112; height: 34; radius: 17; color: "#33e50914"; Text { anchors.centerIn: parent; text: "Premium Erisim"; color: "#ffd7da"; font.pixelSize: 12; font.bold: true } } Item { width: 1; height: 1 } AppButton { text: "Kapat"; secondary: true; implicitWidth: 96; onClicked: premiumPopupDismissed = true } }
                     Text { text: "Tum iceriklere erismek icin aktif bir paket satin alin"; color: window.textPrimary; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 34; font.family: "Space Grotesk"; font.bold: true }
                     Text { text: "Giris basarili. Paketiniz aktif olunca kataloglarin tamami acilacak."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 15 }
                     Row { spacing: 12; AppButton { text: "Test Yapmak Istiyorum"; implicitWidth: 190; onClicked: apiClient.requestTrial("Windows native cihazindan test talebi") } AppButton { text: "WhatsApp ile Iletisime Gec"; secondary: true; implicitWidth: 220; onClicked: Qt.openUrlExternally(contactData().whatsapp || "") } AppButton { text: "Paket Satin Al"; secondary: true; implicitWidth: 170; onClicked: openScreen("packages") } }
@@ -1201,7 +1281,7 @@ ApplicationWindow {
         }
 
         Rectangle {
-            visible: toastMessage.length > 0; z: 40; width: Math.min(640, toastLabel.implicitWidth + 52); height: 62; radius: 20; color: toastColor === success ? "#30d19d22" : toastColor === danger ? "#ff7d8624" : "#7cb6ff22"; border.width: 1; border.color: toastColor; anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 24
+            visible: toastMessage.length > 0; z: 40; width: Math.min(640, toastLabel.implicitWidth + 52); height: 62; radius: 20; color: toastColor === success ? "#2230d19d" : toastColor === danger ? "#24ff7d86" : "#227cb6ff"; border.width: 1; border.color: toastColor; anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 24
             Text { id: toastLabel; anchors.centerIn: parent; text: toastMessage; color: window.textPrimary; font.pixelSize: 14; font.bold: true }
         }
     }

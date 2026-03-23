@@ -1763,6 +1763,10 @@ export function buildServer() {
       const checkedAt = new Date().toISOString();
       const errorMessage = resolved.errorMessage;
       const upstreamStatus = extractUpstreamStatus(errorMessage);
+      const allowOptimisticNativeDirect =
+        !resolved.ok &&
+        typeof resolved.sourceUrl === "string" &&
+        canUseAppDirectPlaybackFallback("native", resolved.sourceUrl);
       const skipFailureCountIncrement =
         typeof upstreamStatus === "number" && [405, 416, 429].includes(upstreamStatus);
       const currentFailureCount = channel.failure_count ?? 0;
@@ -1776,16 +1780,27 @@ export function buildServer() {
             ? "broken"
             : "degraded";
 
-      await updateLiveChannelHealth(channel.id, channel.snapshot_version, {
-        status: healthStatus,
-        errorMessage,
-        resetFailureCount: resolved.ok,
-        markSuccess: resolved.ok,
-        touchPlaybackRequest: true,
-        skipFailureCountIncrement
-      });
+      if (resolved.ok) {
+        await updateLiveChannelHealth(channel.id, channel.snapshot_version, {
+          status: healthStatus,
+          errorMessage,
+          resetFailureCount: true,
+          markSuccess: true,
+          touchPlaybackRequest: true,
+          skipFailureCountIncrement
+        });
+      } else if (!allowOptimisticNativeDirect) {
+        await updateLiveChannelHealth(channel.id, channel.snapshot_version, {
+          status: healthStatus,
+          errorMessage,
+          resetFailureCount: false,
+          markSuccess: false,
+          touchPlaybackRequest: true,
+          skipFailureCountIncrement
+        });
+      }
 
-      if (!resolved.ok || !resolved.sourceUrl) {
+      if ((!resolved.ok || !resolved.sourceUrl) && !allowOptimisticNativeDirect) {
         return replyWithNativePlaybackError(
           reply,
           resolved.sourceUrl ? 502 : 503,
@@ -1800,7 +1815,7 @@ export function buildServer() {
         cookie: resolved.cookie,
         variantGroupKey: channel.variant_group_key ?? variantMetadata.variantGroupKey,
         qualityRank: channel.quality_rank ?? variantMetadata.qualityRank,
-        isVerified: resolved.isVerified,
+        isVerified: resolved.ok && resolved.isVerified,
         lastCheckedAt: checkedAt
       });
     } catch (error) {
@@ -2211,7 +2226,12 @@ export function buildServer() {
         fallbackCredentials: userContext.sharedReferenceCredentials
       });
 
-      if (!resolved.ok || !resolved.sourceUrl) {
+      const allowOptimisticNativeDirect =
+        !resolved.ok &&
+        typeof resolved.sourceUrl === "string" &&
+        canUseAppDirectPlaybackFallback("native", resolved.sourceUrl);
+
+      if ((!resolved.ok || !resolved.sourceUrl) && !allowOptimisticNativeDirect) {
         return replyWithNativePlaybackError(
           reply,
           resolved.sourceUrl ? 502 : 503,
@@ -2224,11 +2244,11 @@ export function buildServer() {
           userId: auth.userId,
           itemId,
           kind,
-          sourceUrl: resolved.sourceUrl,
+          sourceUrl: resolved.sourceUrl!,
           baseOrigin: getRequestBaseOrigin(request),
           clientRuntime: "native",
           platform,
-          allowUnverifiedSource: resolved.isVerified === false,
+          allowUnverifiedSource: resolved.isVerified === false || allowOptimisticNativeDirect,
           sourceTransportHint: resolved.transport,
           selectedAudioTrackId: audioTrackId
         });
@@ -2250,6 +2270,20 @@ export function buildServer() {
           selectedAudioTrackId: playback.selectedAudioTrackId,
           isVerified: playback.isVerified,
           lastCheckedAt: playback.expiresAt ?? new Date().toISOString()
+        });
+      }
+
+      if (allowOptimisticNativeDirect) {
+        return buildNativeVodPlaybackResponse({
+          url: resolved.sourceUrl!,
+          transport: resolved.transport,
+          deliveryMode: "direct",
+          audioTracks: [],
+          defaultAudioTrackId: null,
+          selectedAudioTrackId: null,
+          cookie: resolved.cookie,
+          isVerified: false,
+          lastCheckedAt: new Date().toISOString()
         });
       }
 

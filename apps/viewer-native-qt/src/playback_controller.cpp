@@ -26,6 +26,11 @@ QString extractReplyMessage(const QByteArray &body, const QString &fallback) {
   return text.isEmpty() ? fallback : text;
 }
 
+bool isAuthStatusCode(const QNetworkReply *reply) {
+  const int status = reply ? reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() : 0;
+  return status == 401 || status == 403;
+}
+
 void addMediaOption(libvlc_media_t *media, const QString &value) {
   if (!media || value.trimmed().isEmpty()) {
     return;
@@ -515,13 +520,26 @@ void PlaybackController::resolveCandidateAt(int index) {
 
   const QString path = QStringLiteral("/me/native/live/%1/playback")
                          .arg(QString::fromUtf8(QUrl::toPercentEncoding(m_candidates[index].channelId)));
+  const int requestedIndex = index;
   QNetworkReply *reply = m_apiClient->network()->get(m_apiClient->authorizedRequest(path));
-  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+  connect(reply, &QNetworkReply::finished, this, [this, reply, requestedIndex]() {
     const QByteArray body = reply->readAll();
     const bool ok = reply->error() == QNetworkReply::NoError;
+    const bool authFailed = isAuthStatusCode(reply);
     reply->deleteLater();
 
     if (!ok) {
+      if (authFailed && m_apiClient) {
+        m_apiClient->refreshSession([this, requestedIndex](bool success) {
+          if (success) {
+            resolveCandidateAt(requestedIndex);
+            return;
+          }
+          failActiveTarget(QStringLiteral("Oturum suresi doldu. Lutfen tekrar giris yapin."), QStringLiteral("auth-expired"));
+        });
+        return;
+      }
+
       const QString message = extractReplyMessage(body, QStringLiteral("Native playback source resolve failed."));
       reportPlaybackEvent(QStringLiteral("failed"), QStringLiteral("resolve-failed"), QStringLiteral("resolve-error"), message);
       advanceToNextCandidate(message);
@@ -545,6 +563,7 @@ void PlaybackController::resolveVodSource(const QString &audioTrackId) {
   if (!normalizedAudioTrackId.isEmpty()) {
     m_requestedAudioTrackId = normalizedAudioTrackId;
   }
+  const QString requestedAudioTrackId = !normalizedAudioTrackId.isEmpty() ? normalizedAudioTrackId : m_requestedAudioTrackId;
 
   QString path = QStringLiteral("/me/native/vod/%1/%2/playback")
                    .arg(m_activeTarget.kind, QString::fromUtf8(QUrl::toPercentEncoding(m_activeTarget.itemId)));
@@ -567,12 +586,24 @@ void PlaybackController::resolveVodSource(const QString &audioTrackId) {
   request.setRawHeader("X-Flixify-Client-Runtime", "native");
 
   QNetworkReply *reply = m_apiClient->network()->get(request);
-  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+  connect(reply, &QNetworkReply::finished, this, [this, reply, requestedAudioTrackId]() {
     const QByteArray body = reply->readAll();
     const bool ok = reply->error() == QNetworkReply::NoError;
+    const bool authFailed = isAuthStatusCode(reply);
     reply->deleteLater();
 
     if (!ok) {
+      if (authFailed && m_apiClient) {
+        m_apiClient->refreshSession([this, requestedAudioTrackId](bool success) {
+          if (success) {
+            resolveVodSource(requestedAudioTrackId);
+            return;
+          }
+          failActiveTarget(QStringLiteral("Oturum suresi doldu. Lutfen tekrar giris yapin."), QStringLiteral("auth-expired"));
+        });
+        return;
+      }
+
       const QString message = extractReplyMessage(body, QStringLiteral("Native VOD playback source resolve failed."));
       failActiveTarget(message, QStringLiteral("resolve-error"));
       return;
@@ -647,19 +678,31 @@ void PlaybackController::openResolvedSource(const QJsonObject &source) {
                            : QStringLiteral(":avcodec-hw=none"));
 
   const QString userAgent = source.value(QStringLiteral("userAgent")).toString().trimmed();
-  if (!userAgent.isEmpty()) {
-    addMediaOption(media, QStringLiteral(":http-user-agent=%1").arg(userAgent));
+  const QJsonObject headers = source.value(QStringLiteral("headers")).toObject();
+  const QString headerUserAgent = headers.value(QStringLiteral("User-Agent")).toString().trimmed();
+  if (!userAgent.isEmpty() || !headerUserAgent.isEmpty()) {
+    addMediaOption(
+      media,
+      QStringLiteral(":http-user-agent=%1").arg(!userAgent.isEmpty() ? userAgent : headerUserAgent)
+    );
   }
 
   const QString cookie = source.value(QStringLiteral("cookie")).toString().trimmed();
-  if (!cookie.isEmpty()) {
-    addMediaOption(media, QStringLiteral(":http-cookie=%1").arg(cookie));
+  const QString headerCookie = headers.value(QStringLiteral("Cookie")).toString().trimmed();
+  if (!cookie.isEmpty() || !headerCookie.isEmpty()) {
+    addMediaOption(
+      media,
+      QStringLiteral(":http-cookie=%1").arg(!cookie.isEmpty() ? cookie : headerCookie)
+    );
   }
 
-  const QJsonObject headers = source.value(QStringLiteral("headers")).toObject();
   const QString referer = headers.value(QStringLiteral("Referer")).toString().trimmed();
-  if (!referer.isEmpty()) {
-    addMediaOption(media, QStringLiteral(":http-referrer=%1").arg(referer));
+  const QString referrer = headers.value(QStringLiteral("Referrer")).toString().trimmed();
+  if (!referer.isEmpty() || !referrer.isEmpty()) {
+    addMediaOption(
+      media,
+      QStringLiteral(":http-referrer=%1").arg(!referer.isEmpty() ? referer : referrer)
+    );
   }
 
   libvlc_media_player_set_media(m_player, media);

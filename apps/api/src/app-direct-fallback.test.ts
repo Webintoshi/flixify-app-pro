@@ -8,6 +8,12 @@ describe("app direct playback fallback", () => {
     ).toBe(true);
   });
 
+  it("allows direct playback fallback for native clients with a source url", () => {
+    expect(
+      canUseAppDirectPlaybackFallback("native", "http://example.com/vod/movie.mkv")
+    ).toBe(true);
+  });
+
   it("blocks direct playback fallback when there is no source url", () => {
     expect(canUseAppDirectPlaybackFallback("app", null)).toBe(false);
     expect(canUseAppDirectPlaybackFallback("app", "")).toBe(false);

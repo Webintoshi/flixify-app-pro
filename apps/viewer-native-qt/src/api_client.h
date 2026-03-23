@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QNetworkAccessManager>
 #include <QNetworkRequest>
+#include <functional>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QUrl>
@@ -13,6 +14,7 @@ class ApiClient : public QObject {
   Q_PROPERTY(QString apiBaseUrl READ apiBaseUrl WRITE setApiBaseUrl NOTIFY apiBaseUrlChanged)
   Q_PROPERTY(QString accessToken READ accessToken WRITE setAccessToken NOTIFY accessTokenChanged)
   Q_PROPERTY(bool authenticated READ authenticated NOTIFY authenticatedChanged)
+  Q_PROPERTY(bool restoringSession READ restoringSession NOTIFY restoringSessionChanged)
   Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
   Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
   Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
@@ -35,6 +37,7 @@ public:
   void setAccessToken(const QString &value);
 
   bool authenticated() const;
+  bool restoringSession() const;
   bool busy() const;
   QString lastError() const;
   QString notice() const;
@@ -78,6 +81,7 @@ public:
   Q_INVOKABLE QVariantMap episodeById(const QString &episodeId) const;
   Q_INVOKABLE QVariantMap nextEpisodeForEpisode(const QString &episodeId) const;
   Q_INVOKABLE QString normalizedPlatformName() const;
+  void refreshSession(std::function<void(bool success)> completion = {});
 
   QNetworkAccessManager *network();
   QUrl resolvedUrl(const QString &path) const;
@@ -87,6 +91,7 @@ signals:
   void apiBaseUrlChanged();
   void accessTokenChanged();
   void authenticatedChanged();
+  void restoringSessionChanged();
   void busyChanged();
   void lastErrorChanged();
   void noticeChanged();
@@ -105,6 +110,7 @@ signals:
 
 private:
   void setBusy(bool value);
+  void setRestoringSession(bool value);
   void setLastError(const QString &value);
   void setNotice(const QString &value);
   void setMe(const QVariantMap &value);
@@ -115,6 +121,9 @@ private:
   void beginRequest();
   void endRequest();
   void clearAuthenticatedData();
+  void setRefreshToken(const QString &value);
+  void setSessionTokens(const QString &accessToken, const QString &refreshToken);
+  void handleAuthFailure(const QString &context, std::function<void()> retry);
   void updateLiveChannelsFromJson(const QJsonArray &items);
   void updateMoviesFromJson(const QJsonArray &items);
   void updateSeriesFromJson(const QJsonArray &items);
@@ -123,6 +132,9 @@ private:
 
   QString m_apiBaseUrl;
   QString m_accessToken;
+  QString m_refreshToken;
+  bool m_restoringSession = false;
+  bool m_refreshInFlight = false;
   bool m_busy = false;
   int m_activeRequests = 0;
   QString m_lastError;
@@ -135,5 +147,6 @@ private:
   QVariantList m_liveChannels;
   QVariantList m_movies;
   QVariantList m_series;
+  QList<std::function<void(bool)>> m_refreshCompletions;
   QNetworkAccessManager m_network;
 };
