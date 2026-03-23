@@ -1,7 +1,9 @@
 #include <QGuiApplication>
+#include <QDebug>
 #include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQmlError>
 
 #include "api_client.h"
 #include "native_video_surface.h"
@@ -22,6 +24,11 @@ int main(int argc, char *argv[]) {
   PlaybackController playbackController(&apiClient);
 
   QQmlApplicationEngine engine;
+  QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app, [](const QList<QQmlError> &warnings) {
+    for (const QQmlError &warning : warnings) {
+      qWarning().noquote() << warning.toString();
+    }
+  });
   engine.rootContext()->setContextProperty(QStringLiteral("apiClient"), &apiClient);
   engine.rootContext()->setContextProperty(QStringLiteral("playbackController"), &playbackController);
   engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));

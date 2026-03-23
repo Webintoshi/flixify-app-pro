@@ -12,8 +12,15 @@ class ApiClient : public QObject {
   Q_OBJECT
   Q_PROPERTY(QString apiBaseUrl READ apiBaseUrl WRITE setApiBaseUrl NOTIFY apiBaseUrlChanged)
   Q_PROPERTY(QString accessToken READ accessToken WRITE setAccessToken NOTIFY accessTokenChanged)
+  Q_PROPERTY(bool authenticated READ authenticated NOTIFY authenticatedChanged)
   Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
   Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
+  Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
+  Q_PROPERTY(QVariantMap me READ me NOTIFY meChanged)
+  Q_PROPERTY(QVariantList packages READ packages NOTIFY packagesChanged)
+  Q_PROPERTY(QVariantList paymentMethods READ paymentMethods NOTIFY paymentMethodsChanged)
+  Q_PROPERTY(QVariantList paymentRequests READ paymentRequests NOTIFY paymentRequestsChanged)
+  Q_PROPERTY(QVariantMap appUpdate READ appUpdate NOTIFY appUpdateChanged)
   Q_PROPERTY(QVariantList liveChannels READ liveChannels NOTIFY liveChannelsChanged)
   Q_PROPERTY(QVariantList movies READ movies NOTIFY moviesChanged)
   Q_PROPERTY(QVariantList series READ series NOTIFY seriesChanged)
@@ -27,21 +34,44 @@ public:
   QString accessToken() const;
   void setAccessToken(const QString &value);
 
+  bool authenticated() const;
   bool busy() const;
   QString lastError() const;
+  QString notice() const;
+  QVariantMap me() const;
+  QVariantList packages() const;
+  QVariantList paymentMethods() const;
+  QVariantList paymentRequests() const;
+  QVariantMap appUpdate() const;
   QVariantList liveChannels() const;
   QVariantList movies() const;
   QVariantList series() const;
 
+  Q_INVOKABLE void bootstrap();
+  Q_INVOKABLE void issueAnonCode(
+    const QString &deviceName = QStringLiteral("Flixify Native Qt"),
+    const QString &platform = QString()
+  );
   Q_INVOKABLE void loginByCode(
     const QString &code,
     const QString &deviceName = QStringLiteral("Flixify Native Qt"),
     const QString &platform = QString()
   );
+  Q_INVOKABLE void logout();
+  Q_INVOKABLE void fetchMe();
+  Q_INVOKABLE void fetchPackages();
+  Q_INVOKABLE void fetchPaymentMethods();
+  Q_INVOKABLE void fetchPaymentRequests();
+  Q_INVOKABLE void fetchShellData(const QString &search = QString());
+  Q_INVOKABLE void checkAppUpdate();
   Q_INVOKABLE void fetchLiveCatalog(int page = 1, int pageSize = 300, const QString &search = QString());
   Q_INVOKABLE void fetchMovieCatalog(int page = 1, int pageSize = 300, const QString &search = QString());
   Q_INVOKABLE void fetchSeriesCatalog(int page = 1, int pageSize = 200, const QString &search = QString());
   Q_INVOKABLE void fetchAllCatalogs(const QString &search = QString(), int livePageSize = 300);
+  Q_INVOKABLE void requestPayment(const QString &packageSlug);
+  Q_INVOKABLE void requestTrial(const QString &note = QString());
+  Q_INVOKABLE bool copyText(const QString &value) const;
+  Q_INVOKABLE QString saveTextFile(const QString &nameHint, const QString &content) const;
   Q_INVOKABLE QVariantMap liveChannelById(const QString &channelId) const;
   Q_INVOKABLE QVariantMap movieById(const QString &movieId) const;
   Q_INVOKABLE QVariantMap seriesById(const QString &seriesId) const;
@@ -56,19 +86,35 @@ public:
 signals:
   void apiBaseUrlChanged();
   void accessTokenChanged();
+  void authenticatedChanged();
   void busyChanged();
   void lastErrorChanged();
+  void noticeChanged();
+  void meChanged();
+  void packagesChanged();
+  void paymentMethodsChanged();
+  void paymentRequestsChanged();
+  void appUpdateChanged();
   void liveChannelsChanged();
   void moviesChanged();
   void seriesChanged();
+  void anonCodeIssued(const QString &code);
   void loginSucceeded();
+  void logoutCompleted();
   void requestFailed(const QString &context, const QString &message);
 
 private:
   void setBusy(bool value);
   void setLastError(const QString &value);
+  void setNotice(const QString &value);
+  void setMe(const QVariantMap &value);
+  void setPackages(const QVariantList &value);
+  void setPaymentMethods(const QVariantList &value);
+  void setPaymentRequests(const QVariantList &value);
+  void setAppUpdate(const QVariantMap &value);
   void beginRequest();
   void endRequest();
+  void clearAuthenticatedData();
   void updateLiveChannelsFromJson(const QJsonArray &items);
   void updateMoviesFromJson(const QJsonArray &items);
   void updateSeriesFromJson(const QJsonArray &items);
@@ -80,6 +126,12 @@ private:
   bool m_busy = false;
   int m_activeRequests = 0;
   QString m_lastError;
+  QString m_notice;
+  QVariantMap m_me;
+  QVariantList m_packages;
+  QVariantList m_paymentMethods;
+  QVariantList m_paymentRequests;
+  QVariantMap m_appUpdate;
   QVariantList m_liveChannels;
   QVariantList m_movies;
   QVariantList m_series;

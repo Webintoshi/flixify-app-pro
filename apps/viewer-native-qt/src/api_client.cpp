@@ -1,8 +1,16 @@
 #include "api_client.h"
 
+#include <QClipboard>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkReply>
+#include <QRegularExpression>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QUrlQuery>
 #include <QtGlobal>
 
@@ -21,10 +29,54 @@ QString extractApiErrorMessage(const QByteArray &body, const QString &fallback) 
   return text.isEmpty() ? fallback : text;
 }
 
+bool isAuthStatus(const QNetworkReply *reply) {
+  const int status = reply ? reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() : 0;
+  return status == 401 || status == 403;
+}
+
+QNetworkRequest makeJsonRequest(const QUrl &url, const QString &accessToken = QString()) {
+  QNetworkRequest request(url);
+  request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+  request.setRawHeader("Accept", "application/json");
+  request.setRawHeader("X-Flixify-Client-Runtime", "native");
+  if (!accessToken.trimmed().isEmpty()) {
+    request.setRawHeader("Authorization", QByteArray("Bearer ") + accessToken.trimmed().toUtf8());
+  }
+  return request;
+}
+
+QString sanitizeFileStem(const QString &value) {
+  QString stem = value.trimmed();
+  stem.replace(QRegularExpression(QStringLiteral("[^a-zA-Z0-9_-]+")), QStringLiteral("-"));
+  stem.replace(QRegularExpression(QStringLiteral("-{2,}")), QStringLiteral("-"));
+  stem = stem.trimmed();
+  if (stem.startsWith(QLatin1Char('-'))) {
+    stem.remove(0, 1);
+  }
+  if (stem.endsWith(QLatin1Char('-'))) {
+    stem.chop(1);
+  }
+  return stem.isEmpty() ? QStringLiteral("flixify") : stem.left(48);
+}
+
+QVariantList mapJsonArray(const QJsonArray &items) {
+  QVariantList mapped;
+  mapped.reserve(items.size());
+  for (const QJsonValue &value : items) {
+    mapped.push_back(value.toObject().toVariantMap());
+  }
+  return mapped;
+}
+
 }
 
 ApiClient::ApiClient(QObject *parent)
-  : QObject(parent) {}
+  : QObject(parent) {
+  const QString storedAccessToken = QSettings().value(QStringLiteral("session/accessToken")).toString().trimmed();
+  if (!storedAccessToken.isEmpty()) {
+    m_accessToken = storedAccessToken;
+  }
+}
 
 QString ApiClient::apiBaseUrl() const {
   return m_apiBaseUrl;
@@ -50,8 +102,22 @@ void ApiClient::setAccessToken(const QString &value) {
     return;
   }
 
+  const bool wasAuthenticated = authenticated();
   m_accessToken = trimmed;
+  QSettings settings;
+  if (m_accessToken.isEmpty()) {
+    settings.remove(QStringLiteral("session/accessToken"));
+  } else {
+    settings.setValue(QStringLiteral("session/accessToken"), m_accessToken);
+  }
   emit accessTokenChanged();
+  if (wasAuthenticated != authenticated()) {
+    emit authenticatedChanged();
+  }
+}
+
+bool ApiClient::authenticated() const {
+  return !m_accessToken.isEmpty();
 }
 
 bool ApiClient::busy() const {
@@ -60,6 +126,30 @@ bool ApiClient::busy() const {
 
 QString ApiClient::lastError() const {
   return m_lastError;
+}
+
+QString ApiClient::notice() const {
+  return m_notice;
+}
+
+QVariantMap ApiClient::me() const {
+  return m_me;
+}
+
+QVariantList ApiClient::packages() const {
+  return m_packages;
+}
+
+QVariantList ApiClient::paymentMethods() const {
+  return m_paymentMethods;
+}
+
+QVariantList ApiClient::paymentRequests() const {
+  return m_paymentRequests;
+}
+
+QVariantMap ApiClient::appUpdate() const {
+  return m_appUpdate;
 }
 
 QVariantList ApiClient::liveChannels() const {
@@ -96,30 +186,75 @@ QUrl ApiClient::resolvedUrl(const QString &path) const {
 }
 
 QNetworkRequest ApiClient::authorizedRequest(const QString &path) const {
-  QNetworkRequest request(resolvedUrl(path));
-  request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-  request.setRawHeader("Accept", "application/json");
-  if (!m_accessToken.isEmpty()) {
-    request.setRawHeader("Authorization", QByteArray("Bearer ") + m_accessToken.toUtf8());
-  }
-  request.setRawHeader("X-Flixify-Client-Runtime", "native");
-  return request;
+  return makeJsonRequest(resolvedUrl(path), m_accessToken);
 }
 
-void ApiClient::loginByCode(const QString &code, const QString &deviceName, const QString &platform) {
+void ApiClient::bootstrap() {
+  setLastError(QString());
+  fetchPackages();
+  fetchPaymentMethods();
+
+  if (!authenticated()) {
+    clearAuthenticatedData();
+    return;
+  }
+
+  fetchShellData();
+}
+
+void ApiClient::issueAnonCode(const QString &deviceName, const QString &platform) {
   beginRequest();
   setLastError(QString());
+  setNotice(QString());
 
   QJsonObject payload;
-  payload.insert(QStringLiteral("code"), code.trimmed());
-  payload.insert(QStringLiteral("deviceName"), deviceName.trimmed());
+  payload.insert(QStringLiteral("deviceName"), deviceName.trimmed().isEmpty() ? QStringLiteral("Flixify Native Qt") : deviceName.trimmed());
   payload.insert(
     QStringLiteral("platform"),
     platform.trimmed().isEmpty() ? normalizedPlatformName() : platform.trimmed()
   );
 
   QNetworkReply *reply = m_network.post(
-    authorizedRequest(QStringLiteral("/auth/login-by-code")),
+    makeJsonRequest(resolvedUrl(QStringLiteral("/auth/register-anon"))),
+    QJsonDocument(payload).toJson(QJsonDocument::Compact)
+  );
+
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool ok = reply->error() == QNetworkReply::NoError;
+    reply->deleteLater();
+    endRequest();
+
+    if (!ok) {
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Kayit kodu olusturulamadi."));
+      setLastError(message);
+      emit requestFailed(QStringLiteral("register"), message);
+      return;
+    }
+
+    const QString code = QJsonDocument::fromJson(body).object().value(QStringLiteral("kryptoniteCode")).toString().trimmed();
+    if (!code.isEmpty()) {
+      emit anonCodeIssued(code);
+      setNotice(QStringLiteral("Hesap numarasi olusturuldu."));
+    }
+  });
+}
+
+void ApiClient::loginByCode(const QString &code, const QString &deviceName, const QString &platform) {
+  beginRequest();
+  setLastError(QString());
+  setNotice(QString());
+
+  QJsonObject payload;
+  payload.insert(QStringLiteral("code"), code.trimmed());
+  payload.insert(QStringLiteral("deviceName"), deviceName.trimmed().isEmpty() ? QStringLiteral("Flixify Native Qt") : deviceName.trimmed());
+  payload.insert(
+    QStringLiteral("platform"),
+    platform.trimmed().isEmpty() ? normalizedPlatformName() : platform.trimmed()
+  );
+
+  QNetworkReply *reply = m_network.post(
+    makeJsonRequest(resolvedUrl(QStringLiteral("/auth/login-by-code"))),
     QJsonDocument(payload).toJson(QJsonDocument::Compact)
   );
 
@@ -136,17 +271,172 @@ void ApiClient::loginByCode(const QString &code, const QString &deviceName, cons
       return;
     }
 
-    const QJsonDocument document = QJsonDocument::fromJson(body);
-    const QJsonObject root = document.object();
+    const QJsonObject root = QJsonDocument::fromJson(body).object();
     setAccessToken(root.value(QStringLiteral("accessToken")).toString());
+    setNotice(QString());
+    fetchShellData();
     emit loginSucceeded();
+  });
+}
+
+void ApiClient::logout() {
+  setAccessToken(QString());
+  clearAuthenticatedData();
+  setLastError(QString());
+  setNotice(QString());
+  emit logoutCompleted();
+  fetchPackages();
+  fetchPaymentMethods();
+}
+
+void ApiClient::fetchMe() {
+  if (!authenticated()) {
+    setMe({});
+    return;
+  }
+
+  beginRequest();
+  QNetworkReply *reply = m_network.get(authorizedRequest(QStringLiteral("/me")));
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool ok = reply->error() == QNetworkReply::NoError;
+    const bool authFailed = isAuthStatus(reply);
+    reply->deleteLater();
+    endRequest();
+
+    if (!ok) {
+      if (authFailed) {
+        logout();
+        return;
+      }
+
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Profil bilgileri alinamadi."));
+      setLastError(message);
+      emit requestFailed(QStringLiteral("me"), message);
+      return;
+    }
+
+    setMe(QJsonDocument::fromJson(body).object().toVariantMap());
+  });
+}
+
+void ApiClient::fetchPackages() {
+  beginRequest();
+  QNetworkReply *reply = m_network.get(makeJsonRequest(resolvedUrl(QStringLiteral("/admin/packages/public"))));
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool ok = reply->error() == QNetworkReply::NoError;
+    reply->deleteLater();
+    endRequest();
+
+    if (!ok) {
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Paketler alinamadi."));
+      setLastError(message);
+      emit requestFailed(QStringLiteral("packages"), message);
+      return;
+    }
+
+    const QVariantList items = mapJsonArray(QJsonDocument::fromJson(body).object().value(QStringLiteral("items")).toArray());
+    setPackages(items);
+  });
+}
+
+void ApiClient::fetchPaymentMethods() {
+  beginRequest();
+  QNetworkReply *reply = m_network.get(makeJsonRequest(resolvedUrl(QStringLiteral("/payment-methods/public"))));
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool ok = reply->error() == QNetworkReply::NoError;
+    reply->deleteLater();
+    endRequest();
+
+    if (!ok) {
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Odeme yontemleri alinamadi."));
+      setLastError(message);
+      emit requestFailed(QStringLiteral("payment-methods"), message);
+      return;
+    }
+
+    const QVariantList items = mapJsonArray(QJsonDocument::fromJson(body).object().value(QStringLiteral("items")).toArray());
+    setPaymentMethods(items);
+  });
+}
+
+void ApiClient::fetchPaymentRequests() {
+  if (!authenticated()) {
+    setPaymentRequests({});
+    return;
+  }
+
+  beginRequest();
+  QNetworkReply *reply = m_network.get(authorizedRequest(QStringLiteral("/me/payment-requests")));
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool ok = reply->error() == QNetworkReply::NoError;
+    const bool authFailed = isAuthStatus(reply);
+    reply->deleteLater();
+    endRequest();
+
+    if (!ok) {
+      if (authFailed) {
+        logout();
+        return;
+      }
+
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Odeme talepleri alinamadi."));
+      setLastError(message);
+      emit requestFailed(QStringLiteral("payments"), message);
+      return;
+    }
+
+    const QVariantList items = mapJsonArray(QJsonDocument::fromJson(body).object().value(QStringLiteral("items")).toArray());
+    setPaymentRequests(items);
+  });
+}
+
+void ApiClient::fetchShellData(const QString &search) {
+  fetchMe();
+  fetchPaymentRequests();
+  fetchAllCatalogs(search);
+  checkAppUpdate();
+}
+
+void ApiClient::checkAppUpdate() {
+  if (!authenticated()) {
+    setAppUpdate({});
+    return;
+  }
+
+  beginRequest();
+  QUrl url = resolvedUrl(QStringLiteral("/me/app-update/check"));
+  QUrlQuery query(url);
+  query.addQueryItem(QStringLiteral("platform"), normalizedPlatformName());
+  query.addQueryItem(QStringLiteral("appVersion"), QStringLiteral(FLIXIFY_APP_VERSION));
+  url.setQuery(query);
+
+  QNetworkReply *reply = m_network.get(makeJsonRequest(url, m_accessToken));
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool ok = reply->error() == QNetworkReply::NoError;
+    reply->deleteLater();
+    endRequest();
+
+    if (!ok) {
+      setAppUpdate({});
+      return;
+    }
+
+    const QVariantMap payload = QJsonDocument::fromJson(body).object().toVariantMap();
+    if (payload.value(QStringLiteral("updateAvailable")).toBool()) {
+      setAppUpdate(payload);
+    } else {
+      setAppUpdate({});
+    }
   });
 }
 
 void ApiClient::fetchLiveCatalog(int page, int pageSize, const QString &search) {
   beginRequest();
-  setLastError(QString());
-
   QUrl url = resolvedUrl(QStringLiteral("/me/catalog/live"));
   QUrlQuery query(url);
   query.addQueryItem(QStringLiteral("page"), QString::number(page > 0 ? page : 1));
@@ -156,22 +446,20 @@ void ApiClient::fetchLiveCatalog(int page, int pageSize, const QString &search) 
   }
   url.setQuery(query);
 
-  QNetworkRequest request(url);
-  request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-  request.setRawHeader("Accept", "application/json");
-  if (!m_accessToken.isEmpty()) {
-    request.setRawHeader("Authorization", QByteArray("Bearer ") + m_accessToken.toUtf8());
-  }
-  request.setRawHeader("X-Flixify-Client-Runtime", "native");
-
-  QNetworkReply *reply = m_network.get(request);
+  QNetworkReply *reply = m_network.get(makeJsonRequest(url, m_accessToken));
   connect(reply, &QNetworkReply::finished, this, [this, reply]() {
     const QByteArray body = reply->readAll();
     const bool ok = reply->error() == QNetworkReply::NoError;
+    const bool authFailed = isAuthStatus(reply);
     reply->deleteLater();
     endRequest();
 
     if (!ok) {
+      if (authFailed) {
+        logout();
+        return;
+      }
+
       const QString message = extractApiErrorMessage(body, QStringLiteral("Live catalog request failed."));
       setLastError(message);
       emit requestFailed(QStringLiteral("catalog"), message);
@@ -185,8 +473,6 @@ void ApiClient::fetchLiveCatalog(int page, int pageSize, const QString &search) 
 
 void ApiClient::fetchMovieCatalog(int page, int pageSize, const QString &search) {
   beginRequest();
-  setLastError(QString());
-
   QUrl url = resolvedUrl(QStringLiteral("/me/catalog/movies"));
   QUrlQuery query(url);
   query.addQueryItem(QStringLiteral("page"), QString::number(page > 0 ? page : 1));
@@ -196,22 +482,20 @@ void ApiClient::fetchMovieCatalog(int page, int pageSize, const QString &search)
   }
   url.setQuery(query);
 
-  QNetworkRequest request(url);
-  request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-  request.setRawHeader("Accept", "application/json");
-  if (!m_accessToken.isEmpty()) {
-    request.setRawHeader("Authorization", QByteArray("Bearer ") + m_accessToken.toUtf8());
-  }
-  request.setRawHeader("X-Flixify-Client-Runtime", "native");
-
-  QNetworkReply *reply = m_network.get(request);
+  QNetworkReply *reply = m_network.get(makeJsonRequest(url, m_accessToken));
   connect(reply, &QNetworkReply::finished, this, [this, reply]() {
     const QByteArray body = reply->readAll();
     const bool ok = reply->error() == QNetworkReply::NoError;
+    const bool authFailed = isAuthStatus(reply);
     reply->deleteLater();
     endRequest();
 
     if (!ok) {
+      if (authFailed) {
+        logout();
+        return;
+      }
+
       const QString message = extractApiErrorMessage(body, QStringLiteral("Movie catalog request failed."));
       setLastError(message);
       emit requestFailed(QStringLiteral("movies"), message);
@@ -225,8 +509,6 @@ void ApiClient::fetchMovieCatalog(int page, int pageSize, const QString &search)
 
 void ApiClient::fetchSeriesCatalog(int page, int pageSize, const QString &search) {
   beginRequest();
-  setLastError(QString());
-
   QUrl url = resolvedUrl(QStringLiteral("/me/catalog/series"));
   QUrlQuery query(url);
   query.addQueryItem(QStringLiteral("page"), QString::number(page > 0 ? page : 1));
@@ -236,22 +518,20 @@ void ApiClient::fetchSeriesCatalog(int page, int pageSize, const QString &search
   }
   url.setQuery(query);
 
-  QNetworkRequest request(url);
-  request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-  request.setRawHeader("Accept", "application/json");
-  if (!m_accessToken.isEmpty()) {
-    request.setRawHeader("Authorization", QByteArray("Bearer ") + m_accessToken.toUtf8());
-  }
-  request.setRawHeader("X-Flixify-Client-Runtime", "native");
-
-  QNetworkReply *reply = m_network.get(request);
+  QNetworkReply *reply = m_network.get(makeJsonRequest(url, m_accessToken));
   connect(reply, &QNetworkReply::finished, this, [this, reply]() {
     const QByteArray body = reply->readAll();
     const bool ok = reply->error() == QNetworkReply::NoError;
+    const bool authFailed = isAuthStatus(reply);
     reply->deleteLater();
     endRequest();
 
     if (!ok) {
+      if (authFailed) {
+        logout();
+        return;
+      }
+
       const QString message = extractApiErrorMessage(body, QStringLiteral("Series catalog request failed."));
       setLastError(message);
       emit requestFailed(QStringLiteral("series"), message);
@@ -267,6 +547,135 @@ void ApiClient::fetchAllCatalogs(const QString &search, int livePageSize) {
   fetchLiveCatalog(1, livePageSize, search);
   fetchMovieCatalog(1, 300, search);
   fetchSeriesCatalog(1, 200, search);
+}
+
+void ApiClient::requestPayment(const QString &packageSlug) {
+  const QString normalizedPackageSlug = packageSlug.trimmed();
+  if (normalizedPackageSlug.isEmpty() || !authenticated()) {
+    return;
+  }
+
+  beginRequest();
+  setLastError(QString());
+
+  QJsonObject payload;
+  payload.insert(QStringLiteral("packageSlug"), normalizedPackageSlug);
+
+  QNetworkReply *reply = m_network.post(
+    authorizedRequest(QStringLiteral("/me/payment-requests")),
+    QJsonDocument(payload).toJson(QJsonDocument::Compact)
+  );
+
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool ok = reply->error() == QNetworkReply::NoError;
+    const bool authFailed = isAuthStatus(reply);
+    reply->deleteLater();
+    endRequest();
+
+    if (!ok) {
+      if (authFailed) {
+        logout();
+        return;
+      }
+
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Odeme talebi olusturulamadi."));
+      setLastError(message);
+      emit requestFailed(QStringLiteral("payment-request"), message);
+      return;
+    }
+
+    setNotice(QStringLiteral("Odeme talebi olusturuldu. Lutfen destek ekibi ile iletisime gecin."));
+    fetchPaymentRequests();
+  });
+}
+
+void ApiClient::requestTrial(const QString &note) {
+  if (!authenticated()) {
+    return;
+  }
+
+  beginRequest();
+  setLastError(QString());
+
+  QJsonObject payload;
+  if (!note.trimmed().isEmpty()) {
+    payload.insert(QStringLiteral("note"), note.trimmed());
+  }
+
+  QNetworkReply *reply = m_network.post(
+    authorizedRequest(QStringLiteral("/me/trial-request")),
+    QJsonDocument(payload).toJson(QJsonDocument::Compact)
+  );
+
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool ok = reply->error() == QNetworkReply::NoError;
+    const bool authFailed = isAuthStatus(reply);
+    reply->deleteLater();
+    endRequest();
+
+    if (!ok) {
+      if (authFailed) {
+        logout();
+        return;
+      }
+
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Deneme talebi olusturulamadi."));
+      setLastError(message);
+      emit requestFailed(QStringLiteral("trial-request"), message);
+      return;
+    }
+
+    setNotice(QStringLiteral("Deneme talebiniz olusturuldu."));
+  });
+}
+
+bool ApiClient::copyText(const QString &value) const {
+  if (value.trimmed().isEmpty()) {
+    return false;
+  }
+
+  QClipboard *clipboard = QGuiApplication::clipboard();
+  if (!clipboard) {
+    return false;
+  }
+
+  clipboard->setText(value.trimmed());
+  return true;
+}
+
+QString ApiClient::saveTextFile(const QString &nameHint, const QString &content) const {
+  if (content.trimmed().isEmpty()) {
+    return {};
+  }
+
+  QString baseDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+  if (baseDir.trimmed().isEmpty()) {
+    baseDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+  }
+  if (baseDir.trimmed().isEmpty()) {
+    return {};
+  }
+
+  QDir directory(baseDir);
+  if (!directory.exists() && !directory.mkpath(QStringLiteral("."))) {
+    return {};
+  }
+
+  const QString filename = QStringLiteral("%1-%2.txt")
+                             .arg(sanitizeFileStem(nameHint))
+                             .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss")));
+  const QString path = directory.filePath(filename);
+
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+    return {};
+  }
+
+  file.write(content.toUtf8());
+  file.close();
+  return path;
 }
 
 QVariantMap ApiClient::liveChannelById(const QString &channelId) const {
@@ -382,6 +791,60 @@ void ApiClient::setLastError(const QString &value) {
   emit lastErrorChanged();
 }
 
+void ApiClient::setNotice(const QString &value) {
+  if (value == m_notice) {
+    return;
+  }
+
+  m_notice = value;
+  emit noticeChanged();
+}
+
+void ApiClient::setMe(const QVariantMap &value) {
+  if (value == m_me) {
+    return;
+  }
+
+  m_me = value;
+  emit meChanged();
+}
+
+void ApiClient::setPackages(const QVariantList &value) {
+  if (value == m_packages) {
+    return;
+  }
+
+  m_packages = value;
+  emit packagesChanged();
+}
+
+void ApiClient::setPaymentMethods(const QVariantList &value) {
+  if (value == m_paymentMethods) {
+    return;
+  }
+
+  m_paymentMethods = value;
+  emit paymentMethodsChanged();
+}
+
+void ApiClient::setPaymentRequests(const QVariantList &value) {
+  if (value == m_paymentRequests) {
+    return;
+  }
+
+  m_paymentRequests = value;
+  emit paymentRequestsChanged();
+}
+
+void ApiClient::setAppUpdate(const QVariantMap &value) {
+  if (value == m_appUpdate) {
+    return;
+  }
+
+  m_appUpdate = value;
+  emit appUpdateChanged();
+}
+
 void ApiClient::beginRequest() {
   m_activeRequests += 1;
   setBusy(m_activeRequests > 0);
@@ -390,6 +853,25 @@ void ApiClient::beginRequest() {
 void ApiClient::endRequest() {
   m_activeRequests = qMax(0, m_activeRequests - 1);
   setBusy(m_activeRequests > 0);
+}
+
+void ApiClient::clearAuthenticatedData() {
+  setMe({});
+  setPaymentRequests({});
+  setAppUpdate({});
+
+  if (!m_liveChannels.isEmpty()) {
+    m_liveChannels.clear();
+    emit liveChannelsChanged();
+  }
+  if (!m_movies.isEmpty()) {
+    m_movies.clear();
+    emit moviesChanged();
+  }
+  if (!m_series.isEmpty()) {
+    m_series.clear();
+    emit seriesChanged();
+  }
 }
 
 void ApiClient::updateLiveChannelsFromJson(const QJsonArray &items) {
@@ -403,10 +885,14 @@ void ApiClient::updateLiveChannelsFromJson(const QJsonArray &items) {
     row.insert(QStringLiteral("title"), item.value(QStringLiteral("title")).toString());
     row.insert(QStringLiteral("groupTitle"), item.value(QStringLiteral("groupTitle")).toString());
     row.insert(QStringLiteral("logoUrl"), item.value(QStringLiteral("logoUrl")).toString());
+    row.insert(QStringLiteral("streamUrl"), item.value(QStringLiteral("streamUrl")).toString());
+    row.insert(QStringLiteral("playbackAllowed"), item.value(QStringLiteral("playbackAllowed")).toBool());
     row.insert(QStringLiteral("transport"), item.value(QStringLiteral("transport")).toString());
     row.insert(QStringLiteral("variantGroupKey"), item.value(QStringLiteral("variantGroupKey")).toString());
     row.insert(QStringLiteral("qualityRank"), item.value(QStringLiteral("qualityRank")).toInt(-1));
     row.insert(QStringLiteral("healthStatus"), item.value(QStringLiteral("healthStatus")).toString());
+    row.insert(QStringLiteral("isVerified"), item.value(QStringLiteral("isVerified")).toBool());
+    row.insert(QStringLiteral("lastCheckedAt"), item.value(QStringLiteral("lastCheckedAt")).toString());
     nextItems.push_back(row);
   }
 
