@@ -263,6 +263,8 @@ ApplicationWindow {
     }
     function appUpdatePayload() { return apiClient.appUpdate || ({}) }
     function appUpdateVisible() { return Boolean(appUpdatePayload().updateAvailable && appUpdatePayload().latestVersion && appUpdatePayload().latestVersion !== dismissedUpdateVersion) }
+    function appUpdateBannerVisible() { return appUpdateVisible() || apiClient.updateInProgress || apiClient.updateError.length > 0 }
+    function updateProgressPercent() { return Math.max(0, Math.min(100, Math.round((apiClient.updateProgress || 0) * 100))) }
 
     function openScreen(screenName) {
         currentScreen = screenName
@@ -927,22 +929,71 @@ ApplicationWindow {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: appUpdateVisible() ? 94 : 0
+                        Layout.preferredHeight: appUpdateBannerVisible() ? 118 : 0
                         color: "#167cb6ff"
-                        border.width: appUpdateVisible() ? 1 : 0
+                        border.width: appUpdateBannerVisible() ? 1 : 0
                         border.color: "#307cb6ff"
-                        visible: appUpdateVisible()
+                        visible: appUpdateBannerVisible()
                         Row {
                             anchors.fill: parent; anchors.margins: 18; spacing: 16
                             Column {
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: parent.width - 280
                                 spacing: 4
-                                Text { text: `Yeni surum hazir: v${appUpdatePayload().latestVersion || ""}`; color: window.textPrimary; font.pixelSize: 16; font.family: "Space Grotesk"; font.bold: true }
-                                Text { text: appUpdatePayload().notes || "Guncelleme indirilebilir durumda."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 14 }
+                                Text {
+                                    text: apiClient.updateInProgress
+                                          ? `Guncelleme indiriliyor... %${updateProgressPercent()}`
+                                          : (apiClient.updateError.length
+                                             ? "Guncelleme baslatilamadi"
+                                             : `Yeni surum hazir: v${appUpdatePayload().latestVersion || ""}`)
+                                    color: window.textPrimary
+                                    font.pixelSize: 16
+                                    font.family: "Space Grotesk"
+                                    font.bold: true
+                                }
+                                Text {
+                                    text: apiClient.updateInProgress
+                                          ? "Installer indiriliyor. Hazir olunca uygulama kapanip yeni surum kurulumu baslayacak."
+                                          : (apiClient.updateError.length
+                                             ? apiClient.updateError
+                                             : (appUpdatePayload().notes || "Guncelleme uygulama icinden indirilebilir durumda."))
+                                    width: parent.width
+                                    wrapMode: Text.WordWrap
+                                    color: window.textMuted
+                                    font.pixelSize: 14
+                                }
+                                Rectangle {
+                                    width: parent.width
+                                    height: 8
+                                    radius: 4
+                                    visible: apiClient.updateInProgress
+                                    color: "#24ffffff"
+                                    Rectangle {
+                                        width: parent.width * (apiClient.updateProgress || 0)
+                                        height: parent.height
+                                        radius: 4
+                                        color: window.success
+                                    }
+                                }
                             }
-                            AppButton { anchors.verticalCenter: parent.verticalCenter; text: "Guncellemeyi Indir"; secondary: true; implicitWidth: 170; visible: Boolean(appUpdatePayload().downloadUrl); onClicked: Qt.openUrlExternally(appUpdatePayload().downloadUrl) }
-                            AppButton { anchors.verticalCenter: parent.verticalCenter; text: "Daha Sonra"; secondary: true; implicitWidth: 120; onClicked: dismissedUpdateVersion = appUpdatePayload().latestVersion || "" }
+                            AppButton {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: apiClient.updateInProgress ? "Indiriliyor..." : "Guncelle ve Yeniden Baslat"
+                                secondary: true
+                                implicitWidth: 220
+                                enabled: !apiClient.updateInProgress && Boolean(appUpdatePayload().downloadUrl)
+                                visible: !apiClient.updateInProgress
+                                onClicked: apiClient.installAppUpdate()
+                            }
+                            AppButton {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Daha Sonra"
+                                secondary: true
+                                implicitWidth: 120
+                                enabled: !apiClient.updateInProgress
+                                visible: appUpdateVisible()
+                                onClicked: dismissedUpdateVersion = appUpdatePayload().latestVersion || ""
+                            }
                         }
                     }
 

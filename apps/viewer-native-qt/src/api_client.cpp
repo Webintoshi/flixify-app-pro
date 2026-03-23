@@ -1,16 +1,20 @@
 #include "api_client.h"
 
+#include <QCoreApplication>
 #include <QClipboard>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkReply>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QUrlQuery>
 #include <QtGlobal>
 
@@ -179,6 +183,18 @@ QVariantList ApiClient::paymentRequests() const {
 
 QVariantMap ApiClient::appUpdate() const {
   return m_appUpdate;
+}
+
+bool ApiClient::updateInProgress() const {
+  return m_updateInProgress;
+}
+
+double ApiClient::updateProgress() const {
+  return m_updateProgress;
+}
+
+QString ApiClient::updateError() const {
+  return m_updateError;
 }
 
 QVariantList ApiClient::liveChannels() const {
@@ -556,6 +572,154 @@ void ApiClient::checkAppUpdate() {
     } else {
       setAppUpdate({});
     }
+  });
+}
+
+void ApiClient::installAppUpdate() {
+  if (m_updateInProgress) {
+    return;
+  }
+
+  const QString downloadUrl = m_appUpdate.value(QStringLiteral("downloadUrl")).toString().trimmed();
+  const QString latestVersion = m_appUpdate.value(QStringLiteral("latestVersion")).toString().trimmed();
+  if (downloadUrl.isEmpty()) {
+    const QString message = QStringLiteral("Guncelleme baglantisi bulunamadi.");
+    setUpdateError(message);
+    emit requestFailed(QStringLiteral("app-update-install"), message);
+    return;
+  }
+
+  QUrl url(downloadUrl);
+  if (!url.isValid()) {
+    const QString message = QStringLiteral("Guncelleme baglantisi gecersiz.");
+    setUpdateError(message);
+    emit requestFailed(QStringLiteral("app-update-install"), message);
+    return;
+  }
+
+  QString tempRoot = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+  if (tempRoot.trimmed().isEmpty()) {
+    tempRoot = QDir::tempPath();
+  }
+  if (tempRoot.trimmed().isEmpty()) {
+    const QString message = QStringLiteral("Gecici klasor bulunamadi.");
+    setUpdateError(message);
+    emit requestFailed(QStringLiteral("app-update-install"), message);
+    return;
+  }
+
+  QDir tempDir(tempRoot);
+  if (!tempDir.mkpath(QStringLiteral("Flixify/updates"))) {
+    const QString message = QStringLiteral("Guncelleme klasoru olusturulamadi.");
+    setUpdateError(message);
+    emit requestFailed(QStringLiteral("app-update-install"), message);
+    return;
+  }
+
+  const QString filename = latestVersion.isEmpty()
+    ? QStringLiteral("Flixify-Pro-Setup-latest.exe")
+    : QStringLiteral("Flixify-Pro-Setup-%1.exe").arg(sanitizeFileStem(latestVersion));
+  m_updateInstallerPath = tempDir.filePath(QStringLiteral("Flixify/updates/%1").arg(filename));
+
+  if (m_updateFile) {
+    m_updateFile->close();
+    m_updateFile->deleteLater();
+    m_updateFile = nullptr;
+  }
+
+  if (QFile::exists(m_updateInstallerPath)) {
+    QFile::remove(m_updateInstallerPath);
+  }
+
+  m_updateFile = new QFile(m_updateInstallerPath, this);
+  if (!m_updateFile->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    const QString message = QStringLiteral("Guncelleme dosyasi yazilamadi.");
+    setUpdateError(message);
+    emit requestFailed(QStringLiteral("app-update-install"), message);
+    m_updateFile->deleteLater();
+    m_updateFile = nullptr;
+    return;
+  }
+
+  QNetworkRequest request(url);
+  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+  request.setRawHeader("Accept", "application/octet-stream");
+
+  setUpdateError(QString());
+  setNotice(QString());
+  setUpdateProgress(0.0);
+  setUpdateInProgress(true);
+
+  m_updateReply = m_network.get(request);
+
+  connect(m_updateReply, &QNetworkReply::readyRead, this, [this]() {
+    if (!m_updateReply || !m_updateFile) {
+      return;
+    }
+    const QByteArray chunk = m_updateReply->readAll();
+    if (!chunk.isEmpty()) {
+      m_updateFile->write(chunk);
+    }
+  });
+
+  connect(m_updateReply, &QNetworkReply::downloadProgress, this, [this](qint64 received, qint64 total) {
+    if (total > 0) {
+      setUpdateProgress(static_cast<double>(received) / static_cast<double>(total));
+    }
+  });
+
+  connect(m_updateReply, &QNetworkReply::finished, this, [this]() {
+    const QByteArray tail = m_updateReply ? m_updateReply->readAll() : QByteArray();
+    const bool ok = m_updateReply && m_updateReply->error() == QNetworkReply::NoError;
+    const int status = m_updateReply
+      ? m_updateReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()
+      : 0;
+    if (m_updateReply) {
+      m_updateReply->deleteLater();
+      m_updateReply = nullptr;
+    }
+
+    if (m_updateFile) {
+      if (!tail.isEmpty()) {
+        m_updateFile->write(tail);
+      }
+      m_updateFile->flush();
+      m_updateFile->close();
+      m_updateFile->deleteLater();
+      m_updateFile = nullptr;
+    }
+
+    setUpdateInProgress(false);
+
+    if (!ok || status < 200 || status >= 300) {
+      QFile::remove(m_updateInstallerPath);
+      const QString message = QStringLiteral("Guncelleme indirilemedi.");
+      setUpdateError(message);
+      emit requestFailed(QStringLiteral("app-update-install"), message);
+      return;
+    }
+
+    QFileInfo installerInfo(m_updateInstallerPath);
+    if (!installerInfo.exists() || installerInfo.size() <= 0) {
+      QFile::remove(m_updateInstallerPath);
+      const QString message = QStringLiteral("Guncelleme dosyasi eksik indirildi.");
+      setUpdateError(message);
+      emit requestFailed(QStringLiteral("app-update-install"), message);
+      return;
+    }
+
+    setUpdateProgress(1.0);
+    const bool started = QProcess::startDetached(QDir::toNativeSeparators(m_updateInstallerPath), {});
+    if (!started) {
+      const QString message = QStringLiteral("Installer baslatilamadi.");
+      setUpdateError(message);
+      emit requestFailed(QStringLiteral("app-update-install"), message);
+      return;
+    }
+
+    setUpdateError(QString());
+    setNotice(QStringLiteral("Guncelleme indirildi. Installer baslatiliyor."));
+    QTimer::singleShot(300, QCoreApplication::instance(), &QCoreApplication::quit);
   });
 }
 
@@ -999,6 +1163,34 @@ void ApiClient::setAppUpdate(const QVariantMap &value) {
 
   m_appUpdate = value;
   emit appUpdateChanged();
+}
+
+void ApiClient::setUpdateInProgress(bool value) {
+  if (value == m_updateInProgress) {
+    return;
+  }
+
+  m_updateInProgress = value;
+  emit updateInProgressChanged();
+}
+
+void ApiClient::setUpdateProgress(double value) {
+  const double normalized = qBound(0.0, value, 1.0);
+  if (qFuzzyCompare(normalized, m_updateProgress)) {
+    return;
+  }
+
+  m_updateProgress = normalized;
+  emit updateProgressChanged();
+}
+
+void ApiClient::setUpdateError(const QString &value) {
+  if (value == m_updateError) {
+    return;
+  }
+
+  m_updateError = value;
+  emit updateErrorChanged();
 }
 
 void ApiClient::beginRequest() {

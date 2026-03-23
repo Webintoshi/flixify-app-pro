@@ -3,7 +3,9 @@
 #include <QJsonArray>
 #include <QObject>
 #include <QNetworkAccessManager>
+#include <QPointer>
 #include <QNetworkRequest>
+#include <QFile>
 #include <functional>
 #include <QVariantList>
 #include <QVariantMap>
@@ -23,6 +25,9 @@ class ApiClient : public QObject {
   Q_PROPERTY(QVariantList paymentMethods READ paymentMethods NOTIFY paymentMethodsChanged)
   Q_PROPERTY(QVariantList paymentRequests READ paymentRequests NOTIFY paymentRequestsChanged)
   Q_PROPERTY(QVariantMap appUpdate READ appUpdate NOTIFY appUpdateChanged)
+  Q_PROPERTY(bool updateInProgress READ updateInProgress NOTIFY updateInProgressChanged)
+  Q_PROPERTY(double updateProgress READ updateProgress NOTIFY updateProgressChanged)
+  Q_PROPERTY(QString updateError READ updateError NOTIFY updateErrorChanged)
   Q_PROPERTY(QVariantList liveChannels READ liveChannels NOTIFY liveChannelsChanged)
   Q_PROPERTY(QVariantList movies READ movies NOTIFY moviesChanged)
   Q_PROPERTY(QVariantList series READ series NOTIFY seriesChanged)
@@ -46,6 +51,9 @@ public:
   QVariantList paymentMethods() const;
   QVariantList paymentRequests() const;
   QVariantMap appUpdate() const;
+  bool updateInProgress() const;
+  double updateProgress() const;
+  QString updateError() const;
   QVariantList liveChannels() const;
   QVariantList movies() const;
   QVariantList series() const;
@@ -67,6 +75,7 @@ public:
   Q_INVOKABLE void fetchPaymentRequests();
   Q_INVOKABLE void fetchShellData(const QString &search = QString());
   Q_INVOKABLE void checkAppUpdate();
+  Q_INVOKABLE void installAppUpdate();
   Q_INVOKABLE void fetchLiveCatalog(int page = 1, int pageSize = 300, const QString &search = QString());
   Q_INVOKABLE void fetchMovieCatalog(int page = 1, int pageSize = 300, const QString &search = QString());
   Q_INVOKABLE void fetchSeriesCatalog(int page = 1, int pageSize = 200, const QString &search = QString());
@@ -100,6 +109,9 @@ signals:
   void paymentMethodsChanged();
   void paymentRequestsChanged();
   void appUpdateChanged();
+  void updateInProgressChanged();
+  void updateProgressChanged();
+  void updateErrorChanged();
   void liveChannelsChanged();
   void moviesChanged();
   void seriesChanged();
@@ -118,6 +130,9 @@ private:
   void setPaymentMethods(const QVariantList &value);
   void setPaymentRequests(const QVariantList &value);
   void setAppUpdate(const QVariantMap &value);
+  void setUpdateInProgress(bool value);
+  void setUpdateProgress(double value);
+  void setUpdateError(const QString &value);
   void beginRequest();
   void endRequest();
   void clearAuthenticatedData();
@@ -144,6 +159,12 @@ private:
   QVariantList m_paymentMethods;
   QVariantList m_paymentRequests;
   QVariantMap m_appUpdate;
+  bool m_updateInProgress = false;
+  double m_updateProgress = 0.0;
+  QString m_updateError;
+  QString m_updateInstallerPath;
+  QPointer<QNetworkReply> m_updateReply;
+  QFile *m_updateFile = nullptr;
   QVariantList m_liveChannels;
   QVariantList m_movies;
   QVariantList m_series;
