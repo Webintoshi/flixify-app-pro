@@ -33,6 +33,7 @@ ApplicationWindow {
     property string issuedCode: ""
     property int revealedCount: 0
     property int scrambleSeed: 0
+    property int revealWarmupTicks: 0
     property bool registerAcknowledged: false
     property bool playerVisible: false
     property bool premiumPopupDismissed: false
@@ -79,6 +80,18 @@ ApplicationWindow {
 
     function progressSegments() {
         return Math.min(Math.ceil(sanitizeCode(authCode).length / 4), 4)
+    }
+
+    function registerRevealProgress() {
+        return issuedCode.length ? Math.min(1, revealedCount / issuedCode.length) : 0
+    }
+
+    function registerRevealComplete() {
+        return issuedCode.length > 0 && revealedCount >= issuedCode.length
+    }
+
+    function registerRevealBusy() {
+        return issuedCode.length > 0 && !registerRevealComplete()
     }
 
     function safeText(value) {
@@ -373,14 +386,24 @@ ApplicationWindow {
 
     Timer {
         id: revealTimer
-        interval: 82
+        interval: 112
         repeat: true
         onTriggered: {
+            if (!issuedCode.length) {
+                stop()
+                return
+            }
+            scrambleSeed += 3
+            if (revealWarmupTicks > 0) {
+                revealWarmupTicks -= 1
+                interval = Math.max(84, interval - 4)
+                return
+            }
             if (revealedCount >= issuedCode.length) {
                 stop()
                 return
             }
-            scrambleSeed += 1
+            interval = revealedCount < 4 ? 126 : revealedCount < 10 ? 142 : 158
             revealedCount += 1
         }
     }
@@ -424,8 +447,8 @@ ApplicationWindow {
                 currentScreen = "login"
             }
         }
-        function onLoginSucceeded() { currentScreen = "home"; premiumPopupDismissed = false; showAuthCode = false }
-        function onAnonCodeIssued(code) { issuedCode = sanitizeCode(code); revealedCount = 0; scrambleSeed = 0; registerAcknowledged = false; currentScreen = "register"; revealTimer.restart() }
+        function onLoginSucceeded() { currentScreen = "home"; premiumPopupDismissed = false; showAuthCode = false; authCode = "" }
+        function onAnonCodeIssued(code) { issuedCode = sanitizeCode(code); revealedCount = 0; scrambleSeed = 0; revealWarmupTicks = 6; registerAcknowledged = false; authCode = ""; showAuthCode = false; currentScreen = "register"; revealTimer.interval = 88; revealTimer.restart() }
         function onSeriesChanged() { if (!selectedSeriesId && (apiClient.series || []).length) selectedSeriesId = apiClient.series[0].id }
         function onLiveChannelsChanged() { syncSelectedLiveSelection(); if (currentScreen === "live") liveAutoplayTimer.restart() }
         function onLogoutCompleted() { currentScreen = "login"; authCode = ""; issuedCode = ""; showAuthCode = false; closePlayer(); pendingPackage = null; selectedPaymentMethodId = "" }
@@ -821,7 +844,7 @@ ApplicationWindow {
 
                             Item {
                                 width: parent.width
-                                height: 68
+                                height: 76
 
                                 AppField {
                                     id: authCodeField
@@ -829,16 +852,22 @@ ApplicationWindow {
                                     placeholderText: "X7F2 A9B1 C4D8 E6F0"
                                     text: formatCode(authCode)
                                     echoMode: showAuthCode ? TextInput.Normal : TextInput.Password
-                                    font.pixelSize: 18
-                                    font.family: "Consolas"
-                                    font.letterSpacing: 2
+                                    font.pixelSize: showAuthCode ? 22 : 20
+                                    font.family: showAuthCode ? "Space Grotesk" : "Consolas"
+                                    font.bold: showAuthCode
+                                    font.letterSpacing: showAuthCode ? 2.8 : 2.2
                                     leftPadding: 24
-                                    rightPadding: 80
+                                    rightPadding: 102
+                                    color: showAuthCode ? "#ffffff" : window.textPrimary
+                                    selectByMouse: true
                                     background: Rectangle {
-                                        radius: 16
-                                        color: "#141419"
+                                        radius: 18
+                                        gradient: Gradient {
+                                            GradientStop { position: 0.0; color: "#1a1a22" }
+                                            GradientStop { position: 1.0; color: "#171921" }
+                                        }
                                         border.width: 2
-                                        border.color: authCodeField.activeFocus ? window.accent : "#26ffffff"
+                                        border.color: authCodeField.activeFocus ? window.accent : (showAuthCode ? "#3bffffff" : "#26ffffff")
                                     }
                                     onTextChanged: {
                                         const normalized = sanitizeCode(text)
@@ -847,26 +876,30 @@ ApplicationWindow {
                                 }
 
                                 Rectangle {
-                                    width: 48
-                                    height: 48
-                                    radius: 12
+                                    width: 78
+                                    height: 54
+                                    radius: 16
                                     anchors.right: parent.right
-                                    anchors.rightMargin: 12
+                                    anchors.rightMargin: 11
                                     anchors.verticalCenter: parent.verticalCenter
-                                    color: "#22ffffff"
+                                    gradient: Gradient {
+                                        GradientStop { position: 0.0; color: showAuthCode ? "#272b35" : "#222733" }
+                                        GradientStop { position: 1.0; color: showAuthCode ? "#1e212a" : "#1a1d25" }
+                                    }
                                     border.width: 1
-                                    border.color: "#26ffffff"
+                                    border.color: showAuthCode ? "#40ffffff" : "#26ffffff"
 
                                     Text {
                                         anchors.centerIn: parent
                                         text: showAuthCode ? "Gizle" : "Goster"
                                         color: "#d7dce6"
-                                        font.pixelSize: 11
+                                        font.pixelSize: 13
                                         font.bold: true
                                     }
 
                                     MouseArea {
                                         anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
                                         onClicked: showAuthCode = !showAuthCode
                                     }
                                 }
@@ -909,6 +942,12 @@ ApplicationWindow {
                                         anchors.fill: parent
                                         cursorShape: Qt.PointingHandCursor
                                         onClicked: {
+                                            issuedCode = ""
+                                            revealedCount = 0
+                                            scrambleSeed = 0
+                                            revealWarmupTicks = 0
+                                            registerAcknowledged = false
+                                            authCode = ""
                                             showAuthCode = false
                                             currentScreen = "register"
                                         }
@@ -920,31 +959,273 @@ ApplicationWindow {
                         Column {
                             width: parent.width
                             spacing: 14
-                            visible: currentScreen === "register"
-
-                            AppField { width: parent.width; placeholderText: "Bu cihazin adi"; text: registerDeviceName; visible: !issuedCode.length; onTextChanged: registerDeviceName = text }
-                            AppButton { width: parent.width; text: apiClient.busy ? "Kod Uretiliyor..." : "Hesap Numarasi Olustur"; visible: !issuedCode.length; enabled: !apiClient.busy; onClicked: apiClient.issueAnonCode(registerDeviceName) }
+                            visible: currentScreen === "register" && !issuedCode.length
 
                             Rectangle {
-                                width: parent.width; height: 154; radius: 22; color: "#0b0f17"; border.width: 1; border.color: issuedCode.length ? "#42e50914" : window.borderSoft; visible: issuedCode.length > 0
+                                width: parent.width
+                                height: 206
+                                radius: 24
+                                color: "#0b0f17"
+                                border.width: 1
+                                border.color: "#1dffffff"
+                                gradient: Gradient {
+                                    GradientStop { position: 0.0; color: "#0f1521" }
+                                    GradientStop { position: 0.54; color: "#0b0f17" }
+                                    GradientStop { position: 1.0; color: "#08101a" }
+                                }
+
                                 Column {
-                                    anchors.fill: parent; anchors.margins: 20; spacing: 12
-                                    Text { text: "Erisim Kodunuz"; color: window.textMuted; font.pixelSize: 13; font.bold: true }
-                                    Text { text: animatedIssuedCode(); color: window.textPrimary; width: parent.width; horizontalAlignment: Text.AlignHCenter; font.pixelSize: 32; font.family: "Space Grotesk"; font.bold: true }
+                                    anchors.fill: parent
+                                    anchors.margins: 22
+                                    spacing: 14
+
                                     Rectangle {
-                                        width: parent.width; height: 8; radius: 4; color: "#14ffffff"
-                                        Rectangle { width: parent.width * (issuedCode.length ? revealedCount / issuedCode.length : 0); height: parent.height; radius: 4; color: window.accent }
+                                        width: createLabel.implicitWidth + 26
+                                        height: 34
+                                        radius: 17
+                                        color: "#19e50914"
+                                        border.width: 1
+                                        border.color: "#22ffffff"
+
+                                        Text {
+                                            id: createLabel
+                                            anchors.centerIn: parent
+                                            text: "Tek Kullanimlik Guvenli Kod"
+                                            color: "#ffd7da"
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                        }
+                                    }
+
+                                    Text {
+                                        text: "Premium iceriklere erisim icin size ozel 16 haneli bir hesap numarasi uretin."
+                                        width: parent.width
+                                        wrapMode: Text.WordWrap
+                                        color: window.textPrimary
+                                        font.pixelSize: 26
+                                        font.family: "Space Grotesk"
+                                        font.bold: true
+                                    }
+
+                                    Text {
+                                        text: "Kod bir kez uretilir. Kaydedip sakladiginizda ayni hesapla uygulamaya tekrar giris yapabilirsiniz."
+                                        width: parent.width
+                                        wrapMode: Text.WordWrap
+                                        color: window.textMuted
+                                        font.pixelSize: 14
+                                    }
+
+                                    Row {
+                                        spacing: 10
+                                        Repeater {
+                                            model: [
+                                                { title: "16 Hane", copy: "Kriptolu" },
+                                                { title: "Tek Kod", copy: "Kopyala/Kaydet" },
+                                                { title: "Aninda Aktif", copy: "Native Giris" }
+                                            ]
+
+                                            Rectangle {
+                                                width: Math.floor((parent.width - 20) / 3)
+                                                height: 56
+                                                radius: 16
+                                                color: "#0effffff"
+                                                border.width: 1
+                                                border.color: "#14ffffff"
+
+                                                Column {
+                                                    anchors.centerIn: parent
+                                                    spacing: 4
+                                                    Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 13; font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                                                    Text { text: modelData.copy; color: window.textMuted; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            AppButton {
+                                width: parent.width
+                                implicitHeight: 58
+                                text: apiClient.busy ? "Sifreli Anahtar Uretiliyor..." : "Hesap Numarasi Olustur"
+                                enabled: !apiClient.busy
+                                onClicked: apiClient.issueAnonCode(registerDeviceName)
+                            }
+
+                            AppButton {
+                                width: parent.width
+                                text: "Zaten Hesabim Var"
+                                secondary: true
+                                onClicked: {
+                                    authCode = ""
+                                    showAuthCode = false
+                                    currentScreen = "login"
+                                }
+                            }
+
+                            Row {
+                                width: parent.width
+                                spacing: 12
+                                Repeater {
+                                    model: [
+                                        { title: "Guvenli Erisim", copy: "Kodu kaydet, oturumu native uygulamadan tekrar ac." },
+                                        { title: "Premium Deneyim", copy: "Film, dizi ve canli icerikler branded shell icinde acilir." }
+                                    ]
+                                    Rectangle {
+                                        width: (parent.width - 12) / 2; height: 110; radius: 18; color: "#0d131d"; border.width: 1; border.color: window.borderSoft
+                                        Column {
+                                            anchors.fill: parent; anchors.margins: 16; spacing: 8
+                                            Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 16; font.family: "Space Grotesk"; font.bold: true }
+                                            Text { text: modelData.copy; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 13 }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Column {
+                            width: parent.width
+                            spacing: 14
+                            visible: currentScreen === "register" && issuedCode.length > 0
+
+                            Rectangle {
+                                width: parent.width
+                                height: 228
+                                radius: 24
+                                color: "#0b0f17"
+                                border.width: 1
+                                border.color: registerRevealComplete() ? "#36e50914" : "#22ffffff"
+                                gradient: Gradient {
+                                    GradientStop { position: 0.0; color: registerRevealComplete() ? "#101521" : "#0e121c" }
+                                    GradientStop { position: 1.0; color: "#090d15" }
+                                }
+
+                                Column {
+                                    anchors.fill: parent
+                                    anchors.margins: 20
+                                    spacing: 14
+
+                                    Row {
+                                        width: parent.width
+                                        spacing: 10
+
+                                        Text { text: "Erisim Kodunuz"; color: window.textMuted; font.pixelSize: 13; font.bold: true }
+                                        Item { width: 1; height: 1 }
+                                        Rectangle {
+                                            width: revealStatusText.implicitWidth + 28
+                                            height: 32
+                                            radius: 16
+                                            color: registerRevealComplete() ? "#2330d19d" : "#1ae50914"
+                                            border.width: 1
+                                            border.color: registerRevealComplete() ? "#3a30d19d" : "#24ffffff"
+
+                                            Text {
+                                                id: revealStatusText
+                                                anchors.centerIn: parent
+                                                text: registerRevealComplete() ? "Hazir" : "Sifreli Anahtar Uretiliyor"
+                                                color: registerRevealComplete() ? "#82ecc4" : "#ffd7da"
+                                                font.pixelSize: 11
+                                                font.bold: true
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: animatedIssuedCode()
+                                        color: window.textPrimary
+                                        width: parent.width
+                                        horizontalAlignment: Text.AlignHCenter
+                                        font.pixelSize: 40
+                                        font.family: "Space Grotesk"
+                                        font.bold: true
+                                        font.letterSpacing: 1.2
+                                    }
+
+                                    Text {
+                                        text: registerRevealComplete() ? "Kod hazir. Simdi kopyalayin veya kaydedin." : "Kriptografik karakter matrisi olusturuluyor..."
+                                        width: parent.width
+                                        horizontalAlignment: Text.AlignHCenter
+                                        color: window.textMuted
+                                        font.pixelSize: 13
+                                    }
+
+                                    Rectangle {
+                                        width: parent.width
+                                        height: 10
+                                        radius: 5
+                                        color: "#13ffffff"
+
+                                        Rectangle {
+                                            width: parent.width * registerRevealProgress()
+                                            height: parent.height
+                                            radius: 5
+                                            gradient: Gradient {
+                                                GradientStop { position: 0.0; color: window.accentStrong }
+                                                GradientStop { position: 1.0; color: window.accent }
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: `${revealedCount}/16`
+                                        width: parent.width
+                                        horizontalAlignment: Text.AlignRight
+                                        color: "#b8c4d8"
+                                        font.pixelSize: 12
+                                        font.bold: true
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                width: parent.width
+                                height: 86
+                                radius: 20
+                                color: "#0d131d"
+                                border.width: 1
+                                border.color: "#1dffffff"
+
+                                Row {
+                                    anchors.fill: parent
+                                    anchors.margins: 18
+                                    spacing: 14
+
+                                    Rectangle {
+                                        width: 42
+                                        height: 42
+                                        radius: 14
+                                        color: "#19e50914"
+                                        border.width: 1
+                                        border.color: "#20ffffff"
+                                        anchors.verticalCenter: parent.verticalCenter
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "!"
+                                            color: "#ffd7da"
+                                            font.pixelSize: 20
+                                            font.bold: true
+                                        }
+                                    }
+
+                                    Column {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: parent.width - 62
+                                        spacing: 4
+                                        Text { text: "Onemli"; color: window.textPrimary; font.pixelSize: 15; font.family: "Space Grotesk"; font.bold: true }
+                                        Text { text: "Bu kodu kaybetmeyin. Kodunuzu saklamadan ilerlemeyin."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 13 }
                                     }
                                 }
                             }
 
                             Row {
-                                width: parent.width; spacing: 12; visible: issuedCode.length > 0
+                                width: parent.width
+                                spacing: 12
                                 AppButton {
                                     width: (parent.width - 12) / 2
                                     text: "Kopyala"
                                     secondary: true
-                                    enabled: !revealTimer.running
+                                    enabled: registerRevealComplete()
                                     onClicked: {
                                         const copied = apiClient.copyText(issuedCode)
                                         showToast(copied ? "Kod kopyalandi." : "Kod kopyalanamadi.", copied ? success : danger)
@@ -954,7 +1235,7 @@ ApplicationWindow {
                                     width: (parent.width - 12) / 2
                                     text: "Kaydet"
                                     secondary: true
-                                    enabled: !revealTimer.running
+                                    enabled: registerRevealComplete()
                                     onClicked: {
                                         const path = apiClient.saveTextFile("flixify-kod", `Flixify Pro Hesap Numarasi\nKod: ${formatCode(issuedCode)}\nTam kod: ${issuedCode}\n`)
                                         showToast(path.length ? "Kod dosyasi kaydedildi." : "Kod dosyasi kaydedilemedi.", path.length ? success : danger)
@@ -963,35 +1244,58 @@ ApplicationWindow {
                             }
 
                             Rectangle {
-                                width: parent.width; height: 56; radius: 16; visible: issuedCode.length > 0; color: registerAcknowledged ? "#2230d19d" : "#0cffffff"; border.width: 1; border.color: registerAcknowledged ? "#5530d19d" : window.borderSoft
+                                width: parent.width
+                                height: 60
+                                radius: 18
+                                color: registerAcknowledged ? "#2230d19d" : "#0d131d"
+                                border.width: 1
+                                border.color: registerAcknowledged ? "#5530d19d" : window.borderSoft
+
                                 Row {
-                                    anchors.fill: parent; anchors.margins: 16; spacing: 12
-                                    Rectangle { width: 22; height: 22; radius: 11; color: registerAcknowledged ? window.success : "#18ffffff"; anchors.verticalCenter: parent.verticalCenter; Text { anchors.centerIn: parent; text: registerAcknowledged ? "OK" : ""; color: "#04140d"; font.bold: true } }
+                                    anchors.fill: parent
+                                    anchors.margins: 16
+                                    spacing: 12
+
+                                    Rectangle {
+                                        width: 24
+                                        height: 24
+                                        radius: 12
+                                        color: registerAcknowledged ? window.success : "#18ffffff"
+                                        anchors.verticalCenter: parent.verticalCenter
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: registerAcknowledged ? "OK" : ""
+                                            color: "#04140d"
+                                            font.bold: true
+                                        }
+                                    }
+
                                     Text { anchors.verticalCenter: parent.verticalCenter; text: "Hesap numarami kaydettigimi onayliyorum"; color: window.textPrimary; font.pixelSize: 14 }
                                 }
-                                MouseArea { anchors.fill: parent; enabled: !revealTimer.running; onClicked: registerAcknowledged = !registerAcknowledged }
+
+                                MouseArea { anchors.fill: parent; enabled: registerRevealComplete(); onClicked: registerAcknowledged = !registerAcknowledged }
                             }
 
-                            AppButton { width: parent.width; text: "Giris Ekranina Gec"; visible: issuedCode.length > 0; enabled: !revealTimer.running && registerAcknowledged; onClicked: { authCode = issuedCode; showAuthCode = false; currentScreen = "login" } }
-                            AppButton { width: parent.width; text: "Zaten Hesabim Var"; secondary: true; onClicked: { showAuthCode = false; currentScreen = "login" } }
-                        }
+                            AppButton {
+                                width: parent.width
+                                text: "Giris Ekranina Gec"
+                                enabled: registerRevealComplete() && registerAcknowledged
+                                onClicked: {
+                                    authCode = ""
+                                    showAuthCode = false
+                                    currentScreen = "login"
+                                }
+                            }
 
-                        Row {
-                            width: parent.width
-                            spacing: 12
-                            visible: currentScreen === "register"
-                            Repeater {
-                                model: [
-                                    { title: "Guvenli Erisim", copy: "Kodu kaydet, oturumu native uygulamadan ac." },
-                                    { title: "Premium Deneyim", copy: "Film, dizi ve canli icerikler branded shell icinde acilir." }
-                                ]
-                                Rectangle {
-                                    width: (parent.width - 12) / 2; height: 96; radius: 18; color: "#0affffff"; border.width: 1; border.color: window.borderSoft
-                                    Column {
-                                        anchors.fill: parent; anchors.margins: 16; spacing: 6
-                                        Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 15; font.family: "Space Grotesk"; font.bold: true }
-                                        Text { text: modelData.copy; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 13 }
-                                    }
+                            AppButton {
+                                width: parent.width
+                                text: "Zaten Hesabim Var"
+                                secondary: true
+                                onClicked: {
+                                    authCode = ""
+                                    showAuthCode = false
+                                    currentScreen = "login"
                                 }
                             }
                         }
