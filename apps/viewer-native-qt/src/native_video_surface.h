@@ -8,6 +8,7 @@ class NativeVideoSurface : public QQuickPaintedItem {
 
 public:
   explicit NativeVideoSurface(QQuickItem *parent = nullptr);
+  ~NativeVideoSurface() override;
 
   qulonglong surfaceHandle() const;
   void paint(QPainter *painter) override;
@@ -17,6 +18,13 @@ signals:
 
 private:
   void syncSurfaceHandle();
+  void updateNativeSurfaceGeometry();
+
+#if defined(Q_OS_WIN)
+  void ensureNativeSurface();
+  void destroyNativeSurface();
+  void *m_nativeSurfaceHandle = nullptr;
+#endif
 
   qulonglong m_surfaceHandle = 0;
 };
