@@ -400,12 +400,13 @@ ApplicationWindow {
         return currentScreen === "live" &&
             playerVisible &&
             playbackController.activeContentKind === "live" &&
-            playbackController.activeChannelId === selectedLiveId &&
             selectedLiveItem() !== null &&
             selectedLiveItem().playbackAllowed !== false
     }
     function overlayPlayerVisible() {
-        return playerVisible && !inlineLivePlayerVisible()
+        return playerVisible &&
+            !inlineLivePlayerVisible() &&
+            !(currentScreen === "live" && playbackController.activeContentKind === "live")
     }
     function toggleWindowFullscreen() {
         if (window.visibility === Window.FullScreen) {
