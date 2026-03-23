@@ -534,23 +534,60 @@ ApplicationWindow {
     component AppButton: Button {
         id: control
         property bool secondary: false
-        implicitHeight: 50
-        padding: 0
+        hoverEnabled: control.enabled
+        focusPolicy: Qt.NoFocus
+        implicitHeight: 52
+        leftPadding: 22
+        rightPadding: 22
+        topPadding: 0
+        bottomPadding: 0
         font.pixelSize: 15
         font.bold: true
+        opacity: control.enabled ? 1.0 : 0.42
+        scale: control.down ? 0.988 : control.hovered ? 1.012 : 1.0
+        Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
         background: Rectangle {
+            readonly property bool hoverState: control.hovered && control.enabled
+            readonly property bool pressedState: control.down && control.enabled
             radius: height / 2
             border.width: 1
-            border.color: control.secondary ? window.borderSoft : "#00000000"
+            border.color: control.secondary
+                ? (pressedState ? "#34ffffff" : hoverState ? "#28ffffff" : window.borderSoft)
+                : (pressedState ? "#38ffd9de" : hoverState ? "#24ffffff" : "#00000000")
             gradient: Gradient {
-                GradientStop { position: 0.0; color: control.secondary ? "#12ffffff" : window.accentStrong }
-                GradientStop { position: 1.0; color: control.secondary ? "#12ffffff" : window.accent }
+                GradientStop {
+                    position: 0.0
+                    color: control.secondary
+                        ? (pressedState ? "#1affffff" : hoverState ? "#20ffffff" : "#12ffffff")
+                        : (pressedState ? "#cfb20f18" : hoverState ? "#ff3c49" : window.accentStrong)
+                }
+                GradientStop {
+                    position: 1.0
+                    color: control.secondary
+                        ? (pressedState ? "#0dffffff" : hoverState ? "#14ffffff" : "#12ffffff")
+                        : (pressedState ? "#cc970812" : hoverState ? "#f20f1d" : window.accent)
+                }
             }
-            opacity: control.enabled ? 1.0 : 0.45
+            Rectangle {
+                anchors.fill: parent
+                radius: parent.radius
+                color: hoverState && !control.secondary ? "#12ffffff" : "transparent"
+                opacity: pressedState ? 0.35 : hoverState ? 0.8 : 0.0
+            }
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 1
+                height: parent.height * 0.46
+                radius: parent.radius
+                color: "#18ffffff"
+                opacity: control.secondary ? (hoverState ? 0.5 : 0.32) : (hoverState ? 0.24 : 0.14)
+            }
         }
         contentItem: Text {
             text: control.text
-            color: "#ffffff"
+            color: control.secondary ? "#f4f6fb" : "#ffffff"
             font: control.font
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -577,21 +614,70 @@ ApplicationWindow {
     component ChipButton: Button {
         id: chip
         property bool active: false
+        hoverEnabled: chip.enabled
+        focusPolicy: Qt.NoFocus
         implicitHeight: 42
-        padding: 0
+        leftPadding: 18
+        rightPadding: 18
+        topPadding: 0
+        bottomPadding: 0
+        scale: chip.down ? 0.988 : chip.hovered ? 1.01 : 1.0
+        Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
         background: Rectangle {
+            readonly property bool hoverState: chip.hovered && chip.enabled
             radius: 21
-            color: chip.active ? "#30e50914" : "#0affffff"
+            color: chip.active ? (chip.down ? "#8f0e16" : hoverState ? "#d41520" : "#b20d16") : (chip.down ? "#14ffffff" : hoverState ? "#12ffffff" : "#0affffff")
             border.width: 1
-            border.color: chip.active ? "#28ffffff" : window.borderSoft
+            border.color: chip.active ? (hoverState ? "#42ffffff" : "#28ffffff") : (hoverState ? "#26ffffff" : window.borderSoft)
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 1
+                height: parent.height * 0.48
+                radius: parent.radius
+                color: chip.active ? "#16ffffff" : "#10ffffff"
+                opacity: hoverState ? 0.72 : 0.4
+            }
         }
         contentItem: Text {
             text: chip.text
-            color: window.textPrimary
+            color: chip.active ? "#ffffff" : window.textPrimary
             font.pixelSize: 13
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
+        }
+    }
+
+    component NavButton: Button {
+        id: nav
+        property bool active: false
+        hoverEnabled: nav.enabled
+        focusPolicy: Qt.NoFocus
+        padding: 0
+        background: Item {}
+        contentItem: Column {
+            spacing: 8
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: nav.text
+                color: nav.active ? window.textPrimary : (nav.hovered ? "#d9e1ef" : "#9fffffff")
+                font.pixelSize: 18
+                font.bold: true
+                Behavior on color { ColorAnimation { duration: 140 } }
+            }
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: nav.active ? 56 : (nav.hovered ? 38 : 22)
+                height: 4
+                radius: 2
+                color: nav.active ? window.accent : (nav.hovered ? "#88ff4451" : "#00000000")
+                opacity: nav.active ? 1.0 : (nav.hovered ? 1.0 : 0.0)
+                Behavior on width { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: 120 } }
+                Behavior on color { ColorAnimation { duration: 120 } }
+            }
         }
     }
 
@@ -1578,17 +1664,11 @@ ApplicationWindow {
                                         { key: "movies", label: "Filmler" },
                                         { key: "series", label: "Diziler" }
                                     ]
-                                    Button {
+                                    NavButton {
                                         required property var modelData
                                         text: modelData.label
-                                        flat: true
+                                        active: currentScreen === modelData.key
                                         onClicked: openScreen(modelData.key)
-                                        contentItem: Column {
-                                            spacing: 6
-                                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: parent.parent.text; color: currentScreen === parent.parent.modelData.key ? window.textPrimary : "#9fffffff"; font.pixelSize: 18; font.bold: true }
-                                            Rectangle { anchors.horizontalCenter: parent.horizontalCenter; width: 56; height: 4; radius: 2; color: window.accent; visible: currentScreen === parent.parent.modelData.key }
-                                        }
-                                        background: Item {}
                                     }
                                 }
                             }
