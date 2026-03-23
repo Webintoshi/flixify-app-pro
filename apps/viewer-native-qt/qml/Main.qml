@@ -1718,6 +1718,11 @@ ApplicationWindow {
             anchors.fill: parent
             anchors.margins: 0
             onSurfaceHandleChanged: playbackController.setVideoSurfaceHandle(surfaceHandle)
+            onPointerActivity: {
+                if (currentScreen === "live" && inlineLivePlayerVisible()) {
+                    showLiveControls()
+                }
+            }
         }
     }
 
@@ -2707,7 +2712,11 @@ ApplicationWindow {
                                                 clip: true
                                                 
                                                 Loader {
-                                                    anchors.fill: parent
+                                                    anchors.left: parent.left
+                                                    anchors.right: parent.right
+                                                    anchors.top: parent.top
+                                                    anchors.bottom: parent.bottom
+                                                    anchors.bottomMargin: 84
                                                     active: inlineLivePlayerVisible()
                                                     sourceComponent: nativeVideoSurfaceComponent
                                                 }
@@ -2777,9 +2786,7 @@ ApplicationWindow {
                                                 WindowContainer {
                                                     anchors.fill: parent
                                                     z: 6
-                                                    visible: selectedLiveItem() !== null
-                                                        && filteredLiveItems().length > 0
-                                                        && selectedLiveItem().playbackAllowed !== false
+                                                    visible: false
 
                                                     window: Window {
                                                         flags: Qt.FramelessWindowHint
@@ -3117,7 +3124,9 @@ ApplicationWindow {
                                                     anchors.bottom: parent.bottom
                                                     anchors.margins: 16
                                                     height: 64
-                                                    visible: false
+                                                    visible: selectedLiveItem() !== null
+                                                        && filteredLiveItems().length > 0
+                                                        && selectedLiveItem().playbackAllowed !== false
                                                     opacity: liveControlsVisible ? 1.0 : 0.0
                                                     z: 4
                                                     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
@@ -3343,7 +3352,7 @@ ApplicationWindow {
                                                     color: "#cc20070b"
                                                     border.width: 1
                                                     border.color: "#28ff7d86"
-                                                    visible: false
+                                                    visible: playbackController.lastError.length > 0 && playbackController.activeContentKind === "live"
 
                                                     Text {
                                                         id: inlineErrorLabel

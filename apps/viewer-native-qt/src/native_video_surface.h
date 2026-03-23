@@ -15,6 +15,7 @@ public:
 
 signals:
   void surfaceHandleChanged();
+  void pointerActivity();
 
 private:
   void syncSurfaceHandle();

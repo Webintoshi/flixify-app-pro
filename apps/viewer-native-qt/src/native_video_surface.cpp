@@ -3,6 +3,7 @@
 #include <QPainter>
 #include <QPointF>
 #include <QQuickWindow>
+#include <QMetaObject>
 #include <QtGlobal>
 
 #if defined(Q_OS_WIN)
@@ -16,6 +17,27 @@ constexpr wchar_t kFlixifyVideoSurfaceClassName[] = L"FlixifyNativeVideoSurfaceW
 
 LRESULT CALLBACK flixifyVideoSurfaceProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
   switch (message) {
+    case WM_NCCREATE: {
+      auto *createStruct = reinterpret_cast<CREATESTRUCTW *>(lParam);
+      if (createStruct && createStruct->lpCreateParams) {
+        SetWindowLongPtrW(
+          hwnd,
+          GWLP_USERDATA,
+          reinterpret_cast<LONG_PTR>(createStruct->lpCreateParams)
+        );
+      }
+      break;
+    }
+    case WM_MOUSEMOVE:
+    case WM_MOUSEWHEEL:
+    case WM_NCMOUSEMOVE: {
+      if (auto *instance = reinterpret_cast<NativeVideoSurface *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA))) {
+        QMetaObject::invokeMethod(instance, [instance]() {
+          instance->pointerActivity();
+        }, Qt::QueuedConnection);
+      }
+      break;
+    }
     case WM_ERASEBKGND:
       return 1;
     case WM_PAINT: {
@@ -34,6 +56,8 @@ LRESULT CALLBACK flixifyVideoSurfaceProc(HWND hwnd, UINT message, WPARAM wParam,
     default:
       return DefWindowProcW(hwnd, message, wParam, lParam);
   }
+
+  return DefWindowProcW(hwnd, message, wParam, lParam);
 }
 
 ATOM ensureFlixifyVideoSurfaceClass() {
@@ -170,7 +194,7 @@ void NativeVideoSurface::ensureNativeSurface() {
     parentHandle,
     nullptr,
     GetModuleHandleW(nullptr),
-    nullptr
+    this
   );
 
   if (!childHandle) {
