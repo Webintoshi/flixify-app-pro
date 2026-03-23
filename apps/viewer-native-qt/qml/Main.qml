@@ -98,9 +98,50 @@ ApplicationWindow {
         return (value || "").toString().trim()
     }
 
-    function artworkSource(value) {
+    function isIpOrLocalhostHost(hostname) {
+        const normalized = safeText(hostname).toLowerCase()
+        if (!normalized.length) {
+            return false
+        }
+        if (normalized === "localhost" || normalized.endsWith(".localhost")) {
+            return true
+        }
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(normalized)) {
+            return true
+        }
+        if (normalized.indexOf(":") !== -1) {
+            return /^[0-9a-f:.]+$/i.test(normalized)
+        }
+        return false
+    }
+
+    function normalizeArtworkUrl(value) {
         const trimmed = safeText(value)
-        return trimmed.length ? trimmed : ""
+        if (!trimmed.length) {
+            return ""
+        }
+
+        if (!/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed)) {
+            return trimmed
+        }
+
+        try {
+            const parsed = new URL(trimmed)
+            if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+                return ""
+            }
+            if (parsed.protocol === "http:" && !isIpOrLocalhostHost(parsed.hostname)) {
+                parsed.protocol = "https:"
+                return parsed.toString()
+            }
+            return parsed.toString()
+        } catch (error) {
+            return trimmed
+        }
+    }
+
+    function artworkSource(value) {
+        return normalizeArtworkUrl(value)
     }
 
     function artworkMonogram(value) {
@@ -561,7 +602,7 @@ ApplicationWindow {
             source: artwork.normalizedSource
             fillMode: artwork.mode === "logo" ? Image.PreserveAspectFit : Image.PreserveAspectCrop
             asynchronous: true
-            cache: false
+            cache: true
             visible: artwork.normalizedSource.length > 0 && status === Image.Ready
             clip: true
         }
@@ -748,6 +789,111 @@ ApplicationWindow {
         MouseArea {
             anchors.fill: parent
             onClicked: rail.activated(rail.item)
+        }
+    }
+
+    component PosterGridCard: Item {
+        id: posterCard
+        required property var item
+        required property string cardKind
+        signal activated(var item)
+        width: 222
+        height: 382
+
+        Rectangle {
+            id: posterVisual
+            anchors.fill: parent
+            radius: 24
+            color: "#0a0e16"
+            border.width: 1
+            border.color: "#14ffffff"
+        }
+
+        ArtworkPanel {
+            anchors.fill: parent
+            title: posterCard.item.title || ""
+            subtitle: posterCard.item.subtitle || posterCard.item.groupTitle || ""
+            sourceUrl: posterCard.item.posterUrl || posterCard.item.logoUrl || ""
+            mode: posterCard.cardKind === "live" ? "logo" : "poster"
+            kind: posterCard.cardKind
+            cornerRadius: 24
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 24
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "#05070b12" }
+                GradientStop { position: 0.54; color: "#1805070b" }
+                GradientStop { position: 1.0; color: "#f005070b" }
+            }
+        }
+
+        Column {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.margins: 16
+            spacing: 10
+
+            Row {
+                spacing: 8
+                Rectangle {
+                    width: 62
+                    height: 30
+                    radius: 15
+                    color: "#16ffffff"
+                    Text {
+                        anchors.centerIn: parent
+                        text: posterCard.cardKind === "movie" ? "Film" : "Dizi"
+                        color: window.textPrimary
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+                }
+                Rectangle {
+                    width: playbackBadge.implicitWidth + 22
+                    height: 30
+                    radius: 15
+                    color: posterCard.item.playbackAllowed ? "#2b30d19d" : "#16ffffff"
+                    Text {
+                        id: playbackBadge
+                        anchors.centerIn: parent
+                        text: posterCard.item.playbackAllowed ? "Hazir" : "Paket Gerekli"
+                        color: posterCard.item.playbackAllowed ? "#82ecc4" : window.textPrimary
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+                }
+            }
+
+            Text {
+                text: posterCard.item.title || ""
+                width: parent.width
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+                color: window.textPrimary
+                font.pixelSize: 24
+                font.family: "Space Grotesk"
+                font.bold: true
+            }
+
+            Text {
+                text: posterCard.item.subtitle || posterCard.item.groupTitle || ""
+                width: parent.width
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+                color: window.textMuted
+                font.pixelSize: 13
+                visible: text.length > 0
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: posterCard.activated(posterCard.item)
         }
     }
 
@@ -1662,7 +1808,40 @@ ApplicationWindow {
                                 Text { text: "Filmler"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true }
                                 AppField { width: parent.width; placeholderText: "Film ara..."; text: moviesSearchText; onTextChanged: moviesSearchText = text }
                                 Flickable { width: parent.width; height: 52; contentWidth: movieChipRow.width; clip: true; Row { id: movieChipRow; spacing: 10; Repeater { model: [""] .concat(uniqueGroups(apiClient.movies || [])); ChipButton { required property var modelData; text: modelData.length ? modelData : "Tum Filmler"; active: selectedMovieGroup === modelData; width: Math.max(112, implicitContentWidth + 28); onClicked: selectedMovieGroup = modelData } } } }
-                                Flow { width: parent.width; spacing: 20; Repeater { model: filteredMovies(); RailCard { width: 282; height: 420; item: modelData; cardKind: "movie"; onActivated: playMovie(apiClient.movieById(item.id)) } } }
+                                Flow {
+                                    width: parent.width
+                                    spacing: 20
+                                    Repeater {
+                                        model: filteredMovies()
+                                        PosterGridCard {
+                                            item: modelData
+                                            cardKind: "movie"
+                                            onActivated: playMovie(item)
+                                        }
+                                    }
+                                }
+                                GlassCard {
+                                    width: parent.width
+                                    height: 180
+                                    visible: filteredMovies().length === 0
+                                    color: "#090c13"
+                                    Column {
+                                        anchors.centerIn: parent
+                                        spacing: 8
+                                        Text {
+                                            text: "Filtreye uygun film bulunamadi"
+                                            color: window.textPrimary
+                                            font.pixelSize: 30
+                                            font.family: "Space Grotesk"
+                                            font.bold: true
+                                        }
+                                        Text {
+                                            text: "Aramayi temizleyip baska bir kategori deneyebilirsiniz."
+                                            color: window.textMuted
+                                            font.pixelSize: 14
+                                        }
+                                    }
+                                }
                             }
                         }
 
