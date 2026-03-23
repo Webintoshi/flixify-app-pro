@@ -2,5 +2,7 @@
   <qresource prefix="/">
     <file alias="qml/Main.qml">../qml/Main.qml</file>
     <file alias="branding/icon.png">../../viewer-windows/resources/icon.png</file>
+    <file alias="icons/whatsapp.svg">../Whatsapp logo (1).svg</file>
+    <file alias="icons/telegram.svg">../Telegramlogo.svg</file>
   </qresource>
 </RCC>

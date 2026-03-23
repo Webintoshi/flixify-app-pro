@@ -74,3 +74,6 @@ void libvlc_audio_set_mute(libvlc_media_player_t *player, int mute);
 void libvlc_media_player_set_hwnd(libvlc_media_player_t *player, void *windowHandle);
 void libvlc_media_player_set_nsobject(libvlc_media_player_t *player, void *objectHandle);
 void libvlc_media_player_set_xwindow(libvlc_media_player_t *player, uint32_t windowId);
+
+int libvlc_video_get_size(libvlc_media_player_t *player, unsigned int num, unsigned int *px, unsigned int *py);
+void libvlc_video_set_crop_geometry(libvlc_media_player_t *player, const char *geometry);

@@ -33,6 +33,8 @@ struct LibVlcRuntimeState {
   using MediaPlayerSetHwndFn = void (*)(libvlc_media_player_t *, void *);
   using MediaPlayerSetNSObjectFn = void (*)(libvlc_media_player_t *, void *);
   using MediaPlayerSetXWindowFn = void (*)(libvlc_media_player_t *, uint32_t);
+  using VideoGetSizeFn = int (*)(libvlc_media_player_t *, unsigned int, unsigned int *, unsigned int *);
+  using VideoSetCropGeometryFn = void (*)(libvlc_media_player_t *, const char *);
 
   QLibrary vlcLibrary;
   QLibrary coreLibrary;
@@ -65,6 +67,8 @@ struct LibVlcRuntimeState {
   MediaPlayerSetHwndFn mediaPlayerSetHwnd = nullptr;
   MediaPlayerSetNSObjectFn mediaPlayerSetNSObject = nullptr;
   MediaPlayerSetXWindowFn mediaPlayerSetXWindow = nullptr;
+  VideoGetSizeFn videoGetSize = nullptr;
+  VideoSetCropGeometryFn videoSetCropGeometry = nullptr;
 
   template <typename T>
   bool resolve(const char *symbol, T &target) {
@@ -228,7 +232,9 @@ struct LibVlcRuntimeState {
            resolve("libvlc_audio_set_mute", audioSetMute) &&
            resolve("libvlc_media_player_set_hwnd", mediaPlayerSetHwnd) &&
            resolve("libvlc_media_player_set_nsobject", mediaPlayerSetNSObject) &&
-           resolve("libvlc_media_player_set_xwindow", mediaPlayerSetXWindow);
+           resolve("libvlc_media_player_set_xwindow", mediaPlayerSetXWindow) &&
+           resolve("libvlc_video_get_size", videoGetSize) &&
+           resolve("libvlc_video_set_crop_geometry", videoSetCropGeometry);
   }
 
   bool ensureLoaded() {
@@ -437,5 +443,20 @@ void libvlc_media_player_set_xwindow(libvlc_media_player_t *player, uint32_t win
   auto &state = runtime();
   if (state.ensureLoaded() && state.mediaPlayerSetXWindow && player) {
     state.mediaPlayerSetXWindow(player, windowId);
+  }
+}
+
+int libvlc_video_get_size(libvlc_media_player_t *player, unsigned int num, unsigned int *px, unsigned int *py) {
+  auto &state = runtime();
+  if (state.ensureLoaded() && state.videoGetSize && player && px && py) {
+    return state.videoGetSize(player, num, px, py);
+  }
+  return -1;
+}
+
+void libvlc_video_set_crop_geometry(libvlc_media_player_t *player, const char *geometry) {
+  auto &state = runtime();
+  if (state.ensureLoaded() && state.videoSetCropGeometry && player) {
+    state.videoSetCropGeometry(player, geometry);
   }
 }

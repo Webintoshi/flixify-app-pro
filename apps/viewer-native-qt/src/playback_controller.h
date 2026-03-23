@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QList>
 #include <QObject>
+#include <QSize>
 #include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
@@ -31,6 +32,7 @@ class PlaybackController : public QObject {
   Q_PROPERTY(QVariantList audioTracks READ audioTracks NOTIFY audioTracksChanged)
   Q_PROPERTY(QString selectedAudioTrackId READ selectedAudioTrackId NOTIFY selectedAudioTrackIdChanged)
   Q_PROPERTY(QVariantMap recommendedNextEpisode READ recommendedNextEpisode NOTIFY recommendedNextEpisodeChanged)
+  Q_PROPERTY(QString videoFillMode READ videoFillMode WRITE setVideoFillMode NOTIFY videoFillModeChanged)
 
 public:
   explicit PlaybackController(ApiClient *apiClient, QObject *parent = nullptr);
@@ -53,6 +55,8 @@ public:
   QVariantList audioTracks() const;
   QString selectedAudioTrackId() const;
   QVariantMap recommendedNextEpisode() const;
+  QString videoFillMode() const;
+  void setVideoFillMode(const QString &mode);
 
   Q_INVOKABLE void playChannel(const QString &channelId);
   Q_INVOKABLE void playVod(const QString &kind, const QString &itemId, const QString &title = QString());
@@ -68,6 +72,7 @@ public:
   Q_INVOKABLE void selectAudioTrack(const QString &trackId);
   Q_INVOKABLE void playRecommendedNextEpisode();
   Q_INVOKABLE void setVideoSurfaceHandle(qulonglong handle);
+  Q_INVOKABLE void setVideoSurfaceGeometry(int width, int height);
 
 signals:
   void stateChanged();
@@ -87,6 +92,7 @@ signals:
   void audioTracksChanged();
   void selectedAudioTrackIdChanged();
   void recommendedNextEpisodeChanged();
+  void videoFillModeChanged();
 
 private:
   enum class PlaybackMode {
@@ -148,6 +154,8 @@ private:
   QString normalizedPlatformName() const;
   QString choosePreferredAudioTrackId(const QJsonArray &tracks, const QString &serverDefault, const QString &serverSelected) const;
   static QVariantList mapAudioTracks(const QJsonArray &tracks);
+  void updateVideoCrop();
+  QSize getVideoSize() const;
 
   void handlePlaying();
   void handleBuffering(float percent);
@@ -170,6 +178,9 @@ private:
   bool m_retryingSoftwareDecode = false;
   bool m_retryingVodResolve = false;
   bool m_autoSelectingPreferredAudioTrack = false;
+  QString m_videoFillMode = QStringLiteral("fit");
+  int m_surfaceWidth = 0;
+  int m_surfaceHeight = 0;
   QString m_state = QStringLiteral("idle");
   QString m_lastError;
   QString m_activeChannelId;

@@ -99,6 +99,21 @@ QString PlaybackController::decoderMode() const {
   return m_decoderMode;
 }
 
+QString PlaybackController::videoFillMode() const {
+  return m_videoFillMode;
+}
+
+void PlaybackController::setVideoFillMode(const QString &mode) {
+  const QString normalized = mode.trimmed().toLower();
+  const QString newMode = (normalized == QStringLiteral("fill")) ? QStringLiteral("fill") : QStringLiteral("fit");
+  if (newMode == m_videoFillMode) {
+    return;
+  }
+  m_videoFillMode = newMode;
+  emit videoFillModeChanged();
+  updateVideoCrop();
+}
+
 bool PlaybackController::busy() const {
   return m_busy;
 }
@@ -366,6 +381,64 @@ void PlaybackController::setVideoSurfaceHandle(qulonglong handle) {
 
   m_videoSurfaceHandle = handle;
   bindVideoSurface();
+}
+
+void PlaybackController::setVideoSurfaceGeometry(int width, int height) {
+  if (width == m_surfaceWidth && height == m_surfaceHeight) {
+    return;
+  }
+  m_surfaceWidth = width;
+  m_surfaceHeight = height;
+  updateVideoCrop();
+}
+
+QSize PlaybackController::getVideoSize() const {
+  if (!m_player) {
+    return QSize();
+  }
+  unsigned int vw = 0, vh = 0;
+  libvlc_video_get_size(m_player, 0, &vw, &vh);
+  if (vw > 0 && vh > 0) {
+    return QSize(static_cast<int>(vw), static_cast<int>(vh));
+  }
+  return QSize();
+}
+
+void PlaybackController::updateVideoCrop() {
+  if (!m_player) {
+    return;
+  }
+
+  if (m_videoFillMode == QStringLiteral("fit")) {
+    libvlc_video_set_crop_geometry(m_player, nullptr);
+    return;
+  }
+
+  if (m_surfaceWidth <= 0 || m_surfaceHeight <= 0) {
+    return;
+  }
+
+  const QSize videoSize = getVideoSize();
+  if (!videoSize.isValid() || videoSize.width() <= 0 || videoSize.height() <= 0) {
+    return;
+  }
+
+  const double surfaceRatio = static_cast<double>(m_surfaceWidth) / static_cast<double>(m_surfaceHeight);
+  const double videoRatio = static_cast<double>(videoSize.width()) / static_cast<double>(videoSize.height());
+
+  int cropX = 0, cropY = 0, cropW = videoSize.width(), cropH = videoSize.height();
+
+  if (videoRatio > surfaceRatio) {
+    cropW = qRound(videoSize.height() * surfaceRatio);
+    cropX = (videoSize.width() - cropW) / 2;
+  } else if (videoRatio < surfaceRatio) {
+    cropH = qRound(videoSize.width() / surfaceRatio);
+    cropY = (videoSize.height() - cropH) / 2;
+  }
+
+  const QString cropGeometry = QStringLiteral("%1x%2+%3+%4").arg(cropW).arg(cropH).arg(cropX).arg(cropY);
+  const QByteArray cropBytes = cropGeometry.toUtf8();
+  libvlc_video_set_crop_geometry(m_player, cropBytes.constData());
 }
 
 void PlaybackController::setState(const QString &value) {

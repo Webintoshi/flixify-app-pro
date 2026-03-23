@@ -99,16 +99,24 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-#if defined(Q_OS_WIN)
-  if (auto *rootWindow = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst())) {
-    QTimer::singleShot(0, rootWindow, [rootWindow]() {
-      applyWindowsCaptionStyle(rootWindow);
-    });
-    QObject::connect(rootWindow, &QQuickWindow::visibilityChanged, rootWindow, [rootWindow](QWindow::Visibility) {
-      applyWindowsCaptionStyle(rootWindow);
-    });
+  auto *rootWindow = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+  if (!rootWindow) {
+    return 1;
   }
+
+#if defined(Q_OS_WIN)
+  QTimer::singleShot(0, rootWindow, [rootWindow]() {
+    applyWindowsCaptionStyle(rootWindow);
+  });
+  QObject::connect(rootWindow, &QQuickWindow::visibilityChanged, rootWindow, [rootWindow](QWindow::Visibility) {
+    applyWindowsCaptionStyle(rootWindow);
+  });
 #endif
+
+  // Start in fullscreen mode
+  QTimer::singleShot(100, rootWindow, [rootWindow]() {
+    rootWindow->showFullScreen();
+  });
 
   return app.exec();
 }

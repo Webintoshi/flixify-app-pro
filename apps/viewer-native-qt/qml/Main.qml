@@ -30,6 +30,19 @@ ApplicationWindow {
     readonly property bool shortWindow: height < 820
     readonly property real shellPadding: compactWindow ? 18 : 24
     readonly property real sectionSpacing: compactWindow ? 16 : 20
+
+    // Responsive scaling
+    readonly property real fontScale: {
+        if (width < 1280) return 0.9
+        if (width < 1920) return 1.0
+        if (width < 2560) return 1.1
+        return 1.2
+    }
+    readonly property real spacingScale: {
+        if (height < 800) return 0.9
+        if (height < 1080) return 1.0
+        return 1.15
+    }
     readonly property real heroHeight: compactWindow ? 500 : mediumWindow ? 540 : 580
     readonly property real authPanelWidth: Math.min(width - 32, currentScreen === "register" ? (compactWindow ? 520 : 560) : (compactWindow ? 440 : 460))
     readonly property real restorePanelWidth: Math.min(width - 32, compactWindow ? 460 : 520)
@@ -91,6 +104,12 @@ ApplicationWindow {
     property string selectedPaymentMethodId: ""
     property string toastMessage: ""
     property color toastColor: info
+
+    Component.onCompleted: {
+        playbackController.videoFillMode = "fill"
+        currentScreen = apiClient.authenticated ? "home" : "login"
+        apiClient.bootstrap()
+    }
 
     function normalizeText(value) {
         return (value || "").toString().toLocaleLowerCase()
@@ -1029,11 +1048,6 @@ ApplicationWindow {
         function onRequestFailed(context, message) { showToast(message, danger) }
     }
 
-    Component.onCompleted: {
-        currentScreen = apiClient.authenticated ? "home" : "login"
-        apiClient.bootstrap()
-    }
-
     component AppButton: Button {
         id: control
         property bool secondary: false
@@ -1103,7 +1117,7 @@ ApplicationWindow {
                     GradientStop { position: 0.0; color: control.secondary ? "#30ffffff" : "#40ff7f8a" }
                     GradientStop { position: 1.0; color: "#00ffffff" }
                 }
-                visible: !control.secondary || hoverState
+                visible: hoverState
             }
             
         }
@@ -1290,83 +1304,14 @@ ApplicationWindow {
             anchors.margins: 16
             spacing: 14
 
-            Rectangle {
+            Image {
                 width: 56
                 height: 56
-                radius: 20
                 anchors.verticalCenter: parent.verticalCenter
-                color: supportLink.accentColor
-
-                Canvas {
-                    id: supportIcon
-                    anchors.fill: parent
-                    anchors.margins: supportLink.service === "telegram" ? 12 : 10
-                    antialiasing: true
-                    onPaint: {
-                        const ctx = getContext("2d")
-                        ctx.reset()
-                        ctx.clearRect(0, 0, width, height)
-                        ctx.lineCap = "round"
-                        ctx.lineJoin = "round"
-                        ctx.strokeStyle = "#ffffff"
-                        ctx.fillStyle = "#ffffff"
-
-                        if (supportLink.service === "telegram") {
-                            // Official Telegram paper plane icon
-                            ctx.beginPath()
-                            ctx.moveTo(width * 0.16, height * 0.52)
-                            ctx.lineTo(width * 0.84, height * 0.18)
-                            ctx.lineTo(width * 0.58, height * 0.82)
-                            ctx.lineTo(width * 0.50, height * 0.56)
-                            ctx.closePath()
-                            ctx.fill()
-
-                            ctx.beginPath()
-                            ctx.moveTo(width * 0.28, height * 0.50)
-                            ctx.lineTo(width * 0.50, height * 0.56)
-                            ctx.lineTo(width * 0.60, height * 0.38)
-                            ctx.stroke()
-                        } else {
-                            // Official WhatsApp icon - speech bubble with phone
-                            const cx = width * 0.5
-                            const cy = height * 0.52
-                            const r = width * 0.38
-                            
-                            // Main bubble outline
-                            ctx.lineWidth = Math.max(2.2, width * 0.07)
-                            ctx.strokeStyle = "#ffffff"
-                            ctx.beginPath()
-                            ctx.arc(cx, cy - r * 0.1, r, Math.PI * 0.1, Math.PI * 0.78)
-                            ctx.stroke()
-                            ctx.beginPath()
-                            ctx.arc(cx, cy - r * 0.1, r, Math.PI * 1.22, Math.PI * 1.9)
-                            ctx.stroke()
-                            
-                            // Tail
-                            ctx.beginPath()
-                            ctx.moveTo(cx - r * 0.65, cy + r * 0.35)
-                            ctx.lineTo(cx - r * 0.85, cy + r * 0.72)
-                            ctx.lineTo(cx - r * 0.38, cy + r * 0.55)
-                            ctx.stroke()
-                            
-                            // Phone handset inside
-                            ctx.fillStyle = "#ffffff"
-                            ctx.beginPath()
-                            ctx.moveTo(cx + r * 0.15, cy - r * 0.35)
-                            ctx.quadraticCurveTo(cx + r * 0.35, cy - r * 0.45, cx + r * 0.45, cy - r * 0.25)
-                            ctx.lineTo(cx + r * 0.55, cy - r * 0.08)
-                            ctx.quadraticCurveTo(cx + r * 0.60, cy + r * 0.05, cx + r * 0.50, cy + r * 0.18)
-                            ctx.lineTo(cx + r * 0.42, cy + r * 0.32)
-                            ctx.quadraticCurveTo(cx + r * 0.35, cy + r * 0.45, cx + r * 0.15, cy + r * 0.35)
-                            ctx.lineTo(cx + r * 0.05, cy + r * 0.22)
-                            ctx.quadraticCurveTo(cx - r * 0.02, cy + r * 0.12, cx + r * 0.08, cy + r * 0.02)
-                            ctx.lineTo(cx + r * 0.28, cy - r * 0.12)
-                            ctx.quadraticCurveTo(cx + r * 0.32, cy - r * 0.18, cx + r * 0.22, cy - r * 0.25)
-                            ctx.closePath()
-                            ctx.fill()
-                        }
-                    }
-                }
+                source: supportLink.service === "telegram" ? "qrc:/icons/telegram.svg" : "qrc:/icons/whatsapp.svg"
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+                antialiasing: true
             }
 
             Column {
@@ -1870,7 +1815,13 @@ ApplicationWindow {
         NativeVideoSurface {
             anchors.fill: parent
             anchors.margins: 0
-            onSurfaceHandleChanged: playbackController.setVideoSurfaceHandle(surfaceHandle)
+            onSurfaceHandleChanged: {
+                playbackController.setVideoSurfaceHandle(surfaceHandle)
+                playbackController.setVideoSurfaceGeometry(width, height)
+            }
+            onWidthChanged: playbackController.setVideoSurfaceGeometry(width, height)
+            onHeightChanged: playbackController.setVideoSurfaceGeometry(width, height)
+            Component.onCompleted: playbackController.setVideoSurfaceGeometry(width, height)
             onPointerActivity: {
                 if (currentScreen === "live" && inlineLivePlayerVisible()) {
                     showLiveControls()
@@ -3251,136 +3202,29 @@ ApplicationWindow {
                                                 border.color: "#14ffffff"
                                                 clip: true
                                                 
-                                                Loader {
-                                                    anchors.left: parent.left
-                                                    anchors.right: parent.right
-                                                    anchors.top: parent.top
-                                                    anchors.bottom: parent.bottom
-                                                    anchors.bottomMargin: 84
-                                                    active: inlineLivePlayerVisible()
-                                                    sourceComponent: nativeVideoSurfaceComponent
-                                                }
-
                                                 Item {
+                                                    id: liveVideoContainer
                                                     anchors.fill: parent
-                                                    visible: filteredLiveItems().length === 0
-
-                                                    Column {
-                                                        anchors.centerIn: parent
-                                                        width: Math.min(parent.width * 0.6, 420)
-                                                        spacing: 12
-
-                                                        Text {
-                                                            width: parent.width
-                                                            horizontalAlignment: Text.AlignHCenter
-                                                            text: "Filtreye uyan kanal bulunamadi"
-                                                            color: window.textPrimary
-                                                            font.pixelSize: 28
-                                                            font.family: "Space Grotesk"
-                                                            font.bold: true
-                                                            wrapMode: Text.WordWrap
-                                                        }
-
-                                                        Text {
-                                                            width: parent.width
-                                                            horizontalAlignment: Text.AlignHCenter
-                                                            text: "Aramayi temizleyin veya baska bir kategori secin."
-                                                            color: window.textMuted
-                                                            font.pixelSize: 14
-                                                            wrapMode: Text.WordWrap
-                                                        }
+                                                    visible: inlineLivePlayerVisible()
+                                                    
+                                                    Loader {
+                                                        anchors.fill: parent
+                                                        active: inlineLivePlayerVisible()
+                                                        sourceComponent: nativeVideoSurfaceComponent
                                                     }
-                                                }
 
-                                                Item {
-                                                    anchors.fill: parent
-                                                    visible: filteredLiveItems().length > 0 && selectedLiveItem() !== null && selectedLiveItem().playbackAllowed === false
-
-                                                    Column {
-                                                        anchors.centerIn: parent
-                                                        width: Math.min(parent.width * 0.62, 460)
-                                                        spacing: 12
-
-                                                        Text {
-                                                            width: parent.width
-                                                            horizontalAlignment: Text.AlignHCenter
-                                                            text: "Bu kanali acmak icin aktif paket gerekiyor"
-                                                            color: window.textPrimary
-                                                            font.pixelSize: 30
-                                                            font.family: "Space Grotesk"
-                                                            font.bold: true
-                                                            wrapMode: Text.WordWrap
-                                                        }
-
-                                                        Text {
-                                                            width: parent.width
-                                                            horizontalAlignment: Text.AlignHCenter
-                                                            text: "Sag listeden baska kanal secin ya da paket durumunuzu guncelleyin."
-                                                            color: window.textMuted
-                                                            font.pixelSize: 14
-                                                            wrapMode: Text.WordWrap
-                                                        }
-                                                    }
-                                                }
-
-                                                WindowContainer {
-                                                    anchors.fill: parent
-                                                    z: 6
-                                                    visible: false
-
-                                                    window: Window {
-                                                        flags: Qt.FramelessWindowHint
+                                                    WindowContainer {
+                                                        anchors.fill: parent
+                                                        z: 6
                                                         visible: false
-                                                        color: "transparent"
 
-                                                        Item {
-                                                            anchors.fill: parent
-
-                                                            MouseArea {
-                                                                anchors.fill: parent
-                                                                hoverEnabled: true
-                                                                acceptedButtons: Qt.NoButton
-                                                                onEntered: showLiveControls()
-                                                                onPositionChanged: showLiveControls()
-                                                                onWheel: function(wheel) {
-                                                                    wheel.accepted = false
-                                                                    showLiveControls()
-                                                                }
-                                                            }
-
-                                                            Rectangle {
-                                                                anchors.top: parent.top
-                                                                anchors.right: parent.right
-                                                                anchors.margins: 18
-                                                                width: liveNativeStateText.implicitWidth + 28
-                                                                height: 40
-                                                                radius: 20
-                                                                color: "#c7070a0f"
-                                                                border.width: 1
-                                                                border.color: "#12ffffff"
-                                                                visible: playbackController.state !== "playing"
-
-                                                                Text {
-                                                                    id: liveNativeStateText
-                                                                    anchors.centerIn: parent
-                                                                    text: playbackController.state === "buffering" ? "Buffer dolduruluyor" :
-                                                                          playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazırlanıyor" :
-                                                                          playbackController.state === "error" ? "Yayın açılamadı" :
-                                                                          playbackController.state === "playing" ? "Yayın açık" : "Kanal bekliyor"
-                                                                    color: window.textPrimary
-                                                                    font.pixelSize: 13
-                                                                    font.bold: true
-                                                                }
-                                                            }
+                                                        window: Window {
+                                                            flags: Qt.FramelessWindowHint
+                                                            visible: false
+                                                            color: "transparent"
 
                                                             Item {
-                                                                anchors.left: parent.left
-                                                                anchors.right: parent.right
-                                                                anchors.bottom: parent.bottom
-                                                                anchors.margins: 16
-                                                                height: 64
-                                                                opacity: liveControlsVisible ? 1.0 : 0.0
-                                                                Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                                                                anchors.fill: parent
 
                                                                 MouseArea {
                                                                     anchors.fill: parent
@@ -3388,76 +3232,122 @@ ApplicationWindow {
                                                                     acceptedButtons: Qt.NoButton
                                                                     onEntered: showLiveControls()
                                                                     onPositionChanged: showLiveControls()
+                                                                    onWheel: function(wheel) {
+                                                                        wheel.accepted = false
+                                                                        showLiveControls()
+                                                                    }
                                                                 }
 
                                                                 Rectangle {
-                                                                    anchors.left: parent.left
-                                                                    anchors.bottom: parent.bottom
-                                                                    width: window.compactWindow ? 246 : 276
-                                                                    height: 58
-                                                                    radius: 29
-                                                                    color: "#d10a0e15"
+                                                                    anchors.top: parent.top
+                                                                    anchors.right: parent.right
+                                                                    anchors.margins: 18
+                                                                    width: liveNativeStateText2.implicitWidth + 28
+                                                                    height: 40
+                                                                    radius: 20
+                                                                    color: "#c7070a0f"
                                                                     border.width: 1
-                                                                    border.color: "#18ffffff"
+                                                                    border.color: "#12ffffff"
+                                                                    visible: playbackController.state !== "playing"
 
-                                                                    Row {
+                                                                    Text {
+                                                                        id: liveNativeStateText2
+                                                                        anchors.centerIn: parent
+                                                                        text: playbackController.state === "buffering" ? "Buffer dolduruluyor" :
+                                                                              playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazırlanıyor" :
+                                                                              playbackController.state === "error" ? "Yayın açılamadı" :
+                                                                              playbackController.state === "playing" ? "Yayın açık" : "Kanal bekliyor"
+                                                                        color: window.textPrimary
+                                                                        font.pixelSize: 13
+                                                                        font.bold: true
+                                                                    }
+                                                                }
+
+                                                                Item {
+                                                                    anchors.left: parent.left
+                                                                    anchors.right: parent.right
+                                                                    anchors.bottom: parent.bottom
+                                                                    anchors.margins: 16
+                                                                    height: 64
+                                                                    opacity: liveControlsVisible ? 1.0 : 0.0
+                                                                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+
+                                                                    MouseArea {
                                                                         anchors.fill: parent
-                                                                        anchors.margins: 10
-                                                                        spacing: 10
+                                                                        hoverEnabled: true
+                                                                        acceptedButtons: Qt.NoButton
+                                                                        onEntered: showLiveControls()
+                                                                        onPositionChanged: showLiveControls()
+                                                                    }
 
-                                                                        Rectangle {
-                                                                            width: 38
-                                                                            height: 38
-                                                                            radius: 19
-                                                                            anchors.verticalCenter: parent.verticalCenter
-                                                                            color: liveNativeVolumeMouse.containsMouse ? "#24ffffff" : "#18ffffff"
-                                                                            border.width: 1
-                                                                            border.color: liveNativeVolumeMouse.containsMouse ? "#34ffffff" : "#1effffff"
+                                                                    Rectangle {
+                                                                        anchors.left: parent.left
+                                                                        anchors.bottom: parent.bottom
+                                                                        width: window.compactWindow ? 246 : 276
+                                                                        height: 58
+                                                                        radius: 29
+                                                                        color: "#d10a0e15"
+                                                                        border.width: 1
+                                                                        border.color: "#18ffffff"
 
-                                                                            Canvas {
-                                                                                anchors.fill: parent
-                                                                                anchors.margins: 9
-                                                                                antialiasing: true
-                                                                                onPaint: {
-                                                                                    const ctx = getContext("2d")
-                                                                                    ctx.reset()
-                                                                                    ctx.clearRect(0, 0, width, height)
-                                                                                    ctx.fillStyle = "#ffffff"
-                                                                                    ctx.strokeStyle = "#ffffff"
-                                                                                    ctx.lineWidth = 2.2
-                                                                                    ctx.lineCap = "round"
-                                                                                    ctx.lineJoin = "round"
+                                                                        Row {
+                                                                            anchors.fill: parent
+                                                                            anchors.margins: 10
+                                                                            spacing: 10
 
-                                                                                    ctx.beginPath()
-                                                                                    ctx.moveTo(width * 0.12, height * 0.38)
-                                                                                    ctx.lineTo(width * 0.34, height * 0.38)
-                                                                                    ctx.lineTo(width * 0.54, height * 0.18)
-                                                                                    ctx.lineTo(width * 0.54, height * 0.82)
-                                                                                    ctx.lineTo(width * 0.34, height * 0.62)
-                                                                                    ctx.lineTo(width * 0.12, height * 0.62)
-                                                                                    ctx.closePath()
-                                                                                    ctx.fill()
+                                                                            Rectangle {
+                                                                                width: 38
+                                                                                height: 38
+                                                                                radius: 19
+                                                                                anchors.verticalCenter: parent.verticalCenter
+                                                                                color: liveNativeVolumeMouse.containsMouse ? "#24ffffff" : "#18ffffff"
+                                                                                border.width: 1
+                                                                                border.color: liveNativeVolumeMouse.containsMouse ? "#34ffffff" : "#1effffff"
 
-                                                                                    if (!(playbackController.muted || playbackController.volume <= 0)) {
+                                                                                Canvas {
+                                                                                    anchors.fill: parent
+                                                                                    anchors.margins: 9
+                                                                                    antialiasing: true
+                                                                                    onPaint: {
+                                                                                        const ctx = getContext("2d")
+                                                                                        ctx.reset()
+                                                                                        ctx.clearRect(0, 0, width, height)
+                                                                                        ctx.fillStyle = "#ffffff"
+                                                                                        ctx.strokeStyle = "#ffffff"
+                                                                                        ctx.lineWidth = 2.2
+                                                                                        ctx.lineCap = "round"
+                                                                                        ctx.lineJoin = "round"
+
                                                                                         ctx.beginPath()
-                                                                                        ctx.arc(width * 0.58, height * 0.5, width * 0.12, -0.75, 0.75)
-                                                                                        ctx.stroke()
-                                                                                        ctx.beginPath()
-                                                                                        ctx.arc(width * 0.62, height * 0.5, width * 0.2, -0.75, 0.75)
-                                                                                        ctx.stroke()
-                                                                                    } else {
-                                                                                        ctx.beginPath()
-                                                                                        ctx.moveTo(width * 0.64, height * 0.28)
-                                                                                        ctx.lineTo(width * 0.88, height * 0.72)
-                                                                                        ctx.stroke()
+                                                                                        ctx.moveTo(width * 0.12, height * 0.38)
+                                                                                        ctx.lineTo(width * 0.34, height * 0.38)
+                                                                                        ctx.lineTo(width * 0.54, height * 0.18)
+                                                                                        ctx.lineTo(width * 0.54, height * 0.82)
+                                                                                        ctx.lineTo(width * 0.34, height * 0.62)
+                                                                                        ctx.lineTo(width * 0.12, height * 0.62)
+                                                                                        ctx.closePath()
+                                                                                        ctx.fill()
+
+                                                                                        if (!(playbackController.muted || playbackController.volume <= 0)) {
+                                                                                            ctx.beginPath()
+                                                                                            ctx.arc(width * 0.58, height * 0.5, width * 0.12, -0.75, 0.75)
+                                                                                            ctx.stroke()
+                                                                                            ctx.beginPath()
+                                                                                            ctx.arc(width * 0.62, height * 0.5, width * 0.2, -0.75, 0.75)
+                                                                                            ctx.stroke()
+                                                                                        } else {
+                                                                                            ctx.beginPath()
+                                                                                            ctx.moveTo(width * 0.64, height * 0.28)
+                                                                                            ctx.lineTo(width * 0.88, height * 0.72)
+                                                                                            ctx.stroke()
+                                                                                        }
                                                                                     }
                                                                                 }
-                                                                            }
 
-                                                                            MouseArea {
-                                                                                id: liveNativeVolumeMouse
-                                                                                anchors.fill: parent
-                                                                                hoverEnabled: true
+                                                                                MouseArea {
+                                                                                    id: liveNativeVolumeMouse
+                                                                                    anchors.fill: parent
+                                                                                    hoverEnabled: true
                                                                                 cursorShape: Qt.PointingHandCursor
                                                                                 onEntered: showLiveControls()
                                                                                 onClicked: {
@@ -3620,294 +3510,67 @@ ApplicationWindow {
                                                     }
                                                 }
 
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    hoverEnabled: true
-                                                    acceptedButtons: Qt.NoButton
-                                                    enabled: false
-                                                    onEntered: showLiveControls()
-                                                    onPositionChanged: showLiveControls()
-                                                    onWheel: function(wheel) {
-                                                        wheel.accepted = false
-                                                        showLiveControls()
-                                                    }
-                                                }
-
-                                                Rectangle {
-                                                    anchors.top: parent.top
-                                                    anchors.right: parent.right
-                                                    anchors.margins: 18
-                                                    width: inlineStateText.implicitWidth + 28
-                                                    height: 40
-                                                    radius: 20
-                                                    color: "#c7070a0f"
-                                                    border.width: 1
-                                                    border.color: "#12ffffff"
-                                                    visible: false
+                                                Column {
+                                                    anchors.centerIn: parent
+                                                    width: Math.min(parent.width * 0.6, 420)
+                                                    spacing: 12
+                                                    visible: !inlineLivePlayerVisible() && filteredLiveItems().length === 0
 
                                                     Text {
-                                                        id: inlineStateText
-                                                        anchors.centerIn: parent
-                                                        text: playbackController.state === "buffering" ? "Buffer dolduruluyor" :
-                                                              playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazırlanıyor" :
-                                                              playbackController.state === "error" ? "Yayın açılamadı" :
-                                                              playbackController.state === "playing" ? "Yayın açık" : "Kanal bekliyor"
+                                                        width: parent.width
+                                                        horizontalAlignment: Text.AlignHCenter
+                                                        text: "Filtreye uyan kanal bulunamadi"
                                                         color: window.textPrimary
-                                                        font.pixelSize: 13
+                                                        font.pixelSize: 28
+                                                        font.family: "Space Grotesk"
                                                         font.bold: true
+                                                        wrapMode: Text.WordWrap
+                                                    }
+
+                                                    Text {
+                                                        width: parent.width
+                                                        horizontalAlignment: Text.AlignHCenter
+                                                        text: "Aramayi temizleyin veya baska bir kategori secin."
+                                                        color: window.textMuted
+                                                        font.pixelSize: 14
+                                                        wrapMode: Text.WordWrap
                                                     }
                                                 }
 
                                                 Item {
-                                                    anchors.left: parent.left
-                                                    anchors.right: parent.right
-                                                    anchors.bottom: parent.bottom
-                                                    anchors.margins: 16
-                                                    height: 64
-                                                    visible: selectedLiveItem() !== null
-                                                        && filteredLiveItems().length > 0
-                                                        && selectedLiveItem().playbackAllowed !== false
-                                                    opacity: liveControlsVisible ? 1.0 : 0.0
-                                                    z: 4
-                                                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                                                    anchors.fill: parent
+                                                    visible: !inlineLivePlayerVisible() && filteredLiveItems().length > 0 && selectedLiveItem() !== null && selectedLiveItem().playbackAllowed === false
 
-                                                    MouseArea {
-                                                        anchors.fill: parent
-                                                        hoverEnabled: true
-                                                        acceptedButtons: Qt.NoButton
-                                                        onEntered: showLiveControls()
-                                                        onPositionChanged: showLiveControls()
-                                                    }
-
-                                                    Rectangle {
-                                                        anchors.left: parent.left
-                                                        anchors.bottom: parent.bottom
-                                                        width: window.compactWindow ? 246 : 276
-                                                        height: 58
-                                                        radius: 29
-                                                        color: "#d10a0e15"
-                                                        border.width: 1
-                                                        border.color: "#18ffffff"
-
-                                                        Row {
-                                                            anchors.fill: parent
-                                                            anchors.margins: 10
-                                                            spacing: 10
-
-                                                            Rectangle {
-                                                                width: 38
-                                                                height: 38
-                                                                radius: 19
-                                                                anchors.verticalCenter: parent.verticalCenter
-                                                                color: liveVolumeMouse.containsMouse ? "#24ffffff" : "#18ffffff"
-                                                                border.width: 1
-                                                                border.color: liveVolumeMouse.containsMouse ? "#34ffffff" : "#1effffff"
-
-                                                                Canvas {
-                                                                    anchors.fill: parent
-                                                                    anchors.margins: 9
-                                                                    antialiasing: true
-                                                                    onPaint: {
-                                                                        const ctx = getContext("2d")
-                                                                        ctx.reset()
-                                                                        ctx.clearRect(0, 0, width, height)
-                                                                        ctx.fillStyle = "#ffffff"
-                                                                        ctx.strokeStyle = "#ffffff"
-                                                                        ctx.lineWidth = 2.2
-                                                                        ctx.lineCap = "round"
-                                                                        ctx.lineJoin = "round"
-
-                                                                        ctx.beginPath()
-                                                                        ctx.moveTo(width * 0.12, height * 0.38)
-                                                                        ctx.lineTo(width * 0.34, height * 0.38)
-                                                                        ctx.lineTo(width * 0.54, height * 0.18)
-                                                                        ctx.lineTo(width * 0.54, height * 0.82)
-                                                                        ctx.lineTo(width * 0.34, height * 0.62)
-                                                                        ctx.lineTo(width * 0.12, height * 0.62)
-                                                                        ctx.closePath()
-                                                                        ctx.fill()
-
-                                                                        if (!(playbackController.muted || playbackController.volume <= 0)) {
-                                                                            ctx.beginPath()
-                                                                            ctx.arc(width * 0.58, height * 0.5, width * 0.12, -0.75, 0.75)
-                                                                            ctx.stroke()
-                                                                            ctx.beginPath()
-                                                                            ctx.arc(width * 0.62, height * 0.5, width * 0.2, -0.75, 0.75)
-                                                                            ctx.stroke()
-                                                                        } else {
-                                                                            ctx.beginPath()
-                                                                            ctx.moveTo(width * 0.64, height * 0.28)
-                                                                            ctx.lineTo(width * 0.88, height * 0.72)
-                                                                            ctx.stroke()
-                                                                        }
-                                                                    }
-                                                                }
-
-                                                                MouseArea {
-                                                                    id: liveVolumeMouse
-                                                                    anchors.fill: parent
-                                                                    hoverEnabled: true
-                                                                    cursorShape: Qt.PointingHandCursor
-                                                                    onEntered: showLiveControls()
-                                                                    onClicked: {
-                                                                        showLiveControls()
-                                                                        playbackController.toggleMuted()
-                                                                    }
-                                                                }
-                                                            }
-
-                                                            Slider {
-                                                                id: liveVolumeSlider
-                                                                width: window.compactWindow ? 126 : 152
-                                                                anchors.verticalCenter: parent.verticalCenter
-                                                                from: 0
-                                                                to: 1
-                                                                value: 1
-                                                                stepSize: 0.01
-                                                                Component.onCompleted: value = playbackController.muted ? 0 : playbackController.volume
-                                                                onMoved: {
-                                                                    showLiveControls()
-                                                                    playbackController.setVolume(value)
-                                                                }
-                                                                onPressedChanged: {
-                                                                    if (pressed) showLiveControls()
-                                                                    else liveControlsHideTimer.restart()
-                                                                }
-
-                                                                background: Rectangle {
-                                                                    x: liveVolumeSlider.leftPadding
-                                                                    y: liveVolumeSlider.topPadding + liveVolumeSlider.availableHeight / 2 - height / 2
-                                                                    implicitWidth: 150
-                                                                    implicitHeight: 6
-                                                                    width: liveVolumeSlider.availableWidth
-                                                                    height: implicitHeight
-                                                                    radius: 3
-                                                                    color: "#24ffffff"
-
-                                                                    Rectangle {
-                                                                        width: liveVolumeSlider.visualPosition * parent.width
-                                                                        height: parent.height
-                                                                        radius: 3
-                                                                        color: window.accentStrong
-                                                                    }
-                                                                }
-
-                                                                handle: Rectangle {
-                                                                    x: liveVolumeSlider.leftPadding + liveVolumeSlider.visualPosition * (liveVolumeSlider.availableWidth - width)
-                                                                    y: liveVolumeSlider.topPadding + liveVolumeSlider.availableHeight / 2 - height / 2
-                                                                    implicitWidth: 16
-                                                                    implicitHeight: 16
-                                                                    radius: 8
-                                                                    color: "#ffffff"
-                                                                    border.width: 1
-                                                                    border.color: "#44ffffff"
-                                                                }
-                                                            }
-
-                                                            Text {
-                                                                anchors.verticalCenter: parent.verticalCenter
-                                                                text: `${Math.round((playbackController.muted ? 0 : playbackController.volume) * 100)}%`
-                                                                color: window.textPrimary
-                                                                font.pixelSize: 12
-                                                                font.bold: true
-                                                            }
-                                                        }
-                                                    }
-
-                                                    Rectangle {
-                                                        anchors.right: parent.right
-                                                        anchors.bottom: parent.bottom
-                                                        width: 58
-                                                        height: 58
-                                                        radius: 29
-                                                        color: "#d10a0e15"
-                                                        border.width: 1
-                                                        border.color: liveFullscreenMouse.containsMouse ? "#34ffffff" : "#18ffffff"
-
-                                                        Canvas {
-                                                            anchors.fill: parent
-                                                            anchors.margins: 16
-                                                            antialiasing: true
-                                                            onPaint: {
-                                                                const ctx = getContext("2d")
-                                                                ctx.reset()
-                                                                ctx.clearRect(0, 0, width, height)
-                                                                ctx.strokeStyle = "#ffffff"
-                                                                ctx.lineWidth = 2.2
-                                                                ctx.lineCap = "round"
-
-                                                                ctx.beginPath()
-                                                                ctx.moveTo(width * 0.18, height * 0.38)
-                                                                ctx.lineTo(width * 0.18, height * 0.18)
-                                                                ctx.lineTo(width * 0.38, height * 0.18)
-                                                                ctx.stroke()
-
-                                                                ctx.beginPath()
-                                                                ctx.moveTo(width * 0.62, height * 0.18)
-                                                                ctx.lineTo(width * 0.82, height * 0.18)
-                                                                ctx.lineTo(width * 0.82, height * 0.38)
-                                                                ctx.stroke()
-
-                                                                ctx.beginPath()
-                                                                ctx.moveTo(width * 0.18, height * 0.62)
-                                                                ctx.lineTo(width * 0.18, height * 0.82)
-                                                                ctx.lineTo(width * 0.38, height * 0.82)
-                                                                ctx.stroke()
-
-                                                                ctx.beginPath()
-                                                                ctx.moveTo(width * 0.62, height * 0.82)
-                                                                ctx.lineTo(width * 0.82, height * 0.82)
-                                                                ctx.lineTo(width * 0.82, height * 0.62)
-                                                                ctx.stroke()
-                                                            }
-                                                        }
-
-                                                        MouseArea {
-                                                            id: liveFullscreenMouse
-                                                            anchors.fill: parent
-                                                            hoverEnabled: true
-                                                            cursorShape: Qt.PointingHandCursor
-                                                            onEntered: showLiveControls()
-                                                            onClicked: {
-                                                                showLiveControls()
-                                                                toggleWindowFullscreen()
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                                Connections {
-                                                    target: playbackController
-                                                    function onVolumeChanged() { liveVolumeSlider.value = playbackController.muted ? 0 : playbackController.volume }
-                                                    function onMutedChanged() { liveVolumeSlider.value = playbackController.muted ? 0 : playbackController.volume }
-                                                }
-
-                                                Rectangle {
-                                                    anchors.horizontalCenter: parent.horizontalCenter
-                                                    anchors.bottom: parent.bottom
-                                                    anchors.bottomMargin: 102
-                                                    width: Math.min(parent.width - 36, inlineErrorLabel.implicitWidth + 36)
-                                                    height: inlineErrorLabel.implicitHeight + 22
-                                                    radius: 20
-                                                    color: "#cc20070b"
-                                                    border.width: 1
-                                                    border.color: "#28ff7d86"
-                                                    visible: playbackController.lastError.length > 0 && playbackController.activeContentKind === "live"
-
-                                                    Text {
-                                                        id: inlineErrorLabel
+                                                    Column {
                                                         anchors.centerIn: parent
-                                                        width: parent.width - 26
-                                                        wrapMode: Text.WordWrap
-                                                        horizontalAlignment: Text.AlignHCenter
-                                                        text: playbackController.lastError
-                                                        color: "#ffd5da"
-                                                        font.pixelSize: 13
+                                                        width: Math.min(parent.width * 0.62, 460)
+                                                        spacing: 12
+
+                                                        Text {
+                                                            width: parent.width
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                            text: "Bu kanali acmak icin aktif paket gerekiyor"
+                                                            color: window.textPrimary
+                                                            font.pixelSize: 30
+                                                            font.family: "Space Grotesk"
+                                                            font.bold: true
+                                                            wrapMode: Text.WordWrap
+                                                        }
+
+                                                        Text {
+                                                            width: parent.width
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                            text: "Sag listeden baska kanal secin ya da paket durumunuzu guncelleyin."
+                                                            color: window.textMuted
+                                                            font.pixelSize: 14
+                                                            wrapMode: Text.WordWrap
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
+                                }
 
                                     GlassCard {
                                         Layout.preferredWidth: window.compactWindow ? 360 : 420
@@ -4912,6 +4575,251 @@ ApplicationWindow {
         Rectangle {
             visible: toastMessage.length > 0; z: 40; width: Math.min(640, toastLabel.implicitWidth + 52); height: 62; radius: 20; color: toastColor === success ? "#2230d19d" : toastColor === danger ? "#24ff7d86" : "#227cb6ff"; border.width: 1; border.color: toastColor; anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 24
             Text { id: toastLabel; anchors.centerIn: parent; text: toastMessage; color: window.textPrimary; font.pixelSize: 14; font.bold: true }
+        }
+
+        // Smart Title Bar (hover to show in fullscreen)
+        Item {
+            id: smartTitleBarContainer
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 48
+            z: 100
+            visible: opacity > 0
+            opacity: titleBarMouseArea.containsMouse || titleBarMouseArea.containsPress ? 1.0 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+            // Background
+            Rectangle {
+                anchors.fill: parent
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: "#e605070b" }
+                    GradientStop { position: 1.0; color: "#0005070b" }
+                }
+            }
+
+            // Title
+            Text {
+                anchors.centerIn: parent
+                text: window.title
+                color: window.textPrimary
+                font.pixelSize: 14 * fontScale
+                font.bold: true
+                font.family: "Space Grotesk"
+            }
+
+            // Window controls
+            Row {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 16
+                spacing: 8
+
+                // Minimize button
+                Rectangle {
+                    width: 36; height: 28; radius: 6
+                    color: minimizeMouse.containsMouse ? "#2affffff" : "#18ffffff"
+                    Behavior on color { ColorAnimation { duration: 120 } }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "−"
+                        color: window.textPrimary
+                        font.pixelSize: 16
+                        font.bold: true
+                    }
+
+                    MouseArea {
+                        id: minimizeMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: window.showMinimized()
+                    }
+                }
+
+                // Restore/Maximize button
+                Rectangle {
+                    width: 36; height: 28; radius: 6
+                    color: restoreMouse.containsMouse ? "#2affffff" : "#18ffffff"
+                    Behavior on color { ColorAnimation { duration: 120 } }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: window.visibility === Window.FullScreen ? "❐" : "□"
+                        color: window.textPrimary
+                        font.pixelSize: 14
+                    }
+
+                    MouseArea {
+                        id: restoreMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: toggleWindowFullscreen()
+                    }
+                }
+
+                // Close button
+                Rectangle {
+                    width: 36; height: 28; radius: 6
+                    color: closeMouse.containsMouse ? "#e50914" : "#18ffffff"
+                    Behavior on color { ColorAnimation { duration: 120 } }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "×"
+                        color: window.textPrimary
+                        font.pixelSize: 18
+                        font.bold: true
+                    }
+
+                    MouseArea {
+                        id: closeMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: confirmExitDialog.open()
+                    }
+                }
+            }
+
+            // Mouse area for hover detection
+            MouseArea {
+                id: titleBarMouseArea
+                anchors.fill: parent
+                hoverEnabled: true
+                acceptedButtons: Qt.NoButton
+            }
+        }
+
+        // Top edge hot zone for title bar
+        MouseArea {
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 8
+            hoverEnabled: true
+            acceptedButtons: Qt.NoButton
+            z: 99
+            onEntered: titleBarShowTimer.start()
+            onPositionChanged: {
+                titleBarShowTimer.stop()
+                titleBarShowTimer.start()
+            }
+
+            Timer {
+                id: titleBarShowTimer
+                interval: 3000
+                onTriggered: {}
+            }
+        }
+
+        // Exit Confirmation Dialog
+        Rectangle {
+            id: confirmExitDialog
+            anchors.fill: parent
+            color: "#cc000000"
+            z: 200
+            visible: opacity > 0
+            opacity: 0.0
+
+            function open() {
+                opacity = 1.0
+            }
+
+            function close() {
+                opacity = 0.0
+            }
+
+            Behavior on opacity { NumberAnimation { duration: 200 } }
+
+            // Close on background click
+            MouseArea {
+                anchors.fill: parent
+                onClicked: confirmExitDialog.close()
+            }
+
+            GlassCard {
+                anchors.centerIn: parent
+                width: 420
+                height: 220
+                color: "#0d121c"
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 28
+                    spacing: 20
+
+                    Text {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: "Çıkış Yapmak İstiyor musunuz?"
+                        color: window.textPrimary
+                        font.pixelSize: 22 * fontScale
+                        font.bold: true
+                        font.family: "Space Grotesk"
+                    }
+
+                    Text {
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.fillWidth: true
+                        text: "Flixify Pro'dan çıkmak istediğinize emin misiniz?"
+                        color: window.textMuted
+                        font.pixelSize: 14 * fontScale
+                        wrapMode: Text.WordWrap
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignHCenter
+                        spacing: 16
+
+                        AppButton {
+                            text: "İptal"
+                            secondary: true
+                            implicitWidth: 120
+                            onClicked: confirmExitDialog.close()
+                        }
+
+                        AppButton {
+                            text: "Çıkış"
+                            implicitWidth: 120
+                            onClicked: Qt.quit()
+                        }
+                    }
+                }
+            }
+        }
+
+        // Global shortcuts
+        Shortcut {
+            sequence: "Esc"
+            onActivated: {
+                if (window.visibility === Window.FullScreen) {
+                    window.showNormal()
+                } else if (confirmExitDialog.visible) {
+                    confirmExitDialog.close()
+                } else if (currentScreen !== "login") {
+                    // Back navigation
+                    if (currentScreen === "home" || currentScreen === "movies" || currentScreen === "series" || currentScreen === "live") {
+                        confirmExitDialog.open()
+                    } else {
+                        openScreen("home")
+                    }
+                } else {
+                    confirmExitDialog.open()
+                }
+            }
+        }
+
+        Shortcut {
+            sequence: "F11"
+            onActivated: toggleWindowFullscreen()
+        }
+
+        Shortcut {
+            sequence: "Alt+F4"
+            onActivated: confirmExitDialog.open()
         }
     }
 }
