@@ -6,10 +6,48 @@
 #include <QQmlContext>
 #include <QQmlError>
 #include <QSGRendererInterface>
+#include <QTimer>
 
 #include "api_client.h"
 #include "native_video_surface.h"
 #include "playback_controller.h"
+
+#if defined(Q_OS_WIN)
+#include <windows.h>
+#include <dwmapi.h>
+#endif
+
+#if defined(Q_OS_WIN)
+namespace {
+
+constexpr DWORD kDwmUseImmersiveDarkMode = 20;
+constexpr DWORD kDwmBorderColor = 34;
+constexpr DWORD kDwmCaptionColor = 35;
+constexpr DWORD kDwmTextColor = 36;
+
+void applyWindowsCaptionStyle(QQuickWindow *window) {
+  if (!window) {
+    return;
+  }
+
+  HWND hwnd = reinterpret_cast<HWND>(window->winId());
+  if (!hwnd) {
+    return;
+  }
+
+  const BOOL darkModeEnabled = TRUE;
+  const COLORREF captionColor = RGB(5, 7, 11);
+  const COLORREF borderColor = RGB(15, 18, 27);
+  const COLORREF textColor = RGB(247, 248, 251);
+
+  DwmSetWindowAttribute(hwnd, kDwmUseImmersiveDarkMode, &darkModeEnabled, sizeof(darkModeEnabled));
+  DwmSetWindowAttribute(hwnd, kDwmCaptionColor, &captionColor, sizeof(captionColor));
+  DwmSetWindowAttribute(hwnd, kDwmBorderColor, &borderColor, sizeof(borderColor));
+  DwmSetWindowAttribute(hwnd, kDwmTextColor, &textColor, sizeof(textColor));
+}
+
+}  // namespace
+#endif
 
 int main(int argc, char *argv[]) {
 #if defined(Q_OS_WIN)
@@ -60,6 +98,17 @@ int main(int argc, char *argv[]) {
   if (engine.rootObjects().isEmpty()) {
     return 1;
   }
+
+#if defined(Q_OS_WIN)
+  if (auto *rootWindow = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst())) {
+    QTimer::singleShot(0, rootWindow, [rootWindow]() {
+      applyWindowsCaptionStyle(rootWindow);
+    });
+    QObject::connect(rootWindow, &QQuickWindow::visibilityChanged, rootWindow, [rootWindow](QWindow::Visibility) {
+      applyWindowsCaptionStyle(rootWindow);
+    });
+  }
+#endif
 
   return app.exec();
 }

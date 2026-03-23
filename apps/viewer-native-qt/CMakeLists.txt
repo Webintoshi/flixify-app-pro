@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(FlixifyNativeQt VERSION 2.2.25 LANGUAGES CXX)
+project(FlixifyNativeQt VERSION 2.2.26 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -63,6 +63,10 @@ target_link_libraries(FlixifyNativeQt
     Qt6::QuickControls2
     Qt6::Network
 )
+
+if(WIN32)
+  target_link_libraries(FlixifyNativeQt PRIVATE dwmapi)
+endif()
 
 target_compile_definitions(FlixifyNativeQt PRIVATE
   FLIXIFY_API_BASE_URL="${FLIXIFY_API_BASE_URL}"
