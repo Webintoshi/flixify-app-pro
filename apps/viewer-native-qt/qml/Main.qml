@@ -383,12 +383,17 @@ ApplicationWindow {
 
     function shouldShowPremiumPopup() {
         const user = userData()
+        const popupSuppressedOnScreen =
+            currentScreen === "packages" ||
+            currentScreen === "payments" ||
+            currentScreen === "contact"
         return apiClient.authenticated &&
             Boolean(user.id) &&
             !user.hasActiveSubscription &&
             !premiumPopupDismissed &&
             !pendingPackage &&
-            !playerVisible
+            !playerVisible &&
+            !popupSuppressedOnScreen
     }
     function inlineLivePlayerVisible() {
         return currentScreen === "live" &&
@@ -2655,7 +2660,26 @@ ApplicationWindow {
                     Row { width: parent.width; Rectangle { width: 112; height: 34; radius: 17; color: "#33e50914"; Text { anchors.centerIn: parent; text: "Premium Erisim"; color: "#ffd7da"; font.pixelSize: 12; font.bold: true } } Item { width: 1; height: 1 } AppButton { text: "Kapat"; secondary: true; implicitWidth: 96; onClicked: premiumPopupDismissed = true } }
                     Text { text: "Tum iceriklere erismek icin aktif bir paket satin alin"; color: window.textPrimary; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 34; font.family: "Space Grotesk"; font.bold: true }
                     Text { text: "Giris basarili. Paketiniz aktif olunca kataloglarin tamami acilacak."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 15 }
-                    Row { spacing: 12; AppButton { text: "Test Yapmak Istiyorum"; implicitWidth: 190; onClicked: apiClient.requestTrial("Windows native cihazindan test talebi") } AppButton { text: "WhatsApp ile Iletisime Gec"; secondary: true; implicitWidth: 220; onClicked: Qt.openUrlExternally(contactData().whatsapp || "") } AppButton { text: "Paket Satin Al"; secondary: true; implicitWidth: 170; onClicked: openScreen("packages") } }
+                    Row {
+                        spacing: 12
+                        AppButton {
+                            text: "Test Yapmak Istiyorum"
+                            implicitWidth: 190
+                            onClicked: apiClient.requestTrial("Windows native cihazindan test talebi")
+                        }
+                        AppButton {
+                            text: "WhatsApp ile Iletisime Gec"
+                            secondary: true
+                            implicitWidth: 220
+                            onClicked: openScreen("contact")
+                        }
+                        AppButton {
+                            text: "Paket Satin Al"
+                            secondary: true
+                            implicitWidth: 170
+                            onClicked: openScreen("packages")
+                        }
+                    }
                 }
             }
         }
