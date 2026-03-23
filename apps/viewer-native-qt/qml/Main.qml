@@ -864,27 +864,27 @@ ApplicationWindow {
             radius: height / 2
             border.width: 1
             border.color: control.secondary
-                ? (pressedState ? "#34ffffff" : hoverState ? "#28ffffff" : window.borderSoft)
-                : (pressedState ? "#38ffd9de" : hoverState ? "#24ffffff" : "#00000000")
+                ? (pressedState ? "#41506a" : hoverState ? "#5a708b" : "#324155")
+                : (pressedState ? "#8f1018" : hoverState ? "#ff7f8a" : "#c91722")
             gradient: Gradient {
                 GradientStop {
                     position: 0.0
                     color: control.secondary
-                        ? (pressedState ? "#1affffff" : hoverState ? "#20ffffff" : "#12ffffff")
-                        : (pressedState ? "#cfb20f18" : hoverState ? "#ff3c49" : window.accentStrong)
+                        ? (pressedState ? "#1b2230" : hoverState ? "#253041" : "#1a2230")
+                        : (pressedState ? "#a30d16" : hoverState ? "#ff3b48" : window.accentStrong)
                 }
                 GradientStop {
                     position: 1.0
                     color: control.secondary
-                        ? (pressedState ? "#0dffffff" : hoverState ? "#14ffffff" : "#12ffffff")
-                        : (pressedState ? "#cc970812" : hoverState ? "#f20f1d" : window.accent)
+                        ? (pressedState ? "#121923" : hoverState ? "#1a2230" : "#141b26")
+                        : (pressedState ? "#850913" : hoverState ? "#d7101d" : window.accent)
                 }
             }
             Rectangle {
                 anchors.fill: parent
                 radius: parent.radius
-                color: hoverState && !control.secondary ? "#12ffffff" : "transparent"
-                opacity: pressedState ? 0.35 : hoverState ? 0.8 : 0.0
+                color: control.secondary ? "#0a1018" : "#ffffff"
+                opacity: control.secondary ? (pressedState ? 0.1 : hoverState ? 0.06 : 0.0) : (pressedState ? 0.12 : hoverState ? 0.08 : 0.0)
             }
             Rectangle {
                 anchors.left: parent.left
@@ -893,8 +893,8 @@ ApplicationWindow {
                 anchors.margins: 1
                 height: parent.height * 0.46
                 radius: parent.radius
-                color: "#18ffffff"
-                opacity: control.secondary ? (hoverState ? 0.5 : 0.32) : (hoverState ? 0.24 : 0.14)
+                color: "#ffffff"
+                opacity: control.secondary ? (hoverState ? 0.09 : 0.05) : (hoverState ? 0.16 : 0.08)
             }
         }
         contentItem: Text {
@@ -913,8 +913,11 @@ ApplicationWindow {
         selectionColor: "#55e50914"
         placeholderTextColor: "#8f98a8"
         font.pixelSize: 15
+        verticalAlignment: TextInput.AlignVCenter
         leftPadding: 16
         rightPadding: 16
+        topPadding: Math.max(10, Math.round((height - font.pixelSize - 16) / 2))
+        bottomPadding: topPadding
         background: Rectangle {
             radius: 16
             color: "#0dffffff"
@@ -1069,9 +1072,11 @@ ApplicationWindow {
         background: Rectangle {
             readonly property bool hoverState: chip.hovered && chip.enabled
             radius: 21
-            color: chip.active ? (chip.down ? "#8f0e16" : hoverState ? "#d41520" : "#b20d16") : (chip.down ? "#14ffffff" : hoverState ? "#12ffffff" : "#0affffff")
+            color: chip.active
+                ? (chip.down ? "#8f0e16" : hoverState ? "#d41520" : "#b20d16")
+                : (chip.down ? "#131a24" : hoverState ? "#1b2330" : "#101620")
             border.width: 1
-            border.color: chip.active ? (hoverState ? "#42ffffff" : "#28ffffff") : (hoverState ? "#26ffffff" : window.borderSoft)
+            border.color: chip.active ? (hoverState ? "#42ffffff" : "#28ffffff") : (hoverState ? "#3a495f" : "#293646")
             Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -1079,8 +1084,8 @@ ApplicationWindow {
                 anchors.margins: 1
                 height: parent.height * 0.48
                 radius: parent.radius
-                color: chip.active ? "#16ffffff" : "#10ffffff"
-                opacity: hoverState ? 0.72 : 0.4
+                color: "#ffffff"
+                opacity: chip.active ? (hoverState ? 0.16 : 0.1) : (hoverState ? 0.08 : 0.04)
             }
         }
         contentItem: Text {
@@ -1105,7 +1110,7 @@ ApplicationWindow {
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: nav.text
-                color: nav.active ? window.textPrimary : (nav.hovered ? "#d9e1ef" : "#9fffffff")
+                color: nav.active ? window.textPrimary : (nav.hovered ? "#f3f6fb" : "#b7c3d5")
                 font.pixelSize: 18
                 font.bold: true
                 Behavior on color { ColorAnimation { duration: 140 } }
@@ -1115,7 +1120,7 @@ ApplicationWindow {
                 width: nav.active ? 56 : (nav.hovered ? 38 : 22)
                 height: 4
                 radius: 2
-                color: nav.active ? window.accent : (nav.hovered ? "#88ff4451" : "#00000000")
+                color: nav.active ? window.accent : (nav.hovered ? "#d01a25" : "#00000000")
                 opacity: nav.active ? 1.0 : (nav.hovered ? 1.0 : 0.0)
                 Behavior on width { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
                 Behavior on opacity { NumberAnimation { duration: 120 } }
