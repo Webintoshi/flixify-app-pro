@@ -80,7 +80,7 @@ async function resolveWebAppUrl() {
     }
   }
 
-  return null;
+  return "https://app.flixify.pro/";
 }
 
 async function resolveInstallerArtifact() {

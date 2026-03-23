@@ -650,6 +650,137 @@ ApplicationWindow {
         }
     }
 
+    component SupportLinkCard: Item {
+        id: supportLink
+        property string title: ""
+        property string service: "whatsapp"
+        property string url: ""
+        property color accentColor: service === "telegram" ? "#229ed9" : "#25d366"
+        property bool interactive: safeText(url).length > 0
+        width: 0
+        height: 104
+
+        Rectangle {
+            id: supportSurface
+            anchors.fill: parent
+            radius: 20
+            color: supportMouse.containsMouse && supportLink.interactive ? "#141d2a" : "#0d131d"
+            border.width: 1
+            border.color: supportMouse.containsMouse && supportLink.interactive ? "#2dffffff" : window.borderSoft
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 1
+                height: parent.height * 0.46
+                radius: parent.radius
+                color: supportMouse.containsMouse && supportLink.interactive ? "#16ffffff" : "#0effffff"
+            }
+        }
+
+        Row {
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 14
+
+            Rectangle {
+                width: 54
+                height: 54
+                radius: 18
+                anchors.verticalCenter: parent.verticalCenter
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: Qt.lighter(supportLink.accentColor, 1.08) }
+                    GradientStop { position: 1.0; color: supportLink.accentColor }
+                }
+
+                Canvas {
+                    id: supportIcon
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    antialiasing: true
+                    onPaint: {
+                        const ctx = getContext("2d")
+                        ctx.reset()
+                        ctx.clearRect(0, 0, width, height)
+                        ctx.lineCap = "round"
+                        ctx.lineJoin = "round"
+                        ctx.strokeStyle = "#ffffff"
+                        ctx.fillStyle = "#ffffff"
+
+                        if (supportLink.service === "telegram") {
+                            ctx.beginPath()
+                            ctx.moveTo(width * 0.16, height * 0.52)
+                            ctx.lineTo(width * 0.84, height * 0.18)
+                            ctx.lineTo(width * 0.58, height * 0.82)
+                            ctx.lineTo(width * 0.50, height * 0.56)
+                            ctx.closePath()
+                            ctx.fill()
+
+                            ctx.beginPath()
+                            ctx.moveTo(width * 0.28, height * 0.50)
+                            ctx.lineTo(width * 0.50, height * 0.56)
+                            ctx.lineTo(width * 0.60, height * 0.38)
+                            ctx.stroke()
+                        } else {
+                            const bubbleRadius = width * 0.33
+                            ctx.lineWidth = Math.max(2.5, width * 0.09)
+                            ctx.beginPath()
+                            ctx.arc(width * 0.5, height * 0.44, bubbleRadius, 0, Math.PI * 2)
+                            ctx.stroke()
+
+                            ctx.beginPath()
+                            ctx.moveTo(width * 0.36, height * 0.70)
+                            ctx.lineTo(width * 0.30, height * 0.88)
+                            ctx.lineTo(width * 0.47, height * 0.78)
+                            ctx.stroke()
+
+                            ctx.beginPath()
+                            ctx.moveTo(width * 0.38, height * 0.37)
+                            ctx.quadraticCurveTo(width * 0.43, height * 0.30, width * 0.49, height * 0.36)
+                            ctx.lineTo(width * 0.57, height * 0.47)
+                            ctx.quadraticCurveTo(width * 0.63, height * 0.54, width * 0.58, height * 0.60)
+                            ctx.lineTo(width * 0.52, height * 0.66)
+                            ctx.quadraticCurveTo(width * 0.47, height * 0.71, width * 0.40, height * 0.64)
+                            ctx.lineTo(width * 0.31, height * 0.53)
+                            ctx.quadraticCurveTo(width * 0.26, height * 0.47, width * 0.32, height * 0.41)
+                            ctx.closePath()
+                            ctx.fill()
+                        }
+                    }
+                }
+            }
+
+            Column {
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 6
+
+                Text {
+                    text: supportLink.title
+                    color: window.textPrimary
+                    font.pixelSize: 17
+                    font.family: "Space Grotesk"
+                    font.bold: true
+                }
+
+                Text {
+                    text: supportLink.service === "telegram" ? "Telegram" : "WhatsApp"
+                    color: window.textMuted
+                    font.pixelSize: 13
+                }
+            }
+        }
+
+        MouseArea {
+            id: supportMouse
+            anchors.fill: parent
+            enabled: supportLink.interactive
+            hoverEnabled: true
+            cursorShape: supportLink.interactive ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: Qt.openUrlExternally(supportLink.url)
+        }
+    }
+
     component ChipButton: Button {
         id: chip
         property bool active: false
@@ -1272,7 +1403,7 @@ ApplicationWindow {
 
                             Rectangle {
                                 width: parent.width
-                                height: 206
+                                height: 178
                                 radius: 24
                                 color: "#0b0f17"
                                 border.width: 1
@@ -1286,7 +1417,7 @@ ApplicationWindow {
                                 Column {
                                     anchors.fill: parent
                                     anchors.margins: 22
-                                    spacing: 14
+                                    spacing: 16
 
                                     Rectangle {
                                         width: createLabel.implicitWidth + 26
@@ -1299,56 +1430,51 @@ ApplicationWindow {
                                         Text {
                                             id: createLabel
                                             anchors.centerIn: parent
-                                            text: "Tek Kullanimlik Guvenli Kod"
+                                            text: "16 Haneli Kod"
                                             color: "#ffd7da"
                                             font.pixelSize: 12
                                             font.bold: true
                                         }
                                     }
 
-                                    Text {
-                                        text: "Premium iceriklere erisim icin size ozel 16 haneli bir hesap numarasi uretin."
-                                        width: parent.width
-                                        wrapMode: Text.WordWrap
-                                        color: window.textPrimary
-                                        font.pixelSize: 26
-                                        font.family: "Space Grotesk"
-                                        font.bold: true
-                                    }
-
-                                    Text {
-                                        text: "Kod bir kez uretilir. Kaydedip sakladiginizda ayni hesapla uygulamaya tekrar giris yapabilirsiniz."
-                                        width: parent.width
-                                        wrapMode: Text.WordWrap
-                                        color: window.textMuted
-                                        font.pixelSize: 14
-                                    }
-
                                     Row {
+                                        width: parent.width
                                         spacing: 10
                                         Repeater {
-                                            model: [
-                                                { title: "16 Hane", copy: "Kriptolu" },
-                                                { title: "Tek Kod", copy: "Kopyala/Kaydet" },
-                                                { title: "Aninda Aktif", copy: "Native Giris" }
-                                            ]
+                                            model: 4
 
                                             Rectangle {
-                                                width: Math.floor((parent.width - 20) / 3)
-                                                height: 56
+                                                width: Math.floor((parent.width - 30) / 4)
+                                                height: 62
                                                 radius: 16
                                                 color: "#0effffff"
                                                 border.width: 1
                                                 border.color: "#14ffffff"
+                                                gradient: Gradient {
+                                                    GradientStop { position: 0.0; color: "#111725" }
+                                                    GradientStop { position: 1.0; color: "#0a1018" }
+                                                }
 
-                                                Column {
+                                                Text {
                                                     anchors.centerIn: parent
-                                                    spacing: 4
-                                                    Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 13; font.bold: true; horizontalAlignment: Text.AlignHCenter }
-                                                    Text { text: modelData.copy; color: window.textMuted; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter }
+                                                    text: "****"
+                                                    color: "#f7f8fb"
+                                                    font.pixelSize: 23
+                                                    font.family: "Space Grotesk"
+                                                    font.bold: true
+                                                    letterSpacing: 2
                                                 }
                                             }
                                         }
+                                    }
+
+                                    Text {
+                                        text: "16 haneli ozel erisim kodu"
+                                        width: parent.width
+                                        horizontalAlignment: Text.AlignHCenter
+                                        color: window.textMuted
+                                        font.pixelSize: 13
+                                        font.letterSpacing: 0.6
                                     }
                                 }
                             }
@@ -1375,19 +1501,17 @@ ApplicationWindow {
                             Row {
                                 width: parent.width
                                 spacing: 12
-                                Repeater {
-                                    model: [
-                                        { title: "Guvenli Erisim", copy: "Kodu kaydet, oturumu native uygulamadan tekrar ac." },
-                                        { title: "Premium Deneyim", copy: "Film, dizi ve canli icerikler branded shell icinde acilir." }
-                                    ]
-                                    Rectangle {
-                                        width: (parent.width - 12) / 2; height: 110; radius: 18; color: "#0d131d"; border.width: 1; border.color: window.borderSoft
-                                        Column {
-                                            anchors.fill: parent; anchors.margins: 16; spacing: 8
-                                            Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 16; font.family: "Space Grotesk"; font.bold: true }
-                                            Text { text: modelData.copy; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 13 }
-                                        }
-                                    }
+                                SupportLinkCard {
+                                    width: (parent.width - 12) / 2
+                                    title: "WhatsApp"
+                                    service: "whatsapp"
+                                    url: contactData().whatsapp || ""
+                                }
+                                SupportLinkCard {
+                                    width: (parent.width - 12) / 2
+                                    title: "Telegram"
+                                    service: "telegram"
+                                    url: contactData().telegram || ""
                                 }
                             }
                         }
