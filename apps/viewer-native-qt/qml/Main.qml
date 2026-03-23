@@ -2350,55 +2350,8 @@ ApplicationWindow {
 
                                         ColumnLayout {
                                             anchors.fill: parent
-                                            anchors.margins: 24
-                                            spacing: 16
-
-                                            RowLayout {
-                                                Layout.fillWidth: true
-                                                spacing: 18
-
-                                                ColumnLayout {
-                                                    Layout.fillWidth: true
-                                                    spacing: 6
-
-                                                    Text {
-                                                        text: selectedLiveItem() ? selectedLiveItem().title : "Kanal secin"
-                                                        color: window.textPrimary
-                                                        font.pixelSize: 34
-                                                        font.family: "Space Grotesk"
-                                                        font.bold: true
-                                                        elide: Text.ElideRight
-                                                    }
-
-                                                    Text {
-                                                        text: selectedLiveItem() ? (selectedLiveItem().groupTitle || "Canli TV") : "Sag panelden kanal secin"
-                                                        color: window.textMuted
-                                                        font.pixelSize: 14
-                                                    }
-                                                }
-
-                                                Rectangle {
-                                                    Layout.alignment: Qt.AlignTop
-                                                    width: liveStateLabel.implicitWidth + 24
-                                                    height: 34
-                                                    radius: 17
-                                                    color: playbackController.state === "playing" ? "#2b30d19d" : playbackController.state === "error" ? "#24ff7d86" : "#16ffffff"
-                                                    border.width: 1
-                                                    border.color: playbackController.state === "playing" ? "#2282ecc4" : "#1effffff"
-
-                                                    Text {
-                                                        id: liveStateLabel
-                                                        anchors.centerIn: parent
-                                                        text: playbackController.state === "buffering" ? "Buffer" :
-                                                              playbackController.state === "resolving" || playbackController.state === "opening" ? "Hazirlaniyor" :
-                                                              playbackController.state === "error" ? "Hata" :
-                                                              playbackController.state === "playing" ? "Canli" : "Beklemede"
-                                                        color: "#ffffff"
-                                                        font.pixelSize: 12
-                                                        font.bold: true
-                                                    }
-                                                }
-                                            }
+                                            anchors.margins: 18
+                                            spacing: 0
 
                                             Rectangle {
                                                 Layout.fillWidth: true
@@ -2492,7 +2445,7 @@ ApplicationWindow {
 
                                                 Rectangle {
                                                     anchors.top: parent.top
-                                                    anchors.left: parent.left
+                                                    anchors.right: parent.right
                                                     anchors.margins: 18
                                                     width: inlineStateText.implicitWidth + 28
                                                     height: 40
@@ -2500,7 +2453,10 @@ ApplicationWindow {
                                                     color: "#c7070a0f"
                                                     border.width: 1
                                                     border.color: "#12ffffff"
-                                                    visible: selectedLiveItem() !== null && filteredLiveItems().length > 0 && selectedLiveItem().playbackAllowed !== false
+                                                    visible: selectedLiveItem() !== null
+                                                        && filteredLiveItems().length > 0
+                                                        && selectedLiveItem().playbackAllowed !== false
+                                                        && playbackController.state !== "playing"
 
                                                     Text {
                                                         id: inlineStateText
