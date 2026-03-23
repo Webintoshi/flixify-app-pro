@@ -110,16 +110,44 @@ ApplicationWindow {
         return normalized.length ? normalized.match(/.{1,4}/g).join(" ") : "---- ---- ---- ----"
     }
 
-    function animatedIssuedCode() {
+    function animatedIssuedBuffer() {
         if (!issuedCode.length) {
-            return formatCode("")
+            return "****************"
         }
         const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         let buffer = ""
-        for (let index = 0; index < issuedCode.length; index += 1) {
-            buffer += index < revealedCount ? issuedCode[index] : alphabet[(scrambleSeed + index * 7) % alphabet.length]
+        for (let index = 0; index < 16; index += 1) {
+            if (index < issuedCode.length && index < revealedCount) {
+                buffer += issuedCode[index]
+            } else if (index < issuedCode.length) {
+                buffer += alphabet[(scrambleSeed + index * 11) % alphabet.length]
+            } else {
+                buffer += "*"
+            }
         }
-        return formatCode(buffer)
+        return buffer
+    }
+
+    function issuedSegmentText(segmentIndex) {
+        const start = Math.max(0, segmentIndex * 4)
+        let segment = animatedIssuedBuffer().slice(start, start + 4)
+        if (!segment.length) {
+            segment = "****"
+        }
+        return segment.split("").join(" ")
+    }
+
+    function issuedSegmentRevealCount(segmentIndex) {
+        return Math.max(0, Math.min(4, revealedCount - segmentIndex * 4))
+    }
+
+    function issuedSegmentRevealProgress(segmentIndex) {
+        return issuedSegmentRevealCount(segmentIndex) / 4
+    }
+
+    function issuedSegmentActive(segmentIndex) {
+        const count = issuedSegmentRevealCount(segmentIndex)
+        return registerRevealBusy() && count > 0 && count < 4
     }
 
     function progressSegments() {
@@ -739,24 +767,24 @@ ApplicationWindow {
 
     Timer {
         id: revealTimer
-        interval: 112
+        interval: 132
         repeat: true
         onTriggered: {
             if (!issuedCode.length) {
                 stop()
                 return
             }
-            scrambleSeed += 3
+            scrambleSeed += revealedCount < 4 ? 5 : revealedCount < 10 ? 7 : 9
             if (revealWarmupTicks > 0) {
                 revealWarmupTicks -= 1
-                interval = Math.max(84, interval - 4)
+                interval = Math.max(108, interval - 3)
                 return
             }
             if (revealedCount >= issuedCode.length) {
                 stop()
                 return
             }
-            interval = revealedCount < 4 ? 126 : revealedCount < 10 ? 142 : 158
+            interval = revealedCount < 4 ? 138 : revealedCount < 8 ? 154 : revealedCount < 12 ? 170 : 184
             revealedCount += 1
         }
     }
@@ -825,7 +853,7 @@ ApplicationWindow {
             }
         }
         function onLoginSucceeded() { currentScreen = "home"; premiumPopupDismissed = false; showAuthCode = false; authCode = "" }
-        function onAnonCodeIssued(code) { issuedCode = sanitizeCode(code); revealedCount = 0; scrambleSeed = 0; revealWarmupTicks = 6; registerAcknowledged = false; authCode = ""; showAuthCode = false; currentScreen = "register"; revealTimer.interval = 88; revealTimer.restart() }
+        function onAnonCodeIssued(code) { issuedCode = sanitizeCode(code); revealedCount = 0; scrambleSeed = 0; revealWarmupTicks = 8; registerAcknowledged = false; authCode = ""; showAuthCode = false; currentScreen = "register"; revealTimer.interval = 132; revealTimer.restart() }
         function onSeriesChanged() { if (!selectedSeriesId && (apiClient.series || []).length) selectedSeriesId = apiClient.series[0].id }
         function onLiveChannelsChanged() {
             syncSelectedLiveSelection()
@@ -923,6 +951,103 @@ ApplicationWindow {
             color: "#0dffffff"
             border.width: 1
             border.color: parent.activeFocus ? "#40ffffff" : window.borderSoft
+        }
+    }
+
+    component CodeSegmentCard: Item {
+        id: segmentCard
+        property string displayText: "****"
+        property real revealProgress: 0
+        property bool active: false
+        property bool complete: false
+        property bool placeholder: false
+        width: 0
+        height: 72
+        scale: active ? 1.028 : 1.0
+        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 18
+            color: segmentCard.complete
+                ? "#111a28"
+                : segmentCard.active
+                    ? "#111726"
+                    : "#0d131d"
+            border.width: 1
+            border.color: segmentCard.complete
+                ? "#2f4e70"
+                : segmentCard.active
+                    ? "#3f5d7d"
+                    : "#243141"
+            gradient: Gradient {
+                GradientStop {
+                    position: 0.0
+                    color: segmentCard.complete
+                        ? "#182335"
+                        : segmentCard.active
+                            ? "#172133"
+                            : "#111826"
+                }
+                GradientStop {
+                    position: 1.0
+                    color: segmentCard.complete
+                        ? "#0c121b"
+                        : segmentCard.active
+                            ? "#0d141f"
+                            : "#0a1018"
+                }
+            }
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 1
+            height: parent.height * 0.46
+            radius: parent.radius
+            color: "#ffffff"
+            opacity: segmentCard.complete ? 0.12 : segmentCard.active ? 0.1 : 0.04
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: 6
+            anchors.bottomMargin: 6
+            width: Math.max(14, (parent.width - 12) * Math.max(0, Math.min(1, segmentCard.revealProgress)))
+            height: 4
+            radius: 2
+            color: segmentCard.complete ? "#47d7ff" : window.accentStrong
+            opacity: segmentCard.placeholder ? 0.0 : (segmentCard.complete ? 0.8 : segmentCard.active ? 0.95 : 0.26)
+        }
+
+        Rectangle {
+            width: parent.width - 22
+            height: 2
+            x: 11
+            y: 12
+            radius: 1
+            color: "#58ffffff"
+            opacity: segmentCard.active ? 0.75 : 0.0
+
+            SequentialAnimation on y {
+                loops: Animation.Infinite
+                running: segmentCard.active
+                NumberAnimation { from: 12; to: segmentCard.height - 14; duration: 520; easing.type: Easing.OutQuad }
+                PauseAnimation { duration: 80 }
+            }
+        }
+
+        Text {
+            anchors.centerIn: parent
+            text: segmentCard.displayText
+            color: segmentCard.placeholder ? "#f7f8fb" : "#ffffff"
+            font.pixelSize: segmentCard.placeholder ? 23 : 24
+            font.family: "Space Grotesk"
+            font.bold: true
+            font.letterSpacing: segmentCard.placeholder ? 2 : 1.4
         }
     }
 
@@ -1721,27 +1846,12 @@ ApplicationWindow {
                                         Repeater {
                                             model: 4
 
-                                            Rectangle {
+                                            CodeSegmentCard {
                                                 width: Math.floor((parent.width - 30) / 4)
                                                 height: 62
-                                                radius: 16
-                                                color: "#0effffff"
-                                                border.width: 1
-                                                border.color: "#14ffffff"
-                                                gradient: Gradient {
-                                                    GradientStop { position: 0.0; color: "#111725" }
-                                                    GradientStop { position: 1.0; color: "#0a1018" }
-                                                }
-
-                                                Text {
-                                                    anchors.centerIn: parent
-                                                    text: "****"
-                                                    color: "#f7f8fb"
-                                                    font.pixelSize: 23
-                                                    font.family: "Space Grotesk"
-                                                    font.bold: true
-                                                    font.letterSpacing: 2
-                                                }
+                                                displayText: "* * * *"
+                                                revealProgress: 0
+                                                placeholder: true
                                             }
                                         }
                                     }
@@ -1801,20 +1911,20 @@ ApplicationWindow {
 
                             Rectangle {
                                 width: parent.width
-                                height: 228
+                                height: 244
                                 radius: 24
                                 color: "#0b0f17"
                                 border.width: 1
-                                border.color: registerRevealComplete() ? "#36e50914" : "#22ffffff"
+                                border.color: registerRevealComplete() ? "#314d70" : "#22ffffff"
                                 gradient: Gradient {
-                                    GradientStop { position: 0.0; color: registerRevealComplete() ? "#101521" : "#0e121c" }
+                                    GradientStop { position: 0.0; color: registerRevealComplete() ? "#121b29" : "#0e121c" }
                                     GradientStop { position: 1.0; color: "#090d15" }
                                 }
 
                                 Column {
                                     anchors.fill: parent
                                     anchors.margins: 20
-                                    spacing: 14
+                                    spacing: 16
 
                                     Row {
                                         width: parent.width
@@ -1826,34 +1936,39 @@ ApplicationWindow {
                                             width: revealStatusText.implicitWidth + 28
                                             height: 32
                                             radius: 16
-                                            color: registerRevealComplete() ? "#2330d19d" : "#1ae50914"
+                                            color: registerRevealComplete() ? "#15374f" : "#1ae50914"
                                             border.width: 1
-                                            border.color: registerRevealComplete() ? "#3a30d19d" : "#24ffffff"
+                                            border.color: registerRevealComplete() ? "#2b688c" : "#24ffffff"
 
                                             Text {
                                                 id: revealStatusText
                                                 anchors.centerIn: parent
-                                                text: registerRevealComplete() ? "Hazir" : "Sifreli Anahtar Uretiliyor"
-                                                color: registerRevealComplete() ? "#82ecc4" : "#ffd7da"
+                                                text: registerRevealComplete() ? "Hazir" : "Anahtar Cozuluyor"
+                                                color: registerRevealComplete() ? "#9be7ff" : "#ffd7da"
                                                 font.pixelSize: 11
                                                 font.bold: true
                                             }
                                         }
                                     }
 
-                                    Text {
-                                        text: animatedIssuedCode()
-                                        color: window.textPrimary
+                                    Row {
                                         width: parent.width
-                                        horizontalAlignment: Text.AlignHCenter
-                                        font.pixelSize: 40
-                                        font.family: "Space Grotesk"
-                                        font.bold: true
-                                        font.letterSpacing: 1.2
+                                        spacing: 10
+                                        Repeater {
+                                            model: 4
+
+                                            CodeSegmentCard {
+                                                width: Math.floor((parent.width - 30) / 4)
+                                                displayText: issuedSegmentText(index)
+                                                revealProgress: issuedSegmentRevealProgress(index)
+                                                active: issuedSegmentActive(index)
+                                                complete: issuedSegmentRevealCount(index) >= 4
+                                            }
+                                        }
                                     }
 
                                     Text {
-                                        text: registerRevealComplete() ? "Kod hazir. Simdi kopyalayin veya kaydedin." : "Kriptografik karakter matrisi olusturuluyor..."
+                                        text: registerRevealComplete() ? "Kod hazir. Kopyalayin veya kaydedin." : "16 hane tek tek dogrulaniyor..."
                                         width: parent.width
                                         horizontalAlignment: Text.AlignHCenter
                                         color: window.textMuted
@@ -1872,7 +1987,8 @@ ApplicationWindow {
                                             radius: 5
                                             gradient: Gradient {
                                                 GradientStop { position: 0.0; color: window.accentStrong }
-                                                GradientStop { position: 1.0; color: window.accent }
+                                                GradientStop { position: 0.55; color: "#ff4556" }
+                                                GradientStop { position: 1.0; color: "#3fd3ff" }
                                             }
                                         }
                                     }
