@@ -1106,16 +1106,6 @@ ApplicationWindow {
                 visible: !control.secondary || hoverState
             }
             
-            // Shadow layer
-            layer.enabled: true
-            layer.effect: DropShadow {
-                transparentBorder: true
-                horizontalOffset: 0
-                verticalOffset: control.pressedState ? 2 : 4
-                radius: control.pressedState ? 8 : 12
-                samples: control.pressedState ? 17 : 25
-                color: control.secondary ? "#40000000" : "#80e50914"
-            }
         }
         
         contentItem: Text {
@@ -1293,16 +1283,6 @@ ApplicationWindow {
                 Behavior on opacity { NumberAnimation { duration: 200 } }
             }
             
-            // Shadow
-            layer.enabled: true
-            layer.effect: DropShadow {
-                transparentBorder: true
-                horizontalOffset: 0
-                verticalOffset: 4
-                radius: 8
-                samples: 17
-                color: "#40000000"
-            }
         }
 
         Row {

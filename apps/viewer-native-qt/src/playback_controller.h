@@ -133,6 +133,7 @@ private:
   void failActiveTarget(const QString &reason, const QString &errorCode = QStringLiteral("playback-error"));
   void retryCurrentSourceInSoftwareMode(const QString &reason);
   void retryResolvedVodSource(const QString &reason);
+  bool ensurePlayerReady();
   void recreatePlayer();
   void attachPlayerEvents();
   void bindVideoSurface();

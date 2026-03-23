@@ -51,26 +51,8 @@ bool looksTurkish(const QString &language, const QString &title) {
 
 PlaybackController::PlaybackController(ApiClient *apiClient, QObject *parent)
   : QObject(parent), m_apiClient(apiClient) {
-  const char *arguments[] = {
-    "--quiet",
-    "--no-video-title-show",
-    "--http-reconnect",
-    "--network-caching=1200",
-    "--file-caching=1000"
-  };
-  m_vlc = libvlc_new(static_cast<int>(std::size(arguments)), arguments);
-  if (!m_vlc) {
-    setState(QStringLiteral("error"));
-    setLastError(
-      flixifyLibVlcRuntimeError().trimmed().isEmpty() ? QStringLiteral("libVLC runtime yuklenemedi.")
-                                                      : flixifyLibVlcRuntimeError()
-    );
-  }
-
   m_timelineTimer.setInterval(500);
   connect(&m_timelineTimer, &QTimer::timeout, this, &PlaybackController::updateTimeline);
-
-  recreatePlayer();
 }
 
 PlaybackController::~PlaybackController() {
@@ -708,8 +690,11 @@ void PlaybackController::resolveVodSource(const QString &audioTrackId) {
 }
 
 void PlaybackController::openResolvedSource(const QJsonObject &source) {
-  if (!m_player || !m_vlc) {
-    failActiveTarget(QStringLiteral("libVLC player baslatilamadi."), QStringLiteral("player-init-failed"));
+  if (!ensurePlayerReady()) {
+    failActiveTarget(
+      lastError().trimmed().isEmpty() ? QStringLiteral("libVLC player baslatilamadi.") : lastError(),
+      QStringLiteral("player-init-failed")
+    );
     return;
   }
 
@@ -849,6 +834,40 @@ void PlaybackController::retryResolvedVodSource(const QString &reason) {
   setLastError(reason);
   m_pendingResumeSeconds = positionSeconds();
   resolveVodSource(m_requestedAudioTrackId);
+}
+
+bool PlaybackController::ensurePlayerReady() {
+  if (m_player && m_vlc) {
+    return true;
+  }
+
+  if (!m_vlc) {
+    const char *arguments[] = {
+      "--quiet",
+      "--no-video-title-show",
+      "--http-reconnect",
+      "--network-caching=1200",
+      "--file-caching=1000"
+    };
+    m_vlc = libvlc_new(static_cast<int>(std::size(arguments)), arguments);
+    if (!m_vlc) {
+      setState(QStringLiteral("error"));
+      setLastError(
+        flixifyLibVlcRuntimeError().trimmed().isEmpty() ? QStringLiteral("libVLC runtime yuklenemedi.")
+                                                        : flixifyLibVlcRuntimeError()
+      );
+      return false;
+    }
+  }
+
+  recreatePlayer();
+  if (!m_player) {
+    setState(QStringLiteral("error"));
+    setLastError(QStringLiteral("libVLC player baslatilamadi."));
+    return false;
+  }
+
+  return true;
 }
 
 void PlaybackController::recreatePlayer() {
