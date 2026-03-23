@@ -178,6 +178,7 @@ type AppUpdateManifest = {
   platforms: Record<string, AppUpdateManifestEntry>;
 };
 
+const DEFAULT_APP_UPDATE_MANIFEST_URL = "https://app.flixify.pro/app-update-manifest.json";
 const isDemoMode = env.APP_DEMO_MODE;
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 const appUpdateManifestCache: {
@@ -910,7 +911,7 @@ function isUpdateAvailable(currentVersion: string | null, latestVersion: string 
 }
 
 async function fetchAppUpdateManifest() {
-  const manifestUrl = env.APP_UPDATE_MANIFEST_URL;
+  const manifestUrl = env.APP_UPDATE_MANIFEST_URL ?? DEFAULT_APP_UPDATE_MANIFEST_URL;
   if (!manifestUrl) {
     return null;
   }
