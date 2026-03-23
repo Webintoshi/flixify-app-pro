@@ -2374,15 +2374,18 @@ ApplicationWindow {
                         spacing: window.compactWindow ? 16 : 24
 
                         Row {
+                            id: headerBrandRow
                             spacing: 14
                             Image { width: 36; height: 36; source: "qrc:/branding/icon.png"; fillMode: Image.PreserveAspectFit }
                             Text { text: "FLIXIFY"; color: window.textPrimary; font.pixelSize: 30; font.family: "Space Grotesk"; font.bold: true }
                             Rectangle { width: 58; height: 28; radius: 10; color: window.accent; anchors.verticalCenter: parent.verticalCenter; Text { anchors.centerIn: parent; text: "PRO"; color: "#ffffff"; font.pixelSize: 12; font.bold: true } }
+                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: openScreen("home") }
                         }
 
                         Item {
                             Layout.fillWidth: true
                             Flickable {
+                                id: headerNavFlickable
                                 anchors.fill: parent
                                 contentWidth: navRow.implicitWidth
                                 contentHeight: height
@@ -2393,8 +2396,10 @@ ApplicationWindow {
                                     id: navRow
                                     width: implicitWidth
                                     anchors.verticalCenter: parent.verticalCenter
-                                    x: window.compactWindow ? 0 : Math.max(0, (parent.width - implicitWidth) / 2)
-                                    spacing: window.compactWindow ? 22 : 32
+                                    x: window.compactWindow || headerNavFlickable.interactive
+                                        ? 0
+                                        : Math.max(0, (headerNavFlickable.width - implicitWidth) / 2)
+                                    spacing: window.compactWindow ? 16 : 20
                                 
                                 Repeater {
                                     model: [
@@ -2405,7 +2410,12 @@ ApplicationWindow {
                                     ]
                                     NavButton {
                                         required property var modelData
-                                        text: modelData.label
+                                        visible: modelData.key !== "home"
+                                        text: modelData.key === "live"
+                                            ? "CANLI TV |"
+                                            : modelData.key === "movies"
+                                                ? "FİLM |"
+                                                : "DİZİ"
                                         active: currentScreen === modelData.key
                                         onClicked: openScreen(modelData.key)
                                     }
@@ -2415,11 +2425,52 @@ ApplicationWindow {
                         }
 
                         Rectangle {
-                            width: window.compactWindow ? 184 : 232; height: window.compactWindow ? 56 : 62; radius: height / 2; color: "#0affffff"; border.width: 1; border.color: window.borderSoft
+                            width: window.compactWindow ? 208 : 248
+                            height: window.compactWindow ? 56 : 62
+                            radius: height / 2
+                            color: "#0affffff"
+                            border.width: 1
+                            border.color: window.borderSoft
                             Row {
-                                anchors.fill: parent; anchors.margins: 6; spacing: 12
-                                Rectangle { width: 50; height: 50; radius: 25; color: "#10ffffff"; anchors.verticalCenter: parent.verticalCenter; Text { anchors.centerIn: parent; text: "-"; color: window.textPrimary; font.pixelSize: 28 } }
-                                Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 80; elide: Text.ElideRight; text: userData().kryptoniteCode || "Profil"; color: window.textPrimary; font.pixelSize: window.compactWindow ? 13 : 14; font.bold: true }
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                spacing: 12
+                                Rectangle {
+                                    width: 50
+                                    height: 50
+                                    radius: 25
+                                    color: "#10ffffff"
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Canvas {
+                                        anchors.centerIn: parent
+                                        width: 24
+                                        height: 24
+                                        onPaint: {
+                                            const context = getContext("2d")
+                                            context.reset()
+                                            context.strokeStyle = "#f4f7fb"
+                                            context.lineWidth = 2.25
+                                            context.lineCap = "round"
+                                            context.beginPath()
+                                            context.arc(width / 2, 7.5, 4.1, 0, Math.PI * 2)
+                                            context.stroke()
+                                            context.beginPath()
+                                            context.moveTo(5, 20)
+                                            context.quadraticCurveTo(width / 2, 12.8, width - 5, 20)
+                                            context.stroke()
+                                        }
+                                    }
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: parent.width - 86
+                                    elide: Text.ElideRight
+                                    text: userData().kryptoniteCode || "Profil"
+                                    color: window.textPrimary
+                                    font.pixelSize: window.compactWindow ? 13 : 14
+                                    font.bold: true
+                                }
                             }
                             MouseArea { anchors.fill: parent; onClicked: openScreen("profile") }
                         }
