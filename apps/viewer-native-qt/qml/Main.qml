@@ -72,8 +72,10 @@ ApplicationWindow {
     property int revealWarmupTicks: 0
     property bool registerAcknowledged: false
     property bool playerVisible: false
+    property string inlinePlaybackMode: "none"
     property bool premiumPopupDismissed: false
     property string dismissedUpdateVersion: ""
+    property string selectedMovieId: ""
     property string selectedSeriesId: ""
     property string selectedLiveId: ""
     property string selectedMovieGroup: ""
@@ -594,6 +596,16 @@ ApplicationWindow {
     function filteredSeries() { return filterItems(apiClient.series || [], seriesSearchText, selectedSeriesGroup) }
     function filteredLiveItems() { return apiClient.liveChannels || [] }
 
+    function selectedMovie() {
+        const items = apiClient.movies || []
+        for (let index = 0; index < items.length; index += 1) {
+            if (items[index].id === selectedMovieId) {
+                return items[index]
+            }
+        }
+        return null
+    }
+
     function syncSelectedLiveSelection() {
         const items = filteredLiveItems()
         if (!items.length) {
@@ -700,7 +712,7 @@ ApplicationWindow {
     }
 
     function currentPlaybackItem() {
-        if (playbackController.activeContentKind === "movie") return apiClient.movieById(playbackController.activeContentId)
+        if (inlinePlaybackMode === "movie") return selectedMovie() || apiClient.movieById(playbackController.activeContentId)
         if (playbackController.activeContentKind === "episode") return apiClient.episodeById(playbackController.activeContentId)
         if (playbackController.activeContentKind === "live") return apiClient.liveChannelById(playbackController.activeContentId)
         return ({})
@@ -738,14 +750,26 @@ ApplicationWindow {
     function inlineLivePlayerVisible() {
         return currentScreen === "live" &&
             playerVisible &&
-            playbackController.activeContentKind === "live" &&
+            inlinePlaybackMode === "live" &&
             selectedLiveItem() !== null &&
             selectedLiveItem().playbackAllowed !== false
     }
+    function inlineMoviePlayerVisible() {
+        return currentScreen === "movies" &&
+            playerVisible &&
+            inlinePlaybackMode === "movie" &&
+            selectedMovie() !== null
+    }
+    function inlineEpisodePlayerVisible() {
+        return currentScreen === "series-detail" &&
+            playerVisible &&
+            inlinePlaybackMode === "episode"
+    }
+    function activeInlinePlaybackVisible() {
+        return inlineLivePlayerVisible() || inlineMoviePlayerVisible() || inlineEpisodePlayerVisible()
+    }
     function overlayPlayerVisible() {
-        return playerVisible &&
-            !inlineLivePlayerVisible() &&
-            !(currentScreen === "live" && playbackController.activeContentKind === "live")
+        return false
     }
     function toggleWindowFullscreen() {
         if (window.visibility === Window.FullScreen) {
@@ -766,7 +790,7 @@ ApplicationWindow {
     }
 
     function openScreen(screenName) {
-        if (currentScreen === "live" && screenName !== "live" && playbackController.activeContentKind === "live" && playerVisible) {
+        if (playerVisible && screenName !== currentScreen) {
             closePlayer()
         }
         currentScreen = screenName
@@ -785,28 +809,55 @@ ApplicationWindow {
     }
 
     function openSeriesDetail(seriesId) {
+        if (playerVisible && currentScreen === "series-detail" && selectedSeriesId !== seriesId) {
+            closePlayer()
+        }
         selectedSeriesId = seriesId
         currentScreen = "series-detail"
     }
 
     function playMovie(movie) {
         if (!movie || !movie.id) return
+        if (playerVisible && (inlinePlaybackMode !== "movie" || currentScreen !== "movies")) {
+            closePlayer()
+        }
+        if (currentScreen !== "movies") {
+            currentScreen = "movies"
+        }
+        selectedMovieId = movie.id
         playerSubtitle = movie.groupTitle || "Film"
         playerImageUrl = movie.posterUrl || ""
         playerVisible = true
+        inlinePlaybackMode = "movie"
         playbackController.playVod("movie", movie.id, movie.title)
     }
 
     function playEpisode(episode, series) {
         if (!episode || !episode.id) return
+        if (playerVisible && (inlinePlaybackMode !== "episode" || currentScreen !== "series-detail")) {
+            closePlayer()
+        }
+        if (series && series.id) {
+            selectedSeriesId = series.id
+        }
+        if (currentScreen !== "series-detail") {
+            currentScreen = "series-detail"
+        }
         playerSubtitle = series && series.title ? series.title : "Dizi"
         playerImageUrl = series && series.posterUrl ? series.posterUrl : ""
         playerVisible = true
+        inlinePlaybackMode = "episode"
         playbackController.playVod("episode", episode.id, episode.title)
     }
 
     function playLive(channel, forceRestart) {
         if (!channel || !channel.id) return
+        if (playerVisible && (inlinePlaybackMode !== "live" || currentScreen !== "live")) {
+            closePlayer()
+        }
+        if (currentScreen !== "live") {
+            currentScreen = "live"
+        }
         selectedLiveId = channel.id
         playerSubtitle = channel.groupTitle || "Canlı TV"
         playerImageUrl = channel.logoUrl || ""
@@ -815,10 +866,12 @@ ApplicationWindow {
                 playbackController.stop()
             }
             playerVisible = false
+            inlinePlaybackMode = "none"
             liveControlsVisible = false
             return
         }
         playerVisible = true
+        inlinePlaybackMode = "live"
         showLiveControls()
         const sameChannel = playbackController.activeContentKind === "live" && playbackController.activeChannelId === channel.id
         if (sameChannel && !forceRestart) {
@@ -840,6 +893,8 @@ ApplicationWindow {
 
     function closePlayer() {
         playerVisible = false
+        inlinePlaybackMode = "none"
+        selectedMovieId = ""
         liveControlsVisible = false
         playbackController.stop()
     }
@@ -905,7 +960,7 @@ ApplicationWindow {
                 liveControlsVisible = false
                 return
             }
-            if (liveNativeVolumeSlider.pressed) {
+            if (liveVolumeSlider.pressed) {
                 restart()
                 return
             }
@@ -1144,8 +1199,11 @@ ApplicationWindow {
         property string url: ""
         property color accentColor: service === "telegram" ? "#229ed9" : "#25d366"
         property bool interactive: safeText(url).length > 0
+        property string subtitle: service === "telegram" ? "Hızlı Destek" : "7/24 Anında Yanıt"
         width: 0
-        height: 104
+        height: 108
+        scale: supportMouse.containsMouse && supportLink.interactive ? 1.02 : 1.0
+        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
         Rectangle {
             id: supportSurface
@@ -1153,7 +1211,7 @@ ApplicationWindow {
             radius: 20
             color: supportMouse.containsMouse && supportLink.interactive ? "#141d2a" : "#0d131d"
             border.width: 1
-            border.color: supportMouse.containsMouse && supportLink.interactive ? "#2dffffff" : window.borderSoft
+            border.color: supportMouse.containsMouse && supportLink.interactive ? supportLink.accentColor : window.borderSoft
 
             Rectangle {
                 anchors.left: parent.left
@@ -1164,6 +1222,17 @@ ApplicationWindow {
                 radius: parent.radius
                 color: supportMouse.containsMouse && supportLink.interactive ? "#16ffffff" : "#0effffff"
             }
+            
+            // Subtle glow effect on hover
+            Rectangle {
+                anchors.fill: parent
+                radius: parent.radius
+                color: "transparent"
+                border.width: 2
+                border.color: supportLink.accentColor
+                opacity: supportMouse.containsMouse && supportLink.interactive ? 0.15 : 0
+                Behavior on opacity { NumberAnimation { duration: 200 } }
+            }
         }
 
         Row {
@@ -1172,19 +1241,16 @@ ApplicationWindow {
             spacing: 14
 
             Rectangle {
-                width: 54
-                height: 54
-                radius: 18
+                width: 56
+                height: 56
+                radius: 20
                 anchors.verticalCenter: parent.verticalCenter
-                gradient: Gradient {
-                    GradientStop { position: 0.0; color: Qt.lighter(supportLink.accentColor, 1.08) }
-                    GradientStop { position: 1.0; color: supportLink.accentColor }
-                }
+                color: supportLink.accentColor
 
                 Canvas {
                     id: supportIcon
                     anchors.fill: parent
-                    anchors.margins: 10
+                    anchors.margins: supportLink.service === "telegram" ? 12 : 10
                     antialiasing: true
                     onPaint: {
                         const ctx = getContext("2d")
@@ -1196,6 +1262,7 @@ ApplicationWindow {
                         ctx.fillStyle = "#ffffff"
 
                         if (supportLink.service === "telegram") {
+                            // Official Telegram paper plane icon
                             ctx.beginPath()
                             ctx.moveTo(width * 0.16, height * 0.52)
                             ctx.lineTo(width * 0.84, height * 0.18)
@@ -1210,27 +1277,41 @@ ApplicationWindow {
                             ctx.lineTo(width * 0.60, height * 0.38)
                             ctx.stroke()
                         } else {
-                            const bubbleRadius = width * 0.33
-                            ctx.lineWidth = Math.max(2.5, width * 0.09)
+                            // Official WhatsApp icon - speech bubble with phone
+                            const cx = width * 0.5
+                            const cy = height * 0.52
+                            const r = width * 0.38
+                            
+                            // Main bubble outline
+                            ctx.lineWidth = Math.max(2.2, width * 0.07)
+                            ctx.strokeStyle = "#ffffff"
                             ctx.beginPath()
-                            ctx.arc(width * 0.5, height * 0.44, bubbleRadius, 0, Math.PI * 2)
+                            ctx.arc(cx, cy - r * 0.1, r, Math.PI * 0.1, Math.PI * 0.78)
                             ctx.stroke()
-
                             ctx.beginPath()
-                            ctx.moveTo(width * 0.36, height * 0.70)
-                            ctx.lineTo(width * 0.30, height * 0.88)
-                            ctx.lineTo(width * 0.47, height * 0.78)
+                            ctx.arc(cx, cy - r * 0.1, r, Math.PI * 1.22, Math.PI * 1.9)
                             ctx.stroke()
-
+                            
+                            // Tail
                             ctx.beginPath()
-                            ctx.moveTo(width * 0.38, height * 0.37)
-                            ctx.quadraticCurveTo(width * 0.43, height * 0.30, width * 0.49, height * 0.36)
-                            ctx.lineTo(width * 0.57, height * 0.47)
-                            ctx.quadraticCurveTo(width * 0.63, height * 0.54, width * 0.58, height * 0.60)
-                            ctx.lineTo(width * 0.52, height * 0.66)
-                            ctx.quadraticCurveTo(width * 0.47, height * 0.71, width * 0.40, height * 0.64)
-                            ctx.lineTo(width * 0.31, height * 0.53)
-                            ctx.quadraticCurveTo(width * 0.26, height * 0.47, width * 0.32, height * 0.41)
+                            ctx.moveTo(cx - r * 0.65, cy + r * 0.35)
+                            ctx.lineTo(cx - r * 0.85, cy + r * 0.72)
+                            ctx.lineTo(cx - r * 0.38, cy + r * 0.55)
+                            ctx.stroke()
+                            
+                            // Phone handset inside
+                            ctx.fillStyle = "#ffffff"
+                            ctx.beginPath()
+                            ctx.moveTo(cx + r * 0.15, cy - r * 0.35)
+                            ctx.quadraticCurveTo(cx + r * 0.35, cy - r * 0.45, cx + r * 0.45, cy - r * 0.25)
+                            ctx.lineTo(cx + r * 0.55, cy - r * 0.08)
+                            ctx.quadraticCurveTo(cx + r * 0.60, cy + r * 0.05, cx + r * 0.50, cy + r * 0.18)
+                            ctx.lineTo(cx + r * 0.42, cy + r * 0.32)
+                            ctx.quadraticCurveTo(cx + r * 0.35, cy + r * 0.45, cx + r * 0.15, cy + r * 0.35)
+                            ctx.lineTo(cx + r * 0.05, cy + r * 0.22)
+                            ctx.quadraticCurveTo(cx - r * 0.02, cy + r * 0.12, cx + r * 0.08, cy + r * 0.02)
+                            ctx.lineTo(cx + r * 0.28, cy - r * 0.12)
+                            ctx.quadraticCurveTo(cx + r * 0.32, cy - r * 0.18, cx + r * 0.22, cy - r * 0.25)
                             ctx.closePath()
                             ctx.fill()
                         }
@@ -1240,7 +1321,7 @@ ApplicationWindow {
 
             Column {
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: 6
+                spacing: 4
 
                 Text {
                     text: supportLink.title
@@ -1251,9 +1332,11 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: supportLink.service === "telegram" ? "Telegram" : "WhatsApp"
-                    color: window.textMuted
-                    font.pixelSize: 13
+                    text: supportLink.subtitle
+                    color: supportLink.accentColor
+                    font.pixelSize: 12
+                    font.bold: true
+                    opacity: 0.9
                 }
             }
         }
@@ -1726,6 +1809,383 @@ ApplicationWindow {
         }
     }
 
+    Component {
+        id: inlineVodPlayerComponent
+        GlassCard {
+            color: "#090c13"
+            implicitHeight: window.compactWindow ? 760 : 820
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 18
+                spacing: 14
+
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Text {
+                            text: playbackKindLabel(playbackController.activeContentKind)
+                            color: "#c7ffffff"
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+
+                        Text {
+                            text: playbackController.activeTitle.length ? playbackController.activeTitle : "Player Hazir"
+                            color: window.textPrimary
+                            font.pixelSize: window.compactWindow ? 26 : 32
+                            font.family: "Space Grotesk"
+                            font.bold: true
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+
+                        Text {
+                            text: playerSubtitle
+                            color: window.textMuted
+                            font.pixelSize: 14
+                            visible: text.length > 0
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    AppButton {
+                        text: "Kapat"
+                        secondary: true
+                        implicitWidth: 120
+                        onClicked: closePlayer()
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    spacing: 16
+
+                    GlassCard {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        color: "#000000"
+
+                        Item {
+                            anchors.fill: parent
+
+                            Loader {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                active: true
+                                sourceComponent: nativeVideoSurfaceComponent
+                            }
+
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.top: parent.top
+                                anchors.margins: 18
+                                width: inlineVodStateLabel.implicitWidth + 28
+                                height: 40
+                                radius: 20
+                                color: "#c7070a0f"
+                                border.width: 1
+                                border.color: "#12ffffff"
+
+                                Text {
+                                    id: inlineVodStateLabel
+                                    anchors.centerIn: parent
+                                    text: playbackController.state === "buffering" ? "Buffer dolduruluyor" :
+                                          playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazirlaniyor" :
+                                          playbackController.state === "error" ? "Yayin acilamadi" :
+                                          playbackController.state === "playing" ? "Oynuyor" : "Hazir"
+                                    color: window.textPrimary
+                                    font.pixelSize: 13
+                                    font.bold: true
+                                }
+                            }
+
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                anchors.margins: 16
+                                height: inlineVodControls.implicitHeight + 28
+                                radius: 22
+                                color: "#c7070a0f"
+                                border.width: 1
+                                border.color: "#12ffffff"
+
+                                Column {
+                                    id: inlineVodControls
+                                    anchors.fill: parent
+                                    anchors.margins: 14
+                                    spacing: 14
+
+                                    Row {
+                                        width: parent.width
+                                        spacing: 12
+
+                                        Text {
+                                            text: formatPlaybackClock(playbackController.positionSeconds)
+                                            color: window.textPrimary
+                                            font.pixelSize: 13
+                                            font.bold: true
+                                        }
+
+                                        Rectangle {
+                                            width: Math.max(120, parent.width - 260)
+                                            height: 6
+                                            radius: 3
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            color: "#24ffffff"
+
+                                            Rectangle {
+                                                width: parent.width * playbackProgressRatio()
+                                                height: parent.height
+                                                radius: parent.radius
+                                                color: window.accentStrong
+                                            }
+                                        }
+
+                                        Text {
+                                            text: formatPlaybackClock(playbackController.durationSeconds)
+                                            color: window.textMuted
+                                            font.pixelSize: 13
+                                            font.bold: true
+                                        }
+                                    }
+
+                                    Flow {
+                                        width: parent.width
+                                        spacing: 12
+
+                                        AppButton {
+                                            text: playbackController.paused ? "Oynat" : "Durdur"
+                                            secondary: true
+                                            implicitWidth: 118
+                                            onClicked: playbackController.togglePause()
+                                        }
+
+                                        AppButton {
+                                            text: "-10 sn"
+                                            secondary: true
+                                            implicitWidth: 102
+                                            onClicked: playbackController.seekBy(-10)
+                                        }
+
+                                        AppButton {
+                                            text: "+10 sn"
+                                            secondary: true
+                                            implicitWidth: 102
+                                            onClicked: playbackController.seekBy(10)
+                                        }
+
+                                        AppButton {
+                                            text: "Tekrar Dene"
+                                            secondary: true
+                                            implicitWidth: 126
+                                            onClicked: playbackController.retryCurrent()
+                                        }
+
+                                        AppButton {
+                                            text: "Sonraki Bolum"
+                                            implicitWidth: 154
+                                            visible: Boolean(playbackController.recommendedNextEpisode.id)
+                                            enabled: visible
+                                            onClicked: playbackController.playRecommendedNextEpisode()
+                                        }
+
+                                        Row {
+                                            spacing: 10
+
+                                            Rectangle {
+                                                width: 44
+                                                height: 44
+                                                radius: 22
+                                                color: "#16ffffff"
+                                                border.width: 1
+                                                border.color: "#1effffff"
+
+                                                Canvas {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 11
+                                                    antialiasing: true
+                                                    onPaint: {
+                                                        const ctx = getContext("2d")
+                                                        ctx.reset()
+                                                        ctx.clearRect(0, 0, width, height)
+                                                        ctx.fillStyle = "#ffffff"
+                                                        ctx.strokeStyle = "#ffffff"
+                                                        ctx.lineWidth = 2.2
+                                                        ctx.lineCap = "round"
+                                                        ctx.lineJoin = "round"
+
+                                                        ctx.beginPath()
+                                                        ctx.moveTo(width * 0.14, height * 0.38)
+                                                        ctx.lineTo(width * 0.34, height * 0.38)
+                                                        ctx.lineTo(width * 0.54, height * 0.18)
+                                                        ctx.lineTo(width * 0.54, height * 0.82)
+                                                        ctx.lineTo(width * 0.34, height * 0.62)
+                                                        ctx.lineTo(width * 0.14, height * 0.62)
+                                                        ctx.closePath()
+                                                        ctx.fill()
+
+                                                        if (!(playbackController.muted || playbackController.volume <= 0)) {
+                                                            ctx.beginPath()
+                                                            ctx.arc(width * 0.58, height * 0.5, width * 0.12, -0.75, 0.75)
+                                                            ctx.stroke()
+                                                            ctx.beginPath()
+                                                            ctx.arc(width * 0.62, height * 0.5, width * 0.2, -0.75, 0.75)
+                                                            ctx.stroke()
+                                                        } else {
+                                                            ctx.beginPath()
+                                                            ctx.moveTo(width * 0.60, height * 0.28)
+                                                            ctx.lineTo(width * 0.84, height * 0.72)
+                                                            ctx.stroke()
+                                                        }
+                                                    }
+                                                }
+
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: playbackController.toggleMuted()
+                                                }
+                                            }
+
+                                            Slider {
+                                                id: inlineVodVolumeSlider
+                                                width: window.compactWindow ? 120 : 160
+                                                from: 0
+                                                to: 1
+                                                value: playbackController.muted ? 0 : playbackController.volume
+                                                stepSize: 0.01
+                                                onMoved: playbackController.setVolume(value)
+
+                                                background: Rectangle {
+                                                    x: inlineVodVolumeSlider.leftPadding
+                                                    y: inlineVodVolumeSlider.topPadding + inlineVodVolumeSlider.availableHeight / 2 - height / 2
+                                                    implicitWidth: 150
+                                                    implicitHeight: 6
+                                                    width: inlineVodVolumeSlider.availableWidth
+                                                    height: implicitHeight
+                                                    radius: 3
+                                                    color: "#24ffffff"
+
+                                                    Rectangle {
+                                                        width: inlineVodVolumeSlider.visualPosition * parent.width
+                                                        height: parent.height
+                                                        radius: 3
+                                                        color: window.accentStrong
+                                                    }
+                                                }
+
+                                                handle: Rectangle {
+                                                    x: inlineVodVolumeSlider.leftPadding + inlineVodVolumeSlider.visualPosition * (inlineVodVolumeSlider.availableWidth - width)
+                                                    y: inlineVodVolumeSlider.topPadding + inlineVodVolumeSlider.availableHeight / 2 - height / 2
+                                                    implicitWidth: 16
+                                                    implicitHeight: 16
+                                                    radius: 8
+                                                    color: "#ffffff"
+                                                    border.width: 1
+                                                    border.color: "#44ffffff"
+                                                }
+                                            }
+
+                                            ComboBox {
+                                                width: window.compactWindow ? 170 : 220
+                                                model: playbackController.audioTracks
+                                                textRole: "title"
+                                                enabled: playbackController.audioTracks.length > 0
+                                                currentIndex: activeAudioTrackIndex()
+                                                onActivated: function(index) {
+                                                    const track = playbackController.audioTracks[index]
+                                                    if (track && track.id) playbackController.selectAudioTrack(track.id)
+                                                }
+                                            }
+
+                                            AppButton {
+                                                text: window.visibility === Window.FullScreen ? "Pencereli" : "Tam Ekran"
+                                                secondary: true
+                                                implicitWidth: 142
+                                                onClicked: toggleWindowFullscreen()
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: playbackController.lastError
+                                        color: "#ffb2b8"
+                                        font.pixelSize: 13
+                                        width: parent.width
+                                        wrapMode: Text.WordWrap
+                                        visible: playbackController.lastError.length > 0
+                                    }
+                                }
+                            }
+                        }
+
+                        Connections {
+                            target: playbackController
+                            function onVolumeChanged() { inlineVodVolumeSlider.value = playbackController.muted ? 0 : playbackController.volume }
+                            function onMutedChanged() { inlineVodVolumeSlider.value = playbackController.muted ? 0 : playbackController.volume }
+                        }
+                    }
+
+                    GlassCard {
+                        Layout.preferredWidth: window.compactWindow ? 260 : 320
+                        Layout.fillHeight: true
+                        color: "#090c13"
+
+                        Column {
+                            anchors.fill: parent
+                            anchors.margins: 18
+                            spacing: 12
+
+                            Text {
+                                text: "Yayin Bilgisi"
+                                color: window.textPrimary
+                                font.pixelSize: 20
+                                font.family: "Space Grotesk"
+                                font.bold: true
+                            }
+
+                            Rectangle {
+                                width: parent.width
+                                height: window.compactWindow ? 148 : 180
+                                radius: 22
+                                color: "#08ffffff"
+                                border.width: 1
+                                border.color: window.borderSoft
+
+                                ArtworkPanel {
+                                    anchors.fill: parent
+                                    title: playbackController.activeTitle.length ? playbackController.activeTitle : "Flixify"
+                                    subtitle: playerSubtitle
+                                    sourceUrl: playerImageUrl
+                                    kind: playbackController.activeContentKind || "movie"
+                                    mode: playbackController.activeContentKind === "live" ? "logo" : "poster"
+                                    cornerRadius: 22
+                                }
+                            }
+
+                            Text {
+                                text: playbackController.lastError.length ? playbackController.lastError : "Native player app icinde hazir."
+                                width: parent.width
+                                wrapMode: Text.WordWrap
+                                color: playbackController.lastError.length ? "#ffb2b8" : window.textMuted
+                                font.pixelSize: 14
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         color: "#020307"
@@ -1797,12 +2257,14 @@ ApplicationWindow {
 
                         Text {
                             text: currentScreen === "register"
-                                  ? (issuedCode.length ? "Hesabınız oluşturuldu" : "Yeni bir hesap numarası oluşturun")
+                                  ? (issuedCode.length ? "Hesabınız oluşturuldu" : "Anonim ve takip edilemez.\nGüvenliğiniz için tasarlandı.")
                                   : "16 haneli erişim kodunuzu girin"
                             color: "#d7dce6"
-                            font.pixelSize: 18
+                            font.pixelSize: currentScreen === "register" && !issuedCode.length ? 16 : 18
+                            font.letterSpacing: 0.3
                             width: parent.width
                             horizontalAlignment: Text.AlignHCenter
+                            lineHeight: 1.4
                         }
 
                         Column {
@@ -1996,25 +2458,7 @@ ApplicationWindow {
                                 Column {
                                     anchors.fill: parent
                                     anchors.margins: 22
-                                    spacing: 16
-
-                                    Rectangle {
-                                        width: createLabel.implicitWidth + 26
-                                        height: 34
-                                        radius: 17
-                                        color: "#19e50914"
-                                        border.width: 1
-                                        border.color: "#22ffffff"
-
-                                        Text {
-                                            id: createLabel
-                                            anchors.centerIn: parent
-                                            text: "16 Haneli Kod"
-                                            color: "#ffd7da"
-                                            font.pixelSize: 12
-                                            font.bold: true
-                                        }
-                                    }
+                                    spacing: 20
 
                                     Row {
                                         width: parent.width
@@ -2033,22 +2477,36 @@ ApplicationWindow {
                                     }
 
                                     Text {
-                                        text: "16 haneli özel erişim kodu"
+                                        text: "Kimsenin bilmediği, sadece size özel anahtar"
                                         width: parent.width
                                         horizontalAlignment: Text.AlignHCenter
-                                        color: window.textMuted
-                                        font.pixelSize: 13
-                                        font.letterSpacing: 0.6
+                                        color: "#9fb0c9"
+                                        font.pixelSize: 14
+                                        font.letterSpacing: 0.4
+                                        font.italic: true
                                     }
                                 }
                             }
 
                             AppButton {
+                                id: createAccountBtn
                                 width: parent.width
-                                implicitHeight: 58
-                                text: apiClient.busy ? "Şifreli Anahtar Üretiliyor..." : "Hesap Numarası Oluştur"
+                                implicitHeight: 62
+                                text: apiClient.busy ? "🔐 Şifreli Anahtar Üretiliyor..." : "🔒 Güvenli Hesap Oluştur"
                                 enabled: !apiClient.busy
                                 onClicked: apiClient.issueAnonCode(registerDeviceName)
+                                
+                                // Glow efekti için ek layer
+                                Rectangle {
+                                    anchors.fill: parent
+                                    anchors.margins: -4
+                                    radius: parent.radius + 4
+                                    color: "transparent"
+                                    border.width: 1
+                                    border.color: "#30e50914"
+                                    opacity: createAccountBtn.hovered && createAccountBtn.enabled ? 1 : 0
+                                    Behavior on opacity { NumberAnimation { duration: 200 } }
+                                }
                             }
 
                             AppButton {
@@ -2790,7 +3248,7 @@ ApplicationWindow {
 
                                                     window: Window {
                                                         flags: Qt.FramelessWindowHint
-                                                        visible: true
+                                                        visible: false
                                                         color: "transparent"
 
                                                         Item {
@@ -3608,8 +4066,15 @@ ApplicationWindow {
                                         }
                                     }
                                 }
+                                Loader {
+                                    width: parent.width
+                                    active: inlineMoviePlayerVisible()
+                                    visible: active
+                                    sourceComponent: inlineVodPlayerComponent
+                                }
                                 Flow {
                                     width: parent.width
+                                    visible: !inlineMoviePlayerVisible()
                                     spacing: window.cardGap
                                     Repeater {
                                         model: filteredMovies()
@@ -3631,7 +4096,7 @@ ApplicationWindow {
                                     color: "#10ffffff"
                                     border.width: 1
                                     border.color: "#18ffffff"
-                                    visible: apiClient.movieHasMore || apiClient.movieLoadingMore
+                                    visible: !inlineMoviePlayerVisible() && (apiClient.movieHasMore || apiClient.movieLoadingMore)
 
                                     Text {
                                         anchors.centerIn: parent
@@ -3650,7 +4115,7 @@ ApplicationWindow {
                                 GlassCard {
                                     width: parent.width
                                     height: 180
-                                    visible: filteredMovies().length === 0
+                                    visible: !inlineMoviePlayerVisible() && filteredMovies().length === 0
                                     color: "#090c13"
                                     Column {
                                         anchors.centerIn: parent
@@ -3696,7 +4161,14 @@ ApplicationWindow {
                                 bottomPadding: window.compactWindow ? 24 : 28
                                 spacing: window.sectionSpacing
                                 AppButton { text: "Dizilere Dön"; secondary: true; implicitWidth: 140; onClicked: openScreen("series") }
+                                Loader {
+                                    width: parent.width
+                                    active: inlineEpisodePlayerVisible()
+                                    visible: active
+                                    sourceComponent: inlineVodPlayerComponent
+                                }
                                 Flow {
+                                    visible: !inlineEpisodePlayerVisible()
                                     width: parent.width; spacing: window.cardGap
                                     GlassCard { width: window.compactWindow ? parent.width : 320; height: window.compactWindow ? 380 : 460; color: "#090c13"; ArtworkPanel { anchors.fill: parent; title: selectedSeries() ? selectedSeries().title : "Dizi"; subtitle: selectedSeries() ? (selectedSeries().groupTitle || "Premium Dizi") : "Premium Dizi"; sourceUrl: selectedSeries() ? (selectedSeries().posterUrl || "") : ""; kind: "episode"; mode: "poster"; cornerRadius: 28 } }
                                     GlassCard {
