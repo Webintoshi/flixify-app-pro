@@ -8,8 +8,8 @@ ApplicationWindow {
     id: window
     width: 1540
     height: 960
-    minimumWidth: 1240
-    minimumHeight: 820
+    minimumWidth: 980
+    minimumHeight: 700
     visible: true
     title: "Flixify Pro"
     color: "#05070b"
@@ -25,6 +25,40 @@ ApplicationWindow {
     readonly property color success: "#30d19d"
     readonly property color danger: "#ff7d86"
     readonly property color info: "#7cb6ff"
+    readonly property bool compactWindow: width < 1180
+    readonly property bool mediumWindow: width < 1440
+    readonly property bool shortWindow: height < 820
+    readonly property real shellPadding: compactWindow ? 18 : 24
+    readonly property real sectionSpacing: compactWindow ? 16 : 20
+    readonly property real heroHeight: compactWindow ? 500 : mediumWindow ? 540 : 580
+    readonly property real authPanelWidth: Math.min(width - 32, currentScreen === "register" ? (compactWindow ? 520 : 560) : (compactWindow ? 440 : 460))
+    readonly property real restorePanelWidth: Math.min(width - 32, compactWindow ? 460 : 520)
+    readonly property real blockedPanelWidth: Math.min(width - 32, compactWindow ? 560 : 720)
+    readonly property real modalPanelWidth: Math.min(width - 32, compactWindow ? width - 32 : 740)
+    readonly property real premiumPanelWidth: Math.min(width - 32, compactWindow ? width - 32 : 700)
+    readonly property real profileTileWidth: compactWindow ? 0 : 1
+    readonly property real cardGap: compactWindow ? 16 : 18
+    readonly property real posterCardWidth: compactWindow ? 186 : mediumWindow ? 204 : 222
+    readonly property real railCardWidth: compactWindow ? 236 : mediumWindow ? 260 : 286
+    readonly property real railCardHeight: compactWindow ? 388 : mediumWindow ? 404 : 420
+    readonly property real profileCardWidth: compactWindow ? 0 : 1
+
+    function clampValue(value, minValue, maxValue) {
+        return Math.max(minValue, Math.min(maxValue, value))
+    }
+
+    function pageWidth(containerWidth) {
+        return Math.max(320, containerWidth - shellPadding * 2)
+    }
+
+    function gridColumns(availableWidth, minCardWidth, maxColumns) {
+        return Math.max(1, Math.min(maxColumns, Math.floor((availableWidth + cardGap) / (minCardWidth + cardGap))))
+    }
+
+    function gridCardWidth(availableWidth, minCardWidth, maxColumns) {
+        const columns = gridColumns(availableWidth, minCardWidth, maxColumns)
+        return Math.floor((availableWidth - (columns - 1) * cardGap) / columns)
+    }
 
     property string currentScreen: "login"
     property string authCode: ""
@@ -814,8 +848,8 @@ ApplicationWindow {
         required property var item
         required property string cardKind
         signal activated(var item)
-        width: 286
-        height: 420
+        width: window.railCardWidth
+        height: window.railCardHeight
 
         Rectangle {
             anchors.fill: parent
@@ -912,8 +946,8 @@ ApplicationWindow {
         required property var item
         required property string cardKind
         signal activated(var item)
-        width: 222
-        height: 382
+        width: window.posterCardWidth
+        height: Math.round(window.posterCardWidth * 1.72)
 
         Rectangle {
             id: posterVisual
@@ -1063,7 +1097,7 @@ ApplicationWindow {
 
             ColumnLayout {
                 anchors.centerIn: parent
-                width: currentScreen === "register" ? 560 : 460
+                width: window.authPanelWidth
                 spacing: 18
 
                 GlassCard {
@@ -1075,7 +1109,7 @@ ApplicationWindow {
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.top: parent.top
-                        anchors.margins: 28
+                        anchors.margins: window.compactWindow ? 22 : 28
                         spacing: 18
 
                         Row {
@@ -1580,12 +1614,12 @@ ApplicationWindow {
 
             ColumnLayout {
                 anchors.centerIn: parent
-                width: 520
+                width: window.restorePanelWidth
                 spacing: 18
 
                 GlassCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 220
+                    Layout.preferredHeight: window.shortWindow ? 196 : 220
                     color: window.panelStrong
 
                     Column {
@@ -1636,14 +1670,14 @@ ApplicationWindow {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 104
+                    Layout.preferredHeight: window.compactWindow ? 92 : 104
                     color: "#ee010204"
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 28
-                        anchors.rightMargin: 28
-                        spacing: 24
+                        anchors.leftMargin: window.compactWindow ? 18 : 28
+                        anchors.rightMargin: window.compactWindow ? 18 : 28
+                        spacing: window.compactWindow ? 16 : 24
 
                         Row {
                             spacing: 14
@@ -1654,9 +1688,19 @@ ApplicationWindow {
 
                         Item {
                             Layout.fillWidth: true
-                            Row {
-                                anchors.centerIn: parent
-                                spacing: 32
+                            Flickable {
+                                anchors.fill: parent
+                                contentWidth: navRow.width
+                                contentHeight: height
+                                clip: true
+                                interactive: navRow.width > width
+
+                                Row {
+                                    id: navRow
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    x: window.compactWindow ? 0 : Math.max(0, (parent.width - width) / 2)
+                                    spacing: window.compactWindow ? 22 : 32
+                                
                                 Repeater {
                                     model: [
                                         { key: "home", label: "Ana Sayfa" },
@@ -1671,15 +1715,16 @@ ApplicationWindow {
                                         onClicked: openScreen(modelData.key)
                                     }
                                 }
+                                }
                             }
                         }
 
                         Rectangle {
-                            width: 232; height: 62; radius: 31; color: "#0affffff"; border.width: 1; border.color: window.borderSoft
+                            width: window.compactWindow ? 184 : 232; height: window.compactWindow ? 56 : 62; radius: height / 2; color: "#0affffff"; border.width: 1; border.color: window.borderSoft
                             Row {
                                 anchors.fill: parent; anchors.margins: 6; spacing: 12
                                 Rectangle { width: 50; height: 50; radius: 25; color: "#10ffffff"; anchors.verticalCenter: parent.verticalCenter; Text { anchors.centerIn: parent; text: "-"; color: window.textPrimary; font.pixelSize: 28 } }
-                                Text { anchors.verticalCenter: parent.verticalCenter; width: 150; elide: Text.ElideRight; text: userData().kryptoniteCode || "Profil"; color: window.textPrimary; font.pixelSize: 14; font.bold: true }
+                                Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 80; elide: Text.ElideRight; text: userData().kryptoniteCode || "Profil"; color: window.textPrimary; font.pixelSize: window.compactWindow ? 13 : 14; font.bold: true }
                             }
                             MouseArea { anchors.fill: parent; onClicked: openScreen("profile") }
                         }
@@ -1772,27 +1817,27 @@ ApplicationWindow {
                         ScrollView {
                             clip: true
                             Column {
-                                width: pageStack.width - 48
-                                x: 24
-                                topPadding: 20
-                                bottomPadding: 28
-                                spacing: 22
+                                width: window.pageWidth(pageStack.width)
+                                x: window.shellPadding
+                                topPadding: window.compactWindow ? 18 : 20
+                                bottomPadding: window.compactWindow ? 24 : 28
+                                spacing: window.compactWindow ? 18 : 22
                                 GlassCard {
                                     width: parent.width
-                                    height: 580
+                                    height: window.heroHeight
                                     visible: homeHeroItem() !== null
                                     Item {
                                         anchors.fill: parent
                                         ArtworkPanel { anchors.fill: parent; title: homeHeroItem() ? homeHeroItem().title : "Flixify"; subtitle: homeHeroItem() ? (homeHeroItem().subtitle || "") : ""; sourceUrl: homeHeroItem() ? (homeHeroItem().posterUrl || homeHeroItem().logoUrl || "") : ""; kind: homeHeroItem() ? homeHeroItem().kind : "movie"; mode: homeHeroItem() && homeHeroItem().kind === "live" ? "logo" : "poster"; cornerRadius: 28 }
                                         Rectangle { anchors.fill: parent; radius: 28; gradient: Gradient { GradientStop { position: 0.0; color: "#3305070b" } GradientStop { position: 0.48; color: "#8a05070b" } GradientStop { position: 1.0; color: "#f005070b" } } }
                                         Row {
-                                            anchors.fill: parent; anchors.margins: 34; spacing: 24
+                                            anchors.fill: parent; anchors.margins: window.compactWindow ? 22 : 34; spacing: window.compactWindow ? 18 : 24
                                             Column {
-                                                width: parent.width * 0.62; anchors.verticalCenter: parent.verticalCenter; spacing: 14
+                                                width: window.compactWindow ? parent.width * 0.6 : parent.width * 0.62; anchors.verticalCenter: parent.verticalCenter; spacing: 14
                                                 Rectangle { width: 180; height: 34; radius: 17; color: "#14ffffff"; Text { anchors.centerIn: parent; text: homeHeroItem() && homeHeroItem().kind === "movie" ? "Flixify Film Selection" : homeHeroItem() && homeHeroItem().kind === "live" ? "Canli Yayin Spotlight" : "Binge-Worthy Series"; color: "#d8ffffff"; font.pixelSize: 12; font.bold: true } }
-                                                Text { width: parent.width; wrapMode: Text.WordWrap; text: homeHeroItem() ? homeHeroItem().title : ""; color: window.textPrimary; font.pixelSize: 64; font.family: "Space Grotesk"; font.bold: true }
+                                                Text { width: parent.width; wrapMode: Text.WordWrap; text: homeHeroItem() ? homeHeroItem().title : ""; color: window.textPrimary; font.pixelSize: window.compactWindow ? 44 : window.mediumWindow ? 54 : 64; font.family: "Space Grotesk"; font.bold: true }
                                                 Row { spacing: 10; Rectangle { width: subscriptionPill.implicitWidth + 28; height: 34; radius: 17; color: "#33e50914"; Text { id: subscriptionPill; anchors.centerIn: parent; text: subscriptionLabel(); color: "#ffd7da"; font.pixelSize: 12; font.bold: true } } }
-                                                Text { width: parent.width * 0.82; wrapMode: Text.WordWrap; text: homeHeroItem() && homeHeroItem().kind === "movie" ? "Poster odakli premium film secimi ve native player deneyimi." : homeHeroItem() && homeHeroItem().kind === "live" ? "Canli spor, haber ve premium yayinlar branded shell icinde yonetilir." : "Yeni sezonlar ve otomatik sonraki bolum akisi ile premium dizi deneyimi."; color: "#d7dce6"; font.pixelSize: 16 }
+                                                Text { width: parent.width * (window.compactWindow ? 0.95 : 0.82); wrapMode: Text.WordWrap; text: homeHeroItem() && homeHeroItem().kind === "movie" ? "Poster odakli premium film secimi ve native player deneyimi." : homeHeroItem() && homeHeroItem().kind === "live" ? "Canli spor, haber ve premium yayinlar branded shell icinde yonetilir." : "Yeni sezonlar ve otomatik sonraki bolum akisi ile premium dizi deneyimi."; color: "#d7dce6"; font.pixelSize: window.compactWindow ? 15 : 16 }
                                                 Row {
                                                     spacing: 12
                                                     AppButton { text: homeHeroItem() && homeHeroItem().kind === "live" ? "Canliyi Ac" : homeHeroItem() && homeHeroItem().kind === "movie" ? "Filmi Oynat" : "Diziyi Baslat"; implicitWidth: 180; onClicked: { if (homeHeroItem().kind === "movie") playMovie(apiClient.movieById(homeHeroItem().id)); else if (homeHeroItem().kind === "episode") playEpisode(apiClient.episodeById(homeHeroItem().id), apiClient.seriesById(homeHeroItem().seriesId)); else playLive(apiClient.liveChannelById(homeHeroItem().id)) } }
@@ -1800,7 +1845,7 @@ ApplicationWindow {
                                                 }
                                             }
                                             Column {
-                                                width: parent.width * 0.28; anchors.verticalCenter: parent.verticalCenter; spacing: 14
+                                                width: window.compactWindow ? parent.width * 0.32 : parent.width * 0.28; anchors.verticalCenter: parent.verticalCenter; spacing: 14
                                                 GlassCard {
                                                     width: parent.width; height: 188; color: "#d8080b10"
                                                     Column {
@@ -1888,7 +1933,7 @@ ApplicationWindow {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
-                                    spacing: 20
+                                    spacing: window.sectionSpacing
                                     GlassCard {
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
@@ -2074,7 +2119,7 @@ ApplicationWindow {
 
                                                         Slider {
                                                             id: liveVolumeSlider
-                                                            Layout.preferredWidth: 180
+                                                            Layout.preferredWidth: window.compactWindow ? 144 : 180
                                                             Layout.alignment: Qt.AlignVCenter
                                                             from: 0
                                                             to: 1
@@ -2166,7 +2211,7 @@ ApplicationWindow {
                                     }
 
                                     GlassCard {
-                                        Layout.preferredWidth: 420
+                                        Layout.preferredWidth: window.compactWindow ? 360 : 420
                                         Layout.fillHeight: true
                                         color: "#0a0f18"
 
@@ -2293,17 +2338,17 @@ ApplicationWindow {
                         ScrollView {
                             clip: true
                             Column {
-                                width: pageStack.width - 48
-                                x: 24
-                                topPadding: 20
-                                bottomPadding: 28
-                                spacing: 20
+                                width: window.pageWidth(pageStack.width)
+                                x: window.shellPadding
+                                topPadding: window.compactWindow ? 18 : 20
+                                bottomPadding: window.compactWindow ? 24 : 28
+                                spacing: window.sectionSpacing
                                 Text { text: "Filmler"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true }
                                 AppField { width: parent.width; placeholderText: "Film ara..."; text: moviesSearchText; onTextChanged: moviesSearchText = text }
                                 Flickable { width: parent.width; height: 52; contentWidth: movieChipRow.width; clip: true; Row { id: movieChipRow; spacing: 10; Repeater { model: [""] .concat(uniqueGroups(apiClient.movies || [])); ChipButton { required property var modelData; text: modelData.length ? modelData : "Tum Filmler"; active: selectedMovieGroup === modelData; width: Math.max(112, implicitContentWidth + 28); onClicked: selectedMovieGroup = modelData } } } }
                                 Flow {
                                     width: parent.width
-                                    spacing: 20
+                                    spacing: window.cardGap
                                     Repeater {
                                         model: filteredMovies()
                                         PosterGridCard {
@@ -2341,37 +2386,37 @@ ApplicationWindow {
                         ScrollView {
                             clip: true
                             Column {
-                                width: pageStack.width - 48
-                                x: 24
-                                topPadding: 20
-                                bottomPadding: 28
-                                spacing: 20
+                                width: window.pageWidth(pageStack.width)
+                                x: window.shellPadding
+                                topPadding: window.compactWindow ? 18 : 20
+                                bottomPadding: window.compactWindow ? 24 : 28
+                                spacing: window.sectionSpacing
                                 Text { text: "Diziler"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true }
                                 AppField { width: parent.width; placeholderText: "Dizi ara..."; text: seriesSearchText; onTextChanged: seriesSearchText = text }
                                 Flickable { width: parent.width; height: 52; contentWidth: seriesChipRow.width; clip: true; Row { id: seriesChipRow; spacing: 10; Repeater { model: [""] .concat(uniqueGroups(apiClient.series || [])); ChipButton { required property var modelData; text: modelData.length ? modelData : "Tum Diziler"; active: selectedSeriesGroup === modelData; width: Math.max(112, implicitContentWidth + 28); onClicked: selectedSeriesGroup = modelData } } } }
-                                Flow { width: parent.width; spacing: 20; Repeater { model: filteredSeries(); RailCard { width: 282; height: 430; item: ({ id: modelData.id, title: modelData.title, subtitle: `${modelData.seasonCount} sezon - ${modelData.episodeCount} bolum`, posterUrl: modelData.posterUrl, playbackAllowed: Boolean(modelData.featuredEpisode && modelData.featuredEpisode.playbackAllowed) }); cardKind: "episode"; onActivated: openSeriesDetail(modelData.id) } } }
+                                Flow { width: parent.width; spacing: window.cardGap; Repeater { model: filteredSeries(); RailCard { item: ({ id: modelData.id, title: modelData.title, subtitle: `${modelData.seasonCount} sezon - ${modelData.episodeCount} bolum`, posterUrl: modelData.posterUrl, playbackAllowed: Boolean(modelData.featuredEpisode && modelData.featuredEpisode.playbackAllowed) }); cardKind: "episode"; onActivated: openSeriesDetail(modelData.id) } } }
                             }
                         }
 
                         ScrollView {
                             clip: true
                             Column {
-                                width: pageStack.width - 48
-                                x: 24
-                                topPadding: 20
-                                bottomPadding: 28
-                                spacing: 20
+                                width: window.pageWidth(pageStack.width)
+                                x: window.shellPadding
+                                topPadding: window.compactWindow ? 18 : 20
+                                bottomPadding: window.compactWindow ? 24 : 28
+                                spacing: window.sectionSpacing
                                 AppButton { text: "Dizilere Don"; secondary: true; implicitWidth: 140; onClicked: openScreen("series") }
-                                Row {
-                                    width: parent.width; spacing: 24
-                                    GlassCard { width: 320; height: 460; color: "#090c13"; ArtworkPanel { anchors.fill: parent; title: selectedSeries() ? selectedSeries().title : "Dizi"; subtitle: selectedSeries() ? (selectedSeries().groupTitle || "Premium Dizi") : "Premium Dizi"; sourceUrl: selectedSeries() ? (selectedSeries().posterUrl || "") : ""; kind: "episode"; mode: "poster"; cornerRadius: 28 } }
+                                Flow {
+                                    width: parent.width; spacing: window.cardGap
+                                    GlassCard { width: window.compactWindow ? parent.width : 320; height: window.compactWindow ? 380 : 460; color: "#090c13"; ArtworkPanel { anchors.fill: parent; title: selectedSeries() ? selectedSeries().title : "Dizi"; subtitle: selectedSeries() ? (selectedSeries().groupTitle || "Premium Dizi") : "Premium Dizi"; sourceUrl: selectedSeries() ? (selectedSeries().posterUrl || "") : ""; kind: "episode"; mode: "poster"; cornerRadius: 28 } }
                                     GlassCard {
-                                        width: parent.width - 344; height: 460; color: "#090c13"
+                                        width: window.compactWindow ? parent.width : parent.width - (320 + window.cardGap); height: window.compactWindow ? 320 : 460; color: "#090c13"
                                         Column {
-                                            anchors.fill: parent; anchors.margins: 28; spacing: 14
-                                            Text { text: selectedSeries() ? selectedSeries().title : "Dizi secin"; color: window.textPrimary; font.pixelSize: 46; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap }
+                                            anchors.fill: parent; anchors.margins: window.compactWindow ? 22 : 28; spacing: 14
+                                            Text { text: selectedSeries() ? selectedSeries().title : "Dizi secin"; color: window.textPrimary; font.pixelSize: window.compactWindow ? 34 : 46; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap }
                                             Text { text: selectedSeries() ? (selectedSeries().groupTitle || "Seckin dizi") : ""; color: window.textMuted; font.pixelSize: 16 }
-                                            Text { width: parent.width * 0.8; wrapMode: Text.WordWrap; text: "Sezonlari gezin, bolumu secin ve native player yuzeyinde branded playback deneyimini kullanin."; color: window.textMuted; font.pixelSize: 15 }
+                                            Text { width: parent.width * (window.compactWindow ? 1.0 : 0.8); wrapMode: Text.WordWrap; text: "Sezonlari gezin, bolumu secin ve native player yuzeyinde branded playback deneyimini kullanin."; color: window.textMuted; font.pixelSize: 15 }
                                             AppButton { text: "One Cikan Bolumu Ac"; implicitWidth: 190; enabled: selectedSeries() && selectedSeries().featuredEpisode && selectedSeries().featuredEpisode.id; onClicked: playEpisode(selectedSeries().featuredEpisode, selectedSeries()) }
                                         }
                                     }
@@ -2405,11 +2450,11 @@ ApplicationWindow {
                         ScrollView {
                             clip: true
                             Column {
-                                width: pageStack.width - 48
-                                x: 24
-                                topPadding: 20
-                                bottomPadding: 28
-                                spacing: 20
+                                width: window.pageWidth(pageStack.width)
+                                x: window.shellPadding
+                                topPadding: window.compactWindow ? 18 : 20
+                                bottomPadding: window.compactWindow ? 24 : 28
+                                spacing: window.sectionSpacing
                                 Text { text: "Profil"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true }
                                 Flow {
                                     width: parent.width; spacing: 18
@@ -2421,7 +2466,7 @@ ApplicationWindow {
                                             { title: "Iletisim", copy: "Destek ekibine WhatsApp veya Telegram uzerinden ulasin.", action: "Iletisime Gec", screen: "contact" }
                                         ]
                                         GlassCard {
-                                            width: (parent.width - 18) / 2; height: 210; color: "#090c13"
+                                            width: window.compactWindow ? parent.width : window.gridCardWidth(parent.width, 280, 2); height: 210; color: "#090c13"
                                             Column { anchors.fill: parent; anchors.margins: 22; spacing: 12; Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 26; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap } Text { text: modelData.copy; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 14 } AppButton { text: modelData.action; secondary: modelData.screen !== "packages"; implicitWidth: 160; onClicked: openScreen(modelData.screen) } }
                                         }
                                     }
@@ -2432,18 +2477,18 @@ ApplicationWindow {
                         ScrollView {
                             clip: true
                             Column {
-                                width: pageStack.width - 48
-                                x: 24
-                                topPadding: 20
-                                bottomPadding: 28
-                                spacing: 20
+                                width: window.pageWidth(pageStack.width)
+                                x: window.shellPadding
+                                topPadding: window.compactWindow ? 18 : 20
+                                bottomPadding: window.compactWindow ? 24 : 28
+                                spacing: window.sectionSpacing
                                 Row { spacing: 12; AppButton { text: "Geri"; secondary: true; implicitWidth: 110; onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "Paketler"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
                                 Flow {
                                     width: parent.width; spacing: 18
                                     Repeater {
                                         model: apiClient.packages
                                         GlassCard {
-                                            width: (parent.width - 36) / 3; height: 240; color: "#090c13"
+                                            width: window.gridCardWidth(parent.width, 250, 3); height: 240; color: "#090c13"
                                             Column { anchors.fill: parent; anchors.margins: 22; spacing: 10; Rectangle { width: 82; height: 34; radius: 17; color: "#14ffffff"; Text { anchors.centerIn: parent; text: `${modelData.durationMonths} ay`; color: window.textPrimary; font.pixelSize: 12; font.bold: true } } Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 30; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap } Text { text: modelData.priceLabel || "Fiyat bilgisi destek ekibinden alinir."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 14 } AppButton { text: "Paket Al"; implicitWidth: 132; onClicked: { pendingPackage = modelData; selectedPaymentMethodId = ""; apiClient.fetchPaymentMethods() } } }
                                         }
                                     }
@@ -2454,11 +2499,11 @@ ApplicationWindow {
                         ScrollView {
                             clip: true
                             Column {
-                                width: pageStack.width - 48
-                                x: 24
-                                topPadding: 20
-                                bottomPadding: 28
-                                spacing: 20
+                                width: window.pageWidth(pageStack.width)
+                                x: window.shellPadding
+                                topPadding: window.compactWindow ? 18 : 20
+                                bottomPadding: window.compactWindow ? 24 : 28
+                                spacing: window.sectionSpacing
                                 Row { spacing: 12; AppButton { text: "Geri"; secondary: true; implicitWidth: 110; onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "Odeme Bildirimi"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
                                 Repeater {
                                     model: apiClient.paymentRequests
@@ -2470,11 +2515,11 @@ ApplicationWindow {
                         ScrollView {
                             clip: true
                             Column {
-                                width: pageStack.width - 48
-                                x: 24
-                                topPadding: 20
-                                bottomPadding: 28
-                                spacing: 20
+                                width: window.pageWidth(pageStack.width)
+                                x: window.shellPadding
+                                topPadding: window.compactWindow ? 18 : 20
+                                bottomPadding: window.compactWindow ? 24 : 28
+                                spacing: window.sectionSpacing
                                 Row { spacing: 12; AppButton { text: "Geri"; secondary: true; implicitWidth: 110; onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "Ayarlar"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
                                 Flow {
                                     width: parent.width; spacing: 18
@@ -2485,7 +2530,7 @@ ApplicationWindow {
                                             { label: "Link Durumu", value: userData().hasAssignedLink ? "Bagli" : "Admin atamasi bekleniyor" },
                                             { label: "Abonelik", value: subscriptionLabel() }
                                         ]
-                                        GlassCard { width: (parent.width - 18) / 2; height: 126; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 8; Text { text: modelData.label; color: window.textMuted; font.pixelSize: 13 } Text { text: modelData.value; width: parent.width; wrapMode: Text.WordWrap; color: window.textPrimary; font.pixelSize: 22; font.family: "Space Grotesk"; font.bold: true } } }
+                                        GlassCard { width: window.compactWindow ? parent.width : window.gridCardWidth(parent.width, 280, 2); height: 126; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 8; Text { text: modelData.label; color: window.textMuted; font.pixelSize: 13 } Text { text: modelData.value; width: parent.width; wrapMode: Text.WordWrap; color: window.textPrimary; font.pixelSize: 22; font.family: "Space Grotesk"; font.bold: true } } }
                                     }
                                 }
                                 Row { spacing: 12; AppButton { text: "Paketler"; implicitWidth: 128; onClicked: openScreen("packages") } AppButton { text: "Odemeler"; secondary: true; implicitWidth: 128; onClicked: openScreen("payments") } AppButton { text: "Iletisim"; secondary: true; implicitWidth: 128; onClicked: openScreen("contact") } }
@@ -2495,11 +2540,11 @@ ApplicationWindow {
                         ScrollView {
                             clip: true
                             Column {
-                                width: pageStack.width - 48
-                                x: 24
-                                topPadding: 20
-                                bottomPadding: 28
-                                spacing: 20
+                                width: window.pageWidth(pageStack.width)
+                                x: window.shellPadding
+                                topPadding: window.compactWindow ? 18 : 20
+                                bottomPadding: window.compactWindow ? 24 : 28
+                                spacing: window.sectionSpacing
                                 Row { spacing: 12; AppButton { text: "Geri"; secondary: true; implicitWidth: 110; onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "Iletisim"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
                                 GlassCard {
                                     width: parent.width; height: 200; color: "#090c13"
@@ -2522,11 +2567,11 @@ ApplicationWindow {
             visible: shouldShowBlocked()
             ColumnLayout {
                 anchors.centerIn: parent
-                width: 720
+                width: window.blockedPanelWidth
                 spacing: 18
                 GlassCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 250
+                    Layout.preferredHeight: window.shortWindow ? 220 : 250
                     color: "#0a0d14"
                     Column { anchors.fill: parent; anchors.margins: 28; spacing: 14; Text { text: "Erisim Durdu"; color: window.textPrimary; font.pixelSize: 44; font.family: "Space Grotesk"; font.bold: true } Text { text: "Hesabiniz su anda engelli. Destek ekibi ile iletisime gecerek tekrar aktivasyon talep edebilirsiniz."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 16 } Row { spacing: 12; AppButton { text: "WhatsApp"; implicitWidth: 144; onClicked: Qt.openUrlExternally(contactData().whatsapp || "") } AppButton { text: "Telegram"; secondary: true; implicitWidth: 144; onClicked: Qt.openUrlExternally(contactData().telegram || "") } AppButton { text: "Cikis"; secondary: true; implicitWidth: 120; onClicked: apiClient.logout() } } }
                 }
@@ -2556,11 +2601,11 @@ ApplicationWindow {
                                     AppButton { text: "Tekrar Dene"; secondary: true; implicitWidth: 126; onClicked: playbackController.retryCurrent() }
                                     AppButton { text: "Sonraki Bolum"; implicitWidth: 146; visible: Boolean(playbackController.recommendedNextEpisode.id); enabled: visible; onClicked: playbackController.playRecommendedNextEpisode() }
                                     Item { width: 1; height: 1 }
-                                    Column { anchors.verticalCenter: parent.verticalCenter; spacing: 6; Text { text: `Pozisyon: ${playbackController.positionSeconds.toFixed(1)} / ${playbackController.durationSeconds.toFixed(1)}`; color: window.textPrimary; font.pixelSize: 13 } ComboBox { width: 260; model: playbackController.audioTracks; textRole: "title"; enabled: playbackController.audioTracks.length > 0; currentIndex: activeAudioTrackIndex(); onActivated: function(index) { const track = playbackController.audioTracks[index]; if (track && track.id) playbackController.selectAudioTrack(track.id) } } }
+                                    Column { anchors.verticalCenter: parent.verticalCenter; spacing: 6; Text { text: `Pozisyon: ${playbackController.positionSeconds.toFixed(1)} / ${playbackController.durationSeconds.toFixed(1)}`; color: window.textPrimary; font.pixelSize: 13 } ComboBox { width: window.compactWindow ? 200 : 260; model: playbackController.audioTracks; textRole: "title"; enabled: playbackController.audioTracks.length > 0; currentIndex: activeAudioTrackIndex(); onActivated: function(index) { const track = playbackController.audioTracks[index]; if (track && track.id) playbackController.selectAudioTrack(track.id) } } }
                                 }
                             }
                         }
-                        GlassCard { Layout.preferredWidth: 320; Layout.fillHeight: true; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 12; Text { text: "Yayin Bilgisi"; color: window.textPrimary; font.pixelSize: 20; font.family: "Space Grotesk"; font.bold: true } Rectangle { width: parent.width; height: 180; radius: 22; color: "#08ffffff"; border.width: 1; border.color: window.borderSoft; ArtworkPanel { anchors.fill: parent; title: playbackController.activeTitle.length ? playbackController.activeTitle : "Flixify"; subtitle: playerSubtitle; sourceUrl: playerImageUrl; kind: playbackController.activeContentKind || "movie"; mode: playbackController.activeContentKind === "live" ? "logo" : "poster"; cornerRadius: 22 } } Text { text: playbackController.lastError.length ? playbackController.lastError : "Native player branded shell icinde hazir."; width: parent.width; wrapMode: Text.WordWrap; color: playbackController.lastError.length ? "#ffb2b8" : window.textMuted; font.pixelSize: 14 } } }
+                        GlassCard { Layout.preferredWidth: window.compactWindow ? 260 : 320; Layout.fillHeight: true; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 12; Text { text: "Yayin Bilgisi"; color: window.textPrimary; font.pixelSize: 20; font.family: "Space Grotesk"; font.bold: true } Rectangle { width: parent.width; height: window.compactWindow ? 148 : 180; radius: 22; color: "#08ffffff"; border.width: 1; border.color: window.borderSoft; ArtworkPanel { anchors.fill: parent; title: playbackController.activeTitle.length ? playbackController.activeTitle : "Flixify"; subtitle: playerSubtitle; sourceUrl: playerImageUrl; kind: playbackController.activeContentKind || "movie"; mode: playbackController.activeContentKind === "live" ? "logo" : "poster"; cornerRadius: 22 } } Text { text: playbackController.lastError.length ? playbackController.lastError : "Native player branded shell icinde hazir."; width: parent.width; wrapMode: Text.WordWrap; color: playbackController.lastError.length ? "#ffb2b8" : window.textMuted; font.pixelSize: 14 } } }
                     }
                 }
             }
@@ -2569,7 +2614,7 @@ ApplicationWindow {
         Rectangle {
             anchors.fill: parent; color: "#d9030508"; visible: pendingPackage !== null; z: 30
             GlassCard {
-                width: 740; height: paymentContent.implicitHeight + 40; anchors.centerIn: parent; color: "#0b0f17"; z: 31
+                width: window.modalPanelWidth; height: paymentContent.implicitHeight + 40; anchors.centerIn: parent; color: "#0b0f17"; z: 31
                 Column {
                     id: paymentContent
                     anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 16
@@ -2579,7 +2624,7 @@ ApplicationWindow {
                         width: parent.width; spacing: 12
                         Repeater {
                             model: paymentMethods()
-                            GlassCard { width: (parent.width - 12) / 2; height: 94; color: selectedPaymentMethodId === modelData.id ? "#22e50914" : "#131923"; border.color: selectedPaymentMethodId === modelData.id ? "#30ffffff" : "#2a3140"; Column { anchors.fill: parent; anchors.margins: 16; spacing: 6; Text { text: modelData.label || modelData.id; color: window.textPrimary; font.pixelSize: 18; font.bold: true } Text { text: modelData.details || "Onay sureci destek ekibi tarafindan baslatilir."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 13 } } MouseArea { anchors.fill: parent; onClicked: selectedPaymentMethodId = modelData.id } }
+                            GlassCard { width: window.gridCardWidth(parent.width, 280, 2); height: 94; color: selectedPaymentMethodId === modelData.id ? "#22e50914" : "#131923"; border.color: selectedPaymentMethodId === modelData.id ? "#30ffffff" : "#2a3140"; Column { anchors.fill: parent; anchors.margins: 16; spacing: 6; Text { text: modelData.label || modelData.id; color: window.textPrimary; font.pixelSize: 18; font.bold: true } Text { text: modelData.details || "Onay sureci destek ekibi tarafindan baslatilir."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 13 } } MouseArea { anchors.fill: parent; onClicked: selectedPaymentMethodId = modelData.id } }
                         }
                     }
                     AppButton { width: parent.width; text: "Odeme Bildir"; enabled: selectedPaymentMethod() !== null && !apiClient.busy; onClicked: { apiClient.requestPayment(pendingPackage.slug); if (contactData().whatsapp) Qt.openUrlExternally(contactData().whatsapp); pendingPackage = null; selectedPaymentMethodId = ""; openScreen("payments") } }
@@ -2603,7 +2648,7 @@ ApplicationWindow {
                 onWheel: function(wheel) { wheel.accepted = true }
             }
             GlassCard {
-                width: 700; height: premiumContent.implicitHeight + 40; anchors.centerIn: parent; color: "#0b0f17"; z: 26
+                width: window.premiumPanelWidth; height: premiumContent.implicitHeight + 40; anchors.centerIn: parent; color: "#0b0f17"; z: 26
                 Column {
                     id: premiumContent
                     anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 22; spacing: 16
