@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import {
@@ -179,6 +180,7 @@ type AppUpdateManifest = {
 };
 
 const DEFAULT_APP_UPDATE_MANIFEST_URL = "https://app.flixify.pro/app-update-manifest.json";
+const LOCAL_APP_UPDATE_MANIFEST_PATH = new URL("../../viewer-webos/public/app-update-manifest.json", import.meta.url);
 const isDemoMode = env.APP_DEMO_MODE;
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 const appUpdateManifestCache: {
@@ -910,43 +912,62 @@ function isUpdateAvailable(currentVersion: string | null, latestVersion: string 
   return false;
 }
 
-async function fetchAppUpdateManifest() {
-  const manifestUrl = env.APP_UPDATE_MANIFEST_URL ?? DEFAULT_APP_UPDATE_MANIFEST_URL;
-  if (!manifestUrl) {
+async function readLocalAppUpdateManifest() {
+  try {
+    const raw = await readFile(LOCAL_APP_UPDATE_MANIFEST_PATH, "utf8");
+    const manifest = normalizeAppUpdateManifest(JSON.parse(raw));
+    if (!manifest) {
+      console.warn("[app-update] local manifest formati gecersiz");
+    }
+    return manifest;
+  } catch (error) {
+    console.warn("[app-update] local manifest okunamadi", {
+      error: error instanceof Error ? error.message : String(error ?? "unknown")
+    });
     return null;
   }
+}
 
+async function fetchAppUpdateManifest() {
+  const manifestUrl = env.APP_UPDATE_MANIFEST_URL ?? DEFAULT_APP_UPDATE_MANIFEST_URL;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5_000);
 
   try {
-    const response = await fetch(manifestUrl, {
-      method: "GET",
-      cache: "no-store",
-      signal: controller.signal,
-      headers: {
-        accept: "application/json"
-      }
-    });
+    const response = manifestUrl
+      ? await fetch(manifestUrl, {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal,
+          headers: {
+            accept: "application/json"
+          }
+        })
+      : null;
+
+    if (!response) {
+      return await readLocalAppUpdateManifest();
+    }
 
     if (!response.ok) {
       console.warn("[app-update] manifest okunamadi", {
         status: response.status
       });
-      return null;
+      return await readLocalAppUpdateManifest();
     }
 
     const parsed = await response.json();
     const manifest = normalizeAppUpdateManifest(parsed);
     if (!manifest) {
       console.warn("[app-update] manifest formati gecersiz");
+      return await readLocalAppUpdateManifest();
     }
     return manifest;
   } catch (error) {
     console.warn("[app-update] manifest fetch hatasi", {
       error: error instanceof Error ? error.message : String(error ?? "unknown")
     });
-    return null;
+    return await readLocalAppUpdateManifest();
   } finally {
     clearTimeout(timeout);
   }
