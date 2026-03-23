@@ -1365,41 +1365,42 @@ ApplicationWindow {
             border.width: 1
             border.color: chip.active 
                 ? (pressedState ? "#ff4757" : hoverState ? "#ff6b7a" : "#e50914")
-                : (pressedState ? "#4a5568" : hoverState ? "#5a708b" : "#2d3748")
+                : (pressedState ? "#5a708b" : hoverState ? "#6b7d99" : "#3d4d63")
             
-            // Gradient - BEYAZ OVERLAY YOK!
+            // Gradient - KOYU RENKLER
             gradient: Gradient {
                 GradientStop {
                     position: 0.0
                     color: chip.active
                         ? (pressedState ? "#b91c1c" : hoverState ? "#dc2626" : "#991b1b")
-                        : (pressedState ? "#252f3f" : hoverState ? "#2d3a4f" : "#1e293b")
+                        : (pressedState ? "#2d3a4f" : hoverState ? "#3d4d63" : "#252f3f")
                 }
                 GradientStop {
                     position: 1.0
                     color: chip.active
                         ? (pressedState ? "#991b1b" : hoverState ? "#b91c1c" : "#7f1d1d")
-                        : (pressedState ? "#1a2230" : hoverState ? "#252f3f" : "#131923")
+                        : (pressedState ? "#252f3f" : hoverState ? "#2d3a4f" : "#1a2230")
                 }
             }
             
-            // İnce iç glow (sadece üstte)
+            // Glow EFEKTI - SADECE HOVER'DA VE KIRMIZI/TURUNCU TONLARDA
             Rectangle {
+                visible: hoverState
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.margins: 1
-                height: parent.height * 0.4
-                radius: parent.radius
+                height: parent.height * 0.35
+                radius: parent.radius - 1
                 gradient: Gradient {
-                    GradientStop { position: 0.0; color: chip.active ? "#40ff7f8a" : "#30ffffff" }
+                    GradientStop { position: 0.0; color: chip.active ? "#60ff7f8a" : "#40ff6b7a" }
                     GradientStop { position: 1.0; color: "#00ffffff" }
                 }
             }
         }
         contentItem: Text {
             text: chip.text
-            color: chip.active ? "#ffffff" : "#f8fafc"
+            color: chip.active ? "#ffffff" : (chip.hovered ? "#ffffff" : "#e2e8f0")
             font.pixelSize: 13
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
@@ -1413,25 +1414,31 @@ ApplicationWindow {
         hoverEnabled: nav.enabled
         focusPolicy: Qt.NoFocus
         padding: 0
-        background: Item {}
+        background: Rectangle {
+            radius: height / 2
+            color: nav.active ? "#15ffffff" : (nav.hovered ? "#10ffffff" : "#00ffffff")
+            Behavior on color { ColorAnimation { duration: 150 } }
+        }
         contentItem: Column {
-            spacing: 8
+            spacing: 6
+            anchors.centerIn: parent
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: nav.text
-                color: nav.active ? window.textPrimary : (nav.hovered ? "#f3f6fb" : "#b7c3d5")
-                font.pixelSize: 18
-                font.bold: true
+                color: nav.active ? window.textPrimary : (nav.hovered ? "#f3f6fb" : "#9aa5b8")
+                font.pixelSize: 15 * fontScale
+                font.bold: nav.active || nav.hovered
+                font.family: "Space Grotesk"
                 Behavior on color { ColorAnimation { duration: 140 } }
             }
             Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
-                width: nav.active ? 56 : (nav.hovered ? 38 : 22)
-                height: 4
-                radius: 2
+                width: nav.active ? 40 : (nav.hovered ? 28 : 0)
+                height: 3
+                radius: 1.5
                 color: nav.active ? window.accent : (nav.hovered ? "#d01a25" : "#00000000")
-                opacity: nav.active ? 1.0 : (nav.hovered ? 1.0 : 0.0)
-                Behavior on width { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                opacity: nav.active ? 1.0 : (nav.hovered ? 0.8 : 0.0)
+                Behavior on width { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                 Behavior on opacity { NumberAnimation { duration: 120 } }
                 Behavior on color { ColorAnimation { duration: 120 } }
             }
@@ -1675,7 +1682,7 @@ ApplicationWindow {
         signal activated(var item)
         width: window.posterCardWidth
         readonly property real visualHeight: Math.round(window.posterCardWidth * 1.46)
-        height: visualHeight + 96
+        height: visualHeight + 72
         scale: posterMouse.pressed ? 0.986 : posterMouse.containsMouse ? 1.018 : 1.0
         opacity: posterCard.playbackAllowed ? 1.0 : 0.86
         Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
@@ -1718,7 +1725,7 @@ ApplicationWindow {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: 82
+            height: 58
             radius: 22
             color: "#0c1119"
             border.width: 1
@@ -1737,44 +1744,8 @@ ApplicationWindow {
 
             Column {
                 anchors.fill: parent
-                anchors.margins: 14
-                spacing: 8
-
-                Row {
-                    spacing: 8
-
-                    Rectangle {
-                        width: kindBadge.implicitWidth + 18
-                        height: 28
-                        radius: 14
-                        color: "#16ffffff"
-
-                        Text {
-                            id: kindBadge
-                            anchors.centerIn: parent
-                            text: posterCard.cardKind === "movie" ? "Film" : "Dizi"
-                            color: window.textPrimary
-                            font.pixelSize: 11
-                            font.bold: true
-                        }
-                    }
-
-                    Rectangle {
-                        width: allowedBadge.implicitWidth + 18
-                        height: 28
-                        radius: 14
-                        color: posterCard.playbackAllowed ? "#2430d19d" : "#16ffffff"
-
-                        Text {
-                            id: allowedBadge
-                            anchors.centerIn: parent
-                            text: posterCard.playbackAllowed ? "Oynatılabilir" : "Paket Gerekli"
-                            color: posterCard.playbackAllowed ? "#82ecc4" : window.textPrimary
-                            font.pixelSize: 11
-                            font.bold: true
-                        }
-                    }
-                }
+                anchors.margins: 12
+                spacing: 4
 
                 Text {
                     text: posterCard.titleText
@@ -1783,7 +1754,7 @@ ApplicationWindow {
                     maximumLineCount: 2
                     elide: Text.ElideRight
                     color: window.textPrimary
-                    font.pixelSize: 19
+                    font.pixelSize: 17
                     font.family: "Space Grotesk"
                     font.bold: true
                 }
@@ -2892,7 +2863,7 @@ ApplicationWindow {
                                     x: window.compactWindow || headerNavFlickable.interactive
                                         ? 0
                                         : Math.max(0, (headerNavFlickable.width - implicitWidth) / 2)
-                                    spacing: window.compactWindow ? 16 : 20
+                                    spacing: window.compactWindow ? 8 : 12
                                 
                                 Repeater {
                                     model: [
@@ -2904,11 +2875,9 @@ ApplicationWindow {
                                     NavButton {
                                         required property var modelData
                                         visible: modelData.key !== "home"
-                                        text: modelData.key === "live"
-                                            ? "CANLI TV |"
-                                            : modelData.key === "movies"
-                                                ? "FİLM |"
-                                                : "DİZİ"
+                                        implicitWidth: window.compactWindow ? 100 : 120
+                                        implicitHeight: window.compactWindow ? 44 : 52
+                                        text: modelData.label.toUpperCase()
                                         active: currentScreen === modelData.key
                                         onClicked: openScreen(modelData.key)
                                     }
@@ -3775,13 +3744,30 @@ ApplicationWindow {
                         ScrollView {
                             id: moviesScrollView
                             clip: true
+                            onContentYChanged: {
+                                // Infinite scroll - content sonuna yaklaşınca yükle
+                                if (!inlineMoviePlayerVisible() && apiClient.movieHasMore && !apiClient.movieLoadingMore) {
+                                    var contentBottom = contentY + height
+                                    var totalHeight = contentItem.height
+                                    if (totalHeight > 0 && contentBottom > totalHeight - 400) {
+                                        apiClient.loadMoreMovies()
+                                    }
+                                }
+                            }
                             Column {
-                                width: window.pageWidth(pageStack.width)
-                                x: window.shellPadding
+                                width: Math.min(1600, parent.width - 48)
+                                anchors.horizontalCenter: parent.horizontalCenter
                                 topPadding: window.compactWindow ? 18 : 20
                                 bottomPadding: window.compactWindow ? 24 : 28
                                 spacing: window.sectionSpacing
-                                Text { text: "Filmler"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true }
+                                Text { 
+                                    text: "Filmler"
+                                    color: window.textPrimary
+                                    font.pixelSize: 42
+                                    font.family: "Space Grotesk"
+                                    font.bold: true
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                }
                                 AppField {
                                     width: parent.width
                                     placeholderText: "Film ara..."
@@ -3821,6 +3807,7 @@ ApplicationWindow {
                                     width: parent.width
                                     visible: !inlineMoviePlayerVisible()
                                     spacing: window.cardGap
+                                    anchors.horizontalCenter: parent.horizontalCenter
                                     Repeater {
                                         model: filteredMovies()
                                         PosterGridCard {
@@ -3834,27 +3821,16 @@ ApplicationWindow {
                                         }
                                     }
                                 }
+                                // Loading indicator for infinite scroll
                                 Rectangle {
                                     width: parent.width
-                                    height: 54
-                                    radius: 18
-                                    color: "#10ffffff"
-                                    border.width: 1
-                                    border.color: "#18ffffff"
-                                    visible: !inlineMoviePlayerVisible() && (apiClient.movieHasMore || apiClient.movieLoadingMore)
+                                    height: 60
+                                    color: "transparent"
+                                    visible: !inlineMoviePlayerVisible() && apiClient.movieLoadingMore
 
-                                    Text {
+                                    BusyIndicator {
                                         anchors.centerIn: parent
-                                        text: apiClient.movieLoadingMore ? "Filmler yükleniyor" : "Daha fazla film yükle"
-                                        color: window.textMuted
-                                        font.pixelSize: 13
-                                        font.bold: true
-                                    }
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        enabled: apiClient.movieHasMore && !apiClient.movieLoadingMore
-                                        onClicked: apiClient.loadMoreMovies()
+                                        running: parent.visible
                                     }
                                 }
                                 GlassCard {

@@ -178,6 +178,7 @@ void PlaybackController::playChannel(const QString &channelId) {
   m_retryingSoftwareDecode = false;
   m_retryingVodResolve = false;
   m_autoSelectingPreferredAudioTrack = false;
+  m_waitingForVideoSurface = false;
   setLastError(QString());
   setDecoderMode(QStringLiteral("hardware"));
 
@@ -228,6 +229,7 @@ void PlaybackController::playVod(const QString &kind, const QString &itemId, con
   m_retryingSoftwareDecode = false;
   m_retryingVodResolve = false;
   m_autoSelectingPreferredAudioTrack = false;
+  m_waitingForVideoSurface = false;
   setLastError(QString());
   setDecoderMode(QStringLiteral("hardware"));
 
@@ -254,6 +256,7 @@ void PlaybackController::stop() {
   m_retryingSoftwareDecode = false;
   m_retryingVodResolve = false;
   m_autoSelectingPreferredAudioTrack = false;
+  m_waitingForVideoSurface = false;
   m_pendingResumeSeconds = 0.0;
   setBusy(false);
   setPaused(true);
@@ -381,6 +384,13 @@ void PlaybackController::setVideoSurfaceHandle(qulonglong handle) {
 
   m_videoSurfaceHandle = handle;
   bindVideoSurface();
+  if (m_videoSurfaceHandle != 0 && m_waitingForVideoSurface && !m_lastResolvedSource.isEmpty()) {
+    m_waitingForVideoSurface = false;
+    const QJsonObject source = m_lastResolvedSource;
+    QTimer::singleShot(0, this, [this, source]() {
+      openResolvedSource(source);
+    });
+  }
 }
 
 void PlaybackController::setVideoSurfaceGeometry(int width, int height) {
@@ -780,6 +790,13 @@ void PlaybackController::openResolvedSource(const QJsonObject &source) {
   m_lastResolvedSource = source;
   setDiagnosticsSessionId(source.value(QStringLiteral("diagnosticsSessionId")).toString());
   setState(QStringLiteral("opening"));
+  if (m_videoSurfaceHandle == 0) {
+    m_waitingForVideoSurface = true;
+    setBusy(true);
+    setPaused(true);
+    return;
+  }
+  m_waitingForVideoSurface = false;
 
   libvlc_media_t *media = libvlc_media_new_location(m_vlc, url.toUtf8().constData());
   if (!media) {
@@ -865,6 +882,7 @@ void PlaybackController::failActiveTarget(const QString &reason, const QString &
   setLastError(reason);
   setBusy(false);
   setPaused(true);
+  m_waitingForVideoSurface = false;
   setState(QStringLiteral("error"));
   reportPlaybackEvent(
     isActiveVod() ? QStringLiteral("playback-failed") : QStringLiteral("failed"),
@@ -1167,9 +1185,12 @@ void PlaybackController::handlePlaying() {
   setLastError(QString());
   setState(QStringLiteral("playing"));
   setPaused(false);
+  m_waitingForVideoSurface = false;
   if (!m_timelineTimer.isActive()) {
     m_timelineTimer.start();
   }
+
+  updateVideoCrop();
 
   if (m_pendingResumeSeconds > 0.0 && isActiveVod()) {
     libvlc_media_player_set_time(m_player, static_cast<libvlc_time_t>(m_pendingResumeSeconds * 1000.0));

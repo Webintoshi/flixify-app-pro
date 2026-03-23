@@ -178,6 +178,7 @@ private:
   bool m_retryingSoftwareDecode = false;
   bool m_retryingVodResolve = false;
   bool m_autoSelectingPreferredAudioTrack = false;
+  bool m_waitingForVideoSurface = false;
   QString m_videoFillMode = QStringLiteral("fit");
   int m_surfaceWidth = 0;
   int m_surfaceHeight = 0;
