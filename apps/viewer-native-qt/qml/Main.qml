@@ -106,7 +106,7 @@ ApplicationWindow {
     property color toastColor: info
 
     Component.onCompleted: {
-        playbackController.videoFillMode = "fill"
+        playbackController.videoFillMode = "fit"
         currentScreen = apiClient.authenticated ? "home" : "login"
         apiClient.bootstrap()
     }
@@ -1916,7 +1916,6 @@ ApplicationWindow {
     
     // 2. Orta Kontroller - Önceki/Play/Sonraki
     component PlayerCenterControls: Item {
-        anchors.centerIn: parent
         width: 280
         height: 80
         opacity: liveControlsVisible ? 1.0 : 0.0
@@ -2286,8 +2285,12 @@ ApplicationWindow {
                             anchors.fill: parent
 
                             Loader {
-                                anchors.fill: parent
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
                                 anchors.margins: 6
+                                anchors.bottomMargin: Number(inlineVodControls.implicitHeight) + 48
                                 active: true
                                 sourceComponent: nativeVideoSurfaceComponent
                             }
@@ -3292,7 +3295,7 @@ ApplicationWindow {
                                     ]
                                     NavButton {
                                         required property var modelData
-                                        visible: modelData.key !== "home"
+                                        visible: true
                                         implicitWidth: window.compactWindow ? 100 : 120
                                         implicitHeight: window.compactWindow ? 44 : 52
                                         text: modelData.label.toUpperCase()
@@ -3461,7 +3464,7 @@ ApplicationWindow {
                                 }
                             }
                             Column {
-                                width: parent.width
+                                width: pageStack.width
                                 topPadding: 0
                                 bottomPadding: window.compactWindow ? 24 : 32
                                 spacing: 0
@@ -3778,7 +3781,11 @@ ApplicationWindow {
                                                     
                                                     // 1. Video Surface
                                                     Loader {
-                                                        anchors.fill: parent
+                                                        anchors.left: parent.left
+                                                        anchors.right: parent.right
+                                                        anchors.top: parent.top
+                                                        anchors.bottom: parent.bottom
+                                                        anchors.bottomMargin: 100
                                                         active: inlineLivePlayerVisible()
                                                         sourceComponent: nativeVideoSurfaceComponent
                                                     }
@@ -3836,7 +3843,9 @@ ApplicationWindow {
                                                         
                                                         // Center Controls - Previous/Play/Next
                                                         PlayerCenterControls {
-                                                            anchors.centerIn: parent
+                                                            anchors.horizontalCenter: parent.horizontalCenter
+                                                            anchors.bottom: parent.bottom
+                                                            anchors.bottomMargin: 14
                                                         }
                                                         
                                                         // Bottom Info Bar - Channel Logo & Name
@@ -3844,7 +3853,7 @@ ApplicationWindow {
                                                             anchors.left: parent.left
                                                             anchors.right: parent.right
                                                             anchors.bottom: parent.bottom
-                                                            anchors.bottomMargin: 64
+                                                            anchors.bottomMargin: 14
                                                         }
                                                         
                                                         // Bottom Control Bar - Volume & Settings
@@ -4161,7 +4170,7 @@ ApplicationWindow {
                                 }
                             }
                             Column {
-                                width: Math.min(1600, parent.width - 48)
+                                width: Math.min(1600, pageStack.width - 48)
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 topPadding: window.compactWindow ? 18 : 20
                                 bottomPadding: window.compactWindow ? 24 : 28

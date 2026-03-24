@@ -5957,6 +5957,16 @@ function LivePlayerSurface({
               controls={false}
               poster={videoTrackError ? undefined : LIVE_PLAYER_POSTER_URL}
               className="player-video live-player-video"
+              onClick={() => {
+                const media = videoRef.current;
+                if (!media) return;
+                if (media.paused || media.ended) {
+                  void continuePlayback();
+                } else {
+                  media.pause();
+                  setPlayerState("idle");
+                }
+              }}
             >
               Tarayici video elementini desteklemiyor.
             </video>
@@ -6010,6 +6020,27 @@ function LivePlayerSurface({
               aria-label="Ekran kontrolleri"
               onFocusCapture={revealControls}
             >
+              <button
+                type="button"
+                className="live-player-control-button"
+                aria-label={playerState === "playing" ? "Durdur" : "Oynat"}
+                onClick={() => {
+                  const media = videoRef.current;
+                  if (!media) return;
+                  if (media.paused || media.ended) {
+                    void continuePlayback();
+                  } else {
+                    media.pause();
+                    setPlayerState("idle");
+                  }
+                }}
+                data-tv-focusable="true"
+                data-tv-region="live-player-controls"
+                data-tv-focus-key={compact ? `live-compact-playpause-${item.id}` : `live-player-playpause-${item.id}`}
+              >
+                {playerState === "playing" ? <PauseGlyph /> : <PlayGlyph />}
+              </button>
+
               <button
                 type="button"
                 className="live-player-control-button"
@@ -7770,11 +7801,18 @@ function MoviePlayerSurface({
 }) {
   const {
     videoRef,
+    playerState,
+    playerError,
     interactionRequired,
     continuePlayback,
     stopPlayback,
     togglePlayback,
-    isPaused
+    seekBy,
+    isPaused,
+    canSeek,
+    audioTracks,
+    selectedAudioTrackId,
+    selectAudioTrack
   } = useVodPlaybackController({
     item,
     resolveVodPlayback,
@@ -7783,6 +7821,9 @@ function MoviePlayerSurface({
     clientRuntime,
     platform
   });
+
+  const controlsLocked = playerState === "resolving" || playerState === "connecting";
+  const showStatusBar = Boolean(playerError) || interactionRequired || audioTracks.length > 1;
 
   useVodMediaShortcuts({
     onTogglePlayback: togglePlayback,
@@ -7812,9 +7853,50 @@ function MoviePlayerSurface({
           playsInline
           poster={item.imageUrl ?? undefined}
           className="player-video movie-player-video"
+          onClick={() => void togglePlayback()}
         >
           Tarayici video elementini desteklemiyor.
         </video>
+
+        <VodMiniControls
+          itemId={item.id}
+          kind="movie"
+          canSeek={canSeek}
+          isPaused={isPaused}
+          controlsLocked={controlsLocked}
+          onSeekBackward={() => seekBy(-10)}
+          onSeekForward={() => seekBy(10)}
+          onTogglePlayback={togglePlayback}
+        />
+
+        {showStatusBar ? (
+          <div className="episode-player-status">
+            {playerError ? <span className="episode-player-status-text">{playerError}</span> : null}
+            {!playerError && interactionRequired ? (
+              <span className="episode-player-status-text">Oynatmayi baslatmak icin dokunun.</span>
+            ) : null}
+            {audioTracks.length > 1 ? (
+              <label className="episode-player-status-text">
+                Ses:
+                <select
+                  value={selectedAudioTrackId ?? ""}
+                  onChange={(event) => {
+                    void selectAudioTrack(event.target.value);
+                  }}
+                  data-tv-focusable="true"
+                  data-tv-region="overlay-player-actions"
+                  data-tv-focus-key={`movie-audio-track-${item.id}`}
+                >
+                  {audioTracks.map((track) => (
+                    <option key={track.id} value={track.id}>
+                      {track.title ?? track.language ?? track.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
+        ) : null}
 
         {interactionRequired ? (
           <button
