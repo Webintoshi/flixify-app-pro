@@ -3296,6 +3296,7 @@ ApplicationWindow {
 
                         Item {
                             Layout.fillWidth: true
+                            Layout.fillHeight: true
                             Flickable {
                                 id: headerNavFlickable
                                 anchors.fill: parent
