@@ -1,9 +1,9 @@
 {
   "platforms": {
     "windows-native-qt": {
-      "latestVersion": "2.2.51",
-      "downloadUrl": null,
-      "notes": "Native installer dagitimi web istemcisinden ayrildi."
+      "latestVersion": "2.2.52",
+      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.2.52/Flixify-Pro-Setup-2.2.52-x64.exe",
+      "notes": "Native player alt overlay duzeltmesi ve native-only dagitim guncellemesi."
     }
   }
 }
