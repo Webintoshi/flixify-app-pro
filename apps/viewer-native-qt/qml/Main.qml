@@ -2024,74 +2024,138 @@ ApplicationWindow {
     // 1. Üst Bar - PIP, Cast, Fullscreen, Favori
     component PlayerTopBar: Rectangle {
         id: topBar
-        height: 64
+        height: 80
         color: "transparent"
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: "#99000000" }
-            GradientStop { position: 1.0; color: "transparent" }
-        }
         opacity: liveControlsVisible ? 1.0 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 200 } }
+        Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+        
+        // Modern gradient from top
+        Rectangle {
+            anchors.fill: parent
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "#cc000000" }
+                GradientStop { position: 0.6; color: "#80000000" }
+                GradientStop { position: 1.0; color: "transparent" }
+            }
+        }
+        
+        Row {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: 24
+            spacing: 16
+            
+            // Back button
+            PlayerIconButton {
+                icon: "←"
+                tooltip: "Geri"
+                onClicked: {
+                    if (videoFullscreen) {
+                        exitVideoFullscreen()
+                    }
+                    playerVisible = false
+                    playbackController.stop()
+                }
+            }
+            
+            // Channel badge
+            Rectangle {
+                width: channelBadgeText.implicitWidth + 24
+                height: 32
+                radius: 16
+                color: "#e50914"
+                anchors.verticalCenter: parent.verticalCenter
+                visible: selectedLiveItem()
+                
+                Text {
+                    id: channelBadgeText
+                    anchors.centerIn: parent
+                    text: "CANLI"
+                    color: "#ffffff"
+                    font.pixelSize: 11
+                    font.bold: true
+                    font.letterSpacing: 1
+                }
+            }
+        }
         
         Row {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            anchors.rightMargin: 16
+            anchors.rightMargin: 24
             spacing: 12
             
             // Picture-in-Picture
             PlayerIconButton {
-                icon: "⧉"
+                icon: "◱"
                 tooltip: "Picture in Picture"
                 onClicked: showToast("PIP modu yakında geliyor")
             }
             
             // Cast
             PlayerIconButton {
-                icon: "📡"
+                icon: "⎔"
                 tooltip: "Cast"
                 onClicked: showToast("Cast özelliği yakında geliyor")
             }
             
-            // Fullscreen
+            // Settings
             PlayerIconButton {
-                icon: videoFullscreen ? "⛶" : "⛶"
-                tooltip: videoFullscreen ? "Küçült" : "Tam Ekran"
-                onClicked: toggleVideoFullscreen()
+                icon: "⚙"
+                tooltip: "Ayarlar"
+                onClicked: showToast("Ayarlar yakında geliyor")
             }
             
-            // Favori
+            // Fullscreen
             PlayerIconButton {
-                icon: "★"
-                tooltip: "Favorilere Ekle"
-                iconColor: "#e50914"
-                onClicked: showToast("Favorilere eklendi")
+                icon: videoFullscreen ? "⤢" : "⛶"
+                tooltip: videoFullscreen ? "Küçült" : "Tam Ekran"
+                onClicked: toggleVideoFullscreen()
             }
         }
     }
     
     // 2. Orta Kontroller - Önceki/Play/Sonraki
     component PlayerCenterControls: Item {
-        width: 280
-        height: 80
+        width: 320
+        height: 100
         opacity: liveControlsVisible ? 1.0 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 200 } }
+        Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+        
+        // Glass background
+        Rectangle {
+            anchors.centerIn: parent
+            width: parent.width
+            height: 80
+            radius: 40
+            color: "#40000000"
+            border.width: 1
+            border.color: "#25ffffff"
+            
+            // Backdrop blur effect simulation
+            Rectangle {
+                anchors.fill: parent
+                radius: 40
+                color: "#150d121c"
+            }
+        }
         
         Row {
             anchors.centerIn: parent
-            spacing: 40
+            spacing: 20
             
             // Önceki Kanal
             PlayerControlButton {
-                icon: "◄◄"
-                size: 48
+                icon: "‹"
+                size: 44
                 onClicked: previousLiveChannel()
             }
             
             // Play/Pause (Live TV için buffer control)
             PlayerControlButton {
                 icon: playbackController.state === "playing" ? "❚❚" : "▶"
-                size: 56
+                size: 64
+                accent: true
                 onClicked: {
                     if (playbackController.state === "playing") {
                         playbackController.stop()
@@ -2103,37 +2167,40 @@ ApplicationWindow {
             
             // Sonraki Kanal
             PlayerControlButton {
-                icon: "►►"
-                size: 48
+                icon: "›"
+                size: 44
                 onClicked: nextLiveChannel()
             }
         }
     }
     
-    // 3. Alt Bilgi Barı - Kanal Logo ve İsim
+    // 3. Alt Bilgi Barı - Kanal Logo ve İsim (Modern)
     component PlayerInfoBar: Rectangle {
-        height: 90
+        height: 100
         color: "transparent"
         opacity: liveControlsVisible ? 1.0 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 200 } }
+        Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
         
         Row {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: 20
-            spacing: 16
+            anchors.leftMargin: 24
+            spacing: 18
             
-            // Kanal Logosu
+            // Kanal Logosu - Modern Glass Card
             Rectangle {
-                width: 56
-                height: 56
-                radius: 12
-                color: "#1affffff"
+                width: 64
+                height: 64
+                radius: 16
+                color: "#1a0d121c"
+                border.width: 1
+                border.color: "#25ffffff"
                 
                 Image {
+                    id: channelLogoImage
                     anchors.centerIn: parent
-                    width: 40
-                    height: 40
+                    width: 48
+                    height: 48
                     source: selectedLiveItem() ? window.artworkSource(selectedLiveItem().logoUrl || "") : ""
                     fillMode: Image.PreserveAspectFit
                     visible: status === Image.Ready
@@ -2143,23 +2210,48 @@ ApplicationWindow {
                     anchors.centerIn: parent
                     text: selectedLiveItem() ? (selectedLiveItem().title || "").substring(0, 2).toUpperCase() : "TV"
                     color: window.textPrimary
-                    font.pixelSize: 18
+                    font.pixelSize: 20
                     font.bold: true
-                    visible: parent.children[0].status !== Image.Ready
+                    visible: !channelLogoImage.visible
                 }
             }
             
             // Kanal Bilgisi
             Column {
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: 6
+                spacing: 4
                 
-                Text {
-                    text: selectedLiveItem() ? (selectedLiveItem().countryCode ? selectedLiveItem().countryCode + " • " : "") + selectedLiveItem().title : "Kanal Seçin"
-                    color: window.textPrimary
-                    font.pixelSize: 20
-                    font.family: "Space Grotesk"
-                    font.bold: true
+                // Country badge + Title
+                Row {
+                    spacing: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                    
+                    // Country badge
+                    Rectangle {
+                        visible: selectedLiveItem() && selectedLiveItem().countryCode
+                        width: countryBadgeText.implicitWidth + 16
+                        height: 24
+                        radius: 6
+                        color: "#25ffffff"
+                        anchors.verticalCenter: parent.verticalCenter
+                        
+                        Text {
+                            id: countryBadgeText
+                            anchors.centerIn: parent
+                            text: selectedLiveItem() ? (selectedLiveItem().countryCode || "") : ""
+                            color: window.textPrimary
+                            font.pixelSize: 11
+                            font.bold: true
+                        }
+                    }
+                    
+                    Text {
+                        text: selectedLiveItem() ? selectedLiveItem().title : "Kanal Seçin"
+                        color: window.textPrimary
+                        font.pixelSize: 24
+                        font.family: "Space Grotesk"
+                        font.bold: true
+                    }
                 }
                 
                 Text {
@@ -2170,51 +2262,106 @@ ApplicationWindow {
             }
         }
         
-        // HD Badge
-        Rectangle {
+        // Quality Badge - Modern
+        Row {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            anchors.rightMargin: 20
-            width: 36
-            height: 22
-            radius: 4
-            color: "#e50914"
-            visible: selectedLiveItem() && selectedLiveItem().quality === "HD"
+            anchors.rightMargin: 24
+            spacing: 8
+            
+            // Live indicator with pulse
+            Rectangle {
+                width: 8
+                height: 8
+                radius: 4
+                color: "#30d19d"
+                anchors.verticalCenter: parent.verticalCenter
+                
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 16
+                    height: 16
+                    radius: 8
+                    color: "#30d19d"
+                    opacity: 0.3
+                    
+                    SequentialAnimation on scale {
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 1.5; duration: 1000 }
+                        NumberAnimation { to: 1.0; duration: 1000 }
+                    }
+                    
+                    SequentialAnimation on opacity {
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 0; duration: 1000 }
+                        NumberAnimation { to: 0.3; duration: 1000 }
+                    }
+                }
+            }
             
             Text {
-                anchors.centerIn: parent
-                text: "HD"
-                color: "#ffffff"
+                text: "CANLI"
+                color: "#30d19d"
                 font.pixelSize: 11
                 font.bold: true
+                font.letterSpacing: 1
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            
+            // HD Badge
+            Rectangle {
+                visible: selectedLiveItem() && selectedLiveItem().quality === "HD"
+                width: 32
+                height: 20
+                radius: 4
+                color: "#e50914"
+                anchors.verticalCenter: parent.verticalCenter
+                
+                Text {
+                    anchors.centerIn: parent
+                    text: "HD"
+                    color: "#ffffff"
+                    font.pixelSize: 10
+                    font.bold: true
+                }
             }
         }
     }
     
-    // 4. Alt Kontrol Barı - Ses ve Diğer Kontroller
+    // 4. Alt Kontrol Barı - Ses ve Diğer Kontroller (Modern)
     component PlayerControlBar: Rectangle {
-        height: 64
+        height: 72
         color: "transparent"
         opacity: liveControlsVisible ? 1.0 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 200 } }
+        Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+        
+        // Modern gradient from bottom
+        Rectangle {
+            anchors.fill: parent
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "transparent" }
+                GradientStop { position: 0.4; color: "#80000000" }
+                GradientStop { position: 1.0; color: "#cc000000" }
+            }
+        }
         
         Row {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: 16
+            anchors.leftMargin: 24
             spacing: 16
             
             // Ses Aç/Kapa
             PlayerIconButton {
-                icon: playbackController.muted || playbackController.volume <= 0 ? "🔇" : "🔊"
+                icon: playbackController.muted || playbackController.volume <= 0 ? "🔇" : playbackController.volume < 0.5 ? "🔉" : "🔊"
                 tooltip: "Sesi Aç/Kapat"
                 onClicked: playbackController.toggleMuted()
             }
             
-            // Ses Slider
+            // Modern Ses Slider
             Slider {
                 id: volumeSlider
-                width: 100
+                width: 120
                 anchors.verticalCenter: parent.verticalCenter
                 from: 0
                 to: 1
@@ -2227,79 +2374,148 @@ ApplicationWindow {
                 background: Rectangle {
                     x: volumeSlider.leftPadding
                     y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
-                    implicitWidth: 100
-                    implicitHeight: 4
+                    implicitWidth: 120
+                    implicitHeight: 6
                     width: volumeSlider.availableWidth
                     height: implicitHeight
-                    radius: 2
-                    color: "#40ffffff"
+                    radius: 3
+                    color: "#30ffffff"
                     
                     Rectangle {
                         width: volumeSlider.visualPosition * parent.width
                         height: parent.height
-                        radius: 2
+                        radius: 3
                         color: "#e50914"
+                        
+                        // Glow effect
+                        Rectangle {
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 12
+                            height: 12
+                            radius: 6
+                            color: "#e50914"
+                            opacity: 0.5
+                        }
                     }
                 }
                 
                 handle: Rectangle {
                     x: volumeSlider.leftPadding + volumeSlider.visualPosition * (volumeSlider.availableWidth - width)
                     y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
-                    implicitWidth: 14
-                    implicitHeight: 14
-                    radius: 7
+                    implicitWidth: 16
+                    implicitHeight: 16
+                    radius: 8
                     color: "#ffffff"
+                    border.width: 2
+                    border.color: "#e50914"
+                    
+                    // Hover glow
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 24
+                        height: 24
+                        radius: 12
+                        color: "#e50914"
+                        opacity: 0.2
+                        visible: volumeSlider.pressed
+                    }
                 }
             }
             
-            // Ses Seviyesi Yüzdesi
-            Text {
+            // Ses Seviyesi Yüzdesi - Modern
+            Rectangle {
+                width: 44
+                height: 24
+                radius: 6
+                color: "#15ffffff"
                 anchors.verticalCenter: parent.verticalCenter
-                text: Math.round((playbackController.muted ? 0 : playbackController.volume) * 100) + "%"
-                color: window.textPrimary
-                font.pixelSize: 12
-                width: 32
+                
+                Text {
+                    anchors.centerIn: parent
+                    text: Math.round((playbackController.muted ? 0 : playbackController.volume) * 100)
+                    color: window.textPrimary
+                    font.pixelSize: 12
+                    font.bold: true
+                }
             }
         }
         
         Row {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            anchors.rightMargin: 16
+            anchors.rightMargin: 24
             spacing: 12
+            
+            // Favori
+            PlayerIconButton {
+                icon: "♥"
+                tooltip: "Favorilere Ekle"
+                iconColor: "#e50914"
+                onClicked: showToast("Favorilere eklendi")
+            }
+            
             // Tam Ekran
             PlayerIconButton {
-                icon: videoFullscreen ? "⛶" : "⛶"
+                icon: videoFullscreen ? "⤢" : "⛶"
                 tooltip: videoFullscreen ? "Küçült" : "Tam Ekran"
                 onClicked: toggleVideoFullscreen()
             }
         }
     }
     
-    // Yardımcı Componentler
+    // Yardımcı Componentler - Modern
     component PlayerIconButton: Rectangle {
         property string icon: ""
         property string tooltip: ""
         property color iconColor: "#ffffff"
         signal clicked()
         
-        width: 40
-        height: 40
-        radius: 8
-        color: mouseArea.pressed ? "#30ffffff" : "#15ffffff"
-        Behavior on color { ColorAnimation { duration: 120 } }
+        width: 44
+        height: 44
+        radius: 12
+        color: mouseArea.containsMouse ? "#30ffffff" : "#18ffffff"
+        border.width: 1
+        border.color: mouseArea.containsMouse ? "#40ffffff" : "#20ffffff"
+        Behavior on color { ColorAnimation { duration: 150 } }
+        Behavior on border.color { ColorAnimation { duration: 150 } }
         
         Text {
             anchors.centerIn: parent
             text: parent.icon
             color: parent.iconColor
-            font.pixelSize: 18
+            font.pixelSize: 20
+            font.family: "Segoe UI Symbol"
+        }
+        
+        // Tooltip
+        Rectangle {
+            visible: mouseArea.containsMouse && parent.tooltip.length > 0
+            anchors.bottom: parent.top
+            anchors.bottomMargin: 8
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: tooltipText.implicitWidth + 16
+            height: 28
+            radius: 6
+            color: "#cc000000"
+            border.width: 1
+            border.color: "#30ffffff"
+            
+            Text {
+                id: tooltipText
+                anchors.centerIn: parent
+                text: parent.parent.tooltip
+                color: "#ffffff"
+                font.pixelSize: 12
+            }
+            
+            Behavior on visible { NumberAnimation { duration: 150 } }
         }
         
         MouseArea {
             id: mouseArea
             anchors.fill: parent
-            hoverEnabled: false
+            hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: parent.clicked()
             onEntered: showLiveControls()
@@ -2309,32 +2525,53 @@ ApplicationWindow {
     component PlayerControlButton: Rectangle {
         property string icon: ""
         property int size: 48
+        property bool accent: false
         signal clicked()
         
         width: size
         height: size
-        radius: 8
-        color: mouseArea.pressed ? "#40ffffff" : "#25ffffff"
-        border.width: 1
-        border.color: mouseArea.pressed ? "#60ffffff" : "#30ffffff"
+        radius: size / 2
+        color: accent ? (mouseArea.pressed ? "#c0040e" : "#e50914") : (mouseArea.containsMouse ? "#35ffffff" : "#22ffffff")
+        border.width: accent ? 0 : 1
+        border.color: accent ? "transparent" : (mouseArea.containsMouse ? "#45ffffff" : "#30ffffff")
         Behavior on color { ColorAnimation { duration: 150 } }
+        
+        // Glow for accent button
+        Rectangle {
+            visible: parent.accent
+            anchors.fill: parent
+            radius: parent.radius
+            color: "#e50914"
+            opacity: 0.3
+            z: -1
+            scale: 1.2
+            
+            SequentialAnimation on opacity {
+                loops: Animation.Infinite
+                running: parent.accent && liveControlsVisible
+                NumberAnimation { to: 0.1; duration: 1500 }
+                NumberAnimation { to: 0.3; duration: 1500 }
+            }
+        }
         
         Text {
             anchors.centerIn: parent
             text: parent.icon
             color: "#ffffff"
-            font.pixelSize: parent.size * 0.45
+            font.pixelSize: parent.size * 0.4
+            font.family: "Segoe UI Symbol"
         }
         
         MouseArea {
             id: mouseArea
             anchors.fill: parent
-            hoverEnabled: false
+            hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: {
                 showLiveControls()
                 parent.clicked()
             }
+            onEntered: showLiveControls()
         }
     }
 
@@ -4007,29 +4244,59 @@ ApplicationWindow {
                                                             Behavior on opacity { NumberAnimation { duration: 200 } }
                                                         }
                                                         
-                                                        // Buffer/Loading State Indicator
+                                                        // Modern Buffer/Loading State Indicator
                                                         Rectangle {
                                                             anchors.top: parent.top
                                                             anchors.right: parent.right
-                                                            anchors.margins: 18
-                                                            width: liveNativeStateText2.implicitWidth + 28
-                                                            height: 40
-                                                            radius: 8
-                                                            color: "#c7070a0f"
+                                                            anchors.margins: 24
+                                                            width: liveNativeStateText2.implicitWidth + 48
+                                                            height: 44
+                                                            radius: 22
+                                                            color: "#cc0d121c"
                                                             border.width: 1
-                                                            border.color: "#12ffffff"
+                                                            border.color: "#30ffffff"
                                                             visible: playbackController.state !== "playing"
                                                             
-                                                            Text {
-                                                                id: liveNativeStateText2
+                                                            Row {
                                                                 anchors.centerIn: parent
-                                                                text: playbackController.state === "buffering" ? "Buffer dolduruluyor..." :
-                                                                      playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazırlanıyor..." :
-                                                                      playbackController.state === "error" ? "Yayın açılamadı" :
-                                                                      playbackController.state === "playing" ? "Yayın açık" : "Kanal bekliyor"
-                                                                color: window.textPrimary
-                                                                font.pixelSize: 13
-                                                                font.bold: true
+                                                                spacing: 10
+                                                                
+                                                                // Animated spinner
+                                                                Rectangle {
+                                                                    width: 18
+                                                                    height: 18
+                                                                    radius: 9
+                                                                    color: "transparent"
+                                                                    border.width: 2
+                                                                    border.color: "#e50914"
+                                                                    anchors.verticalCenter: parent.verticalCenter
+                                                                    
+                                                                    Rectangle {
+                                                                        width: 6
+                                                                        height: 6
+                                                                        radius: 3
+                                                                        color: "#e50914"
+                                                                        anchors.centerIn: parent
+                                                                    }
+                                                                    
+                                                                    RotationAnimation on rotation {
+                                                                        loops: Animation.Infinite
+                                                                        from: 0
+                                                                        to: 360
+                                                                        duration: 1000
+                                                                    }
+                                                                }
+                                                                
+                                                                Text {
+                                                                    id: liveNativeStateText2
+                                                                    anchors.verticalCenter: parent.verticalCenter
+                                                                    text: playbackController.state === "buffering" ? "Buffer dolduruluyor" :
+                                                                          playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazırlanıyor" :
+                                                                          playbackController.state === "error" ? "Yayın açılamadı" : "Bağlanıyor"
+                                                                    color: window.textPrimary
+                                                                    font.pixelSize: 14
+                                                                    font.bold: true
+                                                                }
                                                             }
                                                         }
                                                         

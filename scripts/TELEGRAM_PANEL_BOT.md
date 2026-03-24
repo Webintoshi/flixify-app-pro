@@ -2,12 +2,14 @@
 
 Flixify'ya kayit olan kullanicilara Telegram uzerinden reseller panel line atamak icin minimal admin bot.
 
-## Ilk surum ne yapiyor
+## Bot ne yapiyor
 
 - `/bekleyenler` ile `new + unassigned` kullanicilari listeler
+- Yeni kayit olan kullanicilari arka planda izler ve size otomatik bildirim yollar
 - Secilen kullanici icin reseller panelde `create_line` cagirir
 - Donen `username/password` bilgisini Flixify kullanicisina baglar
 - Flixify icinde test veya paket aboneligini aktive eder
+- `/aktif` ile reseller paneldeki canli baglanti sayisini gosterir
 
 ## Gerekli env'ler
 
@@ -29,6 +31,9 @@ RESELLER_API_BASE_URL=http://sifiriptvdns.com:80/ResellerAPI/reseller/index.php
 RESELLER_API_KEY=your-reseller-api-key
 
 TELEGRAM_PENDING_PAGE_SIZE=6
+TELEGRAM_NOTIFY_PAGE_SIZE=50
+TELEGRAM_NEW_USER_POLL_SECONDS=20
+TELEGRAM_PANEL_STATE_FILE=./data/telegram-panel-bot-state.json
 TELEGRAM_ALLOW_REASSIGN=false
 
 TELEGRAM_PANEL_PACKAGE_MAP=[
@@ -77,6 +82,7 @@ TELEGRAM_PANEL_PACKAGE_MAP=[
 - `TELEGRAM_PANEL_PACKAGE_MAP` icindeki Flixify paket suresi ile reseller panel paket suresi ayni olmali.
 - `test-24h` sadece Flixify'deki ozel 24 saatlik route'u kullanir.
 - Bot line acarken reseller panel `username` ve `password` alanina dogrudan Flixify kullanici kodunu yazar.
+- `TELEGRAM_PANEL_STATE_FILE` botun hangi yeni kayitlari daha once bildirdigini tutar.
 
 ## Calistirma
 
@@ -89,4 +95,5 @@ npm run telegram:panel
 - `/start`
 - `/help`
 - `/bekleyenler`
+- `/aktif`
 - `/paketler`

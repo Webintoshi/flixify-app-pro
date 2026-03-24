@@ -1,10 +1,20 @@
 #!/usr/bin/env node
 import "dotenv/config";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import TelegramBot from "node-telegram-bot-api";
 
 const DEFAULT_FLIXIFY_API_BASE_URL = "http://localhost:4000";
 const DEFAULT_PENDING_PAGE_SIZE = 6;
+const DEFAULT_NOTIFY_PAGE_SIZE = 50;
+const DEFAULT_NEW_USER_POLL_SECONDS = 20;
+const DEFAULT_STATE_MAX_USERS = 5000;
 const CALLBACK_MAX_LENGTH = 64;
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DEFAULT_STATE_FILE = path.resolve(__dirname, "..", "data", "telegram-panel-bot-state.json");
 
 const config = loadConfig();
 const bot = new TelegramBot(config.telegramBotToken, { polling: true });
@@ -14,6 +24,9 @@ let cachedAdminSession = config.flixifyAdminAccessToken
       expiresAt: Number.POSITIVE_INFINITY
     }
   : null;
+let notifierState = createDefaultNotifierState();
+let notifierTimer = null;
+let notifierTickInFlight = false;
 
 function normalizeBaseUrl(value, fallback = null) {
   if (typeof value !== "string") {
@@ -22,6 +35,15 @@ function normalizeBaseUrl(value, fallback = null) {
 
   const trimmed = value.trim().replace(/\/+$/, "");
   return trimmed.length > 0 ? trimmed : fallback;
+}
+
+function normalizeFilePath(value, fallback) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return fallback;
+  }
+
+  const trimmed = value.trim();
+  return path.isAbsolute(trimmed) ? trimmed : path.resolve(process.cwd(), trimmed);
 }
 
 function parseBoolean(value, fallback = false) {
@@ -43,6 +65,14 @@ function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return fallback;
+  }
+  return parsed;
+}
+
+function parseNonNegativeInt(value) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
   }
   return parsed;
 }
@@ -137,7 +167,13 @@ function loadConfig() {
   const resellerApiBaseUrl = normalizeBaseUrl(process.env.RESELLER_API_BASE_URL);
   const resellerApiKey = process.env.RESELLER_API_KEY?.trim() || null;
   const pendingPageSize = parsePositiveInt(process.env.TELEGRAM_PENDING_PAGE_SIZE, DEFAULT_PENDING_PAGE_SIZE);
+  const notifyPageSize = parsePositiveInt(process.env.TELEGRAM_NOTIFY_PAGE_SIZE, DEFAULT_NOTIFY_PAGE_SIZE);
   const allowReassign = parseBoolean(process.env.TELEGRAM_ALLOW_REASSIGN, false);
+  const newUserPollSeconds = parsePositiveInt(
+    process.env.TELEGRAM_NEW_USER_POLL_SECONDS,
+    DEFAULT_NEW_USER_POLL_SECONDS
+  );
+  const stateFilePath = normalizeFilePath(process.env.TELEGRAM_PANEL_STATE_FILE, DEFAULT_STATE_FILE);
   const packageMap = parsePackageMap(process.env.TELEGRAM_PANEL_PACKAGE_MAP);
 
   if (!telegramBotToken) {
@@ -175,7 +211,10 @@ function loadConfig() {
     resellerApiBaseUrl,
     resellerApiKey,
     pendingPageSize,
+    notifyPageSize,
     allowReassign,
+    newUserPollSeconds,
+    stateFilePath,
     packageMap,
     packageMapByKey: new Map(packageMap.map((item) => [item.key, item]))
   };
@@ -225,12 +264,91 @@ function normalizeErrorMessage(error) {
   return String(error ?? "Unknown error");
 }
 
+function formatUserStatus(status) {
+  const normalized = String(status ?? "").trim().toLowerCase();
+  const labels = {
+    new: "Yeni Kayit",
+    active: "Aktif",
+    suspended: "Askida",
+    expired: "Suresi Bitti"
+  };
+  return labels[normalized] ?? (normalized ? normalized : "-");
+}
+
+function getUserSnapshot(detail) {
+  const summary = detail?.summary ?? {};
+  const activePackage = summary.activePackage ?? null;
+  const remainingDays = Number(activePackage?.remainingDays);
+
+  return {
+    id: String(summary.id ?? "-"),
+    code: String(summary.kryptoniteCode ?? summary.codeSuffix ?? "----").trim() || "----",
+    createdAt: summary.createdAt ?? null,
+    status: String(summary.status ?? ""),
+    hasAssignedLink: Boolean(summary.hasAssignedLink),
+    iptvUsername: String(detail?.iptvUsername ?? "-") || "-",
+    iptvPassword: String(detail?.iptvPassword ?? "-") || "-",
+    activePackageTitle: String(activePackage?.title ?? "-") || "-",
+    remainingLabel: activePackage && Number.isFinite(remainingDays) ? `${remainingDays} gun` : "-",
+    currentSourceUrl: String(detail?.currentSourceUrl ?? "").trim() || null
+  };
+}
+
 function buildCallbackData(...parts) {
   const data = parts.join(":");
   if (data.length > CALLBACK_MAX_LENGTH) {
     throw new Error(`Callback data is too long: ${data}`);
   }
   return data;
+}
+
+function createDefaultNotifierState() {
+  return {
+    version: 1,
+    bootstrapped: false,
+    knownPendingUserIds: [],
+    lastSyncAt: null
+  };
+}
+
+function dedupeIds(values) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => String(value ?? "").trim())
+        .filter((value) => value.length > 0)
+    )
+  ).slice(-DEFAULT_STATE_MAX_USERS);
+}
+
+function sanitizeNotifierState(value) {
+  if (!value || typeof value !== "object") {
+    return createDefaultNotifierState();
+  }
+
+  return {
+    version: 1,
+    bootstrapped: Boolean(value.bootstrapped),
+    knownPendingUserIds: dedupeIds(Array.isArray(value.knownPendingUserIds) ? value.knownPendingUserIds : []),
+    lastSyncAt: typeof value.lastSyncAt === "string" ? value.lastSyncAt : null
+  };
+}
+
+async function loadNotifierState() {
+  try {
+    const raw = await fs.readFile(config.stateFilePath, "utf8");
+    return sanitizeNotifierState(JSON.parse(raw));
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") {
+      return createDefaultNotifierState();
+    }
+    throw error;
+  }
+}
+
+async function saveNotifierState() {
+  await fs.mkdir(path.dirname(config.stateFilePath), { recursive: true });
+  await fs.writeFile(config.stateFilePath, `${JSON.stringify(notifierState, null, 2)}\n`, "utf8");
 }
 
 async function upsertMessage(chatId, text, options = {}, messageId = null) {
@@ -372,7 +490,7 @@ async function flixifyRequest(path, { method = "GET", query = null, body = undef
   }
 }
 
-async function resellerRequest(action, payload = {}) {
+async function resellerRequest(action, payload = {}, options = {}) {
   const form = new URLSearchParams();
   form.set("api_key", config.resellerApiKey);
   form.set("action", action);
@@ -409,18 +527,35 @@ async function resellerRequest(action, payload = {}) {
     throw new Error(parsed?.error ?? parsed?.status ?? "Reseller API request failed.");
   }
 
-  return parsed.data;
+  return options.returnEnvelope ? parsed : parsed.data;
 }
 
-async function listPendingUsers(page = 1) {
+async function listPendingUsers(page = 1, pageSize = config.pendingPageSize) {
   return flixifyRequest("/admin/users", {
     query: {
       page,
-      pageSize: config.pendingPageSize,
+      pageSize,
       status: "new",
       m3u: "unassigned"
     }
   });
+}
+
+async function listAllPendingUsers() {
+  const aggregatedItems = [];
+  let page = 1;
+  let totalPages = 1;
+
+  while (page <= totalPages) {
+    const payload = await listPendingUsers(page, config.notifyPageSize);
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    const total = parsePositiveInt(payload?.total, items.length || 1);
+    totalPages = Math.max(1, Math.ceil(total / config.notifyPageSize));
+    aggregatedItems.push(...items);
+    page += 1;
+  }
+
+  return aggregatedItems;
 }
 
 async function listFlixifyPackages() {
@@ -480,57 +615,139 @@ async function createPanelLine(userDetail, packageConfig) {
   });
 }
 
-function buildPendingKeyboard(items, page, total) {
-  const rows = items.map((item) => [
+async function getActiveConnectionStats() {
+  const payload = await resellerRequest(
+    "live_connections",
     {
-      text: `${item.codeSuffix ?? "----"} | ${item.status}`,
-      callback_data: buildCallbackData("select", page, item.id)
+      start: 0,
+      limit: 1
+    },
+    {
+      returnEnvelope: true
     }
-  ]);
+  );
 
-  const totalPages = Math.max(1, Math.ceil(total / config.pendingPageSize));
+  const count =
+    parseNonNegativeInt(payload.recordsFiltered) ??
+    parseNonNegativeInt(payload.recordsTotal) ??
+    (Array.isArray(payload.data) ? payload.data.length : 0);
+
+  return {
+    count,
+    checkedAt: new Date().toISOString()
+  };
+}
+
+function buildPendingKeyboard(items, page, total) {
+  const rows = (Array.isArray(items) ? items : []).map((item) => {
+    const label = String(item?.kryptoniteCode ?? item?.codeSuffix ?? item?.id ?? "Kayit").trim();
+    return [
+      {
+        text: `🆕 ${label}`,
+        callback_data: buildCallbackData("select", page, item.id)
+      }
+    ];
+  });
+
+  const totalPages = Math.max(1, Math.ceil(Number(total ?? 0) / config.pendingPageSize) || 1);
   const navRow = [];
 
   if (page > 1) {
     navRow.push({
-      text: "Geri",
+      text: "⬅️ Geri",
       callback_data: buildCallbackData("pending", page - 1)
     });
   }
   if (page < totalPages) {
     navRow.push({
-      text: "Ileri",
+      text: "➡️ Ileri",
       callback_data: buildCallbackData("pending", page + 1)
     });
   }
   navRow.push({
-    text: "Yenile",
+    text: "🔄 Yenile",
     callback_data: buildCallbackData("pending", page)
   });
 
-  if (navRow.length > 0) {
-    rows.push(navRow);
-  }
+  rows.push(navRow);
 
   return {
     inline_keyboard: rows
   };
 }
 
-function buildActionKeyboard(userId, page) {
+function buildUserCardKeyboard(userId, page) {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: "📋 Kodu Goster",
+          callback_data: buildCallbackData("copy", page, userId)
+        }
+      ],
+      [
+        {
+          text: "👤 Kullanici Detayi",
+          callback_data: buildCallbackData("detail", page, userId)
+        }
+      ],
+      [
+        {
+          text: "🧩 M3U Ata",
+          callback_data: buildCallbackData("packages", page, userId)
+        }
+      ],
+      [
+        {
+          text: "📚 Listeye Don",
+          callback_data: buildCallbackData("pending", page)
+        }
+      ]
+    ]
+  };
+}
+
+function buildDetailKeyboard(userId, page) {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: "🧩 M3U Ata",
+          callback_data: buildCallbackData("packages", page, userId)
+        }
+      ],
+      [
+        {
+          text: "↩️ Kart Gorunumu",
+          callback_data: buildCallbackData("select", page, userId)
+        }
+      ],
+      [
+        {
+          text: "📚 Listeye Don",
+          callback_data: buildCallbackData("pending", page)
+        }
+      ]
+    ]
+  };
+}
+
+function buildPackageKeyboard(userId, page) {
   const rows = [];
+
   for (let index = 0; index < config.packageMap.length; index += 2) {
-    const slice = config.packageMap.slice(index, index + 2).map((item) => ({
-      text: item.label,
-      callback_data: buildCallbackData("assign", item.key, page, userId)
-    }));
-    rows.push(slice);
+    rows.push(
+      config.packageMap.slice(index, index + 2).map((item) => ({
+        text: item.label,
+        callback_data: buildCallbackData("assign", item.key, page, userId)
+      }))
+    );
   }
 
   rows.push([
     {
-      text: "Listeye don",
-      callback_data: buildCallbackData("pending", page)
+      text: "↩️ Kullanici Karti",
+      callback_data: buildCallbackData("select", page, userId)
     }
   ]);
 
@@ -539,49 +756,101 @@ function buildActionKeyboard(userId, page) {
   };
 }
 
+function buildResultKeyboard(userId, page) {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: "👤 Kullanici Karti",
+          callback_data: buildCallbackData("select", page, userId)
+        }
+      ],
+      [
+        {
+          text: "📚 Bekleyenler",
+          callback_data: buildCallbackData("pending", page)
+        }
+      ]
+    ]
+  };
+}
+
 function renderPendingUsersText(payload) {
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  const page = parsePositiveInt(payload?.page, 1);
+  const total = parseNonNegativeInt(payload?.total) ?? items.length;
+  const totalPages = Math.max(1, Math.ceil(total / config.pendingPageSize));
   const lines = [
-    "<b>Bekleyen kullanicilar</b>",
-    `Toplam: <b>${payload.total}</b>`,
-    `Sayfa: <b>${payload.page}</b>`,
-    ""
+    "🆕 <b>Bekleyen Kayitlar</b>",
+    "",
+    `Toplam: <b>${total}</b>`,
+    `Sayfa: <b>${page}</b> / <b>${totalPages}</b>`
   ];
 
-  if (!Array.isArray(payload.items) || payload.items.length === 0) {
-    lines.push("Bekleyen kayit yok.");
+  if (items.length === 0) {
+    lines.push("");
+    lines.push("Su anda paket bekleyen yeni kayit yok.");
     return lines.join("\n");
   }
 
-  payload.items.forEach((item, index) => {
-    lines.push(
-      `${index + 1}. <b>${escapeHtml(item.codeSuffix ?? "----")}</b> | ${escapeHtml(item.status)} | ${formatDate(item.createdAt)}`
-    );
+  lines.push("");
+  items.forEach((item, index) => {
+    const label = escapeHtml(item?.kryptoniteCode ?? item?.codeSuffix ?? item?.id ?? "Kayit");
+    lines.push(`${index + 1}. <b>${label}</b>`);
+    lines.push(`   ${escapeHtml(formatDate(item?.createdAt))}`);
   });
 
   lines.push("");
-  lines.push("Bir kullanici secmek icin asagidaki butonlari kullanin.");
+  lines.push("Bir kaydi acmak icin asagidaki butonlari kullanin.");
   return lines.join("\n");
 }
 
-function renderUserDetailText(detail) {
-  const packageTitle = detail.summary.activePackage?.title ?? "-";
-  const remainingDays =
-    detail.summary.activePackage && Number.isFinite(detail.summary.activePackage.remainingDays)
-      ? `${detail.summary.activePackage.remainingDays} gun`
-      : "-";
+function renderUserCardText(detail) {
+  const snapshot = getUserSnapshot(detail);
 
   return [
-    "<b>Kullanici secildi</b>",
-    `Kod: <b>${escapeHtml(detail.summary.kryptoniteCode ?? detail.summary.codeSuffix ?? "----")}</b>`,
-    `User ID: <code>${escapeHtml(detail.summary.id)}</code>`,
-    `Durum: <b>${escapeHtml(detail.summary.status)}</b>`,
-    `Kayit: ${formatDate(detail.summary.createdAt)}`,
-    `M3U bagli: <b>${detail.summary.hasAssignedLink ? "evet" : "hayir"}</b>`,
-    `IPTV kullanici: <b>${escapeHtml(detail.iptvUsername ?? "-")}</b>`,
-    `Aktif paket: <b>${escapeHtml(packageTitle)}</b>`,
-    `Kalan: <b>${escapeHtml(remainingDays)}</b>`,
+    "🆕 <b>Yeni Kayit</b>",
+    "",
+    `👤 <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
+    `🕒 <b>Tarih:</b> ${escapeHtml(formatDate(snapshot.createdAt))}`,
+    `📡 <b>M3U Bagli:</b> <b>${snapshot.hasAssignedLink ? "Evet" : "Hayir"}</b>`,
+    `🔐 <b>IPTV Kullanici:</b> <code>${escapeHtml(snapshot.iptvUsername)}</code>`,
+    `🎟️ <b>Aktif Paket:</b> <b>${escapeHtml(snapshot.activePackageTitle)}</b>`,
+    `⏳ <b>Kalan:</b> <b>${escapeHtml(snapshot.remainingLabel)}</b>`,
     "",
     "Asagidaki butonlardan birini secin."
+  ].join("\n");
+}
+
+function renderUserDetailText(detail) {
+  const snapshot = getUserSnapshot(detail);
+
+  return [
+    "👤 <b>Kullanici Detayi</b>",
+    "",
+    `🆔 <b>User ID:</b> <code>${escapeHtml(snapshot.id)}</code>`,
+    `👤 <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
+    `🏷️ <b>Durum:</b> <b>${escapeHtml(formatUserStatus(snapshot.status))}</b>`,
+    `🕒 <b>Kayit Tarihi:</b> ${escapeHtml(formatDate(snapshot.createdAt))}`,
+    `📡 <b>M3U Bagli:</b> <b>${snapshot.hasAssignedLink ? "Evet" : "Hayir"}</b>`,
+    `🔐 <b>IPTV Kullanici:</b> <code>${escapeHtml(snapshot.iptvUsername)}</code>`,
+    `🔑 <b>IPTV Sifre:</b> <code>${escapeHtml(snapshot.iptvPassword)}</code>`,
+    `🎟️ <b>Aktif Paket:</b> <b>${escapeHtml(snapshot.activePackageTitle)}</b>`,
+    `⏳ <b>Kalan Sure:</b> <b>${escapeHtml(snapshot.remainingLabel)}</b>`,
+    `🔗 <b>Kaynak URL:</b> <code>${escapeHtml(snapshot.currentSourceUrl ?? "-")}</code>`
+  ].join("\n");
+}
+
+function renderPackagePickerText(detail) {
+  const snapshot = getUserSnapshot(detail);
+
+  return [
+    "🧩 <b>M3U Ata</b>",
+    "",
+    `👤 <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
+    `🕒 <b>Tarih:</b> ${escapeHtml(formatDate(snapshot.createdAt))}`,
+    "",
+    "Atamak istediginiz paketi secin."
   ].join("\n");
 }
 
@@ -590,48 +859,60 @@ function renderPackageListText(packagePayload) {
     (Array.isArray(packagePayload?.items) ? packagePayload.items : []).map((item) => [item.slug, item])
   );
 
-  const lines = ["<b>Bot paket haritasi</b>", ""];
+  const lines = ["🧩 <b>Paket Haritasi</b>", ""];
   config.packageMap.forEach((item) => {
     const internalPackage = item.flixifyPackageSlug ? flixifyPackages.get(item.flixifyPackageSlug) : null;
     lines.push(`<b>${escapeHtml(item.label)}</b>`);
-    lines.push(`- Reseller package: ${item.resellerPackageId} | trial=${item.resellerTrial}`);
+    lines.push(`Reseller: <code>${item.resellerPackageId}</code> | Trial: <b>${item.resellerTrial ? "Evet" : "Hayir"}</b>`);
     lines.push(
-      `- Flixify: ${
-        item.flixifyMode === "test-24h"
-          ? "test-24h route"
-          : escapeHtml(item.flixifyPackageSlug ?? "-")
-      }${internalPackage ? ` (${escapeHtml(internalPackage.title)})` : ""}`
+      `Flixify: <code>${
+        escapeHtml(item.flixifyMode === "test-24h" ? "test-24h" : item.flixifyPackageSlug ?? "-")
+      }</code>${internalPackage ? ` (${escapeHtml(internalPackage.title)})` : ""}`
     );
     lines.push("");
   });
   return lines.join("\n").trim();
 }
 
-function renderSuccessText(detail, packageConfig, panelLine) {
+function renderActiveUsersText(stats) {
   return [
-    "<b>Atama tamamlandi</b>",
-    `Kullanici: <code>${escapeHtml(detail.summary.id)}</code>`,
-    `Kod: <b>${escapeHtml(detail.summary.codeSuffix ?? "----")}</b>`,
-    `Secim: <b>${escapeHtml(packageConfig.label)}</b>`,
-    `Panel line ID: <b>${escapeHtml(panelLine.id ?? "-")}</b>`,
-    `IPTV user: <code>${escapeHtml(panelLine.username ?? detail.summary.kryptoniteCode ?? "-")}</code>`,
-    `IPTV pass: <code>${escapeHtml(panelLine.password ?? detail.summary.kryptoniteCode ?? "-")}</code>`,
-    `Bitis: <b>${escapeHtml(formatUnixSeconds(panelLine.exp_date))}</b>`
+    "📡 <b>Aktif IPTV Kullanici Sayisi</b>",
+    "",
+    `Canli baglanti: <b>${stats.count}</b>`,
+    `Kontrol zamani: ${escapeHtml(formatDate(stats.checkedAt))}`
+  ].join("\n");
+}
+
+function renderSuccessText(detail, packageConfig, panelLine) {
+  const snapshot = getUserSnapshot(detail);
+
+  return [
+    "✅ <b>Paket Atandi</b>",
+    "",
+    `👤 <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
+    `🎟️ <b>Secilen Paket:</b> <b>${escapeHtml(packageConfig.label)}</b>`,
+    `🆔 <b>Panel Line ID:</b> <b>${escapeHtml(panelLine.id ?? "-")}</b>`,
+    `🔐 <b>IPTV Kullanici:</b> <code>${escapeHtml(panelLine.username ?? snapshot.code)}</code>`,
+    `🔑 <b>IPTV Sifre:</b> <code>${escapeHtml(panelLine.password ?? snapshot.code)}</code>`,
+    `📅 <b>Bitis:</b> <b>${escapeHtml(formatUnixSeconds(panelLine.exp_date))}</b>`
   ].join("\n");
 }
 
 function renderPartialFailureText(detail, packageConfig, panelLine, error) {
+  const snapshot = getUserSnapshot(detail);
+
   return [
-    "<b>Kismi hata</b>",
-    "Panelde line acildi ama Flixify akisi tamamlanamadi.",
-    `Kullanici: <code>${escapeHtml(detail.summary.id)}</code>`,
-    `Secim: <b>${escapeHtml(packageConfig.label)}</b>`,
-    `Panel line ID: <b>${escapeHtml(panelLine.id ?? "-")}</b>`,
-    `IPTV user: <code>${escapeHtml(panelLine.username ?? "-")}</code>`,
-    `IPTV pass: <code>${escapeHtml(panelLine.password ?? "-")}</code>`,
-    `Hata: <b>${escapeHtml(normalizeErrorMessage(error))}</b>`,
+    "⚠️ <b>Kismi Hata</b>",
     "",
-    "Manuel kontrol gerekebilir."
+    "Panelde line acildi fakat Flixify tarafinda atama tamamlanamadi.",
+    `👤 <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
+    `🎟️ <b>Secilen Paket:</b> <b>${escapeHtml(packageConfig.label)}</b>`,
+    `🆔 <b>Panel Line ID:</b> <b>${escapeHtml(panelLine.id ?? "-")}</b>`,
+    `🔐 <b>IPTV Kullanici:</b> <code>${escapeHtml(panelLine.username ?? "-")}</code>`,
+    `🔑 <b>IPTV Sifre:</b> <code>${escapeHtml(panelLine.password ?? "-")}</code>`,
+    `❌ <b>Hata:</b> <b>${escapeHtml(normalizeErrorMessage(error))}</b>`,
+    "",
+    "Bu kayit icin manuel kontrol gerekebilir."
   ].join("\n");
 }
 
@@ -644,22 +925,60 @@ async function showPendingUsers(chatId, page = 1, messageId = null) {
     text,
     {
       parse_mode: "HTML",
-      reply_markup: buildPendingKeyboard(payload.items, payload.page, payload.total)
+      reply_markup: buildPendingKeyboard(payload.items, parsePositiveInt(payload.page, page), payload.total)
     },
     messageId
   );
 }
 
-async function showUserActions(chatId, userId, page, messageId = null) {
+async function showUserCard(chatId, userId, page, messageId = null) {
   const detail = await getUserDetail(userId);
-  const text = renderUserDetailText(detail);
 
   return upsertMessage(
     chatId,
-    text,
+    renderUserCardText(detail),
     {
       parse_mode: "HTML",
-      reply_markup: buildActionKeyboard(userId, page)
+      reply_markup: buildUserCardKeyboard(userId, page)
+    },
+    messageId
+  );
+}
+
+async function showUserDetails(chatId, userId, page, messageId = null) {
+  const detail = await getUserDetail(userId);
+
+  return upsertMessage(
+    chatId,
+    renderUserDetailText(detail),
+    {
+      parse_mode: "HTML",
+      reply_markup: buildDetailKeyboard(userId, page)
+    },
+    messageId
+  );
+}
+
+async function showPackagePicker(chatId, userId, page, messageId = null) {
+  const detail = await getUserDetail(userId);
+
+  return upsertMessage(
+    chatId,
+    renderPackagePickerText(detail),
+    {
+      parse_mode: "HTML",
+      reply_markup: buildPackageKeyboard(userId, page)
+    },
+    messageId
+  );
+}
+
+async function showErrorMessage(chatId, error, messageId = null) {
+  return upsertMessage(
+    chatId,
+    `❌ <b>Hata</b>\n${escapeHtml(normalizeErrorMessage(error))}`,
+    {
+      parse_mode: "HTML"
     },
     messageId
   );
@@ -681,12 +1000,17 @@ async function assignPackageToUser(chatId, userId, page, packageKey, messageId =
 
   await upsertMessage(
     chatId,
-    `<b>Islem basladi</b>\nKullanici: <code>${escapeHtml(userId)}</code>\nSecim: <b>${escapeHtml(packageConfig.label)}</b>`,
+    [
+      "⏳ <b>Paket Ataniyor</b>",
+      "",
+      `👤 <b>User ID:</b> <code>${escapeHtml(userId)}</code>`,
+      `🎟️ <b>Secim:</b> <b>${escapeHtml(packageConfig.label)}</b>`,
+      "",
+      "Lutfen bekleyin..."
+    ].join("\n"),
     {
       parse_mode: "HTML",
-      reply_markup: {
-        inline_keyboard: [[{ text: "Listeye don", callback_data: buildCallbackData("pending", page) }]]
-      }
+      reply_markup: buildResultKeyboard(userId, page)
     },
     messageId
   );
@@ -705,12 +1029,7 @@ async function assignPackageToUser(chatId, userId, page, packageKey, messageId =
       renderSuccessText(detail, packageConfig, panelLine),
       {
         parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "Listeye don", callback_data: buildCallbackData("pending", page) }],
-            [{ text: "Ayni kullanici", callback_data: buildCallbackData("select", page, userId) }]
-          ]
-        }
+        reply_markup: buildResultKeyboard(userId, page)
       },
       messageId
     );
@@ -720,15 +1039,110 @@ async function assignPackageToUser(chatId, userId, page, packageKey, messageId =
       renderPartialFailureText(detail, packageConfig, panelLine, error),
       {
         parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "Listeye don", callback_data: buildCallbackData("pending", page) }],
-            [{ text: "Ayni kullanici", callback_data: buildCallbackData("select", page, userId) }]
-          ]
-        }
+        reply_markup: buildResultKeyboard(userId, page)
       },
       messageId
     );
+  }
+}
+
+async function showUserCode(query, page, userId) {
+  const detail = await getUserDetail(userId);
+  const snapshot = getUserSnapshot(detail);
+
+  await bot.answerCallbackQuery(query.id, {
+    text: `Kullanici Kodu:\n${snapshot.code}`,
+    show_alert: true
+  });
+
+  if (query.message?.chat.id && query.message?.message_id) {
+    await showUserCard(query.message.chat.id, userId, page, query.message.message_id);
+  }
+}
+
+async function notifyNewUser(userId) {
+  const detail = await getUserDetail(userId);
+
+  await bot.sendMessage(config.telegramAdminId, renderUserCardText(detail), {
+    parse_mode: "HTML",
+    reply_markup: buildUserCardKeyboard(userId, 1)
+  });
+}
+
+async function pollNewUsers({ seedOnly = false } = {}) {
+  if (notifierTickInFlight) {
+    return;
+  }
+
+  notifierTickInFlight = true;
+
+  try {
+    const items = await listAllPendingUsers();
+    const knownIds = new Set(notifierState.knownPendingUserIds);
+    const currentIds = dedupeIds(items.map((item) => item?.id));
+
+    if (seedOnly || !notifierState.bootstrapped) {
+      notifierState = {
+        ...notifierState,
+        bootstrapped: true,
+        knownPendingUserIds: dedupeIds([...notifierState.knownPendingUserIds, ...currentIds]),
+        lastSyncAt: new Date().toISOString()
+      };
+      await saveNotifierState();
+      return;
+    }
+
+    const freshItems = items
+      .filter((item) => {
+        const pendingUserId = String(item?.id ?? "").trim();
+        return pendingUserId.length > 0 && !knownIds.has(pendingUserId);
+      })
+      .sort((left, right) => {
+        const leftTime = new Date(left?.createdAt ?? 0).getTime();
+        const rightTime = new Date(right?.createdAt ?? 0).getTime();
+        return leftTime - rightTime;
+      });
+
+    for (const item of freshItems) {
+      const pendingUserId = String(item?.id ?? "").trim();
+      if (!pendingUserId) {
+        continue;
+      }
+
+      try {
+        await notifyNewUser(pendingUserId);
+        knownIds.add(pendingUserId);
+      } catch (error) {
+        console.error(`telegram-panel-bot notifier failed for user ${pendingUserId}:`, normalizeErrorMessage(error));
+      }
+    }
+
+    notifierState = {
+      ...notifierState,
+      bootstrapped: true,
+      knownPendingUserIds: dedupeIds([...knownIds, ...currentIds]),
+      lastSyncAt: new Date().toISOString()
+    };
+    await saveNotifierState();
+  } catch (error) {
+    console.error("telegram-panel-bot notifier poll failed:", normalizeErrorMessage(error));
+  } finally {
+    notifierTickInFlight = false;
+  }
+}
+
+async function startNotifier() {
+  notifierState = await loadNotifierState();
+  await pollNewUsers({ seedOnly: !notifierState.bootstrapped });
+  notifierTimer = setInterval(() => {
+    void pollNewUsers();
+  }, config.newUserPollSeconds * 1000);
+}
+
+async function stopNotifier() {
+  if (notifierTimer) {
+    clearInterval(notifierTimer);
+    notifierTimer = null;
   }
 }
 
@@ -738,11 +1152,15 @@ bot.onText(/\/start$/, async (message) => {
   }
 
   const text = [
-    "<b>Flixify Panel Bot</b>",
+    "🤖 <b>Flixify Yonetici Botu</b>",
     "",
-    "/bekleyenler - yeni ve M3U atanmamis kullanicilari listele",
-    "/paketler - botun paket haritasini goster",
-    "/help - yardim"
+    "Yeni kayit bildirimleri acik. Kullanicilara buradan paket atayabilirsiniz.",
+    "",
+    "Komutlar:",
+    "/bekleyenler - bekleyen yeni kayitlari listele",
+    "/aktif - canli IPTV baglanti sayisini goster",
+    "/paketler - bot paket haritasini goster",
+    "/help - yardim menusu"
   ].join("\n");
 
   await bot.sendMessage(message.chat.id, text, { parse_mode: "HTML" });
@@ -754,16 +1172,19 @@ bot.onText(/\/help$/, async (message) => {
   }
 
   const text = [
-    "<b>Komutlar</b>",
+    "📘 <b>Kullanim Akisi</b>",
     "",
+    "1. Bot yeni kayit geldiginde size otomatik bildirim yollar.",
+    "2. Bildirim kartinda <b>M3U Ata</b> butonuna basin.",
+    "3. 24s Test, 1 Ay, 3 Ay, 6 Ay veya 12 Ay secin.",
+    "4. Bot reseller panelde line acar ve Flixify kullanicisina baglar.",
+    "",
+    "Komutlar:",
     "/bekleyenler",
+    "/aktif",
+    "/aktifler",
     "/paketler",
-    "/help",
-    "",
-    "Akis:",
-    "1. /bekleyenler",
-    "2. kullaniciyi sec",
-    "3. test veya paket dugmesine bas"
+    "/help"
   ].join("\n");
 
   await bot.sendMessage(message.chat.id, text, { parse_mode: "HTML" });
@@ -777,6 +1198,21 @@ bot.onText(/\/bekleyenler(?:\s+(\d+))?$/, async (message, match) => {
   const page = parsePositiveInt(match?.[1], 1);
   try {
     await showPendingUsers(message.chat.id, page);
+  } catch (error) {
+    await bot.sendMessage(message.chat.id, `Hata: ${normalizeErrorMessage(error)}`);
+  }
+});
+
+bot.onText(/\/aktif(?:ler)?$/, async (message) => {
+  if (!(await authorizeMessage(message))) {
+    return;
+  }
+
+  try {
+    const stats = await getActiveConnectionStats();
+    await bot.sendMessage(message.chat.id, renderActiveUsersText(stats), {
+      parse_mode: "HTML"
+    });
   } catch (error) {
     await bot.sendMessage(message.chat.id, `Hata: ${normalizeErrorMessage(error)}`);
   }
@@ -825,8 +1261,31 @@ bot.on("callback_query", async (query) => {
     if (data.startsWith("select:")) {
       const [, pageRaw, userId] = data.split(":");
       const page = parsePositiveInt(pageRaw, 1);
-      await showUserActions(chatId, userId, page, messageId);
+      await showUserCard(chatId, userId, page, messageId);
       await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data.startsWith("detail:")) {
+      const [, pageRaw, userId] = data.split(":");
+      const page = parsePositiveInt(pageRaw, 1);
+      await showUserDetails(chatId, userId, page, messageId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data.startsWith("packages:")) {
+      const [, pageRaw, userId] = data.split(":");
+      const page = parsePositiveInt(pageRaw, 1);
+      await showPackagePicker(chatId, userId, page, messageId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data.startsWith("copy:")) {
+      const [, pageRaw, userId] = data.split(":");
+      const page = parsePositiveInt(pageRaw, 1);
+      await showUserCode(query, page, userId);
       return;
     }
 
@@ -834,7 +1293,7 @@ bot.on("callback_query", async (query) => {
       const [, packageKey, pageRaw, userId] = data.split(":");
       const page = parsePositiveInt(pageRaw, 1);
       await bot.answerCallbackQuery(query.id, {
-        text: "Atama baslatildi."
+        text: "Paket atamasi baslatildi."
       });
       await assignPackageToUser(chatId, userId, page, packageKey, messageId);
       return;
@@ -848,14 +1307,7 @@ bot.on("callback_query", async (query) => {
       text: "Islem basarisiz.",
       show_alert: false
     });
-    await upsertMessage(
-      chatId,
-      `<b>Hata</b>\n${escapeHtml(normalizeErrorMessage(error))}`,
-      {
-        parse_mode: "HTML"
-      },
-      messageId
-    );
+    await showErrorMessage(chatId, error, messageId);
   }
 });
 
@@ -864,13 +1316,24 @@ bot.on("polling_error", (error) => {
 });
 
 process.on("SIGINT", async () => {
+  await stopNotifier();
   await bot.stopPolling();
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
+  await stopNotifier();
   await bot.stopPolling();
   process.exit(0);
 });
 
-console.log("telegram-panel-bot started");
+startNotifier()
+  .then(() => {
+    console.log("telegram-panel-bot started");
+  })
+  .catch(async (error) => {
+    console.error("telegram-panel-bot failed to start:", normalizeErrorMessage(error));
+    await stopNotifier();
+    await bot.stopPolling();
+    process.exit(1);
+  });
