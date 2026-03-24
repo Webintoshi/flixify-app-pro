@@ -55,19 +55,6 @@ ApplicationWindow {
     readonly property real railCardWidth: compactWindow ? 236 : mediumWindow ? 260 : 286
     readonly property real railCardHeight: compactWindow ? 388 : mediumWindow ? 404 : 420
     readonly property real profileCardWidth: compactWindow ? 0 : 1
-    readonly property var headerPrimaryItems: [
-        { key: "home", label: "Ana Sayfa" },
-        { key: "live", label: "Canli TV" },
-        { key: "movies", label: "Filmler" },
-        { key: "series", label: "Diziler" }
-    ]
-    readonly property var headerSecondaryItems: [
-        { key: "profile", label: "Profil" },
-        { key: "packages", label: "Paketler" },
-        { key: "payments", label: "Odemeler" },
-        { key: "contact", label: "Iletisim" }
-    ]
-
     function clampValue(value, minValue, maxValue) {
         return Math.max(minValue, Math.min(maxValue, value))
     }
@@ -112,6 +99,7 @@ ApplicationWindow {
     property string playerSubtitle: ""
     property string playerImageUrl: ""
     property bool liveControlsVisible: false
+    property bool videoFullscreen: false
     property var pendingPackage: null
     property string selectedPaymentMethodId: ""
     property string toastMessage: ""
@@ -259,6 +247,10 @@ ApplicationWindow {
         const trimmed = safeText(value)
         if (!trimmed.length) {
             return ""
+        }
+
+        if (trimmed.substring(0, 2) === "//") {
+            return "https:" + trimmed
         }
 
         if (!/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed)) {
@@ -845,6 +837,21 @@ ApplicationWindow {
         }
         window.showFullScreen()
     }
+    function toggleVideoFullscreen() {
+        if (videoFullscreen) {
+            exitVideoFullscreen()
+            return
+        }
+        videoFullscreen = true
+        if (window.visibility !== Window.FullScreen) {
+            window.showFullScreen()
+        }
+        showLiveControls()
+    }
+    function exitVideoFullscreen() {
+        videoFullscreen = false
+        window.showNormal()
+    }
     function parseVersionParts(version) {
         const normalized = (version || "").toString().trim().split("+")[0].split("-")[0].trim()
         if (!normalized.length || !/^\d+(\.\d+){0,4}$/.test(normalized)) {
@@ -879,6 +886,9 @@ ApplicationWindow {
     }
 
     function openScreen(screenName) {
+        if (videoFullscreen && screenName !== "live") {
+            exitVideoFullscreen()
+        }
         if (playerVisible && screenName !== currentScreen) {
             closePlayer()
         }
@@ -895,13 +905,6 @@ ApplicationWindow {
         } else if (screenName === "contact") {
             apiClient.fetchMe()
         }
-    }
-
-    function headerScreenActive(screenName) {
-        if (screenName === "series") {
-            return currentScreen === "series" || currentScreen === "series-detail"
-        }
-        return currentScreen === screenName
     }
 
     function openSeriesDetail(seriesId) {
@@ -1500,97 +1503,6 @@ ApplicationWindow {
         }
     }
 
-    component HeaderMenuButton: Button {
-        id: headerMenuControl
-        property bool active: false
-        hoverEnabled: headerMenuControl.enabled
-        focusPolicy: Qt.NoFocus
-        implicitWidth: window.compactWindow ? 116 : 126
-        implicitHeight: window.compactWindow ? 52 : 56
-        leftPadding: 18
-        rightPadding: 18
-        topPadding: 0
-        bottomPadding: 0
-        background: Rectangle {
-            radius: height / 2
-            color: headerMenuControl.active
-                ? "#18ffffff"
-                : (headerMenuControl.hovered ? "#10ffffff" : "#0affffff")
-            border.width: 1
-            border.color: headerMenuControl.active
-                ? "#35e50914"
-                : (headerMenuControl.hovered ? "#24ffffff" : window.borderSoft)
-            Behavior on color { ColorAnimation { duration: 150 } }
-            Behavior on border.color { ColorAnimation { duration: 150 } }
-        }
-        contentItem: Row {
-            anchors.centerIn: parent
-            spacing: 10
-
-            Canvas {
-                width: 18
-                height: 18
-                anchors.verticalCenter: parent.verticalCenter
-                onPaint: {
-                    const context = getContext("2d")
-                    context.reset()
-                    context.strokeStyle = "#f4f7fb"
-                    context.lineWidth = 2
-                    context.lineCap = "round"
-                    for (let index = 0; index < 3; index += 1) {
-                        const y = 4 + index * 5
-                        context.beginPath()
-                        context.moveTo(2, y)
-                        context.lineTo(width - 2, y)
-                        context.stroke()
-                    }
-                }
-            }
-
-            Text {
-                anchors.verticalCenter: parent.verticalCenter
-                text: "Menu"
-                color: "#f4f7fb"
-                font.pixelSize: 14 * fontScale
-                font.bold: true
-                font.family: "Space Grotesk"
-            }
-        }
-    }
-
-    component HeaderMenuEntryButton: Button {
-        id: menuEntry
-        property bool active: false
-        property bool danger: false
-        hoverEnabled: menuEntry.enabled
-        focusPolicy: Qt.NoFocus
-        implicitHeight: 50
-        leftPadding: 16
-        rightPadding: 16
-        topPadding: 0
-        bottomPadding: 0
-        background: Rectangle {
-            radius: 16
-            color: menuEntry.active
-                ? "#15ffffff"
-                : (menuEntry.hovered ? "#10ffffff" : "#00ffffff")
-            border.width: 1
-            border.color: menuEntry.danger
-                ? "#30ff7d86"
-                : (menuEntry.active ? "#35e50914" : (menuEntry.hovered ? "#24ffffff" : "#16ffffff"))
-            Behavior on color { ColorAnimation { duration: 140 } }
-            Behavior on border.color { ColorAnimation { duration: 140 } }
-        }
-        contentItem: Text {
-            text: menuEntry.text
-            color: menuEntry.danger ? "#ffd4d8" : "#f4f7fb"
-            font.pixelSize: 14 * fontScale
-            font.bold: menuEntry.active || menuEntry.hovered || menuEntry.danger
-            font.family: "Space Grotesk"
-            verticalAlignment: Text.AlignVCenter
-        }
-    }
-
     component GlassCard: Rectangle {
         radius: 28
         color: window.panel
@@ -2009,9 +1921,9 @@ ApplicationWindow {
             
             // Fullscreen
             PlayerIconButton {
-                icon: window.visibility === Window.FullScreen ? "⛶" : "⛶"
-                tooltip: "Tam Ekran"
-                onClicked: toggleWindowFullscreen()
+                icon: videoFullscreen ? "⛶" : "⛶"
+                tooltip: videoFullscreen ? "Küçült" : "Tam Ekran"
+                onClicked: toggleVideoFullscreen()
             }
             
             // Favori
@@ -2223,9 +2135,9 @@ ApplicationWindow {
             spacing: 12
             // Tam Ekran
             PlayerIconButton {
-                icon: window.visibility === Window.FullScreen ? "⛶" : "⛶"
-                tooltip: "Tam Ekran"
-                onClicked: toggleWindowFullscreen()
+                icon: videoFullscreen ? "⛶" : "⛶"
+                tooltip: videoFullscreen ? "Küçült" : "Tam Ekran"
+                onClicked: toggleVideoFullscreen()
             }
         }
     }
@@ -3365,6 +3277,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: window.compactWindow ? 92 : 104
                     color: "#ee010204"
+                    visible: !videoFullscreen
 
                     RowLayout {
                         anchors.fill: parent
@@ -3402,33 +3315,22 @@ ApplicationWindow {
                                 
                                 Repeater {
                                     model: [
-                                        { key: "home", label: "Ana Sayfa" },
-                                        { key: "live", label: "Canlı TV" },
-                                        { key: "movies", label: "Filmler" },
-                                        { key: "series", label: "Diziler" }
+                                        { key: "live", label: "Canl\u0131 TV" },
+                                        { key: "movies", label: "Film" },
+                                        { key: "series", label: "Dizi" }
                                     ]
                                     NavButton {
                                         required property var modelData
                                         visible: true
-                                        implicitWidth: window.compactWindow ? 100 : 120
+                                        implicitWidth: window.compactWindow ? 104 : 126
                                         implicitHeight: window.compactWindow ? 44 : 52
-                                        text: modelData.label.toUpperCase()
-                                        active: currentScreen === modelData.key
+                                        text: modelData.label
+                                        active: modelData.key === "series"
+                                            ? (currentScreen === "series" || currentScreen === "series-detail")
+                                            : currentScreen === modelData.key
                                         onClicked: openScreen(modelData.key)
                                     }
                                 }
-                                }
-                            }
-                        }
-
-                        HeaderMenuButton {
-                            id: headerMenuButton
-                            active: headerMenuPopup.visible
-                            onClicked: {
-                                if (headerMenuPopup.visible) {
-                                    headerMenuPopup.close()
-                                } else {
-                                    headerMenuPopup.open()
                                 }
                             }
                         }
@@ -3485,136 +3387,6 @@ ApplicationWindow {
                         }
 
                         AppButton { text: "Çıkış"; secondary: true; implicitWidth: 110; onClicked: apiClient.logout() }
-                    }
-
-                    Popup {
-                        id: headerMenuPopup
-                        parent: Overlay.overlay
-                        modal: true
-                        focus: visible
-                        padding: 18
-                        width: window.compactWindow ? Math.min(window.width - 24, 308) : 340
-                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-                        x: {
-                            if (!parent) {
-                                return 12
-                            }
-                            const point = headerMenuButton.mapToItem(parent, 0, 0)
-                            return Math.max(12, Math.min(parent.width - width - 12, point.x + headerMenuButton.width - width))
-                        }
-                        y: {
-                            if (!parent) {
-                                return window.compactWindow ? 84 : 96
-                            }
-                            const point = headerMenuButton.mapToItem(parent, 0, headerMenuButton.height + 10)
-                            return point.y
-                        }
-
-                        Overlay.modal: Rectangle {
-                            color: "#5a020408"
-                        }
-
-                        background: Rectangle {
-                            radius: 24
-                            color: "#f0131822"
-                            border.width: 1
-                            border.color: "#24ffffff"
-                        }
-
-                        contentItem: ColumnLayout {
-                            spacing: 10
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 84
-                                radius: 20
-                                color: "#10ffffff"
-                                border.width: 1
-                                border.color: "#18ffffff"
-
-                                Column {
-                                    anchors.fill: parent
-                                    anchors.margins: 16
-                                    spacing: 6
-
-                                    Text {
-                                        text: "Hizli Menu"
-                                        color: window.textPrimary
-                                        font.pixelSize: 18 * fontScale
-                                        font.family: "Space Grotesk"
-                                        font.bold: true
-                                    }
-
-                                    Text {
-                                        text: userData().kryptoniteCode || "Flixify Profili"
-                                        color: window.textMuted
-                                        font.pixelSize: 13 * fontScale
-                                        elide: Text.ElideRight
-                                        width: parent.width
-                                    }
-                                }
-                            }
-
-                            Text {
-                                text: "Gezin"
-                                color: window.textMuted
-                                font.pixelSize: 12 * fontScale
-                                font.bold: true
-                                font.family: "Space Grotesk"
-                            }
-
-                            Repeater {
-                                model: window.headerPrimaryItems
-                                HeaderMenuEntryButton {
-                                    required property var modelData
-                                    Layout.fillWidth: true
-                                    text: modelData.label
-                                    active: headerScreenActive(modelData.key)
-                                    onClicked: {
-                                        headerMenuPopup.close()
-                                        openScreen(modelData.key)
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 1
-                                color: "#16ffffff"
-                            }
-
-                            Text {
-                                text: "Hesap"
-                                color: window.textMuted
-                                font.pixelSize: 12 * fontScale
-                                font.bold: true
-                                font.family: "Space Grotesk"
-                            }
-
-                            Repeater {
-                                model: window.headerSecondaryItems
-                                HeaderMenuEntryButton {
-                                    required property var modelData
-                                    Layout.fillWidth: true
-                                    text: modelData.label
-                                    active: headerScreenActive(modelData.key)
-                                    onClicked: {
-                                        headerMenuPopup.close()
-                                        openScreen(modelData.key)
-                                    }
-                                }
-                            }
-
-                            HeaderMenuEntryButton {
-                                Layout.fillWidth: true
-                                text: "Cikis Yap"
-                                danger: true
-                                onClicked: {
-                                    headerMenuPopup.close()
-                                    apiClient.logout()
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -3963,19 +3735,21 @@ ApplicationWindow {
                         Item {
                             ColumnLayout {
                                 anchors.fill: parent
-                                anchors.margins: 24
-                                spacing: 18
+                                anchors.margins: videoFullscreen ? 0 : 24
+                                spacing: videoFullscreen ? 0 : 18
                                 Text {
                                     text: "Canlı TV"
                                     color: window.textPrimary
                                     font.pixelSize: 42
                                     font.family: "Space Grotesk"
                                     font.bold: true
+                                    visible: !videoFullscreen
                                 }
 
                                 Flickable {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 52
+                                    Layout.preferredHeight: videoFullscreen ? 0 : 52
+                                    visible: !videoFullscreen
                                     contentWidth: liveChipRow.width
                                     clip: true
 
@@ -4010,23 +3784,24 @@ ApplicationWindow {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
-                                    spacing: window.sectionSpacing
+                                    spacing: videoFullscreen ? 0 : window.sectionSpacing
                                     GlassCard {
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
-                                        color: "#090c13"
+                                        color: videoFullscreen ? "#000000" : "#090c13"
+                                        radius: videoFullscreen ? 0 : 28
 
                                         ColumnLayout {
                                             anchors.fill: parent
-                                            anchors.margins: 18
+                                            anchors.margins: videoFullscreen ? 0 : 18
                                             spacing: 0
 
                                             Rectangle {
                                                 Layout.fillWidth: true
                                                 Layout.fillHeight: true
-                                                radius: 28
+                                                radius: videoFullscreen ? 0 : 28
                                                 color: "#000000"
-                                                border.width: 1
+                                                border.width: videoFullscreen ? 0 : 1
                                                 border.color: "#14ffffff"
                                                 clip: true
                                                 
@@ -4041,7 +3816,7 @@ ApplicationWindow {
                                                         anchors.right: parent.right
                                                         anchors.top: parent.top
                                                         anchors.bottom: parent.bottom
-                                                        anchors.bottomMargin: 100
+                                                        anchors.bottomMargin: videoFullscreen ? 0 : 100
                                                         active: inlineLivePlayerVisible()
                                                         sourceComponent: nativeVideoSurfaceComponent
                                                     }
@@ -4051,13 +3826,15 @@ ApplicationWindow {
                                                         anchors.fill: parent
                                                         visible: inlineLivePlayerVisible()
                                                         
-                                                        // Mouse Area for hover detection
+                                                        // Mouse Area for hover detection and double-click fullscreen
                                                         MouseArea {
                                                             anchors.fill: parent
                                                             hoverEnabled: true
-                                                            acceptedButtons: Qt.NoButton
+                                                            acceptedButtons: Qt.LeftButton
                                                             onEntered: showLiveControls()
                                                             onPositionChanged: showLiveControls()
+                                                            onClicked: showLiveControls()
+                                                            onDoubleClicked: toggleVideoFullscreen()
                                                             onWheel: function(wheel) {
                                                                 wheel.accepted = false
                                                                 showLiveControls()
@@ -4209,9 +3986,10 @@ ApplicationWindow {
                                 }
 
                                     GlassCard {
-                                        Layout.preferredWidth: window.compactWindow ? 360 : 420
+                                        Layout.preferredWidth: videoFullscreen ? 0 : (window.compactWindow ? 360 : 420)
                                         Layout.fillHeight: true
                                         color: "#0a0f18"
+                                        visible: !videoFullscreen
 
                                         ColumnLayout {
                                             anchors.fill: parent
@@ -5442,12 +5220,13 @@ ApplicationWindow {
         Shortcut {
             sequence: "Esc"
             onActivated: {
-                if (window.visibility === Window.FullScreen) {
+                if (videoFullscreen) {
+                    exitVideoFullscreen()
+                } else if (window.visibility === Window.FullScreen) {
                     window.showNormal()
                 } else if (confirmExitDialog.visible) {
                     confirmExitDialog.close()
                 } else if (currentScreen !== "login") {
-                    // Back navigation
                     if (currentScreen === "home" || currentScreen === "movies" || currentScreen === "series" || currentScreen === "live") {
                         confirmExitDialog.open()
                     } else {
@@ -5461,7 +5240,13 @@ ApplicationWindow {
 
         Shortcut {
             sequence: "F11"
-            onActivated: toggleWindowFullscreen()
+            onActivated: {
+                if (inlineLivePlayerVisible()) {
+                    toggleVideoFullscreen()
+                } else {
+                    toggleWindowFullscreen()
+                }
+            }
         }
 
         Shortcut {
