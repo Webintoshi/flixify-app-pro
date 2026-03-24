@@ -143,10 +143,7 @@ import {
 } from "./playback-credentials.js";
 import {
   createVodPlaybackManager,
-  mapSourceTracksToVodAudioTracks,
-  probeVodMediaProfile,
   probeVodStream,
-  selectVodAudioTrackId,
   VodPlaybackUnavailableError
 } from "./vod.js";
 import { API_CORS_CONFIG } from "./cors-config.js";
@@ -559,19 +556,25 @@ async function resolveVodSourceUrl(input: {
   let sawNetworkLikeFailure = false;
   let sawPotentialFalseNegativeHttpFailure = false;
   let firstCandidateUrl: string | null = candidates[0]?.url ?? null;
+  let firstCandidateCookie: string | null = null;
 
   for (const candidate of candidates) {
     const probe = await probeVodStream(candidate.url);
+    const resolvedCandidateUrl = probe.finalUrl || candidate.url;
     lastTransport = probe.transport;
     if (probe.ok) {
       return {
         ok: true,
-        sourceUrl: candidate.url,
+        sourceUrl: resolvedCandidateUrl,
         transport: probe.transport,
         cookie: probe.cookie,
         errorMessage: null,
         isVerified: true
       };
+    }
+    if (firstCandidateUrl === candidate.url) {
+      firstCandidateUrl = resolvedCandidateUrl;
+      firstCandidateCookie = probe.cookie;
     }
     if (probe.statusCode === 0) {
       sawNetworkLikeFailure = true;
@@ -589,7 +592,7 @@ async function resolveVodSourceUrl(input: {
       ok: true,
       sourceUrl: firstCandidateUrl,
       transport: lastTransport,
-      cookie: null,
+      cookie: firstCandidateCookie,
       errorMessage: lastError,
       isVerified: false
     };
@@ -599,7 +602,7 @@ async function resolveVodSourceUrl(input: {
     ok: false,
     sourceUrl: firstCandidateUrl,
     transport: lastTransport,
-    cookie: null,
+    cookie: firstCandidateCookie,
     errorMessage: lastError,
     isVerified: false
   };
@@ -2346,6 +2349,59 @@ export function buildServer() {
         );
       }
 
+      const baseOrigin = getRequestBaseOrigin(request);
+      let playback: VodPlaybackRecord;
+      try {
+        playback = await vodPlaybackManager.createPlayback({
+          userId: auth.userId,
+          itemId,
+          kind,
+          sourceUrl: resolved.sourceUrl!,
+          baseOrigin,
+          clientRuntime: "native",
+          platform,
+          cookie: resolved.cookie,
+          allowUnverifiedSource: resolved.isVerified === false,
+          sourceTransportHint: resolved.transport,
+          selectedAudioTrackId: audioTrackId
+        });
+      } catch (error) {
+        request.log.warn(
+          {
+            err: error,
+            itemId,
+            kind,
+            platform
+          },
+          "Native VOD playback manager error"
+        );
+
+        const message =
+          error instanceof VodPlaybackUnavailableError && error.message.trim().length > 0
+            ? error.message.trim()
+            : "VOD akisi native playback icin hazirlanamadi.";
+
+        playback = buildDisabledVodPlaybackRecord({
+          itemId,
+          kind,
+          transport: resolved.transport,
+          errorMessage: message
+        });
+      }
+
+      if (playback.canPlay && playback.url) {
+        return buildNativeVodPlaybackResponse({
+          url: playback.url,
+          transport: playback.transport,
+          deliveryMode: playback.deliveryMode,
+          audioTracks: playback.audioTracks,
+          defaultAudioTrackId: playback.defaultAudioTrackId,
+          selectedAudioTrackId: playback.selectedAudioTrackId,
+          isVerified: playback.isVerified,
+          lastCheckedAt: playback.expiresAt ?? new Date().toISOString()
+        });
+      }
+
       if (allowOptimisticNativeDirect) {
         return buildNativeVodPlaybackResponse({
           url: resolved.sourceUrl!,
@@ -2360,24 +2416,11 @@ export function buildServer() {
         });
       }
 
-      const mediaProfile = await probeVodMediaProfile(env.FFPROBE_BINARY, resolved.sourceUrl, resolved.transport);
-      const audioSelection = selectVodAudioTrackId(mediaProfile?.audioTracks ?? [], audioTrackId);
-      const audioTracks = mapSourceTracksToVodAudioTracks(
-        mediaProfile?.audioTracks ?? [],
-        audioSelection.selectedTrackId
+      return replyWithNativePlaybackError(
+        reply,
+        503,
+        playback.errorMessage ?? "VOD kaynagi native playback icin hazirlanamadi."
       );
-
-      return buildNativeVodPlaybackResponse({
-        url: resolved.sourceUrl,
-        transport: resolved.transport,
-        deliveryMode: "direct",
-        audioTracks,
-        defaultAudioTrackId: audioSelection.defaultTrackId,
-        selectedAudioTrackId: audioSelection.selectedTrackId,
-        cookie: resolved.cookie,
-        isVerified: resolved.isVerified,
-        lastCheckedAt: new Date().toISOString()
-      });
     } catch (error) {
       return sendUserRouteError(request, reply, error);
     }

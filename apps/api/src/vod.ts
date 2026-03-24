@@ -142,7 +142,29 @@ function computeRetryDelayMs(
   if (retryAfterMs === null) {
     return exponentialDelay;
   }
+
   return Math.min(policy.maxBackoffMs, Math.max(exponentialDelay, retryAfterMs));
+}
+
+function mergeCookieHeaders(...cookieHeaders: Array<string | null | undefined>) {
+  const cookieMap = new Map<string, string>();
+
+  for (const cookieHeader of cookieHeaders) {
+    if (!cookieHeader) {
+      continue;
+    }
+
+    for (const cookie of cookieHeader.split(";")) {
+      const normalized = cookie.trim();
+      const separatorIndex = normalized.indexOf("=");
+      if (separatorIndex <= 0) {
+        continue;
+      }
+      cookieMap.set(normalized.substring(0, separatorIndex).trim(), normalized);
+    }
+  }
+
+  return cookieMap.size > 0 ? Array.from(cookieMap.values()).join("; ") : null;
 }
 
 function getUpstreamErrorMessage(error: unknown, fallback: string) {
@@ -1619,7 +1641,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       kind: input.kind,
       baseOrigin: input.baseOrigin,
       sourceUrl: effectiveSourceUrl,
-      cookie: input.cookie ?? null,
+      cookie: mergeCookieHeaders(input.cookie, probe.cookie),
       sourceTransport: effectiveTransport,
       deliveryMode,
       expiresAt: Date.now() + sessionTtlMs,
@@ -1788,21 +1810,10 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
         if (response.headers.getSetCookie && typeof response.headers.getSetCookie === "function") {
           const setCookies = response.headers.getSetCookie();
           if (setCookies && setCookies.length > 0) {
-            const currentCookies = session.cookie ? session.cookie.split(";").map((c) => c.trim()) : [];
-            for (const c of setCookies) {
-              const baseCookie = c.split(";")[0];
-              if (baseCookie) currentCookies.push(baseCookie.trim());
-            }
-            const cookieMap = new Map<string, string>();
-            for (const c of currentCookies) {
-              const idx = c.indexOf("=");
-              if (idx > 0) {
-                cookieMap.set(c.substring(0, idx).trim(), c);
-              }
-            }
-            if (cookieMap.size > 0) {
-              session.cookie = Array.from(cookieMap.values()).join("; ");
-            }
+            session.cookie = mergeCookieHeaders(
+              session.cookie,
+              ...setCookies.map((cookie) => cookie.split(";")[0]?.trim() ?? null)
+            );
           }
         }
 
