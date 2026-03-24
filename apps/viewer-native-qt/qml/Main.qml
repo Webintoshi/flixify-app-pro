@@ -2335,16 +2335,6 @@ ApplicationWindow {
         opacity: liveControlsVisible ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
         
-        // Modern gradient from bottom
-        Rectangle {
-            anchors.fill: parent
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: "transparent" }
-                GradientStop { position: 0.4; color: "#80000000" }
-                GradientStop { position: 1.0; color: "#cc000000" }
-            }
-        }
-        
         Row {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
@@ -4201,10 +4191,8 @@ ApplicationWindow {
                                                         anchors.right: parent.right
                                                         anchors.top: parent.top
                                                         anchors.bottom: parent.bottom
-                                                        anchors.bottomMargin: !videoFullscreen && liveControlsVisible ? 100 : 0
                                                         active: inlineLivePlayerVisible()
                                                         sourceComponent: nativeVideoSurfaceComponent
-                                                        Behavior on anchors.bottomMargin { NumberAnimation { duration: 150; easing.type: Easing.OutSine } }
                                                     }
                                                     
                                                     // 2. Player Controls Overlay
@@ -4226,22 +4214,6 @@ ApplicationWindow {
                                                                 wheel.accepted = false
                                                                 showLiveControls()
                                                             }
-                                                        }
-                                                        
-                                                        // Bottom Gradient Background
-                                                        Rectangle {
-                                                            anchors.left: parent.left
-                                                            anchors.right: parent.right
-                                                            anchors.bottom: parent.bottom
-                                                            height: 164
-                                                            color: "transparent"
-                                                            gradient: Gradient {
-                                                                GradientStop { position: 0.0; color: "transparent" }
-                                                                GradientStop { position: 0.5; color: "#66000000" }
-                                                                GradientStop { position: 1.0; color: "#b3000000" }
-                                                            }
-                                                            opacity: liveControlsVisible ? 1.0 : 0.0
-                                                            Behavior on opacity { NumberAnimation { duration: 200 } }
                                                         }
                                                         
                                                         // Modern Buffer/Loading State Indicator
