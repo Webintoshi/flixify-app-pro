@@ -456,11 +456,26 @@ async function activateFlixifySubscription(userId, packageConfig) {
   });
 }
 
+function resolvePanelCredentials(userDetail) {
+  const code = String(userDetail?.summary?.kryptoniteCode ?? "").trim().toUpperCase();
+  if (!/^[A-Z0-9]{16}$/.test(code)) {
+    throw new Error("Flixify kullanici kodu panel username/password olarak kullanilamiyor.");
+  }
+
+  return {
+    username: code,
+    password: code
+  };
+}
+
 async function createPanelLine(userDetail, packageConfig) {
   const codeSuffix = userDetail.summary.codeSuffix ? ` code:${userDetail.summary.codeSuffix}` : "";
+  const credentials = resolvePanelCredentials(userDetail);
   return resellerRequest("create_line", {
     package: packageConfig.resellerPackageId,
     trial: packageConfig.resellerTrial,
+    username: credentials.username,
+    password: credentials.password,
     reseller_notes: `Flixify user:${userDetail.summary.id}${codeSuffix}`
   });
 }
@@ -599,8 +614,8 @@ function renderSuccessText(detail, packageConfig, panelLine) {
     `Kod: <b>${escapeHtml(detail.summary.codeSuffix ?? "----")}</b>`,
     `Secim: <b>${escapeHtml(packageConfig.label)}</b>`,
     `Panel line ID: <b>${escapeHtml(panelLine.id ?? "-")}</b>`,
-    `IPTV user: <code>${escapeHtml(panelLine.username ?? "-")}</code>`,
-    `IPTV pass: <code>${escapeHtml(panelLine.password ?? "-")}</code>`,
+    `IPTV user: <code>${escapeHtml(panelLine.username ?? detail.summary.kryptoniteCode ?? "-")}</code>`,
+    `IPTV pass: <code>${escapeHtml(panelLine.password ?? detail.summary.kryptoniteCode ?? "-")}</code>`,
     `Bitis: <b>${escapeHtml(formatUnixSeconds(panelLine.exp_date))}</b>`
   ].join("\n");
 }

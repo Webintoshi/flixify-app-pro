@@ -45,6 +45,27 @@ TELEGRAM_PANEL_PACKAGE_MAP=[
     "resellerPackageId":8,
     "resellerTrial":0,
     "flixifyPackageSlug":"1-ay"
+  },
+  {
+    "key":"3ay",
+    "label":"3 Ay",
+    "resellerPackageId":9,
+    "resellerTrial":0,
+    "flixifyPackageSlug":"3-ay"
+  },
+  {
+    "key":"6ay",
+    "label":"6 Ay",
+    "resellerPackageId":10,
+    "resellerTrial":0,
+    "flixifyPackageSlug":"6-ay"
+  },
+  {
+    "key":"12ay",
+    "label":"12 Ay",
+    "resellerPackageId":11,
+    "resellerTrial":0,
+    "flixifyPackageSlug":"12-ay"
   }
 ]
 ```
@@ -55,6 +76,7 @@ TELEGRAM_PANEL_PACKAGE_MAP=[
 - `FLIXIFY_TELEGRAM_ADMIN_EMAIL` adresi `ADMIN_EMAILS` listesinde yer almali.
 - `TELEGRAM_PANEL_PACKAGE_MAP` icindeki Flixify paket suresi ile reseller panel paket suresi ayni olmali.
 - `test-24h` sadece Flixify'deki ozel 24 saatlik route'u kullanir.
+- Bot line acarken reseller panel `username` ve `password` alanina dogrudan Flixify kullanici kodunu yazar.
 
 ## Calistirma
 

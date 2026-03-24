@@ -3842,36 +3842,48 @@ ApplicationWindow {
                                                     anchors.fill: parent
                                                     visible: inlineLivePlayerVisible()
                                                     
-                                                    // 1. Video Surface
-                                                    Loader {
-                                                        anchors.left: parent.left
-                                                        anchors.right: parent.right
-                                                        anchors.top: parent.top
-                                                        anchors.bottom: parent.bottom
-                                                        active: inlineLivePlayerVisible()
-                                                        sourceComponent: nativeVideoSurfaceComponent
+                                                    // 1. Video Surface (Forced 16:9 scaling wrapper)
+                                                    Item {
+                                                        id: aspectRatioEnforcer
+                                                        anchors.centerIn: parent
+                                                        width: Math.min(parent.width, parent.height * 16 / 9)
+                                                        height: width * 9 / 16
+
+                                                        Loader {
+                                                            anchors.fill: parent
+                                                            active: inlineLivePlayerVisible()
+                                                            sourceComponent: nativeVideoSurfaceComponent
+                                                        }
                                                     }
                                                     
-                                                    // 2. Player Controls Overlay
-                                                    Item {
+                                                    // 2. Player Controls Overlay (Embedded Window for HWND Z-Order Fix)
+                                                    WindowContainer {
                                                         anchors.fill: parent
-                                                        visible: inlineLivePlayerVisible()
                                                         z: 100
+                                                        visible: inlineLivePlayerVisible()
                                                         
-                                                        // Mouse Area for hover detection and double-click fullscreen
-                                                        MouseArea {
-                                                            anchors.fill: parent
-                                                            hoverEnabled: true
-                                                            acceptedButtons: Qt.LeftButton
-                                                            onEntered: showLiveControls()
-                                                            onPositionChanged: showLiveControls()
-                                                            onClicked: showLiveControls()
-                                                            onDoubleClicked: toggleVideoFullscreen()
-                                                            onWheel: function(wheel) {
-                                                                wheel.accepted = false
-                                                                showLiveControls()
-                                                            }
-                                                        }
+                                                        window: Window {
+                                                            flags: Qt.FramelessWindowHint
+                                                            visible: inlineLivePlayerVisible()
+                                                            color: "transparent"
+                                                            
+                                                            Item {
+                                                                anchors.fill: parent
+                                                                
+                                                                // Mouse Area for hover detection and double-click fullscreen
+                                                                MouseArea {
+                                                                    anchors.fill: parent
+                                                                    hoverEnabled: true
+                                                                    acceptedButtons: Qt.LeftButton
+                                                                    onEntered: showLiveControls()
+                                                                    onPositionChanged: showLiveControls()
+                                                                    onClicked: showLiveControls()
+                                                                    onDoubleClicked: toggleVideoFullscreen()
+                                                                    onWheel: function(wheel) {
+                                                                        wheel.accepted = false
+                                                                        showLiveControls()
+                                                                    }
+                                                                }
                                                         
                                                         // Bottom Gradient Background
                                                         Rectangle {
@@ -3935,11 +3947,13 @@ ApplicationWindow {
                                                             anchors.bottomMargin: 64
                                                         }
                                                         
-                                                        // Bottom Control Bar - Volume & Settings
-                                                        PlayerControlBar {
-                                                            anchors.left: parent.left
-                                                            anchors.right: parent.right
-                                                            anchors.bottom: parent.bottom
+                                                                // Bottom Control Bar - Volume & Settings
+                                                                PlayerControlBar {
+                                                                    anchors.left: parent.left
+                                                                    anchors.right: parent.right
+                                                                    anchors.bottom: parent.bottom
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 
@@ -4299,7 +4313,9 @@ ApplicationWindow {
                                     sourceComponent: inlineVodPlayerComponent
                                 }
                                 Flow {
-                                    width: parent.width
+                                    property int __maxCols: Math.max(1, Math.floor((parent.width + window.cardGap) / (window.posterCardWidth + window.cardGap)))
+                                    property int __actualCols: Math.min(filteredMovies().length, __maxCols)
+                                    width: __actualCols * window.posterCardWidth + Math.max(0, __actualCols - 1) * window.cardGap
                                     visible: !inlineMoviePlayerVisible()
                                     spacing: window.cardGap
                                     anchors.horizontalCenter: parent.horizontalCenter
@@ -4308,7 +4324,7 @@ ApplicationWindow {
                                         PosterGridCard {
                                             titleText: (modelData && modelData["title"] ? modelData["title"] : "").toString()
                                             subtitleText: (modelData && modelData["groupTitle"] ? modelData["groupTitle"] : "").toString()
-                                            artworkUrl: window.artworkSource(modelData && modelData["posterUrl"] ? modelData["posterUrl"] : "")
+                                            artworkUrl: window.artworkSource(modelData ? (modelData.posterUrl || modelData.streamImageUrl || modelData.stream_icon || "") : "")
                                             playbackAllowed: Boolean(modelData && modelData["playbackAllowed"])
                                             payload: modelData
                                             cardKind: "movie"
@@ -4364,7 +4380,7 @@ ApplicationWindow {
                                 Text { text: "Diziler"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true }
                                 AppField { width: parent.width; placeholderText: "Dizi ara..."; text: seriesSearchText; onTextChanged: seriesSearchText = text }
                                 Flickable { width: parent.width; height: 52; contentWidth: seriesChipRow.width; clip: true; Row { id: seriesChipRow; spacing: 10; Repeater { model: [""] .concat(uniqueGroups(apiClient.series || [])); ChipButton { required property var modelData; text: modelData.length ? modelData : "Tum Diziler"; active: selectedSeriesGroup === modelData; width: Math.max(112, implicitContentWidth + 28); onClicked: selectedSeriesGroup = modelData } } } }
-                                Flow { width: parent.width; spacing: window.cardGap; Repeater { model: filteredSeries(); RailCard { item: ({ id: modelData.id, title: modelData.title, subtitle: `${modelData.seasonCount} sezon - ${modelData.episodeCount} bolum`, posterUrl: modelData.posterUrl, playbackAllowed: Boolean(modelData.featuredEpisode && modelData.featuredEpisode.playbackAllowed) }); cardKind: "episode"; onActivated: openSeriesDetail(modelData.id) } } }
+                                Flow { property int __maxCols: Math.max(1, Math.floor((parent.width + window.cardGap) / (window.railCardWidth + window.cardGap))); property int __actualCols: Math.min(filteredSeries().length, __maxCols); width: __actualCols * window.railCardWidth + Math.max(0, __actualCols - 1) * window.cardGap; spacing: window.cardGap; anchors.horizontalCenter: parent.horizontalCenter; Repeater { model: filteredSeries(); RailCard { item: ({ id: modelData.id, title: modelData.title, subtitle: `${modelData.seasonCount} sezon - ${modelData.episodeCount} bolum`, posterUrl: modelData.posterUrl, playbackAllowed: Boolean(modelData.featuredEpisode && modelData.featuredEpisode.playbackAllowed) }); cardKind: "episode"; onActivated: openSeriesDetail(modelData.id) } } }
                             }
                         }
 
