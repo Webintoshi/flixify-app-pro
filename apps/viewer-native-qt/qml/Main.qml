@@ -3821,7 +3821,7 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
                                         color: videoFullscreen ? "#000000" : "#090c13"
-                                        radius: videoFullscreen ? 0 : 28
+                                        radius: videoFullscreen ? 0 : 8
 
                                         ColumnLayout {
                                             anchors.fill: parent
@@ -3831,7 +3831,7 @@ ApplicationWindow {
                                             Rectangle {
                                                 Layout.fillWidth: true
                                                 Layout.fillHeight: true
-                                                radius: videoFullscreen ? 0 : 28
+                                                radius: videoFullscreen ? 0 : 8
                                                 color: "#000000"
                                                 border.width: videoFullscreen ? 0 : 1
                                                 border.color: "#14ffffff"
@@ -3856,6 +3856,7 @@ ApplicationWindow {
                                                     Item {
                                                         anchors.fill: parent
                                                         visible: inlineLivePlayerVisible()
+                                                        z: 100
                                                         
                                                         // Mouse Area for hover detection and double-click fullscreen
                                                         MouseArea {
