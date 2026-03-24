@@ -20,6 +20,10 @@ export type ParsedCatalog = {
   >;
 };
 
+export type ParseM3UOptions = {
+  artworkBaseUrl?: string | null;
+};
+
 function parseAttributes(rawAttributes: string) {
   const attributes: Record<string, string> = {};
   const pattern = /([\w-]+)=("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,]+)/g;
@@ -163,24 +167,53 @@ function sanitizeStreamUrl(value: string) {
   }
 }
 
-function sanitizeArtworkUrl(value: string | null | undefined) {
+function sanitizeArtworkUrl(
+  value: string | null | undefined,
+  options: ParseM3UOptions = {}
+) {
   const candidate = value?.trim();
   if (!candidate) {
     return null;
   }
 
-  try {
-    const parsed = new URL(candidate);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+  const parseHttpUrl = (input: string, baseUrl?: string) => {
+    try {
+      const parsed = baseUrl ? new URL(input, baseUrl) : new URL(input);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return null;
+      }
+      return parsed.toString();
+    } catch {
       return null;
     }
-    return parsed.toString();
-  } catch {
-    return null;
+  };
+
+  if (candidate.startsWith("//")) {
+    return parseHttpUrl(candidate, "https://flixify.invalid");
   }
+
+  const hasExplicitScheme = /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(candidate);
+  if (hasExplicitScheme) {
+    return parseHttpUrl(candidate);
+  }
+
+  const looksLikeHostname = /^[a-z0-9.-]+\.[a-z]{2,}(?::\d{1,5})?(?:[/?#]|$)/i.test(candidate);
+  if (looksLikeHostname) {
+    const inferredHttpsUrl = parseHttpUrl(`https://${candidate}`);
+    if (inferredHttpsUrl) {
+      return inferredHttpsUrl;
+    }
+  }
+
+  const normalizedArtworkBaseUrl = options.artworkBaseUrl?.trim();
+  if (normalizedArtworkBaseUrl) {
+    return parseHttpUrl(candidate, normalizedArtworkBaseUrl);
+  }
+
+  return null;
 }
 
-export function parseM3U(content: string): ParsedCatalog {
+export function parseM3U(content: string, options: ParseM3UOptions = {}): ParsedCatalog {
   const lines = content.split(/\r?\n/);
   const rawCatalog: ParsedCatalog = {
     live: [],
@@ -260,7 +293,7 @@ export function parseM3U(content: string): ParsedCatalog {
       ...item,
       title: normalizeTitle(item.title),
       groupTitle: normalizeTitle(item.groupTitle ?? "") || null,
-      logoUrl: sanitizeArtworkUrl(item.logoUrl),
+      logoUrl: sanitizeArtworkUrl(item.logoUrl, options),
       tvgId: normalizeTvgId(item.tvgId)
     })),
     movies: dedupeMovieCatalogEntries(
@@ -268,7 +301,7 @@ export function parseM3U(content: string): ParsedCatalog {
         ...item,
         title: normalizeTitle(item.title),
         groupTitle: normalizeTitle(item.groupTitle ?? "") || null,
-        logoUrl: sanitizeArtworkUrl(item.logoUrl),
+        logoUrl: sanitizeArtworkUrl(item.logoUrl, options),
         tvgId: normalizeTvgId(item.tvgId)
       })),
       {
@@ -282,7 +315,7 @@ export function parseM3U(content: string): ParsedCatalog {
       title: normalizeTitle(item.title),
       seriesTitle: normalizeTitle(item.seriesTitle) || normalizeTitle(item.title),
       groupTitle: normalizeTitle(item.groupTitle ?? "") || null,
-      logoUrl: sanitizeArtworkUrl(item.logoUrl),
+      logoUrl: sanitizeArtworkUrl(item.logoUrl, options),
       tvgId: normalizeTvgId(item.tvgId)
     }))
   };

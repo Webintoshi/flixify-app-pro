@@ -46,6 +46,22 @@ https://stream/movie/user/pass/film-a.mp4`);
     expect(catalog.movies[0]?.logoUrl).toBeNull();
   });
 
+  it("resolves relative artwork urls with configured artwork base", () => {
+    const catalog = parseM3U(
+      `#EXTM3U
+#EXTINF:-1 tvg-id="safe-live" tvg-logo="/images/live-logo.png" group-title="Canli TV",Haber 7
+https://stream/live/user/pass/channel.ts
+#EXTINF:-1 group-title="Filmler" tvg-logo="logos/movie-poster.jpg",Film A
+https://stream/movie/user/pass/film-a.mp4`,
+      {
+        artworkBaseUrl: "https://cdn.example.com/base/"
+      }
+    );
+
+    expect(catalog.live[0]?.logoUrl).toBe("https://cdn.example.com/images/live-logo.png");
+    expect(catalog.movies[0]?.logoUrl).toBe("https://cdn.example.com/base/logos/movie-poster.jpg");
+  });
+
   it("parses and orders series episodes deterministically", () => {
     const catalog = parseM3U(`#EXTM3U
 #EXTINF:-1 group-title="Diziler",Ornek Dizi 2x03

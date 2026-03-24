@@ -152,6 +152,7 @@ import {
 import { API_CORS_CONFIG } from "./cors-config.js";
 import { stripEmptyJsonContentType } from "./http-headers.js";
 import {
+  createSignedLiveLogoUrl,
   fetchLiveLogoFromUpstream,
   LIVE_LOGO_PROXY_PATH,
   LiveLogoProxyError,
@@ -346,6 +347,34 @@ function signLiveCatalogResponse<T extends { items: LiveChannel[] }>(payload: T,
   return {
     ...payload,
     items: signLiveLogoItems(payload.items, getRequestBaseOrigin(request))
+  };
+}
+
+function signMovieCatalogResponse<T extends { items: Array<{ posterUrl: string | null }> }>(
+  payload: T,
+  request: FastifyRequest
+): T {
+  const requestOrigin = getRequestBaseOrigin(request);
+  return {
+    ...payload,
+    items: payload.items.map((item) => ({
+      ...item,
+      posterUrl: createSignedLiveLogoUrl(item.posterUrl, requestOrigin)
+    }))
+  };
+}
+
+function signSeriesCatalogResponse<T extends { items: Array<{ posterUrl: string | null }> }>(
+  payload: T,
+  request: FastifyRequest
+): T {
+  const requestOrigin = getRequestBaseOrigin(request);
+  return {
+    ...payload,
+    items: payload.items.map((item) => ({
+      ...item,
+      posterUrl: createSignedLiveLogoUrl(item.posterUrl, requestOrigin)
+    }))
   };
 }
 
@@ -1930,7 +1959,10 @@ export function buildServer() {
         if (!me?.user.hasAssignedLink) {
           return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
         }
-        return listDemoMovieCatalog(auth.userId, query.page, query.pageSize, query.search, query.group);
+        return signMovieCatalogResponse(
+          listDemoMovieCatalog(auth.userId, query.page, query.pageSize, query.search, query.group),
+          request
+        );
       }
 
       const userContext = await getUserContext(auth.userId);
@@ -1938,17 +1970,20 @@ export function buildServer() {
         return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
       }
 
-      return listMoviesCatalog(
-        userContext.snapshotVersion,
-        query.page,
-        query.pageSize,
-        query.search,
-        query.group,
-        {
-          baseUrl: userContext.playbackBaseUrl,
-          credentials: userContext.iptvCredentials,
-          canPlay: userContext.canPlay
-        }
+      return signMovieCatalogResponse(
+        await listMoviesCatalog(
+          userContext.snapshotVersion,
+          query.page,
+          query.pageSize,
+          query.search,
+          query.group,
+          {
+            baseUrl: userContext.playbackBaseUrl,
+            credentials: userContext.iptvCredentials,
+            canPlay: userContext.canPlay
+          }
+        ),
+        request
       );
     } catch (error) {
       return sendUserRouteError(request, reply, error);
@@ -1965,7 +2000,10 @@ export function buildServer() {
         if (!me?.user.hasAssignedLink) {
           return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
         }
-        return listDemoSeriesCatalog(auth.userId, query.page, query.pageSize, query.search, query.group);
+        return signSeriesCatalogResponse(
+          listDemoSeriesCatalog(auth.userId, query.page, query.pageSize, query.search, query.group),
+          request
+        );
       }
 
       const userContext = await getUserContext(auth.userId);
@@ -1973,17 +2011,20 @@ export function buildServer() {
         return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
       }
 
-      return listSeriesCatalog(
-        userContext.snapshotVersion,
-        query.page,
-        query.pageSize,
-        query.search,
-        query.group,
-        {
-          baseUrl: userContext.playbackBaseUrl,
-          credentials: userContext.iptvCredentials,
-          canPlay: userContext.canPlay
-        }
+      return signSeriesCatalogResponse(
+        await listSeriesCatalog(
+          userContext.snapshotVersion,
+          query.page,
+          query.pageSize,
+          query.search,
+          query.group,
+          {
+            baseUrl: userContext.playbackBaseUrl,
+            credentials: userContext.iptvCredentials,
+            canPlay: userContext.canPlay
+          }
+        ),
+        request
       );
     } catch (error) {
       return sendUserRouteError(request, reply, error);

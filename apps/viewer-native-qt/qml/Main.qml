@@ -243,7 +243,7 @@ ApplicationWindow {
         return false
     }
 
-    function normalizeArtworkUrl(value) {
+    function resolveArtworkUrl(value) {
         const trimmed = safeText(value)
         if (!trimmed.length) {
             return ""
@@ -253,18 +253,38 @@ ApplicationWindow {
             return "https:" + trimmed
         }
 
-        if (!/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed)) {
+        if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed)) {
             return trimmed
         }
 
+        const baseUrl = safeText(apiClient.apiBaseUrl)
+        if (!baseUrl.length) {
+            return trimmed
+        }
+
+        const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/"
+        const normalizedPath = trimmed.startsWith("/") ? trimmed.substring(1) : trimmed
+        return normalizedBaseUrl + normalizedPath
+    }
+
+    function normalizeArtworkUrl(value) {
+        const resolved = resolveArtworkUrl(value)
+        if (!resolved.length) {
+            return ""
+        }
+
         try {
-            const parsed = new URL(trimmed)
+            const parsed = new URL(resolved)
             if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
                 return ""
             }
             return parsed.toString()
         } catch (error) {
-            return trimmed
+            try {
+                return encodeURI(resolved)
+            } catch (encodeError) {
+                return resolved
+            }
         }
     }
 
@@ -1141,7 +1161,7 @@ ApplicationWindow {
             id: btnBg
             readonly property bool hoverState: false
             readonly property bool pressedState: control.down && control.enabled
-            radius: height / 2
+            radius: 8
             border.width: 1
             border.color: control.secondary
                 ? (pressedState ? "#4a5568" : hoverState ? "#5a708b" : "#2d3748")
@@ -1419,7 +1439,7 @@ ApplicationWindow {
         background: Rectangle {
             readonly property bool hoverState: false
             readonly property bool pressedState: chip.down && chip.enabled
-            radius: 21
+            radius: 8
             border.width: 1
             border.color: chip.active 
                 ? (pressedState ? "#ff4757" : hoverState ? "#ff6b7a" : "#e50914")
@@ -1473,7 +1493,7 @@ ApplicationWindow {
         focusPolicy: Qt.NoFocus
         padding: 0
         background: Rectangle {
-            radius: height / 2
+            radius: 8
             color: nav.active ? "#15ffffff" : "#00000000"
             Behavior on color { ColorAnimation { duration: 150 } }
         }
@@ -2000,7 +2020,7 @@ ApplicationWindow {
                     anchors.centerIn: parent
                     width: 40
                     height: 40
-                    source: selectedLiveItem() ? (selectedLiveItem().logoUrl || "") : ""
+                    source: selectedLiveItem() ? window.artworkSource(selectedLiveItem().logoUrl || "") : ""
                     fillMode: Image.PreserveAspectFit
                     visible: status === Image.Ready
                 }
@@ -2151,7 +2171,7 @@ ApplicationWindow {
         
         width: 40
         height: 40
-        radius: 20
+        radius: 8
         color: mouseArea.pressed ? "#30ffffff" : "#15ffffff"
         Behavior on color { ColorAnimation { duration: 120 } }
         
@@ -2179,7 +2199,7 @@ ApplicationWindow {
         
         width: size
         height: size
-        radius: size / 2
+        radius: 8
         color: mouseArea.pressed ? "#40ffffff" : "#25ffffff"
         border.width: 1
         border.color: mouseArea.pressed ? "#60ffffff" : "#30ffffff"
@@ -2327,7 +2347,7 @@ ApplicationWindow {
                                 anchors.margins: 18
                                 width: inlineVodStateLabel.implicitWidth + 28
                                 height: 40
-                                radius: 20
+                                radius: 8
                                 color: "#c7070a0f"
                                 border.width: 1
                                 border.color: "#12ffffff"
@@ -2351,7 +2371,7 @@ ApplicationWindow {
                                 anchors.bottom: parent.bottom
                                 anchors.margins: 16
                                 height: inlineVodControls.implicitHeight + 28
-                                radius: 22
+                                radius: 8
                                 color: "#c7070a0f"
                                 border.width: 1
                                 border.color: "#12ffffff"
@@ -3339,7 +3359,7 @@ ApplicationWindow {
                         Rectangle {
                             width: window.compactWindow ? 208 : 248
                             height: window.compactWindow ? 56 : 62
-                            radius: height / 2
+                            radius: 8
                             color: "#0affffff"
                             border.width: 1
                             border.color: window.borderSoft
@@ -3350,7 +3370,7 @@ ApplicationWindow {
                                 Rectangle {
                                     width: 50
                                     height: 50
-                                    radius: 25
+                                    radius: 6
                                     color: "#10ffffff"
                                     anchors.verticalCenter: parent.verticalCenter
 
@@ -3856,7 +3876,7 @@ ApplicationWindow {
                                                             anchors.margins: 18
                                                             width: liveNativeStateText2.implicitWidth + 28
                                                             height: 40
-                                                            radius: 20
+                                                            radius: 8
                                                             color: "#c7070a0f"
                                                             border.width: 1
                                                             border.color: "#12ffffff"
@@ -4686,7 +4706,7 @@ ApplicationWindow {
                                     anchors.margins: 18
                                     width: vodStateText.implicitWidth + 28
                                     height: 40
-                                    radius: 20
+                                    radius: 8
                                     color: "#c7070a0f"
                                     border.width: 1
                                     border.color: "#12ffffff"
@@ -5006,7 +5026,7 @@ ApplicationWindow {
         }
 
         Rectangle {
-            visible: toastMessage.length > 0; z: 40; width: Math.min(640, toastLabel.implicitWidth + 52); height: 62; radius: 20; color: toastColor === success ? "#2230d19d" : toastColor === danger ? "#24ff7d86" : "#227cb6ff"; border.width: 1; border.color: toastColor; anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 24
+            visible: toastMessage.length > 0; z: 40; width: Math.min(640, toastLabel.implicitWidth + 52); height: 62; radius: 8; color: toastColor === success ? "#2230d19d" : toastColor === danger ? "#24ff7d86" : "#227cb6ff"; border.width: 1; border.color: toastColor; anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 24
             Text { id: toastLabel; anchors.centerIn: parent; text: toastMessage; color: window.textPrimary; font.pixelSize: 14; font.bold: true }
         }
 

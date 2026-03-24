@@ -34,8 +34,9 @@ describe("live logo proxy route", () => {
       )
     );
 
+    const nowMs = Date.now();
     const signedUrl = createSignedLiveLogoUrl("http://example.com/logo.png", "https://api.flixify.test", {
-      nowMs: Date.UTC(2026, 2, 24, 12, 0, 0),
+      nowMs,
       ttlSeconds: 300
     });
     const target = new URL(signedUrl ?? "");

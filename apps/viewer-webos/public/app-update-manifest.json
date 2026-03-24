@@ -1,8 +1,8 @@
 {
   "platforms": {
     "windows-native-qt": {
-      "latestVersion": "2.2.44",
-      "downloadUrl": "https://app.flixify.pro/downloads/flixify-windows.exe?v=2.2.44"
+      "latestVersion": "2.2.45",
+      "downloadUrl": "https://app.flixify.pro/downloads/flixify-windows.exe?v=2.2.45"
     }
   }
 }

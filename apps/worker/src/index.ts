@@ -779,7 +779,9 @@ async function processJob(job: { id: string }) {
     }
 
     const content = await response.text();
-    const catalog = parseM3U(content);
+    const catalog = parseM3U(content, {
+      artworkBaseUrl: config.baseUrl
+    });
     const snapshotVersion = (configRow?.shared_source_snapshot_version ?? 0) + 1;
 
     const client = await pool.connect();
