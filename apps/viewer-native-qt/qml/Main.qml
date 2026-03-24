@@ -4368,8 +4368,8 @@ ApplicationWindow {
                                 }
                             }
                             Column {
-                                width: Math.min(1600, pageStack.width - 48)
-                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: window.pageWidth(pageStack.width)
+                                x: window.shellPadding
                                 topPadding: window.compactWindow ? 18 : 20
                                 bottomPadding: window.compactWindow ? 24 : 28
                                 spacing: window.sectionSpacing
@@ -4379,7 +4379,6 @@ ApplicationWindow {
                                     font.pixelSize: 42
                                     font.family: "Space Grotesk"
                                     font.bold: true
-                                    anchors.horizontalCenter: parent.horizontalCenter
                                 }
                                 AppField {
                                     width: parent.width
@@ -4422,7 +4421,6 @@ ApplicationWindow {
                                     width: __actualCols * window.posterCardWidth + Math.max(0, __actualCols - 1) * window.cardGap
                                     visible: !inlineMoviePlayerVisible()
                                     spacing: window.cardGap
-                                    anchors.horizontalCenter: parent.horizontalCenter
                                     Repeater {
                                         model: filteredMovies()
                                         PosterGridCard {
