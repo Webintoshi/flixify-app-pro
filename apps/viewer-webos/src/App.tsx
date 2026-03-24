@@ -2479,7 +2479,7 @@ function LoginAuthPage({
         </div>
 
         {/* Subtitle */}
-        <p className="auth-subtitle">16 haneli erişim kodunuzu girin</p>
+        <p className="auth-subtitle">Güvenli erişim kodunuzla devam edin</p>
 
         {/* Form */}
         <div className="auth-form">
@@ -2546,7 +2546,7 @@ function LoginAuthPage({
                 Giriş Yapılıyor...
               </span>
             ) : (
-              "Giriş Yap"
+              "Oturum Aç"
             )}
           </button>
         </div>
@@ -2554,7 +2554,7 @@ function LoginAuthPage({
         {/* Links */}
         <div className="auth-links">
           <p className="auth-link-text">
-            Hesabınız yok mu? <NavLink to={registerRoute} data-tv-focusable="true" data-tv-region="auth-links" data-tv-focus-key="auth-register-link">Hesap Oluştur</NavLink>
+            Hesabınız yok mu? <NavLink to={registerRoute} data-tv-focusable="true" data-tv-region="auth-links" data-tv-focus-key="auth-register-link">Güvenli Hesap Oluştur</NavLink>
           </p>
           <NavLink to="/" className="auth-back-link" data-tv-focusable="true" data-tv-region="auth-links" data-tv-focus-key="auth-back-link">
             <ArrowLeftIcon />
@@ -2776,7 +2776,7 @@ function RegisterAuthPage({
 
         {/* Subtitle */}
         <p className="auth-subtitle">
-          {!issuedCode ? "Yeni bir hesap oluşturun" : "Hesabınız oluşturuldu!"}
+          {!issuedCode ? "Anonim ve takip edilemez. Güvenliğiniz için tasarlandı." : "Hesabınız oluşturuldu!"}
         </p>
 
         {/* Main Content */}
@@ -2784,7 +2784,7 @@ function RegisterAuthPage({
           {!issuedCode ? (
             <>
               <div className="auth-intro">
-                <p>Tek kullanımlık erişim kodunuzu oluşturun.</p>
+                <p>🔐 Sadece size özel, şifrelenmiş erişim anahtarınızı oluşturun.</p>
               </div>
 
               <button 
@@ -2803,7 +2803,10 @@ function RegisterAuthPage({
                     Kod Üretiliyor...
                   </span>
                 ) : (
-                  "Hesap Numarası Oluştur"
+                  <>
+                    <span className="auth-btn-icon">🔒</span>
+                    <span>Güvenli Hesap Oluştur</span>
+                  </>
                 )}
               </button>
             </>
@@ -2839,6 +2842,11 @@ function RegisterAuthPage({
                   />
                 </div>
               </div>
+
+              {/* Privacy Message */}
+              <p className="auth-privacy-message">
+                Hiçbir veriniz saklanmaz. %100 anonim, %100 özgür.
+              </p>
 
               {/* Action Buttons */}
               <div className="auth-actions">
@@ -2916,7 +2924,7 @@ function RegisterAuthPage({
         {/* Links */}
         <div className="auth-links">
           <p className="auth-link-text">
-            Zaten hesabınız var mı? <NavLink to={loginRoute} data-tv-focusable="true" data-tv-region="auth-links" data-tv-focus-key="auth-login-link">Giriş Yapın</NavLink>
+            Zaten hesabınız var mı? <NavLink to={loginRoute} data-tv-focusable="true" data-tv-region="auth-links" data-tv-focus-key="auth-login-link">Oturum Açın</NavLink>
           </p>
           <NavLink to="/" className="auth-back-link" data-tv-focusable="true" data-tv-region="auth-links" data-tv-focus-key="auth-back-link">
             <ArrowLeftIcon />

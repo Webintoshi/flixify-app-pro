@@ -3461,8 +3461,7 @@ ApplicationWindow {
                                 }
                             }
                             Column {
-                                width: Math.min(1600, parent.width)
-                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: parent.width
                                 topPadding: 0
                                 bottomPadding: window.compactWindow ? 24 : 32
                                 spacing: 0
@@ -3499,7 +3498,9 @@ ApplicationWindow {
                                         anchors.left: parent.left
                                         anchors.right: parent.right
                                         anchors.bottom: parent.bottom
-                                        anchors.margins: window.compactWindow ? 30 : 50
+                                        anchors.leftMargin: window.shellPadding
+                                        anchors.rightMargin: window.shellPadding
+                                        anchors.bottomMargin: window.compactWindow ? 30 : 50
                                         spacing: 20
                                         
                                         Rectangle {
@@ -3601,7 +3602,7 @@ ApplicationWindow {
 
                                 // CONTENT SECTIONS
                                 Column {
-                                    width: parent.width
+                                    width: parent.width - (window.shellPadding * 2)
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     spacing: window.sectionSpacing * 1.5
                                     
