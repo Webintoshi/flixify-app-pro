@@ -1914,8 +1914,12 @@ ApplicationWindow {
     // 1. Üst Bar - PIP, Cast, Fullscreen, Favori
     component PlayerTopBar: Rectangle {
         id: topBar
-        height: 48
-        color: "#cc000000"
+        height: 64
+        color: "transparent"
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: "#99000000" }
+            GradientStop { position: 1.0; color: "transparent" }
+        }
         opacity: liveControlsVisible ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: 200 } }
         
@@ -1999,7 +2003,7 @@ ApplicationWindow {
     // 3. Alt Bilgi Barı - Kanal Logo ve İsim
     component PlayerInfoBar: Rectangle {
         height: 90
-        color: "#cc000000"
+        color: "transparent"
         opacity: liveControlsVisible ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: 200 } }
         
@@ -2080,7 +2084,7 @@ ApplicationWindow {
     // 4. Alt Kontrol Barı - Ses ve Diğer Kontroller
     component PlayerControlBar: Rectangle {
         height: 64
-        color: "#cc000000"
+        color: "transparent"
         opacity: liveControlsVisible ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: 200 } }
         
@@ -3844,7 +3848,6 @@ ApplicationWindow {
                                                         anchors.right: parent.right
                                                         anchors.top: parent.top
                                                         anchors.bottom: parent.bottom
-                                                        anchors.bottomMargin: videoFullscreen ? 0 : 100
                                                         active: inlineLivePlayerVisible()
                                                         sourceComponent: nativeVideoSurfaceComponent
                                                     }
@@ -3867,6 +3870,22 @@ ApplicationWindow {
                                                                 wheel.accepted = false
                                                                 showLiveControls()
                                                             }
+                                                        }
+                                                        
+                                                        // Bottom Gradient Background
+                                                        Rectangle {
+                                                            anchors.left: parent.left
+                                                            anchors.right: parent.right
+                                                            anchors.bottom: parent.bottom
+                                                            height: 164
+                                                            color: "transparent"
+                                                            gradient: Gradient {
+                                                                GradientStop { position: 0.0; color: "transparent" }
+                                                                GradientStop { position: 0.5; color: "#66000000" }
+                                                                GradientStop { position: 1.0; color: "#b3000000" }
+                                                            }
+                                                            opacity: liveControlsVisible ? 1.0 : 0.0
+                                                            Behavior on opacity { NumberAnimation { duration: 200 } }
                                                         }
                                                         
                                                         // Buffer/Loading State Indicator
@@ -3904,9 +3923,7 @@ ApplicationWindow {
                                                         
                                                         // Center Controls - Previous/Play/Next
                                                         PlayerCenterControls {
-                                                            anchors.horizontalCenter: parent.horizontalCenter
-                                                            anchors.bottom: parent.bottom
-                                                            anchors.bottomMargin: 14
+                                                            anchors.centerIn: parent
                                                         }
                                                         
                                                         // Bottom Info Bar - Channel Logo & Name
@@ -3914,7 +3931,7 @@ ApplicationWindow {
                                                             anchors.left: parent.left
                                                             anchors.right: parent.right
                                                             anchors.bottom: parent.bottom
-                                                            anchors.bottomMargin: 14
+                                                            anchors.bottomMargin: 64
                                                         }
                                                         
                                                         // Bottom Control Bar - Volume & Settings
