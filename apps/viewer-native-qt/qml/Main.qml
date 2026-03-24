@@ -617,6 +617,76 @@ ApplicationWindow {
         apiClient.fetchMovieCatalog(1, 18, normalizedSearch, normalizedGroup)
     }
 
+    function firstPlayable(items) {
+        for (let index = 0; index < items.length; index += 1) {
+            if (items[index].playbackAllowed !== false) {
+                return items[index]
+            }
+        }
+        return items.length ? items[0] : null
+    }
+
+    function homeFeaturedMovies(limit) {
+        const maxItems = Math.max(1, Number(limit) || 12)
+        const items = apiClient.movies || []
+        const playable = []
+        const locked = []
+        for (let index = 0; index < items.length; index += 1) {
+            if (items[index].playbackAllowed === false) {
+                locked.push(items[index])
+            } else {
+                playable.push(items[index])
+            }
+        }
+        return playable.concat(locked).slice(0, maxItems)
+    }
+
+    function homeMovieSections(maxSections, itemsPerSection) {
+        const sectionLimit = Math.max(1, Number(maxSections) || 3)
+        const itemLimit = Math.max(1, Number(itemsPerSection) || 10)
+        const groups = apiClient.movieGroups || []
+        const movies = apiClient.movies || []
+        const sections = []
+        const usedGroups = {}
+
+        for (let index = 0; index < groups.length; index += 1) {
+            const title = safeText(groups[index].title)
+            const normalizedTitle = normalizeText(title)
+            if (!normalizedTitle.length || usedGroups[normalizedTitle]) {
+                continue
+            }
+            usedGroups[normalizedTitle] = true
+
+            const items = []
+            for (let movieIndex = 0; movieIndex < movies.length; movieIndex += 1) {
+                const movie = movies[movieIndex]
+                if (normalizeText(movie.groupTitle) !== normalizedTitle) {
+                    continue
+                }
+                items.push(movie)
+                if (items.length >= itemLimit) {
+                    break
+                }
+            }
+
+            if (!items.length) {
+                continue
+            }
+
+            sections.push({
+                key: normalizedTitle,
+                title: title,
+                items
+            })
+
+            if (sections.length >= sectionLimit) {
+                break
+            }
+        }
+
+        return sections
+    }
+
     function filterItems(items, search, group) {
         const searchText = normalizeText(search)
         const groupText = normalizeText(group)
@@ -754,17 +824,35 @@ ApplicationWindow {
     }
 
     function homeHeroItem() {
-        if ((apiClient.movies || []).length) {
-            const movie = apiClient.movies[0]
-            return { id: movie.id, kind: "movie", title: movie.title, subtitle: movie.groupTitle || "Film secimi", posterUrl: movie.posterUrl }
+        const featuredMovies = homeFeaturedMovies(1)
+        if (featuredMovies.length) {
+            const movie = featuredMovies[0]
+            return {
+                id: movie.id,
+                kind: "movie",
+                title: movie.title,
+                subtitle: movie.groupTitle || "Film secimi",
+                posterUrl: movie.posterUrl,
+                playbackAllowed: movie.playbackAllowed
+            }
         }
+
         const episodes = featuredSeriesEpisodes()
         if (episodes.length) {
-            return episodes[0]
+            return firstPlayable(episodes)
         }
-        if ((apiClient.liveChannels || []).length) {
-            const live = apiClient.liveChannels[0]
-            return { id: live.id, kind: "live", title: live.title, subtitle: live.groupTitle || "Canlı TV", logoUrl: live.logoUrl }
+
+        const liveItems = apiClient.liveChannels || []
+        if (liveItems.length) {
+            const live = firstPlayable(liveItems)
+            return {
+                id: live.id,
+                kind: "live",
+                title: live.title,
+                subtitle: live.groupTitle || "Canli TV",
+                logoUrl: live.logoUrl,
+                playbackAllowed: live.playbackAllowed
+            }
         }
         return null
     }
@@ -913,7 +1001,29 @@ ApplicationWindow {
             closePlayer()
         }
         currentScreen = screenName
-        if (screenName === "live") {
+        if (screenName === "home") {
+            const defaultLiveFilter = buildLiveCountryFilter("TR")
+            const hasActiveFilters =
+                safeText(moviesSearchText).length > 0 ||
+                safeText(selectedMovieGroup).length > 0 ||
+                safeText(seriesSearchText).length > 0 ||
+                safeText(selectedSeriesGroup).length > 0 ||
+                safeText(liveSearchText).length > 0 ||
+                (safeText(selectedLiveGroup).length > 0 && selectedLiveGroup !== defaultLiveFilter)
+
+            if (hasActiveFilters) {
+                moviesSearchText = ""
+                selectedMovieGroup = ""
+                seriesSearchText = ""
+                selectedSeriesGroup = ""
+                liveSearchText = ""
+                selectedLiveGroup = defaultLiveFilter
+            }
+
+            if (apiClient.authenticated) {
+                apiClient.fetchAllCatalogs()
+            }
+        } else if (screenName === "live") {
             applyLiveFilters(liveSearchText, selectedLiveGroup)
             syncSelectedLiveSelection()
             liveAutoplayTimer.restart()
@@ -3664,20 +3774,26 @@ ApplicationWindow {
                                     
                                     // Popüler Filmler
                                     HomeContentSection {
-                                        title: "🎬 Popüler Filmler"
-                                        items: (apiClient.movies || []).slice(0, 12)
+                                        title: "Sizin Icin Secilen Filmler"
+                                        items: homeFeaturedMovies(12)
                                         kind: "movie"
                                         onItemClicked: function(item) { playMovie(apiClient.movieById(item.id)) }
                                         onSeeAll: openScreen("movies")
                                     }
-                                    
-                                    // Yeni Eklenenler
-                                    HomeContentSection {
-                                        title: "✨ Yeni Eklenenler"
-                                        items: (apiClient.movies || []).slice().reverse().slice(0, 10)
-                                        kind: "movie"
-                                        onItemClicked: function(item) { playMovie(apiClient.movieById(item.id)) }
-                                        onSeeAll: openScreen("movies")
+
+                                    Repeater {
+                                        model: homeMovieSections(3, 10)
+                                        HomeContentSection {
+                                            required property var modelData
+                                            title: modelData.title
+                                            items: modelData.items
+                                            kind: "movie"
+                                            onItemClicked: function(item) { playMovie(apiClient.movieById(item.id)) }
+                                            onSeeAll: {
+                                                applyMovieFilters("", modelData.title)
+                                                openScreen("movies")
+                                            }
+                                        }
                                     }
                                     
                                     // Öne Çıkan Diziler
@@ -3842,48 +3958,38 @@ ApplicationWindow {
                                                     anchors.fill: parent
                                                     visible: inlineLivePlayerVisible()
                                                     
-                                                    // 1. Video Surface (Forced 16:9 scaling wrapper)
-                                                    Item {
-                                                        id: aspectRatioEnforcer
-                                                        anchors.centerIn: parent
-                                                        width: Math.min(parent.width, parent.height * 16 / 9)
-                                                        height: width * 9 / 16
-
-                                                        Loader {
-                                                            anchors.fill: parent
-                                                            active: inlineLivePlayerVisible()
-                                                            sourceComponent: nativeVideoSurfaceComponent
-                                                        }
+                                                    // 1. Video Surface
+                                                    Loader {
+                                                        anchors.left: parent.left
+                                                        anchors.right: parent.right
+                                                        anchors.top: parent.top
+                                                        anchors.bottom: parent.bottom
+                                                        anchors.bottomMargin: !videoFullscreen && liveControlsVisible ? 100 : 0
+                                                        active: inlineLivePlayerVisible()
+                                                        sourceComponent: nativeVideoSurfaceComponent
+                                                        Behavior on anchors.bottomMargin { NumberAnimation { duration: 150; easing.type: Easing.OutSine } }
                                                     }
                                                     
-                                                    // 2. Player Controls Overlay (Embedded Window for HWND Z-Order Fix)
-                                                    WindowContainer {
+                                                    // 2. Player Controls Overlay
+                                                    Item {
                                                         anchors.fill: parent
-                                                        z: 100
                                                         visible: inlineLivePlayerVisible()
+                                                        z: 100
                                                         
-                                                        window: Window {
-                                                            flags: Qt.FramelessWindowHint
-                                                            visible: inlineLivePlayerVisible()
-                                                            color: "transparent"
-                                                            
-                                                            Item {
-                                                                anchors.fill: parent
-                                                                
-                                                                // Mouse Area for hover detection and double-click fullscreen
-                                                                MouseArea {
-                                                                    anchors.fill: parent
-                                                                    hoverEnabled: true
-                                                                    acceptedButtons: Qt.LeftButton
-                                                                    onEntered: showLiveControls()
-                                                                    onPositionChanged: showLiveControls()
-                                                                    onClicked: showLiveControls()
-                                                                    onDoubleClicked: toggleVideoFullscreen()
-                                                                    onWheel: function(wheel) {
-                                                                        wheel.accepted = false
-                                                                        showLiveControls()
-                                                                    }
-                                                                }
+                                                        // Mouse Area for hover detection and double-click fullscreen
+                                                        MouseArea {
+                                                            anchors.fill: parent
+                                                            hoverEnabled: true
+                                                            acceptedButtons: Qt.LeftButton
+                                                            onEntered: showLiveControls()
+                                                            onPositionChanged: showLiveControls()
+                                                            onClicked: showLiveControls()
+                                                            onDoubleClicked: toggleVideoFullscreen()
+                                                            onWheel: function(wheel) {
+                                                                wheel.accepted = false
+                                                                showLiveControls()
+                                                            }
+                                                        }
                                                         
                                                         // Bottom Gradient Background
                                                         Rectangle {
@@ -3947,13 +4053,11 @@ ApplicationWindow {
                                                             anchors.bottomMargin: 64
                                                         }
                                                         
-                                                                // Bottom Control Bar - Volume & Settings
-                                                                PlayerControlBar {
-                                                                    anchors.left: parent.left
-                                                                    anchors.right: parent.right
-                                                                    anchors.bottom: parent.bottom
-                                                                }
-                                                            }
+                                                        // Bottom Control Bar - Volume & Settings
+                                                        PlayerControlBar {
+                                                            anchors.left: parent.left
+                                                            anchors.right: parent.right
+                                                            anchors.bottom: parent.bottom
                                                         }
                                                     }
                                                 

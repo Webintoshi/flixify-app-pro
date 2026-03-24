@@ -1636,7 +1636,10 @@ QVariantMap ApiClient::mapSeriesFromJson(const QJsonObject &item) {
   QVariantMap row;
   row.insert(QStringLiteral("id"), item.value(QStringLiteral("id")).toString());
   row.insert(QStringLiteral("title"), item.value(QStringLiteral("title")).toString());
-  row.insert(QStringLiteral("posterUrl"), item.value(QStringLiteral("posterUrl")).toString());
+  QString posterUrlStr = item.value(QStringLiteral("posterUrl")).toString();
+  if (posterUrlStr.isEmpty()) { posterUrlStr = item.value(QStringLiteral("stream_icon")).toString(); }
+  if (posterUrlStr.isEmpty()) { posterUrlStr = item.value(QStringLiteral("streamImageUrl")).toString(); }
+  row.insert(QStringLiteral("posterUrl"), posterUrlStr);
   row.insert(QStringLiteral("groupTitle"), item.value(QStringLiteral("groupTitle")).toString());
   row.insert(QStringLiteral("seasonCount"), item.value(QStringLiteral("seasonCount")).toInt());
   row.insert(QStringLiteral("episodeCount"), item.value(QStringLiteral("episodeCount")).toInt());
@@ -1708,7 +1711,10 @@ void ApiClient::updateMoviesFromJson(const QJsonArray &items, bool append) {
     QVariantMap row;
     row.insert(QStringLiteral("id"), item.value(QStringLiteral("id")).toString());
     row.insert(QStringLiteral("title"), item.value(QStringLiteral("title")).toString());
-    row.insert(QStringLiteral("posterUrl"), item.value(QStringLiteral("posterUrl")).toString());
+    QString posterUrlStr = item.value(QStringLiteral("posterUrl")).toString();
+    if (posterUrlStr.isEmpty()) { posterUrlStr = item.value(QStringLiteral("stream_icon")).toString(); }
+    if (posterUrlStr.isEmpty()) { posterUrlStr = item.value(QStringLiteral("streamImageUrl")).toString(); }
+    row.insert(QStringLiteral("posterUrl"), posterUrlStr);
     row.insert(QStringLiteral("groupTitle"), item.value(QStringLiteral("groupTitle")).toString());
     row.insert(QStringLiteral("streamUrl"), item.value(QStringLiteral("streamUrl")).toString());
     row.insert(QStringLiteral("playbackAllowed"), item.value(QStringLiteral("playbackAllowed")).toBool());
