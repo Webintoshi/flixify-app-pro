@@ -62,6 +62,45 @@ https://stream/movie/user/pass/film-a.mp4`,
     expect(catalog.movies[0]?.logoUrl).toBe("https://cdn.example.com/base/logos/movie-poster.jpg");
   });
 
+  it("rewrites legacy provider artwork hosts to the current artwork base host", () => {
+    const catalog = parseM3U(
+      `#EXTM3U
+#EXTINF:-1 tvg-logo="http://udashboard.win/logo/tr/Sinema_TV_Yerli.png" group-title="Canli TV",Sinema TV
+https://stream/live/user/pass/channel.ts`,
+      {
+        artworkBaseUrl: "http://sifiriptvdns.com"
+      }
+    );
+
+    expect(catalog.live[0]?.logoUrl).toBe("http://sifiriptvdns.com/logo/tr/Sinema_TV_Yerli.png");
+  });
+
+  it("rewrites mirrored picon artwork paths to the current artwork base host", () => {
+    const catalog = parseM3U(
+      `#EXTM3U
+#EXTINF:-1 tvg-logo="http://udashboard.shop/picon/elitsinema1001.png" group-title="Canli TV",Elite Sinema
+https://stream/live/user/pass/channel.ts`,
+      {
+        artworkBaseUrl: "http://sifiriptvdns.com"
+      }
+    );
+
+    expect(catalog.live[0]?.logoUrl).toBe("http://sifiriptvdns.com/picon/elitsinema1001.png");
+  });
+
+  it("keeps non-provider artwork hosts untouched", () => {
+    const catalog = parseM3U(
+      `#EXTM3U
+#EXTINF:-1 tvg-logo="http://de1.plist.link/plepg/img/channels/1.png?cache=1" group-title="Canli TV",Test Kanal
+https://stream/live/user/pass/channel.ts`,
+      {
+        artworkBaseUrl: "http://sifiriptvdns.com"
+      }
+    );
+
+    expect(catalog.live[0]?.logoUrl).toBe("http://de1.plist.link/plepg/img/channels/1.png?cache=1");
+  });
+
   it("parses and orders series episodes deterministically", () => {
     const catalog = parseM3U(`#EXTM3U
 #EXTINF:-1 group-title="Diziler",Ornek Dizi 2x03
@@ -78,5 +117,40 @@ https://stream/series/user/pass/series-s1e1.mp4`);
       "2-3"
     ]);
     expect(catalog.series[0]?.seriesTitle).toBe("Ornek Dizi");
+  });
+
+  it("keeps no-prefix ts movie channels out of the movie catalog", () => {
+    const catalog = parseM3U(`#EXTM3U
+#EXTINF:-1 group-title="Sinema",TR • BEINMOVIES PREMIERE 1 FHD
+https://stream/user/pass/418.ts
+#EXTINF:-1 group-title="Filmler",Inception (2010) Turkce Dublaj
+https://stream/movie/user/pass/inception.mkv`);
+
+    expect(catalog.live).toHaveLength(1);
+    expect(catalog.movies).toHaveLength(1);
+    expect(catalog.live[0]?.title).toContain("BEINMOVIES");
+    expect(catalog.movies[0]?.title).toContain("Inception");
+  });
+
+  it("keeps non-episodic ts channels out of the series catalog", () => {
+    const catalog = parseM3U(`#EXTM3U
+#EXTINF:-1 group-title="Spain",[FuboTV] ATRESERIES
+https://stream/user/pass/4204.ts
+#EXTINF:-1 group-title="Diziler",Ornek Dizi S01E01
+https://stream/series/user/pass/ornek-s1e1.mkv`);
+
+    expect(catalog.live).toHaveLength(1);
+    expect(catalog.series).toHaveLength(1);
+    expect(catalog.series[0]?.seriesTitle).toBe("Ornek Dizi");
+  });
+
+  it("drops encoded image dumps entirely", () => {
+    const catalog = parseM3U(`#EXTM3U
+#EXTINF:-1 group-title="ITALY",/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxMTEhQRExQTFRUXGBgVFxUYGBgYGRgaHR4fHRgZGRse
+https://stream/user/pass/4179.ts`);
+
+    expect(catalog.live).toHaveLength(0);
+    expect(catalog.movies).toHaveLength(0);
+    expect(catalog.series).toHaveLength(0);
   });
 });

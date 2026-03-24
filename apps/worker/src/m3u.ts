@@ -1,4 +1,9 @@
-import { dedupeMovieCatalogEntries } from "@flixify/contracts";
+import {
+  classifyVodCatalogEntry,
+  dedupeMovieCatalogEntries,
+  extractSeriesEpisodeMeta,
+  normalizeVodCatalogLabel
+} from "@flixify/contracts";
 
 export type ParsedM3UEntry = {
   title: string;
@@ -24,6 +29,29 @@ export type ParseM3UOptions = {
   artworkBaseUrl?: string | null;
 };
 
+const LEGACY_ARTWORK_HOSTS = new Set([
+  "45.87.29.12",
+  "epg.ottoprime.net",
+  "home-playtv.com:25461",
+  "kongking.shop",
+  "latinoamericatv.vip:8080",
+  "logo.uixtreamreseller.com:8080",
+  "sltv-logo.cms-s.com",
+  "udashboard.shop",
+  "udashboard.shop:8080",
+  "udashboard.vip",
+  "udashboard.win",
+  "xtitan.xyz:2082"
+]);
+
+const LEGACY_ARTWORK_PATH_PREFIXES = [
+  "/images/",
+  "/logo/",
+  "/LOGO/",
+  "/picon/",
+  "/public/dist/img/uploads/logos/"
+];
+
 function parseAttributes(rawAttributes: string) {
   const attributes: Record<string, string> = {};
   const pattern = /([\w-]+)=("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,]+)/g;
@@ -47,106 +75,7 @@ function parseAttributes(rawAttributes: string) {
 }
 
 function normalizeTitle(title: string) {
-  return title
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function classifyEntry(entry: ParsedM3UEntry) {
-  const signal = normalizeTitle(`${entry.title} ${entry.groupTitle ?? ""}`)
-    .toLowerCase()
-    .replace(/[._|/\\+-]+/g, " ");
-
-  const hasSeriesSignal =
-    /\bs\d{1,2}\s*e\d{1,3}\b/.test(signal) ||
-    /\b\d{1,2}\s*x\s*\d{1,3}\b/.test(signal) ||
-    signal.includes("season") ||
-    signal.includes("episode") ||
-    signal.includes("sezon") ||
-    signal.includes("bolum") ||
-    signal.includes("dizi") ||
-    signal.includes("series");
-
-  const hasMovieSignal =
-    signal.includes("film") ||
-    signal.includes("movie") ||
-    signal.includes("sinema") ||
-    signal.includes("vod");
-
-  try {
-    const segments = new URL(entry.streamUrl).pathname
-      .split("/")
-      .filter(Boolean)
-      .map((segment) => segment.toLowerCase());
-
-    const hasMoviePath = segments.includes("movie");
-    const hasSeriesPath = segments.includes("series");
-
-    if (hasSeriesPath) {
-      return "series" as const;
-    }
-
-    if (hasMoviePath) {
-      return "movie" as const;
-    }
-
-    if (hasSeriesSignal) {
-      return "series" as const;
-    }
-
-    if (hasMovieSignal) {
-      return "movie" as const;
-    }
-
-    return "live" as const;
-  } catch {
-    // URL parse edilemezse metin tabanli fallback ile devam et.
-  }
-
-  if (hasSeriesSignal) {
-    return "series" as const;
-  }
-
-  if (hasMovieSignal) {
-    return "movie" as const;
-  }
-
-  return "live" as const;
-}
-
-function extractSeriesMeta(title: string) {
-  const patterns: RegExp[] = [
-    /^(.*?)(?:\s+|[._-]+)?s(?:eason)?\s*(\d{1,2})(?:\s+|[._-]+)?e(?:pisode)?\s*(\d{1,3}).*$/i,
-    /^(.*?)(?:\s+|[._-]+)?(\d{1,2})\s*x\s*(\d{1,3}).*$/i,
-    /^(.*?)(?:\s+|[._-]+)?sezon\s*(\d{1,2})(?:\s+|[._-]+)?(?:bolum|episode|ep)\s*(\d{1,3}).*$/i
-  ];
-
-  for (const pattern of patterns) {
-    const match = title.match(pattern);
-    if (!match) {
-      continue;
-    }
-
-    const seriesTitle = normalizeTitle((match[1] ?? "").replace(/[-_]+$/g, "")) || normalizeTitle(title);
-    const seasonNumber = Number(match[2]);
-    const episodeNumber = Number(match[3]);
-    if (!Number.isFinite(seasonNumber) || !Number.isFinite(episodeNumber)) {
-      continue;
-    }
-
-    return {
-      seriesTitle,
-      seasonNumber: Math.max(1, seasonNumber),
-      episodeNumber: Math.max(1, episodeNumber)
-    };
-  }
-
-  return {
-    seriesTitle: normalizeTitle(title),
-    seasonNumber: 1,
-    episodeNumber: 1
-  };
+  return normalizeVodCatalogLabel(title);
 }
 
 function normalizeTvgId(value: string | null | undefined) {
@@ -181,6 +110,16 @@ function sanitizeArtworkUrl(
       const parsed = baseUrl ? new URL(input, baseUrl) : new URL(input);
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
         return null;
+      }
+      const normalizedArtworkBaseUrl = options.artworkBaseUrl?.trim();
+      if (
+        normalizedArtworkBaseUrl &&
+        LEGACY_ARTWORK_HOSTS.has(parsed.host.toLowerCase()) &&
+        LEGACY_ARTWORK_PATH_PREFIXES.some((prefix) => parsed.pathname.startsWith(prefix))
+      ) {
+        const artworkBase = new URL(normalizedArtworkBaseUrl);
+        parsed.protocol = artworkBase.protocol;
+        parsed.host = artworkBase.host;
       }
       return parsed.toString();
     } catch {
@@ -256,16 +195,20 @@ export function parseM3U(content: string, options: ParseM3UOptions = {}): Parsed
         ...currentMeta,
         streamUrl
       };
-      const classification = classifyEntry(entry);
+      const classification = classifyVodCatalogEntry({
+        title: entry.title,
+        groupTitle: entry.groupTitle,
+        source: entry.streamUrl
+      });
       if (classification === "series") {
-        const meta = extractSeriesMeta(entry.title);
+        const meta = extractSeriesEpisodeMeta(entry.title);
         rawCatalog.series.push({
           ...entry,
           ...meta
         });
       } else if (classification === "movie") {
         rawCatalog.movies.push(entry);
-      } else {
+      } else if (classification === "live") {
         rawCatalog.live.push(entry);
       }
       currentMeta = null;

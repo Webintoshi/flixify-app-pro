@@ -20,6 +20,7 @@ import type {
 } from "@flixify/contracts";
 import { buildLiveVariantMetadata, dedupeMovieCatalogEntries } from "@flixify/contracts";
 import { buildPlaylistUrl, buildStreamUrl, parsePlaylistUrl, type PlaylistConfig } from "./iptv.js";
+import { filterStoredMovieCatalogRows, filterStoredSeriesCatalogRows } from "./vod-catalog-filter.js";
 import { query, withTransaction } from "./db.js";
 import { addPackageDuration, calculateRemainingDays } from "./time.js";
 
@@ -1279,6 +1280,17 @@ async function listSeriesGroups(snapshotVersion: number, search?: string) {
 }
 
 function buildMovieGroupsFromRows(rows: Array<{ group_title: string | null }>) {
+  return buildVodGroupsFromRows(rows, "movie");
+}
+
+function buildSeriesGroupsFromRows(rows: Array<{ group_title: string | null }>) {
+  return buildVodGroupsFromRows(rows, "series");
+}
+
+function buildVodGroupsFromRows(
+  rows: Array<{ group_title: string | null }>,
+  kind: CatalogGroup["kind"]
+) {
   const counts = new Map<string, number>();
 
   for (const row of rows) {
@@ -1291,7 +1303,7 @@ function buildMovieGroupsFromRows(rows: Array<{ group_title: string | null }>) {
     .map<CatalogGroup>(([title, count]) => ({
       title,
       count,
-      kind: "movie"
+      kind
     }));
 }
 
@@ -1853,7 +1865,8 @@ export async function listMoviesCatalog(
     [snapshotVersion, searchValue]
   );
 
-  const dedupedRows = dedupeMovieCatalogEntries(itemsResult.rows, {
+  const filteredCatalogRows = filterStoredMovieCatalogRows(itemsResult.rows);
+  const dedupedRows = dedupeMovieCatalogEntries(filteredCatalogRows, {
     getTitle: (row) => row.title,
     getGroupTitle: (row) => row.group_title,
     getArtworkUrl: (row) => row.poster_url
@@ -1900,7 +1913,12 @@ export async function getMovieForPlayback(snapshotVersion: number, movieId: stri
     [snapshotVersion, movieId]
   );
 
-  return result.rows[0] ?? null;
+  const row = result.rows[0] ?? null;
+  if (!row) {
+    return null;
+  }
+
+  return filterStoredMovieCatalogRows([row]).length > 0 ? row : null;
 }
 
 export async function listSeriesCatalog(
@@ -1914,33 +1932,21 @@ export async function listSeriesCatalog(
   const offset = (page - 1) * pageSize;
   const searchValue = buildSearchClause(search);
   const groupValue = buildGroupClause(group);
-  const where = `
-    where s.snapshot_version = $1
-      and ($2::text is null or lower(s.title) like $2 or lower(coalesce(s.group_title, '')) like $2)
-      and ($3::text is null or lower(coalesce(s.group_title, 'diger')) = $3)
-  `;
-  const [seriesResult, totalResult, groups] = await Promise.all([
-    query<{
-      id: string;
-      title: string;
-      poster_url: string | null;
-      group_title: string | null;
-    }>(
-      `
-        select s.id, s.title, s.poster_url, s.group_title
-        from public.shared_series s
-        ${where}
-        order by s.order_index asc, s.title asc
-        limit $4 offset $5
-      `,
-      [snapshotVersion, searchValue, groupValue, pageSize, offset]
-    ),
-    query<{ count: string }>(
-      `select count(*)::text as count from public.shared_series s ${where}`,
-      [snapshotVersion, searchValue, groupValue]
-    ),
-    listSeriesGroups(snapshotVersion, search)
-  ]);
+  const seriesResult = await query<{
+    id: string;
+    title: string;
+    poster_url: string | null;
+    group_title: string | null;
+  }>(
+    `
+      select s.id, s.title, s.poster_url, s.group_title
+      from public.shared_series s
+      where s.snapshot_version = $1
+        and ($2::text is null or lower(s.title) like $2 or lower(coalesce(s.group_title, '')) like $2)
+      order by s.order_index asc, s.title asc
+    `,
+    [snapshotVersion, searchValue]
+  );
 
   const seriesIds = seriesResult.rows.map((row) => row.id);
   const episodesResult =
@@ -1952,9 +1958,10 @@ export async function listSeriesCatalog(
           season_number: number;
           episode_number: number;
           stream_path: string;
+          order_index: number;
         }>(
           `
-            select id, series_id, title, season_number, episode_number, stream_path
+            select id, series_id, title, season_number, episode_number, stream_path, order_index
             from public.shared_episodes
             where series_id = any($1::uuid[])
             order by season_number asc, episode_number asc, order_index asc
@@ -1963,23 +1970,30 @@ export async function listSeriesCatalog(
         )
       : { rows: [] };
 
+  const filteredCatalog = filterStoredSeriesCatalogRows(seriesResult.rows, episodesResult.rows);
+  const groups = buildSeriesGroupsFromRows(filteredCatalog.seriesRows);
+  const filteredRows = groupValue
+    ? filteredCatalog.seriesRows.filter(
+        (row) => (row.group_title?.trim() || "Diger").toLowerCase() === groupValue
+      )
+    : filteredCatalog.seriesRows;
+  const pagedRows = filteredRows.slice(offset, offset + pageSize);
+
   return {
-    items: seriesResult.rows.map<SeriesRecord>((seriesRow) => ({
+    items: pagedRows.map<SeriesRecord>((seriesRow) => ({
       id: seriesRow.id,
       title: seriesRow.title,
       posterUrl: seriesRow.poster_url,
       groupTitle: seriesRow.group_title,
       ...(() => {
-        const seriesEpisodes = episodesResult.rows
-          .filter((episode) => episode.series_id === seriesRow.id)
-          .map((episode) => ({
-            id: episode.id,
-            title: episode.title,
-            seasonNumber: episode.season_number,
-            episodeNumber: episode.episode_number,
-            streamUrl: null,
-            playbackAllowed: Boolean(playback?.canPlay)
-          }));
+        const seriesEpisodes = (filteredCatalog.episodesBySeriesId.get(seriesRow.id) ?? []).map((episode) => ({
+          id: episode.id,
+          title: episode.title,
+          seasonNumber: episode.season_number,
+          episodeNumber: episode.episode_number,
+          streamUrl: null,
+          playbackAllowed: Boolean(playback?.canPlay)
+        }));
 
         const seasonsMap = new Map<number, SeriesSeasonRecord>();
         for (const episode of seriesEpisodes) {
@@ -2014,7 +2028,7 @@ export async function listSeriesCatalog(
     })),
     page,
     pageSize,
-    total: Number(totalResult.rows[0]?.count ?? 0),
+    total: filteredRows.length,
     groups
   };
 }
@@ -2027,23 +2041,66 @@ export async function getEpisodeForPlayback(snapshotVersion: number, episodeId: 
     season_number: number;
     episode_number: number;
     stream_path: string;
+    series_title: string;
+    series_group_title: string | null;
   }>(
     `
-      select id, series_id, title, season_number, episode_number, stream_path
-      from public.shared_episodes
-      where id = $1
-        and exists (
-          select 1
-          from public.shared_series s
-          where s.id = public.shared_episodes.series_id
-            and s.snapshot_version = $2
-        )
+      select
+        e.id,
+        e.series_id,
+        e.title,
+        e.season_number,
+        e.episode_number,
+        e.stream_path,
+        s.title as series_title,
+        s.group_title as series_group_title
+      from public.shared_episodes e
+      join public.shared_series s on s.id = e.series_id
+      where e.id = $1
+        and s.snapshot_version = $2
       limit 1
     `,
     [episodeId, snapshotVersion]
   );
 
-  return result.rows[0] ?? null;
+  const row = result.rows[0] ?? null;
+  if (!row) {
+    return null;
+  }
+
+  const filteredCatalog = filterStoredSeriesCatalogRows(
+    [
+      {
+        id: row.series_id,
+        title: row.series_title,
+        poster_url: null,
+        group_title: row.series_group_title
+      }
+    ],
+    [
+      {
+        id: row.id,
+        series_id: row.series_id,
+        title: row.title,
+        season_number: row.season_number,
+        episode_number: row.episode_number,
+        stream_path: row.stream_path
+      }
+    ]
+  );
+
+  if ((filteredCatalog.episodesBySeriesId.get(row.series_id)?.length ?? 0) === 0) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    series_id: row.series_id,
+    title: row.title,
+    season_number: row.season_number,
+    episode_number: row.episode_number,
+    stream_path: row.stream_path
+  };
 }
 
 export async function createPaymentRequest(userId: string, packageSlug: string) {

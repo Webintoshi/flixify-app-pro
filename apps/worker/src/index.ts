@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { PoolClient, QueryResultRow } from "pg";
-import { buildLiveVariantMetadata } from "@flixify/contracts";
+import { buildLiveVariantMetadata, isValidMovieCatalogEntry, isValidSeriesEpisodeCatalogEntry } from "@flixify/contracts";
 import { env } from "./env.js";
 import { pool } from "./db.js";
 import { buildPlaylistUrl, buildStreamUrl, extractStreamPath, type PlaylistConfig } from "./iptv.js";
@@ -395,6 +395,17 @@ async function insertSharedMovies(
       continue;
     }
 
+    if (
+      !isValidMovieCatalogEntry({
+        title: movie.title,
+        groupTitle: movie.groupTitle,
+        source: streamPath
+      })
+    ) {
+      skippedCount += 1;
+      continue;
+    }
+
     records.push({
       title: movie.title,
       poster_url: movie.logoUrl,
@@ -483,6 +494,18 @@ async function insertSharedSeriesAndEpisodes(
   for (const entry of orderedCatalog) {
     const streamPath = tryExtractStreamPath(entry.streamUrl, config, `dizi:${entry.title}`);
     if (!streamPath) {
+      skippedCount += 1;
+      continue;
+    }
+
+    if (
+      !isValidSeriesEpisodeCatalogEntry({
+        seriesTitle: entry.seriesTitle,
+        title: entry.title,
+        groupTitle: entry.groupTitle,
+        source: streamPath
+      })
+    ) {
       skippedCount += 1;
       continue;
     }
