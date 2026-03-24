@@ -1,8 +1,8 @@
 {
   "platforms": {
     "windows-native-qt": {
-      "latestVersion": "2.2.53",
-      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.2.53/Flixify-Pro-Setup-2.2.53-x64.exe",
+      "latestVersion": "2.2.54",
+      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.2.54/Flixify-Pro-Setup-2.2.54-x64.exe",
       "notes": "VOD katalog temizligi, native VOD gorunurlugu duzeltmeleri ve server-side playback iyilestirmeleri."
     }
   }
