@@ -17,22 +17,30 @@ constexpr wchar_t kFlixifyVideoSurfaceClassName[] = L"FlixifyNativeVideoSurfaceW
 
 LRESULT CALLBACK flixifyVideoSurfaceProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
   switch (message) {
-    case WM_NCCREATE: {
-      auto *createStruct = reinterpret_cast<CREATESTRUCTW *>(lParam);
-      if (createStruct && createStruct->lpCreateParams) {
-        SetWindowLongPtrW(
-          hwnd,
+	    case WM_NCCREATE: {
+	      auto *createStruct = reinterpret_cast<CREATESTRUCTW *>(lParam);
+	      if (createStruct && createStruct->lpCreateParams) {
+	        SetWindowLongPtrW(
+	          hwnd,
           GWLP_USERDATA,
           reinterpret_cast<LONG_PTR>(createStruct->lpCreateParams)
         );
-      }
-      break;
-    }
-    case WM_MOUSEMOVE:
-    case WM_MOUSEWHEEL:
-    case WM_NCMOUSEMOVE: {
-      if (auto *instance = reinterpret_cast<NativeVideoSurface *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA))) {
-        QMetaObject::invokeMethod(instance, [instance]() {
+	      }
+	      break;
+	    }
+	    case WM_NCHITTEST: {
+	      if (auto *instance = reinterpret_cast<NativeVideoSurface *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA))) {
+	        if (instance->mousePassthrough()) {
+	          return HTTRANSPARENT;
+	        }
+	      }
+	      break;
+	    }
+	    case WM_MOUSEMOVE:
+	    case WM_MOUSEWHEEL:
+	    case WM_NCMOUSEMOVE: {
+	      if (auto *instance = reinterpret_cast<NativeVideoSurface *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA))) {
+	        QMetaObject::invokeMethod(instance, [instance]() {
           instance->pointerActivity();
         }, Qt::QueuedConnection);
       }
@@ -102,6 +110,19 @@ NativeVideoSurface::~NativeVideoSurface() {
 
 qulonglong NativeVideoSurface::surfaceHandle() const {
   return m_surfaceHandle;
+}
+
+bool NativeVideoSurface::mousePassthrough() const {
+  return m_mousePassthrough;
+}
+
+void NativeVideoSurface::setMousePassthrough(bool enabled) {
+  if (m_mousePassthrough == enabled) {
+    return;
+  }
+
+  m_mousePassthrough = enabled;
+  emit mousePassthroughChanged();
 }
 
 void NativeVideoSurface::paint(QPainter *painter) {

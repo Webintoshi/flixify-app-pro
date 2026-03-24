@@ -55,6 +55,18 @@ ApplicationWindow {
     readonly property real railCardWidth: compactWindow ? 236 : mediumWindow ? 260 : 286
     readonly property real railCardHeight: compactWindow ? 388 : mediumWindow ? 404 : 420
     readonly property real profileCardWidth: compactWindow ? 0 : 1
+    readonly property var headerPrimaryItems: [
+        { key: "home", label: "Ana Sayfa" },
+        { key: "live", label: "Canli TV" },
+        { key: "movies", label: "Filmler" },
+        { key: "series", label: "Diziler" }
+    ]
+    readonly property var headerSecondaryItems: [
+        { key: "profile", label: "Profil" },
+        { key: "packages", label: "Paketler" },
+        { key: "payments", label: "Odemeler" },
+        { key: "contact", label: "Iletisim" }
+    ]
 
     function clampValue(value, minValue, maxValue) {
         return Math.max(minValue, Math.min(maxValue, value))
@@ -106,7 +118,7 @@ ApplicationWindow {
     property color toastColor: info
 
     Component.onCompleted: {
-        playbackController.videoFillMode = "fit"
+        playbackController.videoFillMode = "fill"
         currentScreen = apiClient.authenticated ? "home" : "login"
         apiClient.bootstrap()
     }
@@ -885,6 +897,13 @@ ApplicationWindow {
         }
     }
 
+    function headerScreenActive(screenName) {
+        if (screenName === "series") {
+            return currentScreen === "series" || currentScreen === "series-detail"
+        }
+        return currentScreen === screenName
+    }
+
     function openSeriesDetail(seriesId) {
         if (playerVisible && currentScreen === "series-detail" && selectedSeriesId !== seriesId) {
             closePlayer()
@@ -1481,6 +1500,97 @@ ApplicationWindow {
         }
     }
 
+    component HeaderMenuButton: Button {
+        id: headerMenuControl
+        property bool active: false
+        hoverEnabled: headerMenuControl.enabled
+        focusPolicy: Qt.NoFocus
+        implicitWidth: window.compactWindow ? 116 : 126
+        implicitHeight: window.compactWindow ? 52 : 56
+        leftPadding: 18
+        rightPadding: 18
+        topPadding: 0
+        bottomPadding: 0
+        background: Rectangle {
+            radius: height / 2
+            color: headerMenuControl.active
+                ? "#18ffffff"
+                : (headerMenuControl.hovered ? "#10ffffff" : "#0affffff")
+            border.width: 1
+            border.color: headerMenuControl.active
+                ? "#35e50914"
+                : (headerMenuControl.hovered ? "#24ffffff" : window.borderSoft)
+            Behavior on color { ColorAnimation { duration: 150 } }
+            Behavior on border.color { ColorAnimation { duration: 150 } }
+        }
+        contentItem: Row {
+            anchors.centerIn: parent
+            spacing: 10
+
+            Canvas {
+                width: 18
+                height: 18
+                anchors.verticalCenter: parent.verticalCenter
+                onPaint: {
+                    const context = getContext("2d")
+                    context.reset()
+                    context.strokeStyle = "#f4f7fb"
+                    context.lineWidth = 2
+                    context.lineCap = "round"
+                    for (let index = 0; index < 3; index += 1) {
+                        const y = 4 + index * 5
+                        context.beginPath()
+                        context.moveTo(2, y)
+                        context.lineTo(width - 2, y)
+                        context.stroke()
+                    }
+                }
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Menu"
+                color: "#f4f7fb"
+                font.pixelSize: 14 * fontScale
+                font.bold: true
+                font.family: "Space Grotesk"
+            }
+        }
+    }
+
+    component HeaderMenuEntryButton: Button {
+        id: menuEntry
+        property bool active: false
+        property bool danger: false
+        hoverEnabled: menuEntry.enabled
+        focusPolicy: Qt.NoFocus
+        implicitHeight: 50
+        leftPadding: 16
+        rightPadding: 16
+        topPadding: 0
+        bottomPadding: 0
+        background: Rectangle {
+            radius: 16
+            color: menuEntry.active
+                ? "#15ffffff"
+                : (menuEntry.hovered ? "#10ffffff" : "#00ffffff")
+            border.width: 1
+            border.color: menuEntry.danger
+                ? "#30ff7d86"
+                : (menuEntry.active ? "#35e50914" : (menuEntry.hovered ? "#24ffffff" : "#16ffffff"))
+            Behavior on color { ColorAnimation { duration: 140 } }
+            Behavior on border.color { ColorAnimation { duration: 140 } }
+        }
+        contentItem: Text {
+            text: menuEntry.text
+            color: menuEntry.danger ? "#ffd4d8" : "#f4f7fb"
+            font.pixelSize: 14 * fontScale
+            font.bold: menuEntry.active || menuEntry.hovered || menuEntry.danger
+            font.family: "Space Grotesk"
+            verticalAlignment: Text.AlignVCenter
+        }
+    }
+
     component GlassCard: Rectangle {
         radius: 28
         color: window.panel
@@ -2048,13 +2158,6 @@ ApplicationWindow {
             anchors.leftMargin: 16
             spacing: 16
             
-            // Kanal Listesi Toggle
-            PlayerIconButton {
-                icon: "📺"
-                tooltip: "Kanal Listesi"
-                onClicked: showToast("Kanal listesi")
-            }
-            
             // Ses Aç/Kapa
             PlayerIconButton {
                 icon: playbackController.muted || playbackController.volume <= 0 ? "🔇" : "🔊"
@@ -2118,20 +2221,11 @@ ApplicationWindow {
             anchors.verticalCenter: parent.verticalCenter
             anchors.rightMargin: 16
             spacing: 12
-            
-            // EPG/Rehber
+            // Tam Ekran
             PlayerIconButton {
-                icon: "☰"
-                tooltip: "Program Rehberi"
-                onClicked: showToast("EPG yakında geliyor")
-            }
-            
-            // Kayıt
-            PlayerIconButton {
-                icon: "⏺"
-                tooltip: "Kaydet"
-                iconColor: "#ff4757"
-                onClicked: showToast("Kayıt özelliği yakında geliyor")
+                icon: window.visibility === Window.FullScreen ? "⛶" : "⛶"
+                tooltip: "Tam Ekran"
+                onClicked: toggleWindowFullscreen()
             }
         }
     }
@@ -2200,19 +2294,39 @@ ApplicationWindow {
 
     Component {
         id: nativeVideoSurfaceComponent
-        NativeVideoSurface {
+        Item {
             anchors.fill: parent
-            anchors.margins: 0
-            onSurfaceHandleChanged: {
-                playbackController.setVideoSurfaceHandle(surfaceHandle)
-                playbackController.setVideoSurfaceGeometry(width, height)
+
+            NativeVideoSurface {
+                id: nativeVideoSurface
+                anchors.fill: parent
+                anchors.margins: 0
+                mousePassthrough: true
+                onSurfaceHandleChanged: {
+                    playbackController.setVideoSurfaceHandle(surfaceHandle)
+                    playbackController.setVideoSurfaceGeometry(width, height)
+                }
+                onWidthChanged: playbackController.setVideoSurfaceGeometry(width, height)
+                onHeightChanged: playbackController.setVideoSurfaceGeometry(width, height)
+                Component.onCompleted: playbackController.setVideoSurfaceGeometry(width, height)
+                onPointerActivity: {
+                    if (currentScreen === "live" && inlineLivePlayerVisible()) {
+                        showLiveControls()
+                    }
+                }
             }
-            onWidthChanged: playbackController.setVideoSurfaceGeometry(width, height)
-            onHeightChanged: playbackController.setVideoSurfaceGeometry(width, height)
-            Component.onCompleted: playbackController.setVideoSurfaceGeometry(width, height)
-            onPointerActivity: {
-                if (currentScreen === "live" && inlineLivePlayerVisible()) {
-                    showLiveControls()
+
+            HoverHandler {
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                onHoveredChanged: {
+                    if (hovered && currentScreen === "live" && inlineLivePlayerVisible()) {
+                        showLiveControls()
+                    }
+                }
+                onPointChanged: {
+                    if (currentScreen === "live" && inlineLivePlayerVisible()) {
+                        showLiveControls()
+                    }
                 }
             }
         }
@@ -3307,6 +3421,18 @@ ApplicationWindow {
                             }
                         }
 
+                        HeaderMenuButton {
+                            id: headerMenuButton
+                            active: headerMenuPopup.visible
+                            onClicked: {
+                                if (headerMenuPopup.visible) {
+                                    headerMenuPopup.close()
+                                } else {
+                                    headerMenuPopup.open()
+                                }
+                            }
+                        }
+
                         Rectangle {
                             width: window.compactWindow ? 208 : 248
                             height: window.compactWindow ? 56 : 62
@@ -3359,6 +3485,136 @@ ApplicationWindow {
                         }
 
                         AppButton { text: "Çıkış"; secondary: true; implicitWidth: 110; onClicked: apiClient.logout() }
+                    }
+
+                    Popup {
+                        id: headerMenuPopup
+                        parent: Overlay.overlay
+                        modal: true
+                        focus: visible
+                        padding: 18
+                        width: window.compactWindow ? Math.min(window.width - 24, 308) : 340
+                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                        x: {
+                            if (!parent) {
+                                return 12
+                            }
+                            const point = headerMenuButton.mapToItem(parent, 0, 0)
+                            return Math.max(12, Math.min(parent.width - width - 12, point.x + headerMenuButton.width - width))
+                        }
+                        y: {
+                            if (!parent) {
+                                return window.compactWindow ? 84 : 96
+                            }
+                            const point = headerMenuButton.mapToItem(parent, 0, headerMenuButton.height + 10)
+                            return point.y
+                        }
+
+                        Overlay.modal: Rectangle {
+                            color: "#5a020408"
+                        }
+
+                        background: Rectangle {
+                            radius: 24
+                            color: "#f0131822"
+                            border.width: 1
+                            border.color: "#24ffffff"
+                        }
+
+                        contentItem: ColumnLayout {
+                            spacing: 10
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 84
+                                radius: 20
+                                color: "#10ffffff"
+                                border.width: 1
+                                border.color: "#18ffffff"
+
+                                Column {
+                                    anchors.fill: parent
+                                    anchors.margins: 16
+                                    spacing: 6
+
+                                    Text {
+                                        text: "Hizli Menu"
+                                        color: window.textPrimary
+                                        font.pixelSize: 18 * fontScale
+                                        font.family: "Space Grotesk"
+                                        font.bold: true
+                                    }
+
+                                    Text {
+                                        text: userData().kryptoniteCode || "Flixify Profili"
+                                        color: window.textMuted
+                                        font.pixelSize: 13 * fontScale
+                                        elide: Text.ElideRight
+                                        width: parent.width
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "Gezin"
+                                color: window.textMuted
+                                font.pixelSize: 12 * fontScale
+                                font.bold: true
+                                font.family: "Space Grotesk"
+                            }
+
+                            Repeater {
+                                model: window.headerPrimaryItems
+                                HeaderMenuEntryButton {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    text: modelData.label
+                                    active: headerScreenActive(modelData.key)
+                                    onClicked: {
+                                        headerMenuPopup.close()
+                                        openScreen(modelData.key)
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 1
+                                color: "#16ffffff"
+                            }
+
+                            Text {
+                                text: "Hesap"
+                                color: window.textMuted
+                                font.pixelSize: 12 * fontScale
+                                font.bold: true
+                                font.family: "Space Grotesk"
+                            }
+
+                            Repeater {
+                                model: window.headerSecondaryItems
+                                HeaderMenuEntryButton {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    text: modelData.label
+                                    active: headerScreenActive(modelData.key)
+                                    onClicked: {
+                                        headerMenuPopup.close()
+                                        openScreen(modelData.key)
+                                    }
+                                }
+                            }
+
+                            HeaderMenuEntryButton {
+                                Layout.fillWidth: true
+                                text: "Cikis Yap"
+                                danger: true
+                                onClicked: {
+                                    headerMenuPopup.close()
+                                    apiClient.logout()
+                                }
+                            }
+                        }
                     }
                 }
 

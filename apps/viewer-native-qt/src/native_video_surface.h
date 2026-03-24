@@ -5,16 +5,20 @@
 class NativeVideoSurface : public QQuickPaintedItem {
   Q_OBJECT
   Q_PROPERTY(qulonglong surfaceHandle READ surfaceHandle NOTIFY surfaceHandleChanged)
+  Q_PROPERTY(bool mousePassthrough READ mousePassthrough WRITE setMousePassthrough NOTIFY mousePassthroughChanged)
 
 public:
   explicit NativeVideoSurface(QQuickItem *parent = nullptr);
   ~NativeVideoSurface() override;
 
   qulonglong surfaceHandle() const;
+  bool mousePassthrough() const;
+  void setMousePassthrough(bool enabled);
   void paint(QPainter *painter) override;
 
 signals:
   void surfaceHandleChanged();
+  void mousePassthroughChanged();
   void pointerActivity();
 
 private:
@@ -28,4 +32,5 @@ private:
 #endif
 
   qulonglong m_surfaceHandle = 0;
+  bool m_mousePassthrough = true;
 };
