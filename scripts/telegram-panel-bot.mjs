@@ -616,21 +616,44 @@ async function createPanelLine(userDetail, packageConfig) {
 }
 
 async function getActiveConnectionStats() {
-  const payload = await resellerRequest(
-    "live_connections",
-    {
-      start: 0,
-      limit: 1
+  const form = new URLSearchParams();
+  form.set("api_key", config.resellerApiKey);
+  form.set("action", "live_connections");
+  form.set("start", "0");
+  form.set("limit", "1");
+
+  const response = await fetch(config.resellerApiBaseUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded"
     },
-    {
-      returnEnvelope: true
-    }
-  );
+    body: form.toString(),
+    signal: AbortSignal.timeout(20_000)
+  });
+
+  const rawBody = await response.text();
+  if (!response.ok) {
+    throw new Error(`live_connections failed with HTTP ${response.status}`);
+  }
+
+  if (rawBody.trim() === "" || rawBody.trim() === "null") {
+    return {
+      count: 0,
+      checkedAt: new Date().toISOString()
+    };
+  }
+
+  let payload = null;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    throw new Error(`live_connections invalid response: ${rawBody.slice(0, 200)}`);
+  }
 
   const count =
-    parseNonNegativeInt(payload.recordsFiltered) ??
-    parseNonNegativeInt(payload.recordsTotal) ??
-    (Array.isArray(payload.data) ? payload.data.length : 0);
+    parseNonNegativeInt(payload?.recordsFiltered) ??
+    parseNonNegativeInt(payload?.recordsTotal) ??
+    (Array.isArray(payload?.data) ? payload.data.length : 0);
 
   return {
     count,
@@ -643,7 +666,7 @@ function buildPendingKeyboard(items, page, total) {
     const label = String(item?.kryptoniteCode ?? item?.codeSuffix ?? item?.id ?? "Kayit").trim();
     return [
       {
-        text: `🆕 ${label}`,
+        text: `\u{1F195} ${label}`,
         callback_data: buildCallbackData("select", page, item.id)
       }
     ];
@@ -654,18 +677,18 @@ function buildPendingKeyboard(items, page, total) {
 
   if (page > 1) {
     navRow.push({
-      text: "⬅️ Geri",
+      text: "\u{2B05}\u{FE0F} Geri",
       callback_data: buildCallbackData("pending", page - 1)
     });
   }
   if (page < totalPages) {
     navRow.push({
-      text: "➡️ Ileri",
+      text: "\u{27A1}\u{FE0F} Ileri",
       callback_data: buildCallbackData("pending", page + 1)
     });
   }
   navRow.push({
-    text: "🔄 Yenile",
+    text: "\u{1F504} Yenile",
     callback_data: buildCallbackData("pending", page)
   });
 
@@ -681,25 +704,25 @@ function buildUserCardKeyboard(userId, page) {
     inline_keyboard: [
       [
         {
-          text: "📋 Kodu Goster",
+          text: "\u{1F4CB} Kodu Goster",
           callback_data: buildCallbackData("copy", page, userId)
         }
       ],
       [
         {
-          text: "👤 Kullanici Detayi",
+          text: "\u{1F464} Kullanici Detayi",
           callback_data: buildCallbackData("detail", page, userId)
         }
       ],
       [
         {
-          text: "🧩 M3U Ata",
+          text: "\u{1F9E9} M3U Ata",
           callback_data: buildCallbackData("packages", page, userId)
         }
       ],
       [
         {
-          text: "📚 Listeye Don",
+          text: "\u{1F4DA} Listeye Don",
           callback_data: buildCallbackData("pending", page)
         }
       ]
@@ -712,19 +735,19 @@ function buildDetailKeyboard(userId, page) {
     inline_keyboard: [
       [
         {
-          text: "🧩 M3U Ata",
+          text: "\u{1F9E9} M3U Ata",
           callback_data: buildCallbackData("packages", page, userId)
         }
       ],
       [
         {
-          text: "↩️ Kart Gorunumu",
+          text: "\u{21A9}\u{FE0F} Kart Gorunumu",
           callback_data: buildCallbackData("select", page, userId)
         }
       ],
       [
         {
-          text: "📚 Listeye Don",
+          text: "\u{1F4DA} Listeye Don",
           callback_data: buildCallbackData("pending", page)
         }
       ]
@@ -746,7 +769,7 @@ function buildPackageKeyboard(userId, page) {
 
   rows.push([
     {
-      text: "↩️ Kullanici Karti",
+      text: "\u{21A9}\u{FE0F} Kullanici Karti",
       callback_data: buildCallbackData("select", page, userId)
     }
   ]);
@@ -761,13 +784,13 @@ function buildResultKeyboard(userId, page) {
     inline_keyboard: [
       [
         {
-          text: "👤 Kullanici Karti",
+          text: "\u{1F464} Kullanici Karti",
           callback_data: buildCallbackData("select", page, userId)
         }
       ],
       [
         {
-          text: "📚 Bekleyenler",
+          text: "\u{1F4DA} Bekleyenler",
           callback_data: buildCallbackData("pending", page)
         }
       ]
@@ -781,7 +804,7 @@ function renderPendingUsersText(payload) {
   const total = parseNonNegativeInt(payload?.total) ?? items.length;
   const totalPages = Math.max(1, Math.ceil(total / config.pendingPageSize));
   const lines = [
-    "🆕 <b>Bekleyen Kayitlar</b>",
+    "\u{1F195} <b>Bekleyen Kayitlar</b>",
     "",
     `Toplam: <b>${total}</b>`,
     `Sayfa: <b>${page}</b> / <b>${totalPages}</b>`
@@ -809,14 +832,14 @@ function renderUserCardText(detail) {
   const snapshot = getUserSnapshot(detail);
 
   return [
-    "🆕 <b>Yeni Kayit</b>",
+    "\u{1F195} <b>Yeni Kayit</b>",
     "",
-    `👤 <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
-    `🕒 <b>Tarih:</b> ${escapeHtml(formatDate(snapshot.createdAt))}`,
-    `📡 <b>M3U Bagli:</b> <b>${snapshot.hasAssignedLink ? "Evet" : "Hayir"}</b>`,
-    `🔐 <b>IPTV Kullanici:</b> <code>${escapeHtml(snapshot.iptvUsername)}</code>`,
-    `🎟️ <b>Aktif Paket:</b> <b>${escapeHtml(snapshot.activePackageTitle)}</b>`,
-    `⏳ <b>Kalan:</b> <b>${escapeHtml(snapshot.remainingLabel)}</b>`,
+    `\u{1F464} <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
+    `\u{1F552} <b>Tarih:</b> ${escapeHtml(formatDate(snapshot.createdAt))}`,
+    `\u{1F4E1} <b>M3U Bagli:</b> <b>${snapshot.hasAssignedLink ? "Evet" : "Hayir"}</b>`,
+    `\u{1F510} <b>IPTV Kullanici:</b> <code>${escapeHtml(snapshot.iptvUsername)}</code>`,
+    `\u{1F39F}\u{FE0F} <b>Aktif Paket:</b> <b>${escapeHtml(snapshot.activePackageTitle)}</b>`,
+    `\u{23F3} <b>Kalan:</b> <b>${escapeHtml(snapshot.remainingLabel)}</b>`,
     "",
     "Asagidaki butonlardan birini secin."
   ].join("\n");
@@ -826,18 +849,18 @@ function renderUserDetailText(detail) {
   const snapshot = getUserSnapshot(detail);
 
   return [
-    "👤 <b>Kullanici Detayi</b>",
+    "\u{1F464} <b>Kullanici Detayi</b>",
     "",
-    `🆔 <b>User ID:</b> <code>${escapeHtml(snapshot.id)}</code>`,
-    `👤 <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
-    `🏷️ <b>Durum:</b> <b>${escapeHtml(formatUserStatus(snapshot.status))}</b>`,
-    `🕒 <b>Kayit Tarihi:</b> ${escapeHtml(formatDate(snapshot.createdAt))}`,
-    `📡 <b>M3U Bagli:</b> <b>${snapshot.hasAssignedLink ? "Evet" : "Hayir"}</b>`,
-    `🔐 <b>IPTV Kullanici:</b> <code>${escapeHtml(snapshot.iptvUsername)}</code>`,
-    `🔑 <b>IPTV Sifre:</b> <code>${escapeHtml(snapshot.iptvPassword)}</code>`,
-    `🎟️ <b>Aktif Paket:</b> <b>${escapeHtml(snapshot.activePackageTitle)}</b>`,
-    `⏳ <b>Kalan Sure:</b> <b>${escapeHtml(snapshot.remainingLabel)}</b>`,
-    `🔗 <b>Kaynak URL:</b> <code>${escapeHtml(snapshot.currentSourceUrl ?? "-")}</code>`
+    `\u{1F194} <b>User ID:</b> <code>${escapeHtml(snapshot.id)}</code>`,
+    `\u{1F464} <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
+    `\u{1F3F7}\u{FE0F} <b>Durum:</b> <b>${escapeHtml(formatUserStatus(snapshot.status))}</b>`,
+    `\u{1F552} <b>Kayit Tarihi:</b> ${escapeHtml(formatDate(snapshot.createdAt))}`,
+    `\u{1F4E1} <b>M3U Bagli:</b> <b>${snapshot.hasAssignedLink ? "Evet" : "Hayir"}</b>`,
+    `\u{1F510} <b>IPTV Kullanici:</b> <code>${escapeHtml(snapshot.iptvUsername)}</code>`,
+    `\u{1F511} <b>IPTV Sifre:</b> <code>${escapeHtml(snapshot.iptvPassword)}</code>`,
+    `\u{1F39F}\u{FE0F} <b>Aktif Paket:</b> <b>${escapeHtml(snapshot.activePackageTitle)}</b>`,
+    `\u{23F3} <b>Kalan Sure:</b> <b>${escapeHtml(snapshot.remainingLabel)}</b>`,
+    `\u{1F517} <b>Kaynak URL:</b> <code>${escapeHtml(snapshot.currentSourceUrl ?? "-")}</code>`
   ].join("\n");
 }
 
@@ -845,10 +868,10 @@ function renderPackagePickerText(detail) {
   const snapshot = getUserSnapshot(detail);
 
   return [
-    "🧩 <b>M3U Ata</b>",
+    "\u{1F9E9} <b>M3U Ata</b>",
     "",
-    `👤 <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
-    `🕒 <b>Tarih:</b> ${escapeHtml(formatDate(snapshot.createdAt))}`,
+    `\u{1F464} <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
+    `\u{1F552} <b>Tarih:</b> ${escapeHtml(formatDate(snapshot.createdAt))}`,
     "",
     "Atamak istediginiz paketi secin."
   ].join("\n");
@@ -859,7 +882,7 @@ function renderPackageListText(packagePayload) {
     (Array.isArray(packagePayload?.items) ? packagePayload.items : []).map((item) => [item.slug, item])
   );
 
-  const lines = ["🧩 <b>Paket Haritasi</b>", ""];
+  const lines = ["\u{1F9E9} <b>Paket Haritasi</b>", ""];
   config.packageMap.forEach((item) => {
     const internalPackage = item.flixifyPackageSlug ? flixifyPackages.get(item.flixifyPackageSlug) : null;
     lines.push(`<b>${escapeHtml(item.label)}</b>`);
@@ -876,7 +899,7 @@ function renderPackageListText(packagePayload) {
 
 function renderActiveUsersText(stats) {
   return [
-    "📡 <b>Aktif IPTV Kullanici Sayisi</b>",
+    "\u{1F4E1} <b>Aktif IPTV Kullanici Sayisi</b>",
     "",
     `Canli baglanti: <b>${stats.count}</b>`,
     `Kontrol zamani: ${escapeHtml(formatDate(stats.checkedAt))}`
@@ -887,14 +910,14 @@ function renderSuccessText(detail, packageConfig, panelLine) {
   const snapshot = getUserSnapshot(detail);
 
   return [
-    "✅ <b>Paket Atandi</b>",
+    "\u{2705} <b>Paket Atandi</b>",
     "",
-    `👤 <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
-    `🎟️ <b>Secilen Paket:</b> <b>${escapeHtml(packageConfig.label)}</b>`,
-    `🆔 <b>Panel Line ID:</b> <b>${escapeHtml(panelLine.id ?? "-")}</b>`,
-    `🔐 <b>IPTV Kullanici:</b> <code>${escapeHtml(panelLine.username ?? snapshot.code)}</code>`,
-    `🔑 <b>IPTV Sifre:</b> <code>${escapeHtml(panelLine.password ?? snapshot.code)}</code>`,
-    `📅 <b>Bitis:</b> <b>${escapeHtml(formatUnixSeconds(panelLine.exp_date))}</b>`
+    `\u{1F464} <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
+    `\u{1F39F}\u{FE0F} <b>Secilen Paket:</b> <b>${escapeHtml(packageConfig.label)}</b>`,
+    `\u{1F194} <b>Panel Line ID:</b> <b>${escapeHtml(panelLine.id ?? "-")}</b>`,
+    `\u{1F510} <b>IPTV Kullanici:</b> <code>${escapeHtml(panelLine.username ?? snapshot.code)}</code>`,
+    `\u{1F511} <b>IPTV Sifre:</b> <code>${escapeHtml(panelLine.password ?? snapshot.code)}</code>`,
+    `\u{1F4C5} <b>Bitis:</b> <b>${escapeHtml(formatUnixSeconds(panelLine.exp_date))}</b>`
   ].join("\n");
 }
 
@@ -902,15 +925,15 @@ function renderPartialFailureText(detail, packageConfig, panelLine, error) {
   const snapshot = getUserSnapshot(detail);
 
   return [
-    "⚠️ <b>Kismi Hata</b>",
+    "\u{26A0}\u{FE0F} <b>Kismi Hata</b>",
     "",
     "Panelde line acildi fakat Flixify tarafinda atama tamamlanamadi.",
-    `👤 <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
-    `🎟️ <b>Secilen Paket:</b> <b>${escapeHtml(packageConfig.label)}</b>`,
-    `🆔 <b>Panel Line ID:</b> <b>${escapeHtml(panelLine.id ?? "-")}</b>`,
-    `🔐 <b>IPTV Kullanici:</b> <code>${escapeHtml(panelLine.username ?? "-")}</code>`,
-    `🔑 <b>IPTV Sifre:</b> <code>${escapeHtml(panelLine.password ?? "-")}</code>`,
-    `❌ <b>Hata:</b> <b>${escapeHtml(normalizeErrorMessage(error))}</b>`,
+    `\u{1F464} <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
+    `\u{1F39F}\u{FE0F} <b>Secilen Paket:</b> <b>${escapeHtml(packageConfig.label)}</b>`,
+    `\u{1F194} <b>Panel Line ID:</b> <b>${escapeHtml(panelLine.id ?? "-")}</b>`,
+    `\u{1F510} <b>IPTV Kullanici:</b> <code>${escapeHtml(panelLine.username ?? "-")}</code>`,
+    `\u{1F511} <b>IPTV Sifre:</b> <code>${escapeHtml(panelLine.password ?? "-")}</code>`,
+    `\u{274C} <b>Hata:</b> <b>${escapeHtml(normalizeErrorMessage(error))}</b>`,
     "",
     "Bu kayit icin manuel kontrol gerekebilir."
   ].join("\n");
@@ -976,7 +999,7 @@ async function showPackagePicker(chatId, userId, page, messageId = null) {
 async function showErrorMessage(chatId, error, messageId = null) {
   return upsertMessage(
     chatId,
-    `❌ <b>Hata</b>\n${escapeHtml(normalizeErrorMessage(error))}`,
+    `\u{274C} <b>Hata</b>\n${escapeHtml(normalizeErrorMessage(error))}`,
     {
       parse_mode: "HTML"
     },
@@ -1001,10 +1024,10 @@ async function assignPackageToUser(chatId, userId, page, packageKey, messageId =
   await upsertMessage(
     chatId,
     [
-      "⏳ <b>Paket Ataniyor</b>",
+      "\u{23F3} <b>Paket Ataniyor</b>",
       "",
-      `👤 <b>User ID:</b> <code>${escapeHtml(userId)}</code>`,
-      `🎟️ <b>Secim:</b> <b>${escapeHtml(packageConfig.label)}</b>`,
+      `\u{1F464} <b>User ID:</b> <code>${escapeHtml(userId)}</code>`,
+      `\u{1F39F}\u{FE0F} <b>Secim:</b> <b>${escapeHtml(packageConfig.label)}</b>`,
       "",
       "Lutfen bekleyin..."
     ].join("\n"),
@@ -1152,7 +1175,7 @@ bot.onText(/\/start$/, async (message) => {
   }
 
   const text = [
-    "🤖 <b>Flixify Yonetici Botu</b>",
+    "\u{1F916} <b>Flixify Yonetici Botu</b>",
     "",
     "Yeni kayit bildirimleri acik. Kullanicilara buradan paket atayabilirsiniz.",
     "",
@@ -1172,7 +1195,7 @@ bot.onText(/\/help$/, async (message) => {
   }
 
   const text = [
-    "📘 <b>Kullanim Akisi</b>",
+    "\u{1F4D8} <b>Kullanim Akisi</b>",
     "",
     "1. Bot yeni kayit geldiginde size otomatik bildirim yollar.",
     "2. Bildirim kartinda <b>M3U Ata</b> butonuna basin.",

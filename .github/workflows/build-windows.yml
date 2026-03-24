@@ -1,0 +1,128 @@
+name: Build Windows Release
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'apps/viewer-native-qt/**'
+      - '.github/workflows/build-windows.yml'
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  QT_VERSION: '6.8.0'
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: ${{ env.QT_VERSION }}
+        host: windows
+        target: desktop
+        arch: win64_msvc2022_64
+        modules: 'qtmultimedia qtshadertools qt5compat'
+        cache: true
+
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Setup Ninja
+      uses: ashutoshvarma/setup-ninja@master
+      with:
+        version: 1.12.1
+
+    - name: Configure CMake
+      working-directory: apps/viewer-native-qt
+      run: |
+        cmake --preset windows-x64-release || cmake -B build/windows-x64-release -G Ninja `
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+          -DCMAKE_C_COMPILER=cl `
+          -DCMAKE_CXX_COMPILER=cl `
+          -DCMAKE_PREFIX_PATH="$env:Qt6_DIR"
+
+    - name: Build
+      working-directory: apps/viewer-native-qt
+      run: cmake --build build/windows-x64-release --config ${{ env.BUILD_TYPE }} --parallel
+
+    - name: Package with CPack
+      working-directory: apps/viewer-native-qt/build/windows-x64-release
+      run: cpack -C ${{ env.BUILD_TYPE }} --verbose || echo "CPack skipped (no installer)"
+
+    - name: Upload Artifact (Executable)
+      uses: actions/upload-artifact@v4
+      with:
+        name: FlixifyNativeQt-Windows-x64
+        path: |
+          apps/viewer-native-qt/build/windows-x64-release/**/*.exe
+          apps/viewer-native-qt/dist/windows-x64-release/**/*.exe
+          apps/viewer-native-qt/build/windows-x64-release/**/*.dll
+        if-no-files-found: warn
+
+    - name: Upload Artifact (Full Package)
+      uses: actions/upload-artifact@v4
+      with:
+        name: FlixifyNativeQt-Windows-Full
+        path: |
+          apps/viewer-native-qt/dist/windows-x64-release/
+          apps/viewer-native-qt/build/windows-x64-release/${{ env.BUILD_TYPE }}/
+        if-no-files-found: ignore
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        pattern: FlixifyNativeQt-*
+        merge-multiple: false
+
+    - name: Get version from CMakeLists.txt
+      id: get_version
+      run: |
+        VERSION=$(grep -oP 'VERSION\s+\K[0-9]+\.[0-9]+\.[0-9]+' apps/viewer-native-qt/CMakeLists.txt | head -1)
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.get_version.outputs.VERSION }}
+        name: Flixify Pro v${{ steps.get_version.outputs.VERSION }}
+        body: |
+          ## Flixify Pro Windows Release v${{ steps.get_version.outputs.VERSION }}
+          
+          ### Değişiklikler
+          - Otomatik build
+          
+          ### Kurulum
+          1. `Flixify-Pro-Setup-*-x64.exe` dosyasını indirin
+          2. Kurulum sihirbazını çalıştırın
+          3. Uygulamayı başlatın
+          
+          ### Sistem Gereksinimleri
+          - Windows 10/11 64-bit
+          - Visual C++ Redistributable 2022
+        files: |
+          artifacts/FlixifyNativeQt-Windows-x64/**/*
+          artifacts/FlixifyNativeQt-Windows-Full/**/*
+        fail_on_unmatched_files: false
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
