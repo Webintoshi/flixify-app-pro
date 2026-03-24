@@ -6,14 +6,11 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @flixify/contracts && npm run build -w @flixify/sdk && npm run build -w @flixify/viewer-core && npm run build -w @flixify/api && npm run build -w @flixify/worker && npm run build -w @flixify/ops-web && npm run build -w @flixify/viewer-webos",
+    "build": "npm run build -w @flixify/contracts && npm run build -w @flixify/sdk && npm run build -w @flixify/viewer-core && npm run build -w @flixify/api && npm run build -w @flixify/worker",
     "check:env": "node scripts/preflight.mjs",
     "dev": "node scripts/preflight.mjs && node scripts/dev-stack.mjs",
     "dev:api": "npm run dev -w @flixify/api",
     "dev:worker": "npm run dev -w @flixify/worker",
-    "dev:ops": "npm run dev -w @flixify/ops-web",
-    "dev:ops:turbo": "npm run dev:turbo -w @flixify/ops-web",
-    "dev:webos": "npm run dev -w @flixify/viewer-webos",
     "configure:native-qt": "npm run configure -w @flixify/viewer-native-qt",
     "build:native-qt": "npm run build -w @flixify/viewer-native-qt",
     "smoke:p0": "node scripts/smoke-p0.mjs",

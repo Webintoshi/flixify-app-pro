@@ -4,8 +4,6 @@ import process from "node:process";
 
 const root = process.cwd();
 const envPath = path.join(root, ".env");
-const opsEnvPath = path.join(root, "apps/ops-web/.env.local");
-const webosEnvPath = path.join(root, "apps/viewer-webos/.env.local");
 
 function parseDotenv(raw) {
   return Object.fromEntries(
@@ -29,17 +27,7 @@ if (!fs.existsSync(envPath)) {
   fail(`missing ${envPath}`);
 }
 
-if (!fs.existsSync(opsEnvPath)) {
-  fail(`missing ${opsEnvPath}`);
-}
-
-if (!fs.existsSync(webosEnvPath)) {
-  fail(`missing ${webosEnvPath}`);
-}
-
 const env = parseDotenv(fs.readFileSync(envPath, "utf8"));
-const opsEnv = parseDotenv(fs.readFileSync(opsEnvPath, "utf8"));
-const webosEnv = parseDotenv(fs.readFileSync(webosEnvPath, "utf8"));
 
 const requiredRootKeys = ["DATABASE_URL", "APP_JWT_SECRET", "ADMIN_EMAILS", "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_JWKS_URL"];
 for (const key of requiredRootKeys) {
@@ -70,17 +58,6 @@ if (env.APP_JWT_SECRET.length < 32) {
 
 if (!env.ADMIN_EMAILS.split(",").map((item) => item.trim()).filter(Boolean).length) {
   fail("ADMIN_EMAILS must contain at least one admin email.");
-}
-
-const requiredOpsKeys = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "NEXT_PUBLIC_API_BASE_URL"];
-for (const key of requiredOpsKeys) {
-  if (!opsEnv[key]) {
-    fail(`missing ${key} in apps/ops-web/.env.local`);
-  }
-}
-
-if (!webosEnv.VITE_API_BASE_URL) {
-  fail("missing VITE_API_BASE_URL in apps/viewer-webos/.env.local");
 }
 
 console.log("Preflight passed.");

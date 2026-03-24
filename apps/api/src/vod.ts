@@ -1004,10 +1004,6 @@ function isDesktopPlaybackPlatform(platform: string | null) {
   );
 }
 
-function isWebOsPlaybackPlatform(platform: string | null) {
-  return Boolean(platform && platform.startsWith("webos"));
-}
-
 function isSafeDirectVideoCodec(codec: string | null) {
   return codec === "h264" || codec === "avc1";
 }
@@ -1060,7 +1056,7 @@ export function resolveVodTranscodeDecision(input: VodTranscodeDecisionInput): V
       };
     }
 
-    const safeInstalledPlatform = isDesktopPlaybackPlatform(platform) || isWebOsPlaybackPlatform(platform);
+    const safeInstalledPlatform = isDesktopPlaybackPlatform(platform);
     if (safeInstalledPlatform && effectiveTransport === "mp4" && isDirectSafeInstalledMp4(input)) {
       return {
         needsTranscode: false,

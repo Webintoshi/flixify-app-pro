@@ -35,13 +35,13 @@ describe("resolveVodTranscodeDecision", () => {
     expect(debugDecision.needsTranscode).toBe(false);
   });
 
-  it("keeps webos HLS on direct mode", () => {
+  it("keeps native HLS on direct mode", () => {
     const decision = resolveVodTranscodeDecision({
       transport: "hls",
       supportsByteRange: true,
       preferTranscode: false,
       clientRuntime: "app",
-      platform: "webos-app"
+      platform: "windows-native-qt"
     });
 
     expect(decision.deliveryMode).toBe("hls_proxy");

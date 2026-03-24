@@ -1,52 +1,39 @@
 # Flixify App Pro
 
-Supabase veri katmani ve Coolify deployment hedefiyle tasarlanmis coklu platform IPTV platformu.
+Bu repo native-odakli yapida tutulur.
 
 ## Paketler
 
-- `apps/api`: custom auth, katalog, paket, admin API
-- `apps/worker`: M3U senkron ve paket surec worker'i
-- `apps/ops-web`: admin ve satis paneli
-- `apps/viewer-native-qt`: Windows odakli native playback istemcisi
-- `apps/viewer-webos`: LG webOS istemcisi
+- `apps/viewer-native-qt`: Qt + libVLC native istemci
+- `apps/api`: custom auth, katalog ve playback API
+- `apps/worker`: arka plan senkron ve isleyici surecleri
 - `packages/contracts`: ortak tipler ve API semalari
-- `packages/sdk`: istemciler icin ortak API SDK'si
-- `supabase`: SQL migration'lari ve seed mantigi
+- `packages/sdk`: ortak istemci SDK'si
+- `packages/viewer-core`: paylasilan viewer yardimcilari
+- `supabase`: migration ve SQL dogrulama dosyalari
 
 ## Hizli Baslangic
 
 1. `.env.example` dosyasini `.env` olarak kopyalayip ortami doldur.
-   `apps/ops-web/.env.local` icin public Supabase ve API degiskenlerini ayarla.
-   `ADMIN_EMAILS` ile admin API erisimi verilecek adresleri belirle.
 2. `npm install`
 3. Supabase migration'larini uygula.
 4. `npm run check:env`
-5. `npm run dev`
+5. Backend icin `npm run dev`
 
-Alternatif olarak servisleri ayri ayri da calistirabilirsin:
+Native istemciyi ayri hazirlamak icin:
 
-- `npm run dev:api`
-- `npm run dev:worker`
-- `npm run dev:ops`
-- `npm run dev:ops:turbo`
-- `npm run dev:webos`
+- `npm run configure:native-qt`
+- `npm run build:native-qt`
 
-Kalite kapisi komutlari:
+## Kalite Kapisi
 
-- `npm run test` (contracts + api + worker)
+- `npm run test`
 - `npm run build`
-- `npm run smoke:p0` (API auth flow + ops redirect + webos runtime config smoke)
-- `npm run quality:p0` (test + build + smoke)
-
-Supabase SQL uygulama ve guvenlik ayrintilari icin `supabase/README.md`,
-`supabase/sql/verify_schema.sql` ve `supabase/sql/verify_security.sql` dosyalarini kullan.
-
-Coolify canli kurulum adimlari ve zorunlu production env listesi icin `coolify/README.md`
-ve `coolify/.env.production.example` dosyalarini kullan.
+- `npm run smoke:p0`
+- `npm run quality:p0`
 
 ## Notlar
 
-- Aktif istemci shell'leri `viewer-native-qt` ve `viewer-webos` ile sinirlidir.
-- LG webOS ve Windows derlemeleri ilgili vendor SDK'larina baglidir.
-- `viewer-webos` runtime API adresi `public/app-config.json` dosyasindan okunur (`apiBaseUrl`).
-- Windows production paketlerinde `FLIXIFY_API_BASE_URL` ve `FLIXIFY_WEB_APP_URL` zorunludur.
+- Coolify uzerinden sadece `api` ve `worker` servisleri deploy edilir.
+- Native app update kontrolu icin local fallback manifest dosyasi `data/app-update-manifest.json` altindadir.
+- Windows production paketleri icin Qt 6, CMake, Ninja ve libVLC toolchain'i gerekir.

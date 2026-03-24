@@ -82,14 +82,14 @@ describe("FlixifyClient.resolveVodPlayback", () => {
     });
 
     await client.resolveNativeVodPlayback("episode", "episode-1", {
-      platform: "webos-app",
+      platform: "windows-native-qt",
       audioTrackId: "a2"
     });
 
     const [requestUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
     const parsedUrl = new URL(requestUrl);
     expect(parsedUrl.pathname).toBe("/me/native/vod/episode/episode-1/playback");
-    expect(parsedUrl.searchParams.get("platform")).toBe("webos-app");
+    expect(parsedUrl.searchParams.get("platform")).toBe("windows-native-qt");
     expect(parsedUrl.searchParams.get("audioTrackId")).toBe("a2");
   });
 });

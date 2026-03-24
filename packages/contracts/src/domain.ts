@@ -66,7 +66,6 @@ export const playerEngineSchema = z.enum([
   "mpegts.js",
   "relay",
   "libvlc",
-  "webos-media-pipeline",
   "unknown"
 ]);
 export type PlayerEngine = z.infer<typeof playerEngineSchema>;

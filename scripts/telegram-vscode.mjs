@@ -170,13 +170,13 @@ bot.onText(/\/help/, async (msg) => {
    \`/exec ls -la apps/\`
 
 📋 */logs <servis>* - Logları göster
-   Servisler: api, worker, ops, webos, all
+   Servisler: api, worker, all
    \`/logs api\`
 
 ▶️ */dev [start|stop|status]* - Dev server kontrolü
 
 🔄 */restart <servis>* - Servis yeniden başlat
-   Servisler: api, worker, ops, webos
+   Servisler: api, worker
 
 *🤖 AI Asistan & VS Code Eklentileri:*
 
@@ -412,7 +412,7 @@ bot.onText(/\/logs(?:\s+(\w+))?/, async (msg, match) => {
   if (!isAuthorized(chatId)) return;
   
   const service = match[1] || 'all';
-  const validServices = ['api', 'worker', 'ops', 'webos', 'all'];
+  const validServices = ['api', 'worker', 'all'];
   
   if (!validServices.includes(service)) {
     return bot.sendMessage(chatId, `❌ Geçersiz servis: ${service}\nKullanılabilir: ${validServices.join(', ')}`);
@@ -427,12 +427,6 @@ bot.onText(/\/logs(?:\s+(\w+))?/, async (msg, match) => {
       break;
     case 'worker':
       command = 'tail -50 logs/worker.log 2>/dev/null || pm2 logs worker --lines 50 --nostream || echo "Log bulunamadı"';
-      break;
-    case 'ops':
-      command = 'tail -50 logs/ops.log 2>/dev/null || echo "ops-web log yok"';
-      break;
-    case 'webos':
-      command = 'tail -50 logs/webos.log 2>/dev/null || echo "webos log yok"';
       break;
     case 'all':
       command = 'ps aux | grep -E "(npm|node)" | grep -v grep | head -20';
@@ -576,7 +570,7 @@ bot.onText(/\/restart(?:\s+(\w+))?/, async (msg, match) => {
   if (!isAuthorized(chatId)) return;
   
   const service = match[1];
-  const validServices = ['api', 'worker', 'ops', 'webos'];
+  const validServices = ['api', 'worker'];
   
   if (!service) {
     return bot.sendMessage(chatId, `Kullanım: /restart <servis>\nServisler: ${validServices.join(', ')}`);
@@ -598,9 +592,7 @@ bot.onText(/\/restart(?:\s+(\w+))?/, async (msg, match) => {
     
     const scriptMap = {
       api: 'dev:api',
-      worker: 'dev:worker',
-      ops: 'dev:ops',
-      webos: 'dev:webos'
+      worker: 'dev:worker'
     };
     
     const child = spawn('npm', ['run', scriptMap[service]], {

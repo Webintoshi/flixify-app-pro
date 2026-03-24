@@ -1,0 +1,9 @@
+{
+  "platforms": {
+    "windows-native-qt": {
+      "latestVersion": "2.2.51",
+      "downloadUrl": null,
+      "notes": "Native installer dagitimi web istemcisinden ayrildi."
+    }
+  }
+}

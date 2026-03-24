@@ -190,8 +190,7 @@ type AppUpdateManifest = {
   platforms: Record<string, AppUpdateManifestEntry>;
 };
 
-const DEFAULT_APP_UPDATE_MANIFEST_URL = "https://app.flixify.pro/app-update-manifest.json";
-const LOCAL_APP_UPDATE_MANIFEST_PATH = new URL("../../viewer-webos/public/app-update-manifest.json", import.meta.url);
+const LOCAL_APP_UPDATE_MANIFEST_PATH = new URL("../../../data/app-update-manifest.json", import.meta.url);
 const isDemoMode = env.APP_DEMO_MODE;
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 const appUpdateManifestCache: {
@@ -795,10 +794,6 @@ function buildNativeVodPlaybackResponse(input: {
   });
 }
 
-function isWebOsPlaybackPlatform(platform: string | null) {
-  return typeof platform === "string" && platform.startsWith("webos");
-}
-
 function normalizeOptionalText(value: unknown, maxLength = 2000) {
   if (typeof value !== "string") {
     return null;
@@ -892,9 +887,6 @@ function resolvePlatformAliases(platform: string) {
   if (normalized.startsWith("windows")) {
     aliases.push("windows-desktop");
   }
-  if (normalized.startsWith("webos")) {
-    aliases.push("webos-app");
-  }
   if (normalized.startsWith("mac")) {
     aliases.push("macos-desktop");
   }
@@ -975,11 +967,15 @@ async function readLocalAppUpdateManifest() {
 }
 
 async function fetchAppUpdateManifest() {
-  const manifestUrl = env.APP_UPDATE_MANIFEST_URL ?? DEFAULT_APP_UPDATE_MANIFEST_URL;
+  const manifestUrl = env.APP_UPDATE_MANIFEST_URL?.trim() || null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5_000);
 
   try {
+    if (!manifestUrl) {
+      return await readLocalAppUpdateManifest();
+    }
+
     const response = manifestUrl
       ? await fetch(manifestUrl, {
           method: "GET",
@@ -2348,40 +2344,6 @@ export function buildServer() {
           resolved.sourceUrl ? 502 : 503,
           resolved.errorMessage ?? "VOD kaynagi dogrudan acilamadi."
         );
-      }
-
-      if (isWebOsPlaybackPlatform(platform)) {
-        const playback = await vodPlaybackManager.createPlayback({
-          userId: auth.userId,
-          itemId,
-          kind,
-          sourceUrl: resolved.sourceUrl!,
-          baseOrigin: getRequestBaseOrigin(request),
-          clientRuntime: "native",
-          platform,
-          allowUnverifiedSource: resolved.isVerified === false || allowOptimisticNativeDirect,
-          sourceTransportHint: resolved.transport,
-          selectedAudioTrackId: audioTrackId
-        });
-
-        if (!playback.canPlay || !playback.url) {
-          return replyWithNativePlaybackError(
-            reply,
-            503,
-            playback.errorMessage ?? "webOS VOD kaynagi native playback icin hazirlanamadi."
-          );
-        }
-
-        return buildNativeVodPlaybackResponse({
-          url: playback.url,
-          transport: playback.transport,
-          deliveryMode: playback.deliveryMode,
-          audioTracks: playback.audioTracks,
-          defaultAudioTrackId: playback.defaultAudioTrackId,
-          selectedAudioTrackId: playback.selectedAudioTrackId,
-          isVerified: playback.isVerified,
-          lastCheckedAt: playback.expiresAt ?? new Date().toISOString()
-        });
       }
 
       if (allowOptimisticNativeDirect) {

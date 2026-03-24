@@ -11,7 +11,6 @@
     "bundle:windows": "node scripts/package.mjs --preset windows-x64-release",
     "bundle:macos": "node scripts/package.mjs --preset macos-universal-release",
     "bundle:android": "node scripts/package.mjs --preset android-arm64-release",
-    "bundle:android-tv": "node scripts/package.mjs --preset android-tv-arm64-release",
-    "publish:web-download": "node scripts/publish-web-download.mjs"
+    "bundle:android-tv": "node scripts/package.mjs --preset android-tv-arm64-release"
   }
 }

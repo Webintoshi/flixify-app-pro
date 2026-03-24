@@ -2,8 +2,6 @@ import { spawn } from "node:child_process";
 import process from "node:process";
 
 const apiPort = Number(process.env.SMOKE_API_PORT ?? 4100);
-const opsPort = Number(process.env.SMOKE_OPS_PORT ?? 3100);
-const webosPort = Number(process.env.SMOKE_WEBOS_PORT ?? 3105);
 const verbose = process.env.SMOKE_VERBOSE === "true";
 const children = [];
 
@@ -63,14 +61,6 @@ async function waitFor(check, timeoutMs, intervalMs = 400) {
     throw lastError;
   }
   throw new Error("Timeout waiting for condition.");
-}
-
-async function expectStatus(url, allowedStatuses) {
-  const response = await fetch(url, { redirect: "manual", cache: "no-store" });
-  if (!allowedStatuses.includes(response.status)) {
-    throw new Error(`Unexpected status for ${url}: ${response.status}`);
-  }
-  return response;
 }
 
 async function runApiFlow(baseUrl) {
@@ -143,8 +133,6 @@ async function shutdown() {
 
 async function main() {
   const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
-  const opsBaseUrl = `http://127.0.0.1:${opsPort}`;
-  const webosBaseUrl = `http://127.0.0.1:${webosPort}`;
 
   log(`Starting API on ${apiBaseUrl}`);
   startProcess("api", "node", ["apps/api/dist/server.js"], {
@@ -159,62 +147,6 @@ async function main() {
 
   await runApiFlow(apiBaseUrl);
   log("API auth smoke flow passed");
-
-  log(`Starting ops-web (start) on ${opsBaseUrl}`);
-  startProcess("ops-web", npmBinary(), [
-    "run",
-    "start",
-    "-w",
-    "@flixify/ops-web",
-    "--",
-    "--port",
-    String(opsPort)
-  ]);
-
-  await waitFor(async () => {
-    const response = await fetch(`${opsBaseUrl}/admin`, { cache: "no-store" });
-    return response.ok;
-  }, 45_000);
-
-  const girisResponse = await expectStatus(`${opsBaseUrl}/giris`, [307, 308]);
-  if (girisResponse.headers.get("location") !== "/giris-yap") {
-    throw new Error(`/giris did not redirect to /giris-yap`);
-  }
-
-  const registerResponse = await expectStatus(`${opsBaseUrl}/register`, [307, 308]);
-  if (registerResponse.headers.get("location") !== "/kayit-ol") {
-    throw new Error(`/register did not redirect to /kayit-ol`);
-  }
-  log("ops-web redirect smoke passed");
-
-  log(`Starting viewer-webos preview on ${webosBaseUrl}`);
-  startProcess("viewer-webos", npmBinary(), [
-    "run",
-    "preview",
-    "-w",
-    "@flixify/viewer-webos",
-    "--",
-    "--host",
-    "127.0.0.1",
-    "--port",
-    String(webosPort)
-  ]);
-
-  await waitFor(async () => {
-    const response = await fetch(`${webosBaseUrl}/`, { cache: "no-store" });
-    return response.ok;
-  }, 30_000);
-
-  const runtimeConfig = await fetch(`${webosBaseUrl}/app-config.json`, { cache: "no-store" });
-  if (!runtimeConfig.ok) {
-    throw new Error(`viewer-webos runtime config missing: ${runtimeConfig.status}`);
-  }
-
-  const runtimeConfigJson = await runtimeConfig.json();
-  if (typeof runtimeConfigJson !== "object" || runtimeConfigJson === null || !("apiBaseUrl" in runtimeConfigJson)) {
-    throw new Error("viewer-webos runtime config format is invalid.");
-  }
-  log("viewer-webos runtime config smoke passed");
 }
 
 for (const signal of ["SIGINT", "SIGTERM"]) {

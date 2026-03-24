@@ -1,18 +1,16 @@
 # Coolify Live Deployment Guide
 
-Bu klasor, sistemi Coolify'da `api + worker + ops-web + viewer-webos` olarak canliya almak icin hazirlandi.
+Bu klasor native-only repo yapisi icin sadece `api + worker` deploy etmek uzere tutulur.
 
 ## Topoloji
 
 - `api.<domain>` -> `api`
-- `panel.<domain>` -> `ops-web`
-- `app.<domain>` -> `viewer-webos`
-- `worker` public degil (internal)
+- `worker` public degil
 
 ## 1) Coolify Kaynak Kurulumu
 
-1. Coolify'da yeni proje olustur (`flixify-prod`).
-2. Kaynak olarak Git repo bagla (branch `main`).
+1. Coolify'da yeni proje olustur.
+2. Kaynak olarak Git repo bagla.
 3. Docker Compose kaynagi olarak `coolify/docker-compose.yml` sec.
 
 ## 2) Env Degiskenleri
@@ -21,39 +19,15 @@ Bu klasor, sistemi Coolify'da `api + worker + ops-web + viewer-webos` olarak can
 - Production kurali: `localhost` degeri kullanma.
 - Zorunlu API URL:
   - `PUBLIC_API_BASE_URL=https://api.<domain>`
-  - `NEXT_PUBLIC_API_BASE_URL=https://api.<domain>`
-  - `VITE_API_BASE_URL=https://api.<domain>`
-- Soft-update manifest:
-  - `APP_UPDATE_MANIFEST_URL=https://app.<domain>/app-update-manifest.json`
 - VOD transcode icin `FFMPEG_BINARY=ffmpeg` tanimla.
+- `APP_UPDATE_MANIFEST_URL` bos birakilabilir; bu durumda API local fallback olarak `data/app-update-manifest.json` kullanir.
 
 ## 3) Deploy Sirasi
 
 1. `api` deploy et.
 2. `worker` deploy et.
-3. `ops-web` deploy et.
-4. `viewer-webos` deploy et.
-
-Not:
-- `viewer-webos` servisi baslarken `dist/app-config.json` dosyasini `PUBLIC_API_BASE_URL` ile runtime'da yazar.
-- `ops-web` production build'i API env olmadan fail-fast olur.
 
 ## 4) Canli Dogrulama
 
 1. `https://api.<domain>/health` -> `200` ve `ok:true`.
-2. `https://app.<domain>/kayit-ol` aciliyor.
-3. `https://app.<domain>/giris-yap` login akisi basarili.
-4. `https://panel.<domain>` admin girisi aciliyor.
-5. Browser ag kayitlarinda `localhost:*` istegi yok.
-
-## 5) Windows EXE Paketleme
-
-- Canli API ile paketle:
-  - `npm run bundle:windows -w @flixify/viewer-native-qt`
-  - `npm run publish:web-download -w @flixify/viewer-native-qt`
-- Surum: `apps/viewer-native-qt/package.json`
-- Dagitim dosyasi:
-  - `apps/viewer-native-qt/dist/windows-x64-release/Flixify-Pro-Setup-<version>-x64.exe`
-- Web indirme dosyasi ve update manifest otomatik guncellenir:
-  - `apps/viewer-webos/public/downloads/flixify-windows.exe`
-  - `apps/viewer-webos/public/app-update-manifest.json`
+2. Native istemci login ve katalog akisi API uzerinden calisiyor olmali.
