@@ -1,9 +1,9 @@
 {
   "platforms": {
     "windows-native-qt": {
-      "latestVersion": "2.2.54",
-      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.2.54/Flixify-Pro-Setup-2.2.54-x64.exe",
-      "notes": "VOD katalog temizligi, native VOD gorunurlugu duzeltmeleri ve server-side playback iyilestirmeleri."
+      "latestVersion": "2.2.55",
+      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.2.55/Flixify-Pro-Setup-2.2.55-x64.exe",
+      "notes": "Canli TV oynaticisinda alt kontrol butonlari tekrar sabit gorunur hale getirildi."
     }
   }
 }

@@ -2332,7 +2332,8 @@ ApplicationWindow {
     component PlayerControlBar: Rectangle {
         height: 72
         color: "transparent"
-        opacity: liveControlsVisible ? 1.0 : 0.0
+        readonly property bool pinnedVisible: currentScreen === "live" && inlineLivePlayerVisible() && selectedLiveItem() !== null
+        opacity: pinnedVisible || liveControlsVisible ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
         
         Row {
