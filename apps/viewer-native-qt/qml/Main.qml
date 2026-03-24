@@ -571,7 +571,7 @@ ApplicationWindow {
 
     function applyLiveFilters(search, group) {
         const normalizedSearch = safeText(search)
-        const normalizedGroup = safeText(group).length ? safeText(group) : buildLiveCountryFilter("TR")
+        const normalizedGroup = group === "__all__" ? "" : (safeText(group).length ? safeText(group) : buildLiveCountryFilter("TR"))
         liveSearchText = normalizedSearch
         selectedLiveGroup = normalizedGroup
         apiClient.fetchLiveCatalog(1, 300, normalizedSearch, normalizedGroup)
@@ -3756,6 +3756,13 @@ ApplicationWindow {
                                     Row {
                                         id: liveChipRow
                                         spacing: 10
+
+                                        ChipButton {
+                                            text: "Tüm Kanallar"
+                                            active: selectedLiveGroup === ""
+                                            width: Math.max(112, implicitContentWidth + 28)
+                                            onClicked: applyLiveFilters(liveSearchText, "__all__")
+                                        }
 
                                         Repeater {
                                             model: liveCountryChips()
