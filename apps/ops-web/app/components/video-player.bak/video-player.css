@@ -1,0 +1,734 @@
+/* ============================================
+   🎬 FLIXIFY PRO - Premium Video Player Styles
+   YouTube-inspired design with IPTV optimizations
+   ============================================ */
+
+/* CSS Custom Properties */
+:root {
+  --fp-primary: #f40612;
+  --fp-primary-dark: #c0040e;
+  --fp-bg: #000000;
+  --fp-bg-overlay: rgba(0, 0, 0, 0.7);
+  --fp-text: #ffffff;
+  --fp-text-muted: rgba(255, 255, 255, 0.7);
+  --fp-control-bg: rgba(0, 0, 0, 0.6);
+  --fp-progress-bg: rgba(255, 255, 255, 0.2);
+  --fp-progress-played: #f40612;
+  --fp-progress-buffered: rgba(255, 255, 255, 0.4);
+  --fp-transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --fp-control-height: 48px;
+  --fp-progress-height: 4px;
+  --fp-progress-hover-height: 8px;
+  --fp-border-radius: 12px;
+}
+
+/* Main Player Container */
+.flixify-player {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--fp-bg);
+  border-radius: var(--fp-border-radius);
+  overflow: hidden;
+  user-select: none;
+  outline: none;
+}
+
+.flixify-player:focus {
+  box-shadow: 0 0 0 3px rgba(244, 6, 18, 0.3);
+}
+
+/* Theater Mode */
+.flixify-player.is-theater-mode {
+  max-width: 100%;
+  border-radius: 0;
+}
+
+/* Fullscreen */
+.flixify-player.is-fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  z-index: 9999;
+}
+
+/* Video Element */
+.flixify-player__video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  cursor: pointer;
+}
+
+/* ============================================
+   CONTROLS CONTAINER
+   ============================================ */
+
+.flixify-player__controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.9), transparent);
+  padding: 0 12px 12px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.flixify-player.controls-visible .flixify-player__controls,
+.flixify-player:not(.is-playing) .flixify-player__controls {
+  opacity: 1;
+}
+
+.flixify-player__controls:hover {
+  opacity: 1;
+}
+
+/* ============================================
+   PROGRESS BAR
+   ============================================ */
+
+.flixify-player__progress-container {
+  position: relative;
+  width: 100%;
+  height: 16px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.flixify-player__progress-bar {
+  position: relative;
+  width: 100%;
+  height: var(--fp-progress-height);
+  background: var(--fp-progress-bg);
+  border-radius: 2px;
+  transition: height 0.2s ease;
+}
+
+.flixify-player__progress-container:hover .flixify-player__progress-bar {
+  height: var(--fp-progress-hover-height);
+}
+
+.flixify-player__progress-played {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--fp-progress-played);
+  border-radius: 2px;
+  transition: width 0.1s linear;
+}
+
+.flixify-player__progress-buffered {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: var(--fp-progress-buffered);
+  border-radius: 2px;
+}
+
+/* Scrubber Handle */
+.flixify-player__progress-scrubber {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 16px;
+  height: 16px;
+  background: var(--fp-primary);
+  border-radius: 50%;
+  margin-top: 0;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  box-shadow: 0 2px 8px rgba(244, 6, 18, 0.4);
+}
+
+.flixify-player__progress-container:hover .flixify-player__progress-scrubber,
+.flixify-player__progress-container:active .flixify-player__progress-scrubber {
+  opacity: 1;
+}
+
+.flixify-player__progress-scrubber:hover {
+  transform: translate(-50%, -50%) scale(1.2);
+}
+
+/* Time Tooltip */
+.flixify-player__progress-tooltip {
+  position: absolute;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.9);
+  color: var(--fp-text);
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.flixify-player__progress-tooltip::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 6px 6px 0;
+  border-style: solid;
+  border-color: rgba(0, 0, 0, 0.9) transparent transparent;
+}
+
+/* ============================================
+   CONTROL BUTTONS LAYOUT
+   ============================================ */
+
+.flixify-player__controls-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--fp-control-height);
+}
+
+.flixify-player__controls-left,
+.flixify-player__controls-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ============================================
+   CONTROL BUTTONS
+   ============================================ */
+
+.flixify-player__control-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--fp-text);
+  cursor: pointer;
+  transition: var(--fp-transition);
+}
+
+.flixify-player__control-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.flixify-player__control-btn svg {
+  width: 24px;
+  height: 24px;
+}
+
+.flixify-player__control-btn--large {
+  width: 48px;
+  height: 48px;
+}
+
+.flixify-player__control-btn--large svg {
+  width: 32px;
+  height: 32px;
+}
+
+.flixify-player__control-btn.is-active {
+  color: var(--fp-primary);
+}
+
+/* ============================================
+   VOLUME CONTROL
+   ============================================ */
+
+.flixify-player__volume-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.flixify-player__volume-slider-container {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 8px;
+  background: rgba(0, 0, 0, 0.8);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.flixify-player__volume-slider {
+  width: 80px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.flixify-player__volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--fp-text);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.flixify-player__volume-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.flixify-player__volume-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--fp-text);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+/* ============================================
+   TIME DISPLAY
+   ============================================ */
+
+.flixify-player__time-display {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fp-text);
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  margin-left: 4px;
+}
+
+.flixify-player__time-separator {
+  color: var(--fp-text-muted);
+  margin: 0 2px;
+}
+
+.flixify-player__time-duration {
+  color: var(--fp-text-muted);
+}
+
+/* ============================================
+   TITLE
+   ============================================ */
+
+.flixify-player__title {
+  color: var(--fp-text);
+  font-size: 15px;
+  font-weight: 600;
+  margin-left: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+}
+
+/* ============================================
+   SETTINGS MENU
+   ============================================ */
+
+.flixify-player__settings-container {
+  position: relative;
+}
+
+.flixify-player__settings-menu {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  min-width: 180px;
+  background: rgba(0, 0, 0, 0.95);
+  border-radius: 8px;
+  padding: 8px 0;
+  margin-bottom: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+}
+
+.flixify-player__settings-item,
+.flixify-player__settings-option,
+.flixify-player__settings-back {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 16px;
+  background: transparent;
+  border: none;
+  color: var(--fp-text);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.flixify-player__settings-item:hover,
+.flixify-player__settings-option:hover,
+.flixify-player__settings-back:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.flixify-player__settings-item span:last-child,
+.flixify-player__settings-option span:last-child {
+  color: var(--fp-text-muted);
+  font-size: 13px;
+}
+
+.flixify-player__settings-option.is-active {
+  color: var(--fp-primary);
+}
+
+.flixify-player__settings-option.is-active span:first-child {
+  color: var(--fp-primary);
+}
+
+.flixify-player__settings-option svg {
+  width: 20px;
+  height: 20px;
+  color: var(--fp-primary);
+}
+
+.flixify-player__settings-back {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 4px;
+  padding-bottom: 12px;
+  font-weight: 600;
+}
+
+/* ============================================
+   OVERLAY (Big Play Button, Buffering)
+   ============================================ */
+
+.flixify-player__overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.flixify-player__overlay > * {
+  pointer-events: auto;
+}
+
+/* Big Play Button */
+.flixify-player__big-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 3px solid var(--fp-text);
+  border-radius: 50%;
+  color: var(--fp-text);
+  cursor: pointer;
+  transition: var(--fp-transition);
+  backdrop-filter: blur(4px);
+}
+
+.flixify-player__big-play:hover {
+  background: rgba(244, 6, 18, 0.9);
+  border-color: var(--fp-primary);
+  transform: scale(1.1);
+}
+
+.flixify-player__big-play svg {
+  width: 36px;
+  height: 36px;
+  margin-left: 4px;
+}
+
+/* Buffering */
+.flixify-player__buffering {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Loading Spinner */
+.flixify-player__spinner {
+  width: 60px;
+  height: 60px;
+}
+
+.flixify-player__spinner--small {
+  width: 40px;
+  height: 40px;
+}
+
+.flixify-player__spinner svg {
+  width: 100%;
+  height: 100%;
+  animation: fp-spin 1s linear infinite;
+}
+
+.flixify-player__spinner circle {
+  stroke: var(--fp-primary);
+  stroke-dasharray: 80, 200;
+  stroke-dashoffset: 0;
+  animation: fp-dash 1.5s ease-in-out infinite;
+}
+
+@keyframes fp-spin {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fp-dash {
+  0% {
+    stroke-dasharray: 1, 200;
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dasharray: 89, 200;
+    stroke-dashoffset: -35;
+  }
+  100% {
+    stroke-dasharray: 89, 200;
+    stroke-dashoffset: -124;
+  }
+}
+
+/* ============================================
+   DOUBLE TAP AREAS (Mobile)
+   ============================================ */
+
+.flixify-player__tap-area {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 30%;
+  display: none;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .flixify-player__tap-area {
+    display: block;
+  }
+}
+
+.flixify-player__tap-area--left {
+  left: 0;
+}
+
+.flixify-player__tap-area--right {
+  right: 0;
+}
+
+/* Double Tap Ripple */
+.flixify-player__ripple {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 30px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+  animation: fp-ripple 0.6s ease-out;
+}
+
+.flixify-player__ripple--left {
+  left: 20%;
+}
+
+.flixify-player__ripple--right {
+  right: 20%;
+}
+
+.flixify-player__ripple svg {
+  width: 32px;
+  height: 32px;
+  color: var(--fp-text);
+}
+
+.flixify-player__ripple span {
+  color: var(--fp-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+@keyframes fp-ripple {
+  0% {
+    opacity: 0;
+    transform: translateY(-50%) scale(0.8);
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+  }
+  80% {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-50%) scale(1.1);
+  }
+}
+
+/* ============================================
+   ERROR DISPLAY
+   ============================================ */
+
+.flixify-player__overlay--error {
+  background: rgba(0, 0, 0, 0.9);
+  z-index: 10;
+}
+
+.flixify-player__error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+  padding: 24px;
+}
+
+.flixify-player__error-icon {
+  width: 64px;
+  height: 64px;
+  color: var(--fp-primary);
+}
+
+.flixify-player__error-text {
+  color: var(--fp-text);
+  font-size: 16px;
+  max-width: 300px;
+  line-height: 1.5;
+}
+
+.flixify-player__error-retry {
+  padding: 12px 24px;
+  background: var(--fp-primary);
+  border: none;
+  border-radius: 8px;
+  color: var(--fp-text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.flixify-player__error-retry:hover {
+  background: var(--fp-primary-dark);
+}
+
+/* ============================================
+   RESPONSIVE ADJUSTMENTS
+   ============================================ */
+
+@media (max-width: 640px) {
+  .flixify-player {
+    --fp-control-height: 44px;
+    border-radius: 0;
+  }
+
+  .flixify-player__controls {
+    padding: 0 8px 8px;
+  }
+
+  .flixify-player__control-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .flixify-player__control-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .flixify-player__title {
+    display: none;
+  }
+
+  .flixify-player__time-display {
+    font-size: 12px;
+  }
+
+  .flixify-player__big-play {
+    width: 64px;
+    height: 64px;
+  }
+
+  .flixify-player__big-play svg {
+    width: 28px;
+    height: 28px;
+  }
+
+  .flixify-player__settings-menu {
+    position: fixed;
+    bottom: auto;
+    top: 50%;
+    left: 50%;
+    right: auto;
+    transform: translate(-50%, -50%);
+    min-width: 200px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .flixify-player {
+    --fp-progress-height: 5px;
+    --fp-progress-hover-height: 10px;
+  }
+
+  .flixify-player__title {
+    max-width: 400px;
+  }
+}
+
+/* ============================================
+   REDUCED MOTION
+   ============================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  .flixify-player__controls,
+  .flixify-player__progress-scrubber,
+  .flixify-player__control-btn,
+  .flixify-player__big-play {
+    transition: none;
+  }
+
+  .flixify-player__spinner svg,
+  .flixify-player__spinner circle {
+    animation: none;
+  }
+
+  .flixify-player__ripple {
+    animation: none;
+  }
+}
+
+/* ============================================
+   HIGH CONTRAST MODE
+   ============================================ */
+
+@media (prefers-contrast: high) {
+  .flixify-player__progress-played {
+    background: #ff0000;
+  }
+
+  .flixify-player__control-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+}

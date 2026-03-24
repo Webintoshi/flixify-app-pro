@@ -3,7 +3,8 @@ import process from "node:process";
 
 const services = [
   { name: "api", color: "\u001b[31m", command: ["npm", "run", "dev:api"] },
-  { name: "worker", color: "\u001b[32m", command: ["npm", "run", "dev:worker"] }
+  { name: "worker", color: "\u001b[32m", command: ["npm", "run", "dev:worker"] },
+  { name: "ops", color: "\u001b[34m", command: ["npm", "run", "dev:ops"] }
 ];
 
 const reset = "\u001b[0m";
