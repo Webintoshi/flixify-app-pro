@@ -1,4 +1,6 @@
+import path from "node:path";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import {
@@ -22,6 +24,7 @@ import {
   vodPlaybackEventInputSchema
 } from "@flixify/contracts";
 import type {
+  LiveChannel,
   LiveHealthStatus,
   LivePlaybackRecord,
   LiveTransport,
@@ -148,6 +151,13 @@ import {
 } from "./vod.js";
 import { API_CORS_CONFIG } from "./cors-config.js";
 import { stripEmptyJsonContentType } from "./http-headers.js";
+import {
+  fetchLiveLogoFromUpstream,
+  LIVE_LOGO_PROXY_PATH,
+  LiveLogoProxyError,
+  signLiveLogoItems,
+  verifySignedLiveLogoQuery
+} from "./live-logo.js";
 import {
   BlockedUserRouteError,
   classifyUserRouteError,
@@ -330,6 +340,13 @@ function getRequestBaseOrigin(request: FastifyRequest) {
       : request.headers.host ?? `localhost:${env.API_PORT}`;
 
   return `${protocol ?? "http"}://${host}`;
+}
+
+function signLiveCatalogResponse<T extends { items: LiveChannel[] }>(payload: T, request: FastifyRequest): T {
+  return {
+    ...payload,
+    items: signLiveLogoItems(payload.items, getRequestBaseOrigin(request))
+  };
 }
 
 function getBearerToken(authorization?: string) {
@@ -1093,6 +1110,32 @@ export function buildServer() {
     await vodPlaybackManager.dispose();
   });
 
+  app.get(LIVE_LOGO_PROXY_PATH, async (request, reply) => {
+    const verifiedQuery = verifySignedLiveLogoQuery((request.query as Record<string, unknown> | undefined) ?? {});
+    if (!verifiedQuery.ok) {
+      return reply.status(verifiedQuery.error.statusCode).send({ message: verifiedQuery.error.message });
+    }
+
+    try {
+      const proxiedLogo = await fetchLiveLogoFromUpstream(verifiedQuery.value.sourceUrl);
+
+      reply.header("cache-control", "public, max-age=86400, stale-while-revalidate=604800");
+      reply.header("x-content-type-options", "nosniff");
+      if (proxiedLogo.etag) {
+        reply.header("etag", proxiedLogo.etag);
+      }
+      if (proxiedLogo.lastModified) {
+        reply.header("last-modified", proxiedLogo.lastModified);
+      }
+
+      return reply.type(proxiedLogo.contentType).send(proxiedLogo.body);
+    } catch (error) {
+      const resolvedError =
+        error instanceof LiveLogoProxyError ? error : new LiveLogoProxyError("Logo servisi hatasi.", 502);
+      return reply.status(resolvedError.statusCode).send({ message: resolvedError.message });
+    }
+  });
+
   app.get("/health", async (_request, reply) => {
     if (isDemoMode) {
       return {
@@ -1420,7 +1463,10 @@ export function buildServer() {
         if (!me?.user.hasAssignedLink) {
           return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
         }
-        return listDemoLiveCatalog(auth.userId, query.page, query.pageSize, query.search, query.group);
+        return signLiveCatalogResponse(
+          listDemoLiveCatalog(auth.userId, query.page, query.pageSize, query.search, query.group),
+          request
+        );
       }
 
       const userContext = await getUserContext(auth.userId);
@@ -1428,17 +1474,13 @@ export function buildServer() {
         return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
       }
 
-      return listLiveCatalog(
-        userContext.snapshotVersion,
-        query.page,
-        query.pageSize,
-        query.search,
-        query.group,
-        {
+      return signLiveCatalogResponse(
+        await listLiveCatalog(userContext.snapshotVersion, query.page, query.pageSize, query.search, query.group, {
           baseUrl: userContext.playbackBaseUrl,
           credentials: userContext.iptvCredentials,
           canPlay: userContext.canPlay
-        }
+        }),
+        request
       );
     } catch (error) {
       return sendUserRouteError(request, reply, error);
@@ -2922,15 +2964,26 @@ export function buildServer() {
   return app;
 }
 
-const app = buildServer();
+function isDirectExecution() {
+  const entryPath = process.argv[1];
+  if (!entryPath) {
+    return false;
+  }
 
-app
-  .listen({
-    port: env.API_PORT,
-    host: "0.0.0.0"
-  })
-  .catch(async (error) => {
-    app.log.error(error);
-    await app.close();
-    process.exit(1);
-  });
+  return path.resolve(entryPath) === fileURLToPath(import.meta.url);
+}
+
+if (isDirectExecution()) {
+  const app = buildServer();
+
+  app
+    .listen({
+      port: env.API_PORT,
+      host: "0.0.0.0"
+    })
+    .catch(async (error) => {
+      app.log.error(error);
+      await app.close();
+      process.exit(1);
+    });
+}
