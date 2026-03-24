@@ -1110,7 +1110,7 @@ ApplicationWindow {
         id: control
         property bool secondary: false
         property bool glow: false
-        hoverEnabled: control.enabled
+        hoverEnabled: false
         focusPolicy: Qt.NoFocus
         implicitHeight: 56
         leftPadding: 28
@@ -1121,7 +1121,7 @@ ApplicationWindow {
         font.bold: true
         font.family: "Space Grotesk"
         opacity: control.enabled ? 1.0 : 0.45
-        scale: control.down ? 0.97 : control.hovered ? 1.02 : 1.0
+        scale: control.down ? 0.97 : 1.0
         Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
         
         // Glow efekti (primary butonlar için)
@@ -1139,7 +1139,7 @@ ApplicationWindow {
         
         background: Rectangle {
             id: btnBg
-            readonly property bool hoverState: control.hovered && control.enabled
+            readonly property bool hoverState: false
             readonly property bool pressedState: control.down && control.enabled
             radius: height / 2
             border.width: 1
@@ -1407,17 +1407,17 @@ ApplicationWindow {
     component ChipButton: Button {
         id: chip
         property bool active: false
-        hoverEnabled: chip.enabled
+        hoverEnabled: false
         focusPolicy: Qt.NoFocus
         implicitHeight: 42
         leftPadding: 18
         rightPadding: 18
         topPadding: 0
         bottomPadding: 0
-        scale: chip.down ? 0.97 : chip.hovered ? 1.02 : 1.0
+        scale: chip.down ? 0.97 : 1.0
         Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
         background: Rectangle {
-            readonly property bool hoverState: chip.hovered && chip.enabled
+            readonly property bool hoverState: false
             readonly property bool pressedState: chip.down && chip.enabled
             radius: 21
             border.width: 1
@@ -1469,12 +1469,12 @@ ApplicationWindow {
     component NavButton: Button {
         id: nav
         property bool active: false
-        hoverEnabled: nav.enabled
+        hoverEnabled: false
         focusPolicy: Qt.NoFocus
         padding: 0
         background: Rectangle {
             radius: height / 2
-            color: nav.active ? "#15ffffff" : (nav.hovered ? "#10ffffff" : "#00ffffff")
+            color: nav.active ? "#15ffffff" : "#00000000"
             Behavior on color { ColorAnimation { duration: 150 } }
         }
         contentItem: Column {
@@ -1483,19 +1483,19 @@ ApplicationWindow {
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: nav.text
-                color: nav.active ? window.textPrimary : (nav.hovered ? "#f3f6fb" : "#9aa5b8")
-                font.pixelSize: 15 * fontScale
-                font.bold: nav.active || nav.hovered
+                color: nav.active ? window.textPrimary : "#9aa5b8"
+                font.pixelSize: 16 * fontScale
+                font.bold: true
                 font.family: "Space Grotesk"
                 Behavior on color { ColorAnimation { duration: 140 } }
             }
             Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
-                width: nav.active ? 40 : (nav.hovered ? 28 : 0)
+                width: nav.active ? 40 : 0
                 height: 3
                 radius: 1.5
-                color: nav.active ? window.accent : (nav.hovered ? "#d01a25" : "#00000000")
-                opacity: nav.active ? 1.0 : (nav.hovered ? 0.8 : 0.0)
+                color: nav.active ? window.accent : "#00000000"
+                opacity: nav.active ? 1.0 : 0.0
                 Behavior on width { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                 Behavior on opacity { NumberAnimation { duration: 120 } }
                 Behavior on color { ColorAnimation { duration: 120 } }
@@ -2152,7 +2152,7 @@ ApplicationWindow {
         width: 40
         height: 40
         radius: 20
-        color: mouseArea.containsMouse ? "#30ffffff" : "#15ffffff"
+        color: mouseArea.pressed ? "#30ffffff" : "#15ffffff"
         Behavior on color { ColorAnimation { duration: 120 } }
         
         Text {
@@ -2165,7 +2165,7 @@ ApplicationWindow {
         MouseArea {
             id: mouseArea
             anchors.fill: parent
-            hoverEnabled: true
+            hoverEnabled: false
             cursorShape: Qt.PointingHandCursor
             onClicked: parent.clicked()
             onEntered: showLiveControls()
@@ -2180,9 +2180,9 @@ ApplicationWindow {
         width: size
         height: size
         radius: size / 2
-        color: mouseArea.containsMouse ? "#40ffffff" : "#25ffffff"
+        color: mouseArea.pressed ? "#40ffffff" : "#25ffffff"
         border.width: 1
-        border.color: mouseArea.containsMouse ? "#60ffffff" : "#30ffffff"
+        border.color: mouseArea.pressed ? "#60ffffff" : "#30ffffff"
         Behavior on color { ColorAnimation { duration: 150 } }
         
         Text {
@@ -2195,7 +2195,7 @@ ApplicationWindow {
         MouseArea {
             id: mouseArea
             anchors.fill: parent
-            hoverEnabled: true
+            hoverEnabled: false
             cursorShape: Qt.PointingHandCursor
             onClicked: {
                 showLiveControls()

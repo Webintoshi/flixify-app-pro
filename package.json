@@ -17,6 +17,7 @@
     "configure:native-qt": "npm run configure -w @flixify/viewer-native-qt",
     "build:native-qt": "npm run build -w @flixify/viewer-native-qt",
     "smoke:p0": "node scripts/smoke-p0.mjs",
+    "telegram:panel": "node scripts/telegram-panel-bot.mjs",
     "telegram:vscode": "node scripts/telegram-vscode.mjs",
     "quality:p0": "npm run test && npm run build && npm run smoke:p0",
     "supabase:run-sql": "node scripts/run-supabase-sql.mjs",
