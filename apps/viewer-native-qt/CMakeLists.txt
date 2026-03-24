@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(FlixifyNativeQt VERSION 2.2.38 LANGUAGES CXX)
+project(FlixifyNativeQt VERSION 2.2.39 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,7 +11,7 @@ set(CMAKE_AUTOUIC ON)
 option(FLIXIFY_ENABLE_INSTALL "Enable install targets for packaging" ON)
 set(FLIXIFY_API_BASE_URL "$ENV{FLIXIFY_API_BASE_URL}" CACHE STRING "Flixify API base URL")
 set(LIBVLC_ROOT "$ENV{LIBVLC_ROOT}" CACHE PATH "Path to the libVLC runtime root")
-set(FLIXIFY_WINDOWS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../viewer-windows/resources/icon.ico")
+set(FLIXIFY_WINDOWS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico")
 if(FLIXIFY_API_BASE_URL STREQUAL "")
   set(FLIXIFY_API_BASE_URL "https://api.flixify.pro")
 endif()

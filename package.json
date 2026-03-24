@@ -16,12 +16,11 @@
     "dev:webos": "npm run dev -w @flixify/viewer-webos",
     "configure:native-qt": "npm run configure -w @flixify/viewer-native-qt",
     "build:native-qt": "npm run build -w @flixify/viewer-native-qt",
-    "typecheck:native": "npm run typecheck -w @flixify/viewer-native",
     "smoke:p0": "node scripts/smoke-p0.mjs",
     "telegram:vscode": "node scripts/telegram-vscode.mjs",
     "quality:p0": "npm run test && npm run build && npm run smoke:p0",
     "supabase:run-sql": "node scripts/run-supabase-sql.mjs",
-    "test": "npm run test -w @flixify/contracts && npm run test -w @flixify/api && npm run test -w @flixify/worker && npm run typecheck:native"
+    "test": "npm run test -w @flixify/contracts && npm run test -w @flixify/api && npm run test -w @flixify/worker"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -26,7 +26,8 @@ for (const service of services) {
   const child = spawn(service.command[0], service.command.slice(1), {
     stdio: ["ignore", "pipe", "pipe"],
     cwd: process.cwd(),
-    env: process.env
+    env: process.env,
+    shell: true
   });
 
   child.stdout.on("data", (chunk) => prefixOutput(service.name, service.color, chunk));

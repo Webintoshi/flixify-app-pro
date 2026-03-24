@@ -49,10 +49,11 @@ Not:
 ## 5) Windows EXE Paketleme
 
 - Canli API ile paketle:
-  - `FLIXIFY_API_BASE_URL=https://api.<domain> FLIXIFY_WEB_APP_URL=https://app.<domain> npm run dist:win:installer:x64 -w @flixify/viewer-windows`
-- Surum: `2.1.0`
+  - `npm run bundle:windows -w @flixify/viewer-native-qt`
+  - `npm run publish:web-download -w @flixify/viewer-native-qt`
+- Surum: `apps/viewer-native-qt/package.json`
 - Dagitim dosyasi:
-  - `apps/viewer-windows/dist-electron/Flixify-Pro-Setup-2.1.0-x64.exe`
+  - `apps/viewer-native-qt/dist/windows-x64-release/Flixify-Pro-Setup-<version>-x64.exe`
 - Web indirme dosyasi ve update manifest otomatik guncellenir:
   - `apps/viewer-webos/public/downloads/flixify-windows.exe`
   - `apps/viewer-webos/public/app-update-manifest.json`

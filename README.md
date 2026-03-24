@@ -7,8 +7,7 @@ Supabase veri katmani ve Coolify deployment hedefiyle tasarlanmis coklu platform
 - `apps/api`: custom auth, katalog, paket, admin API
 - `apps/worker`: M3U senkron ve paket surec worker'i
 - `apps/ops-web`: admin ve satis paneli
-- `apps/viewer-native`: iOS, Android, Apple TV, Android TV istemcisi icin React Native TV kaynaklari
-- `apps/viewer-windows`: React Native Windows istemcisi
+- `apps/viewer-native-qt`: Windows odakli native playback istemcisi
 - `apps/viewer-webos`: LG webOS istemcisi
 - `packages/contracts`: ortak tipler ve API semalari
 - `packages/sdk`: istemciler icin ortak API SDK'si
@@ -34,7 +33,7 @@ Alternatif olarak servisleri ayri ayri da calistirabilirsin:
 
 Kalite kapisi komutlari:
 
-- `npm run test` (contracts + api + worker + native typecheck)
+- `npm run test` (contracts + api + worker)
 - `npm run build`
 - `npm run smoke:p0` (API auth flow + ops redirect + webos runtime config smoke)
 - `npm run quality:p0` (test + build + smoke)
@@ -47,7 +46,7 @@ ve `coolify/.env.production.example` dosyalarini kullan.
 
 ## Notlar
 
-- `viewer-native` ve `viewer-windows` kaynaklari bu repoda hazirdir; native shell ve SDK kurulumlari platform makinesinde tamamlanmalidir.
-- Apple TV / Android TV / LG webOS / Windows derlemeleri ilgili vendor SDK'larina baglidir.
+- Aktif istemci shell'leri `viewer-native-qt` ve `viewer-webos` ile sinirlidir.
+- LG webOS ve Windows derlemeleri ilgili vendor SDK'larina baglidir.
 - `viewer-webos` runtime API adresi `public/app-config.json` dosyasindan okunur (`apiBaseUrl`).
 - Windows production paketlerinde `FLIXIFY_API_BASE_URL` ve `FLIXIFY_WEB_APP_URL` zorunludur.

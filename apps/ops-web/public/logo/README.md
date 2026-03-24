@@ -45,9 +45,9 @@ Kimlik dili `TV ikon + guclu FLIXIFY wordmark + PRO badge` uzerine kuruludur.
 - `/apple-touch-icon.png`
 - `/logo/site.webmanifest`
 - Desktop:
-- `apps/viewer-windows/resources/icon.png`
-- `apps/viewer-windows/resources/icon.ico`
-- `apps/viewer-windows/resources/icon.icns`
+- `apps/viewer-native-qt/resources/icon.png`
+- `apps/viewer-native-qt/resources/icon.ico`
+- `apps/viewer-native-qt/resources/icon.icns`
 - WebOS viewer:
 - `apps/viewer-webos/public/favicon.svg`
 - `apps/viewer-webos/public/favicon.ico`
@@ -67,8 +67,8 @@ sips -s format png --resampleHeightWidth 512 512 flixify-icon-only.svg --out ico
 3. Desktop ikonlarini yeniden paketle:
 
 ```bash
-npm run dist:win:installer:x64 -w @flixify/viewer-windows
-npm run dist:mac:dmg:arm64 -w @flixify/viewer-windows
+npm run bundle:windows -w @flixify/viewer-native-qt
+npm run bundle:macos -w @flixify/viewer-native-qt
 ```
 
 ## Kullanım Karari
