@@ -1,9 +1,14 @@
 {
   "platforms": {
     "windows-native-qt": {
-      "latestVersion": "2.2.55",
-      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.2.55/Flixify-Pro-Setup-2.2.55-x64.exe",
-      "notes": "Canli TV oynaticisinda alt kontrol butonlari tekrar sabit gorunur hale getirildi."
+      "latestVersion": "2.2.60",
+      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.2.60/Flixify-Pro-Setup-2.2.60-x64.exe",
+      "notes": "Canli TV probe dogrulamasi, native live relay fallback ve upstream hata algilamasi guncellendi."
+    },
+    "macos-native-qt": {
+      "latestVersion": "2.2.58",
+      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.2.58/Flixify-Pro-2.2.58-macos-universal.dmg",
+      "notes": "Apple Silicon ve Intel icin imzali universal DMG, native macOS playback surface ve macOS kisayollari eklendi."
     }
   }
 }

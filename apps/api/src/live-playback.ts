@@ -660,6 +660,34 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
     }
   }
 
+  async function downgradeSessionToFileProxy(
+    session: LiveRelaySession,
+    snapshotVersion: number,
+    errorMessage: string
+  ) {
+    if (session.localState?.process && !session.localState.process.killed) {
+      session.localState.process.kill("SIGKILL");
+    }
+    if (session.localState?.tempDir) {
+      await removeDirectory(session.localState.tempDir);
+    }
+
+    session.localState = null;
+    session.deliveryMode = "file_proxy";
+
+    await emitDiagnostic({
+      channelId: session.channelId,
+      snapshotVersion,
+      event: "relay-fallback-file-proxy",
+      deliveryMode: session.deliveryMode,
+      sourceTransport: session.sourceTransport,
+      errorMessage,
+      detail: buildRelayDetail(session, {
+        fallbackReason: errorMessage
+      })
+    });
+  }
+
   function touchViewer(session: LiveRelaySession, viewer: ViewerLease) {
     const nextExpiry = Date.now() + sessionTtlMs;
     viewer.expiresAt = nextExpiry;
@@ -1045,7 +1073,10 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
       session.cacheProfile !== cacheProfile ||
       session.sourceUrl !== input.sourceUrl ||
       session.sourceTransport !== input.sourceTransport ||
-      (wantsRelay && session.localState === null && input.sourceTransport !== "hls") ||
+      (wantsRelay &&
+        session.localState === null &&
+        input.sourceTransport !== "hls" &&
+        (!input.allowFileProxyFallback || session.deliveryMode !== "file_proxy")) ||
       (!wantsRelay && session.localState !== null) ||
       (session.localState !== null &&
         input.preferTranscode === true &&
@@ -1123,14 +1154,18 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
         const prepared = await ensureLocalRelay(session);
         if (!prepared.ok) {
           const errorMessage = prepared.errorMessage ?? "Canli relay hazirlanamadi.";
-          await destroySession(session);
-          return createDisabledPlaybackRecord({
-            channelId: input.channelId,
-            sourceTransport: input.sourceTransport,
-            healthStatus: "degraded",
-            lastCheckedAt: input.lastCheckedAt,
-            errorMessage
-          });
+          if (input.allowFileProxyFallback) {
+            await downgradeSessionToFileProxy(session, input.snapshotVersion, errorMessage);
+          } else {
+            await destroySession(session);
+            return createDisabledPlaybackRecord({
+              channelId: input.channelId,
+              sourceTransport: input.sourceTransport,
+              healthStatus: "degraded",
+              lastCheckedAt: input.lastCheckedAt,
+              errorMessage
+            });
+          }
         }
       }
 
@@ -1162,13 +1197,18 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
     if (session.localState) {
       const prepared = await ensureLocalRelay(session);
       if (!prepared.ok) {
-        return createDisabledPlaybackRecord({
-          channelId: input.channelId,
-          sourceTransport: input.sourceTransport,
-          healthStatus: "degraded",
-          lastCheckedAt: input.lastCheckedAt,
-          errorMessage: prepared.errorMessage ?? "Canli relay hazirlanamadi."
-        });
+        const errorMessage = prepared.errorMessage ?? "Canli relay hazirlanamadi.";
+        if (input.allowFileProxyFallback) {
+          await downgradeSessionToFileProxy(session, input.snapshotVersion, errorMessage);
+        } else {
+          return createDisabledPlaybackRecord({
+            channelId: input.channelId,
+            sourceTransport: input.sourceTransport,
+            healthStatus: "degraded",
+            lastCheckedAt: input.lastCheckedAt,
+            errorMessage
+          });
+        }
       }
     }
 

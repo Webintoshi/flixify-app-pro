@@ -490,6 +490,7 @@ async function resolveLiveSourceUrl(input: {
       ok: false,
       sourceUrl: null,
       transport: input.fallbackTransport,
+      statusCode: 0,
       errorMessage: "Canli yayin kimlik bilgileri eksik.",
       cookie: null,
       isVerified: false
@@ -498,6 +499,7 @@ async function resolveLiveSourceUrl(input: {
 
   let lastError = "Canli yayin kaynagi dogrulanamadi.";
   let lastTransport = input.fallbackTransport;
+  let lastStatusCode = 0;
   let sawNetworkLikeFailure = false;
   let sawPotentialFalseNegativeHttpFailure = false;
   const firstCandidateUrl = candidates[0]?.url ?? null;
@@ -507,11 +509,13 @@ async function resolveLiveSourceUrl(input: {
     if (probe.transport !== "unknown") {
       lastTransport = probe.transport;
     }
+    lastStatusCode = probe.statusCode;
     if (probe.ok) {
       return {
         ok: true,
         sourceUrl: candidate.url,
         transport: probe.transport === "unknown" ? input.fallbackTransport : probe.transport,
+        statusCode: probe.statusCode,
         cookie: probe.cookie,
         errorMessage: null,
         isVerified: true
@@ -520,7 +524,10 @@ async function resolveLiveSourceUrl(input: {
     if (probe.statusCode === 0) {
       sawNetworkLikeFailure = true;
     }
-    if ([401, 403, 405, 416, 429].includes(probe.statusCode)) {
+    if (
+      [401, 403, 405, 416, 429].includes(probe.statusCode) &&
+      /^upstream\s+\d{3}$/i.test(probe.errorMessage?.trim() ?? "")
+    ) {
       sawPotentialFalseNegativeHttpFailure = true;
     }
     lastError = probe.errorMessage ?? lastError;
@@ -533,6 +540,7 @@ async function resolveLiveSourceUrl(input: {
       ok: true,
       sourceUrl: firstCandidateUrl,
       transport: lastTransport === "unknown" ? input.fallbackTransport : lastTransport,
+      statusCode: lastStatusCode,
       cookie: null,
       errorMessage: lastError,
       isVerified: false
@@ -543,6 +551,7 @@ async function resolveLiveSourceUrl(input: {
     ok: false,
     sourceUrl: firstCandidateUrl,
     transport: lastTransport === "unknown" ? input.fallbackTransport : lastTransport,
+    statusCode: lastStatusCode,
     cookie: null,
     errorMessage: lastError,
     isVerified: false
@@ -1807,8 +1816,10 @@ export function buildServer() {
         !playback.canPlay &&
         userContext.canPlay &&
         typeof resolved.sourceUrl === "string" &&
-        (canUseAppDirectPlaybackFallback(clientRuntime, resolved.sourceUrl) ||
-          upstreamStatus !== 404)
+        (optimisticProbeFallback ||
+          (typeof upstreamStatus === "number" &&
+            upstreamStatus !== 404 &&
+            canUseAppDirectPlaybackFallback(clientRuntime, resolved.sourceUrl)))
       ) {
         return buildDirectLivePlaybackFallback({
           channelId,
@@ -1954,7 +1965,9 @@ export function buildServer() {
       const allowOptimisticNativeDirect =
         !resolved.ok &&
         typeof resolved.sourceUrl === "string" &&
-        canUseAppDirectPlaybackFallback("native", resolved.sourceUrl);
+        canUseAppDirectPlaybackFallback("native", resolved.sourceUrl) &&
+        (resolved.statusCode === 0 ||
+          (typeof upstreamStatus === "number" && [401, 403, 405, 416, 429].includes(upstreamStatus)));
       const skipFailureCountIncrement =
         typeof upstreamStatus === "number" && [405, 416, 429].includes(upstreamStatus);
       const currentFailureCount = channel.failure_count ?? 0;
@@ -2013,7 +2026,7 @@ export function buildServer() {
           isVerified: resolved.isVerified,
           errorMessage: canAttemptRelay ? null : errorMessage ?? "Canli yayin gecici olarak kullanilamiyor.",
           forceRelayRestart,
-          allowFileProxyFallback: debugFileProxy || allowOptimisticNativeDirect,
+          allowFileProxyFallback: true,
           preferDirectProxy: !preferRelay,
           preferTranscode,
           cacheProfile

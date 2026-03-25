@@ -45,7 +45,7 @@ function detectTransportFromParts(url: string, contentType?: string | null): Liv
 }
 
 function readFirstChunk(response: IncomingMessage) {
-  return new Promise<number>((resolve, reject) => {
+  return new Promise<Buffer | null>((resolve, reject) => {
     let settled = false;
 
     const cleanup = () => {
@@ -62,7 +62,7 @@ function readFirstChunk(response: IncomingMessage) {
       settled = true;
       cleanup();
       response.destroy();
-      resolve(chunk.length);
+      resolve(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
 
     response.on("end", () => {
@@ -71,7 +71,7 @@ function readFirstChunk(response: IncomingMessage) {
       }
       settled = true;
       cleanup();
-      resolve(0);
+      resolve(null);
     });
 
     response.on("close", () => {
@@ -80,7 +80,7 @@ function readFirstChunk(response: IncomingMessage) {
       }
       settled = true;
       cleanup();
-      resolve(0);
+      resolve(null);
     });
 
     response.on("error", (error) => {
@@ -92,6 +92,87 @@ function readFirstChunk(response: IncomingMessage) {
       reject(error);
     });
   });
+}
+
+function extractEmbeddedUpstreamStatus(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const status = (payload as { status?: unknown }).status;
+  return typeof status === "number" && Number.isFinite(status) && status >= 400 ? status : null;
+}
+
+function extractStructuredErrorMessage(
+  chunk: Buffer | null,
+  contentType: string | string[] | undefined
+): { statusCode: number | null; errorMessage: string | null } {
+  if (!chunk || chunk.length === 0) {
+    return {
+      statusCode: null,
+      errorMessage: null
+    };
+  }
+
+  const normalizedType = normalizeContentType(typeof contentType === "string" ? contentType : contentType?.[0]);
+  const text = chunk.toString("utf8").trim();
+  if (!text) {
+    return {
+      statusCode: null,
+      errorMessage: null
+    };
+  }
+
+  const looksTextual =
+    normalizedType.includes("application/json") ||
+    normalizedType.startsWith("text/") ||
+    text.startsWith("{") ||
+    text.startsWith("[") ||
+    text.startsWith("<");
+
+  if (!looksTextual) {
+    return {
+      statusCode: null,
+      errorMessage: null
+    };
+  }
+
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try {
+      const payload = JSON.parse(text) as { error?: unknown; message?: unknown; status?: unknown };
+      const embeddedStatus = extractEmbeddedUpstreamStatus(payload);
+      const message =
+        typeof payload.message === "string"
+          ? payload.message.trim()
+          : typeof payload.error === "string"
+            ? payload.error.trim()
+            : "";
+
+      if (embeddedStatus !== null || message) {
+        return {
+          statusCode: embeddedStatus,
+          errorMessage: message || (embeddedStatus !== null ? `Upstream ${embeddedStatus}` : "Upstream JSON hata dondu.")
+        };
+      }
+    } catch {
+      return {
+        statusCode: null,
+        errorMessage: normalizedType.includes("application/json") ? "Upstream JSON hata dondu." : null
+      };
+    }
+  }
+
+  if (normalizedType.startsWith("text/") || text.startsWith("<")) {
+    return {
+      statusCode: null,
+      errorMessage: text.slice(0, 160)
+    };
+  }
+
+  return {
+    statusCode: null,
+    errorMessage: null
+  };
 }
 
 async function probeUrl(url: string, redirects = 0, useRange = true, accumulatedCookies: string[] = []): Promise<{
@@ -166,13 +247,13 @@ async function probeUrl(url: string, redirects = 0, useRange = true, accumulated
             return;
           }
 
-          const firstChunkBytes = await readFirstChunk(response);
-          if (useRange && firstChunkBytes === 0) {
+          const firstChunk = await readFirstChunk(response);
+          if (useRange && (!firstChunk || firstChunk.length === 0)) {
             resolve(await probeUrl(url, redirects, false, accumulatedCookies));
             return;
           }
 
-          if (firstChunkBytes === 0) {
+          if (!firstChunk || firstChunk.length === 0) {
             resolve({
               ok: false,
               statusCode,
@@ -180,6 +261,19 @@ async function probeUrl(url: string, redirects = 0, useRange = true, accumulated
               transport,
               cookie: null,
               errorMessage: "Akistan veri okunamadi."
+            });
+            return;
+          }
+
+          const structuredError = extractStructuredErrorMessage(firstChunk, response.headers["content-type"]);
+          if (structuredError.errorMessage) {
+            resolve({
+              ok: false,
+              statusCode: structuredError.statusCode ?? statusCode,
+              finalUrl,
+              transport,
+              cookie: accumulatedCookies.length > 0 ? accumulatedCookies.join("; ") : null,
+              errorMessage: structuredError.errorMessage
             });
             return;
           }

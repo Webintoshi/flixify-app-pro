@@ -81,4 +81,77 @@ segment-00043.ts
       await manager.dispose();
     }
   });
+
+  it("falls back to file_proxy when relay startup fails for native playback", async () => {
+    const manager = createLivePlaybackManager({
+      ffmpegBinary: process.execPath,
+      sessionTtlMs: 60_000
+    });
+
+    try {
+      const playback = await manager.createPlayback({
+        channelId: "channel-ts-fallback",
+        snapshotVersion: 1,
+        sourceUrl: "https://example.com/live/channel.ts",
+        cookie: null,
+        baseOrigin: "https://flixify.test",
+        sourceTransport: "ts",
+        healthStatus: "healthy",
+        lastCheckedAt: new Date("2026-03-25T00:00:00.000Z").toISOString(),
+        canPlay: true,
+        isVerified: true,
+        errorMessage: null,
+        preferDirectProxy: false,
+        allowFileProxyFallback: true,
+        preferTranscode: false,
+        cacheProfile: "fast"
+      });
+
+      expect(playback.canPlay).toBe(true);
+      expect(playback.deliveryMode).toBe("file_proxy");
+      expect(playback.transport).toBe("ts");
+      expect(playback.url).toMatch(/^https:\/\/flixify\.test\/live\/playback\/[^/]+\/file\?token=/);
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it("reuses file_proxy fallback sessions for native playback after relay failure", async () => {
+    const manager = createLivePlaybackManager({
+      ffmpegBinary: process.execPath,
+      sessionTtlMs: 60_000
+    });
+
+    const input = {
+      channelId: "channel-ts-reuse",
+      snapshotVersion: 1,
+      sourceUrl: "https://example.com/live/channel.ts",
+      cookie: null,
+      baseOrigin: "https://flixify.test",
+      sourceTransport: "ts" as const,
+      healthStatus: "healthy" as const,
+      lastCheckedAt: new Date("2026-03-25T00:00:00.000Z").toISOString(),
+      canPlay: true,
+      isVerified: true,
+      errorMessage: null,
+      preferDirectProxy: false,
+      allowFileProxyFallback: true,
+      preferTranscode: false,
+      cacheProfile: "fast" as const
+    };
+
+    try {
+      const playbackA = await manager.createPlayback(input);
+      const playbackB = await manager.createPlayback(input);
+      const sessionA = /\/live\/playback\/([^/]+)\//.exec(playbackA.url ?? "")?.[1] ?? null;
+      const sessionB = /\/live\/playback\/([^/]+)\//.exec(playbackB.url ?? "")?.[1] ?? null;
+
+      expect(playbackA.deliveryMode).toBe("file_proxy");
+      expect(playbackB.deliveryMode).toBe("file_proxy");
+      expect(sessionA).toBeTruthy();
+      expect(sessionA).toBe(sessionB);
+    } finally {
+      await manager.dispose();
+    }
+  });
 });
