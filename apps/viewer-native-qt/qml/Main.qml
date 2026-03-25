@@ -7,9 +7,11 @@ import Flixify.Native 1.0
 ApplicationWindow {
     id: window
     width: 1600
-    height: 600
-    minimumWidth: 980
-    minimumHeight: 600
+    height: Qt.platform.os === "windows" ? 900 : 600
+    minimumWidth: Qt.platform.os === "windows" ? 1600 : 980
+    minimumHeight: Qt.platform.os === "windows" ? 900 : 600
+    maximumWidth: Qt.platform.os === "windows" ? 1600 : 16777215
+    maximumHeight: Qt.platform.os === "windows" ? 900 : 16777215
     visible: true
     title: "Flixify Pro"
     color: "#05070b"
@@ -25,6 +27,7 @@ ApplicationWindow {
     readonly property color success: "#30d19d"
     readonly property color danger: "#ff7d86"
     readonly property color info: "#7cb6ff"
+    readonly property bool isMacOS: Qt.platform.os === "osx"
     readonly property bool compactWindow: width < 1180
     readonly property bool mediumWindow: width < 1440
     readonly property bool shortWindow: height < 820
@@ -99,6 +102,7 @@ ApplicationWindow {
     property string playerSubtitle: ""
     property string playerImageUrl: ""
     property bool liveControlsVisible: false
+    property bool liveVolumePressed: false
     property bool videoFullscreen: false
     property var pendingPackage: null
     property string selectedPaymentMethodId: ""
@@ -1026,6 +1030,13 @@ ApplicationWindow {
         videoFullscreen = false
         window.showNormal()
     }
+    function requestAppQuit() {
+        if (isMacOS) {
+            Qt.quit()
+            return
+        }
+        confirmExitDialog.open()
+    }
     function parseVersionParts(version) {
         const normalized = (version || "").toString().trim().split("+")[0].split("-")[0].trim()
         if (!normalized.length || !/^\d+(\.\d+){0,4}$/.test(normalized)) {
@@ -1052,6 +1063,20 @@ ApplicationWindow {
     function appUpdateVisible() { return Boolean(appUpdatePayload().updateAvailable && appUpdatePayload().latestVersion && isUpdateNewerThanCurrent(appUpdatePayload().latestVersion) && appUpdatePayload().latestVersion !== dismissedUpdateVersion) }
     function appUpdateBannerVisible() { return appUpdateVisible() || apiClient.updateInProgress || apiClient.updateError.length > 0 }
     function updateProgressPercent() { return Math.max(0, Math.min(100, Math.round((apiClient.updateProgress || 0) * 100))) }
+    function updatePrimaryActionLabel() { return isMacOS ? "DMG Indir ve Ac" : "Guncelle ve Yeniden Baslat" }
+    function updateBannerProgressText() {
+        return isMacOS
+            ? "Imzali DMG indiriliyor. Hazir oldugunda Finder uzerinden acilacak."
+            : "Installer indiriliyor. Hazir olunca uygulama kapanip yeni surum kurulumu baslayacak."
+    }
+    function updateBannerIdleText() {
+        return appUpdatePayload().notes || (isMacOS
+            ? "Guncelleme imzali DMG olarak indirilebilir durumda."
+            : "Guncelleme uygulama icinden indirilebilir durumda.")
+    }
+    function platformTrialRequestNote() {
+        return isMacOS ? "MacBook native cihazindan test talebi" : "Desktop native cihazindan test talebi"
+    }
     function showLiveControls() {
         liveControlsVisible = true
         if (currentScreen === "live" && playerVisible && selectedLiveItem() !== null && selectedLiveItem().playbackAllowed !== false) {
@@ -1255,7 +1280,7 @@ ApplicationWindow {
                 liveControlsVisible = false
                 return
             }
-            if (liveVolumeSlider.pressed) {
+            if (liveVolumePressed) {
                 restart()
                 return
             }
@@ -2090,9 +2115,10 @@ ApplicationWindow {
     // 1. Üst Bar - PIP, Cast, Fullscreen, Favori
     component PlayerTopBar: Rectangle {
         id: topBar
-        height: 80
+        height: 84
         color: "transparent"
-        opacity: liveControlsVisible ? 1.0 : 0.0
+        readonly property bool pinnedVisible: currentScreen === "live" && inlineLivePlayerVisible() && selectedLiveItem() !== null
+        opacity: pinnedVisible || liveControlsVisible ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
         
         // Modern gradient from top
@@ -2109,7 +2135,7 @@ ApplicationWindow {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             anchors.leftMargin: 24
-            spacing: 16
+            spacing: 12
             
             // Back button
             PlayerIconButton {
@@ -2528,6 +2554,210 @@ ApplicationWindow {
     }
     
     // Yardımcı Componentler - Modern
+    component LivePlayerActionButton: Rectangle {
+        property string title: ""
+        property string tooltip: ""
+        property bool accent: false
+        property bool danger: false
+        signal clicked()
+
+        width: Math.max(78, actionLabel.implicitWidth + 28)
+        height: 40
+        radius: 12
+        color: danger
+               ? (actionMouse.pressed ? "#9f0b13" : actionMouse.containsMouse ? "#d41821" : "#bf1018")
+               : accent
+                 ? (actionMouse.pressed ? "#c0040e" : actionMouse.containsMouse ? "#f11b27" : "#e50914")
+                 : (actionMouse.containsMouse ? "#30ffffff" : "#18ffffff")
+        border.width: accent || danger ? 0 : 1
+        border.color: actionMouse.containsMouse ? "#40ffffff" : "#24ffffff"
+        Behavior on color { ColorAnimation { duration: 150 } }
+        Behavior on border.color { ColorAnimation { duration: 150 } }
+
+        Text {
+            id: actionLabel
+            anchors.centerIn: parent
+            text: parent.title
+            color: "#ffffff"
+            font.pixelSize: 12
+            font.bold: true
+            font.family: "Space Grotesk"
+        }
+
+        Rectangle {
+            visible: actionMouse.containsMouse && parent.tooltip.length > 0
+            anchors.bottom: parent.top
+            anchors.bottomMargin: 8
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: dockTooltipText.implicitWidth + 18
+            height: 28
+            radius: 6
+            color: "#cc000000"
+            border.width: 1
+            border.color: "#30ffffff"
+
+            Text {
+                id: dockTooltipText
+                anchors.centerIn: parent
+                text: parent.parent.tooltip
+                color: "#ffffff"
+                font.pixelSize: 12
+            }
+        }
+
+        MouseArea {
+            id: actionMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+                showLiveControls()
+                parent.clicked()
+            }
+            onEntered: showLiveControls()
+        }
+    }
+
+    component LivePlayerQuickDock: Item {
+        readonly property bool dockVisible: currentScreen === "live" && inlineLivePlayerVisible() && selectedLiveItem() !== null
+        visible: dockVisible
+        opacity: dockVisible ? 1.0 : 0.0
+        height: 58
+
+        Connections {
+            target: playbackController
+            function onVolumeChanged() { liveQuickVolumeSlider.value = playbackController.muted ? 0 : playbackController.volume }
+            function onMutedChanged() { liveQuickVolumeSlider.value = playbackController.muted ? 0 : playbackController.volume }
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: audioDockRow.implicitWidth + 28
+            height: parent.height
+            radius: 18
+            color: "#c10d121c"
+            border.width: 1
+            border.color: "#24ffffff"
+
+            Row {
+                id: audioDockRow
+                anchors.centerIn: parent
+                spacing: 14
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "SES"
+                    color: window.textMuted
+                    font.pixelSize: 12
+                    font.bold: true
+                }
+
+                LivePlayerActionButton {
+                    title: playbackController.muted || playbackController.volume <= 0 ? "AC" : "KAPAT"
+                    tooltip: playbackController.muted || playbackController.volume <= 0 ? "Sesi ac" : "Sesi kapat"
+                    onClicked: playbackController.toggleMuted()
+                }
+
+                Slider {
+                    id: liveQuickVolumeSlider
+                    width: 168
+                    anchors.verticalCenter: parent.verticalCenter
+                    from: 0
+                    to: 1
+                    value: playbackController.muted ? 0 : playbackController.volume
+                    onMoved: {
+                        showLiveControls()
+                        playbackController.setVolume(value)
+                    }
+                    onPressedChanged: liveVolumePressed = pressed
+
+                    background: Rectangle {
+                        x: liveQuickVolumeSlider.leftPadding
+                        y: liveQuickVolumeSlider.topPadding + liveQuickVolumeSlider.availableHeight / 2 - height / 2
+                        implicitWidth: 168
+                        implicitHeight: 6
+                        width: liveQuickVolumeSlider.availableWidth
+                        height: implicitHeight
+                        radius: 3
+                        color: "#30ffffff"
+
+                        Rectangle {
+                            width: liveQuickVolumeSlider.visualPosition * parent.width
+                            height: parent.height
+                            radius: 3
+                            color: "#e50914"
+                        }
+                    }
+
+                    handle: Rectangle {
+                        x: liveQuickVolumeSlider.leftPadding + liveQuickVolumeSlider.visualPosition * (liveQuickVolumeSlider.availableWidth - width)
+                        y: liveQuickVolumeSlider.topPadding + liveQuickVolumeSlider.availableHeight / 2 - height / 2
+                        implicitWidth: 16
+                        implicitHeight: 16
+                        radius: 8
+                        color: "#ffffff"
+                        border.width: 2
+                        border.color: "#e50914"
+                    }
+                }
+
+                Rectangle {
+                    width: 54
+                    height: 28
+                    radius: 8
+                    color: "#15ffffff"
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: `${Math.round((playbackController.muted ? 0 : playbackController.volume) * 100)}%`
+                        color: window.textPrimary
+                        font.pixelSize: 12
+                        font.bold: true
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            width: actionDockRow.implicitWidth + 28
+            height: parent.height
+            radius: 18
+            color: "#c10d121c"
+            border.width: 1
+            border.color: "#24ffffff"
+
+            Row {
+                id: actionDockRow
+                anchors.centerIn: parent
+                spacing: 12
+
+                LivePlayerActionButton {
+                    title: playbackController.videoFillMode === "fill" ? "SIGDIR" : "DOLDUR"
+                    tooltip: playbackController.videoFillMode === "fill" ? "Goruntuyu sigdir" : "Goruntuyu doldur"
+                    onClicked: playbackController.videoFillMode = playbackController.videoFillMode === "fill" ? "fit" : "fill"
+                }
+
+                LivePlayerActionButton {
+                    title: videoFullscreen ? "PENCERE" : "TAM EKRAN"
+                    tooltip: videoFullscreen ? "Pencere moduna don" : "Tam ekran ac"
+                    accent: true
+                    onClicked: toggleVideoFullscreen()
+                }
+
+                LivePlayerActionButton {
+                    title: "KAPAT"
+                    tooltip: "Playeri kapat"
+                    danger: true
+                    onClicked: closePlayer()
+                }
+            }
+        }
+    }
+
     component PlayerIconButton: Rectangle {
         property string icon: ""
         property string tooltip: ""
@@ -2644,19 +2874,23 @@ ApplicationWindow {
             property int slotIndex: 0
             anchors.fill: parent
 
+            function syncSurfaceBinding() {
+                playbackController.setVideoSurfaceHandle(slotIndex, nativeVideoSurface.surfaceHandle)
+                playbackController.setVideoSurfaceGeometry(slotIndex, nativeVideoSurface.width, nativeVideoSurface.height)
+            }
+
+            onSlotIndexChanged: syncSurfaceBinding()
+
             NativeVideoSurface {
                 id: nativeVideoSurface
                 anchors.fill: parent
                 anchors.margins: 0
                 mousePassthrough: true
                 frontSurface: playbackController.activeVideoSlot === parent.slotIndex
-                onSurfaceHandleChanged: {
-                    playbackController.setVideoSurfaceHandle(parent.slotIndex, surfaceHandle)
-                    playbackController.setVideoSurfaceGeometry(parent.slotIndex, width, height)
-                }
-                onWidthChanged: playbackController.setVideoSurfaceGeometry(parent.slotIndex, width, height)
-                onHeightChanged: playbackController.setVideoSurfaceGeometry(parent.slotIndex, width, height)
-                Component.onCompleted: playbackController.setVideoSurfaceGeometry(parent.slotIndex, width, height)
+                onSurfaceHandleChanged: parent.syncSurfaceBinding()
+                onWidthChanged: parent.syncSurfaceBinding()
+                onHeightChanged: parent.syncSurfaceBinding()
+                Component.onCompleted: parent.syncSurfaceBinding()
                 onPointerActivity: {
                     if (currentScreen === "live" && inlineLivePlayerVisible()) {
                         showLiveControls()
@@ -3892,7 +4126,7 @@ ApplicationWindow {
                             MouseArea { anchors.fill: parent; onClicked: openScreen("profile") }
                         }
 
-                        AppButton { text: "Çıkış"; secondary: true; implicitWidth: 110; onClicked: apiClient.logout() }
+                        AppButton { text: "Cikis"; secondary: true; implicitWidth: 110; onClicked: apiClient.logout() }
                     }
                 }
 
@@ -3916,10 +4150,10 @@ ApplicationWindow {
                                 spacing: 4
                                 Text {
                                     text: apiClient.updateInProgress
-                                          ? `Güncelleme indiriliyor... %${updateProgressPercent()}`
+                                          ? `Guncelleme indiriliyor... %${updateProgressPercent()}`
                                           : (apiClient.updateError.length
-                                             ? "Güncelleme başlatılamadı"
-                                             : `Yeni sürüm hazır: v${appUpdatePayload().latestVersion || ""}`)
+                                             ? "Guncelleme baslatilamadi"
+                                             : `Yeni surum hazir: v${appUpdatePayload().latestVersion || ""}`)
                                     color: window.textPrimary
                                     font.pixelSize: 16
                                     font.family: "Space Grotesk"
@@ -3927,10 +4161,10 @@ ApplicationWindow {
                                 }
                                 Text {
                                     text: apiClient.updateInProgress
-                                          ? "Installer indiriliyor. Hazır olunca uygulama kapanıp yeni sürüm kurulumu başlayacak."
+                                          ? updateBannerProgressText()
                                           : (apiClient.updateError.length
                                              ? apiClient.updateError
-                                             : (appUpdatePayload().notes || "Güncelleme uygulama içinden indirilebilir durumda."))
+                                             : updateBannerIdleText())
                                     width: parent.width
                                     wrapMode: Text.WordWrap
                                     color: window.textMuted
@@ -3952,7 +4186,7 @@ ApplicationWindow {
                             }
                             AppButton {
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: apiClient.updateInProgress ? "İndiriliyor..." : "Güncelle ve Yeniden Başlat"
+                                text: apiClient.updateInProgress ? "Indiriliyor..." : updatePrimaryActionLabel()
                                 secondary: true
                                 implicitWidth: 220
                                 enabled: !apiClient.updateInProgress && Boolean(appUpdatePayload().downloadUrl)
@@ -4330,19 +4564,19 @@ ApplicationWindow {
                                                     visible: inlineLivePlayerVisible()
                                                     
                                                     // 1. Video Surface
-                                                    Repeater {
-                                                        model: 2
-                                                        delegate: Loader {
-                                                            anchors.left: parent.left
-                                                            anchors.right: parent.right
-                                                            anchors.top: parent.top
-                                                            anchors.bottom: parent.bottom
-                                                            active: inlineLivePlayerVisible()
-                                                            sourceComponent: nativeVideoSurfaceComponent
+                                                    Loader {
+                                                        anchors.left: parent.left
+                                                        anchors.right: parent.right
+                                                        anchors.top: parent.top
+                                                        anchors.bottom: parent.bottom
+                                                        active: inlineLivePlayerVisible()
+                                                        sourceComponent: nativeVideoSurfaceComponent
 
-                                                            onLoaded: {
-                                                                if (item) {
-                                                                    item.slotIndex = index
+                                                        onLoaded: {
+                                                            if (item) {
+                                                                item.slotIndex = 0
+                                                                if (item.syncSurfaceBinding) {
+                                                                    item.syncSurfaceBinding()
                                                                 }
                                                             }
                                                         }
@@ -4430,6 +4664,7 @@ ApplicationWindow {
                                                             anchors.top: parent.top
                                                             anchors.left: parent.left
                                                             anchors.right: parent.right
+                                                            visible: false
                                                         }
                                                         
                                                         // Center Controls - Previous/Play/Next
@@ -4450,6 +4685,17 @@ ApplicationWindow {
                                                             anchors.left: parent.left
                                                             anchors.right: parent.right
                                                             anchors.bottom: parent.bottom
+                                                            visible: false
+                                                        }
+
+                                                        LivePlayerQuickDock {
+                                                            anchors.left: parent.left
+                                                            anchors.right: parent.right
+                                                            anchors.leftMargin: 24
+                                                            anchors.rightMargin: 24
+                                                            anchors.bottom: parent.bottom
+                                                            anchors.bottomMargin: 18
+                                                            z: 120
                                                         }
                                                     }
                                                 
@@ -6236,10 +6482,10 @@ ApplicationWindow {
                         AppButton {
                             text: "Test Yapmak Istiyorum"
                             implicitWidth: 190
-                            onClicked: apiClient.requestTrial("Windows native cihazindan test talebi")
+                            onClicked: apiClient.requestTrial(platformTrialRequestNote())
                         }
                         AppButton {
-                            text: "WhatsApp ile İletişime Geç"
+                            text: "WhatsApp ile Iletisime Gec"
                             secondary: true
                             implicitWidth: 220
                             onClicked: openScreen("contact")
@@ -6268,8 +6514,8 @@ ApplicationWindow {
             anchors.right: parent.right
             height: 48
             z: 100
-            visible: opacity > 0
-            opacity: titleBarMouseArea.containsMouse || titleBarMouseArea.containsPress ? 1.0 : 0.0
+            visible: !window.isMacOS && opacity > 0
+            opacity: !window.isMacOS && (titleBarMouseArea.containsMouse || titleBarMouseArea.containsPress) ? 1.0 : 0.0
             Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
             // Background
@@ -6362,7 +6608,7 @@ ApplicationWindow {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: confirmExitDialog.open()
+                        onClicked: requestAppQuit()
                     }
                 }
             }
@@ -6382,6 +6628,7 @@ ApplicationWindow {
             anchors.left: parent.left
             anchors.right: parent.right
             height: 8
+            visible: !window.isMacOS
             hoverEnabled: true
             acceptedButtons: Qt.NoButton
             z: 99
@@ -6436,7 +6683,7 @@ ApplicationWindow {
 
                     Text {
                         Layout.alignment: Qt.AlignHCenter
-                        text: "Çıkış Yapmak İstiyor musunuz?"
+                        text: "Cikis yapmak istiyor musunuz?"
                         color: window.textPrimary
                         font.pixelSize: 22 * fontScale
                         font.bold: true
@@ -6446,7 +6693,7 @@ ApplicationWindow {
                     Text {
                         Layout.alignment: Qt.AlignHCenter
                         Layout.fillWidth: true
-                        text: "Flixify Pro'dan çıkmak istediğinize emin misiniz?"
+                        text: "Flixify Pro'dan cikmak istediginize emin misiniz?"
                         color: window.textMuted
                         font.pixelSize: 14 * fontScale
                         wrapMode: Text.WordWrap
@@ -6458,14 +6705,14 @@ ApplicationWindow {
                         spacing: 16
 
                         AppButton {
-                            text: "İptal"
+                            text: "Iptal"
                             secondary: true
                             implicitWidth: 120
                             onClicked: confirmExitDialog.close()
                         }
 
                         AppButton {
-                            text: "Çıkış"
+                            text: "Cikis"
                             implicitWidth: 120
                             onClicked: Qt.quit()
                         }
@@ -6484,13 +6731,13 @@ ApplicationWindow {
                     window.showNormal()
                 } else if (confirmExitDialog.visible) {
                     confirmExitDialog.close()
-                } else if (currentScreen !== "login") {
+                } else if (!window.isMacOS && currentScreen !== "login") {
                     if (currentScreen === "home" || currentScreen === "movies" || currentScreen === "series" || currentScreen === "live") {
                         confirmExitDialog.open()
                     } else {
                         openScreen("home")
                     }
-                } else {
+                } else if (!window.isMacOS) {
                     confirmExitDialog.open()
                 }
             }
@@ -6498,6 +6745,7 @@ ApplicationWindow {
 
         Shortcut {
             sequence: "F11"
+            enabled: !window.isMacOS
             onActivated: {
                 if (inlineLivePlayerVisible()) {
                     toggleVideoFullscreen()
@@ -6508,8 +6756,37 @@ ApplicationWindow {
         }
 
         Shortcut {
+            sequence: "Ctrl+Meta+F"
+            enabled: window.isMacOS
+            onActivated: {
+                if (inlineLivePlayerVisible()) {
+                    toggleVideoFullscreen()
+                } else {
+                    toggleWindowFullscreen()
+                }
+            }
+        }
+
+        Shortcut {
+            sequence: "Meta+Q"
+            enabled: window.isMacOS
+            onActivated: requestAppQuit()
+        }
+
+        Shortcut {
+            sequence: "Meta+W"
+            enabled: window.isMacOS
+            onActivated: {
+                if (playerVisible || overlayPlayerVisible()) {
+                    closePlayer()
+                }
+            }
+        }
+
+        Shortcut {
             sequence: "Alt+F4"
-            onActivated: confirmExitDialog.open()
+            enabled: !window.isMacOS
+            onActivated: requestAppQuit()
         }
     }
 }

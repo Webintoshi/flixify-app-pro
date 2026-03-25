@@ -220,8 +220,10 @@ void PlaybackController::playChannel(const QString &channelId) {
     return;
   }
 
-  if (m_player) {
-    libvlc_media_player_stop(m_player);
+  for (PlayerSlotState &slot : m_playerSlots) {
+    if (slot.player) {
+      libvlc_media_player_stop(slot.player);
+    }
   }
 
   const QVariantMap channel = m_apiClient ? m_apiClient->liveChannelById(normalizedChannelId) : QVariantMap();
@@ -254,19 +256,37 @@ void PlaybackController::playChannel(const QString &channelId) {
   resetLiveSwitchState();
   setLastError(QString());
   setDecoderMode(QStringLiteral("hardware"));
+  clearLiveSourceCache();
 
   m_candidates = buildCandidateQueue(normalizedChannelId);
-  if (m_candidates.isEmpty()) {
+  if (m_candidates.isEmpty() || channel.isEmpty()) {
     failActiveTarget(QStringLiteral("Secilen kanal native katalogda bulunamadi."), QStringLiteral("channel-not-found"));
     return;
   }
 
-  m_candidateIndex = -1;
-  prepareLiveSlot(0, normalizedChannelId, m_liveSwitchRequestedAt);
-  if (tryOpenCachedLiveSource(normalizedChannelId, 0)) {
+  const QString sourceUrl = channel.value(QStringLiteral("streamUrl")).toString().trimmed();
+  if (sourceUrl.isEmpty()) {
+    failActiveTarget(QStringLiteral("Canli yayin URL'i katalogda bulunamadi."), QStringLiteral("missing-stream-url"));
     return;
   }
-  resolveCandidateAt(0);
+
+  m_candidateIndex = 0;
+  prepareLiveSlot(0, normalizedChannelId, nowMs());
+
+  QJsonObject source;
+  source.insert(QStringLiteral("url"), sourceUrl);
+  source.insert(QStringLiteral("transport"), channel.value(QStringLiteral("transport")).toString().trimmed());
+  source.insert(QStringLiteral("variantGroupKey"), channel.value(QStringLiteral("variantGroupKey")).toString());
+  source.insert(
+    QStringLiteral("qualityRank"),
+    channel.contains(QStringLiteral("qualityRank")) ? channel.value(QStringLiteral("qualityRank")).toInt() : -1
+  );
+  source.insert(QStringLiteral("isVerified"), channel.value(QStringLiteral("isVerified")).toBool());
+  source.insert(QStringLiteral("lastCheckedAt"), channel.value(QStringLiteral("lastCheckedAt")).toString());
+  source.insert(QStringLiteral("deliveryMode"), QStringLiteral("direct"));
+  source.insert(QStringLiteral("headers"), QJsonObject());
+  source.insert(QStringLiteral("cookie"), QString());
+  openResolvedSource(source, 0);
 }
 
 void PlaybackController::playVod(const QString &kind, const QString &itemId, const QString &title) {
@@ -690,40 +710,14 @@ QList<PlaybackController::ChannelCandidate> PlaybackController::buildCandidateQu
     return candidates;
   }
 
-  const QString targetGroup = current.value(QStringLiteral("variantGroupKey")).toString().trimmed();
-  const QVariantList catalog = m_apiClient->liveChannels();
-  for (const QVariant &item : catalog) {
-    const QVariantMap map = item.toMap();
-    const QString itemId = map.value(QStringLiteral("id")).toString();
-    const QString itemGroup = map.value(QStringLiteral("variantGroupKey")).toString().trimmed();
-    if (itemId == channelId || (!targetGroup.isEmpty() && itemGroup == targetGroup)) {
-      ChannelCandidate candidate;
-      candidate.channelId = itemId;
-      candidate.title = map.value(QStringLiteral("title")).toString();
-      candidate.variantGroupKey = itemGroup;
-      candidate.qualityRank = map.contains(QStringLiteral("qualityRank"))
-                                ? map.value(QStringLiteral("qualityRank")).toInt()
-                                : -1;
-      candidates.push_back(candidate);
-    }
-  }
-
-  std::sort(candidates.begin(), candidates.end(), [](const auto &left, const auto &right) {
-    if (left.channelId == right.channelId) {
-      return false;
-    }
-    if (left.qualityRank != right.qualityRank) {
-      return left.qualityRank > right.qualityRank;
-    }
-    return left.title.toLower() < right.title.toLower();
-  });
-
-  for (int index = 0; index < candidates.size(); ++index) {
-    if (candidates[index].channelId == channelId) {
-      candidates.move(index, 0);
-      break;
-    }
-  }
+  ChannelCandidate candidate;
+  candidate.channelId = channelId;
+  candidate.title = current.value(QStringLiteral("title")).toString();
+  candidate.variantGroupKey = current.value(QStringLiteral("variantGroupKey")).toString().trimmed();
+  candidate.qualityRank = current.contains(QStringLiteral("qualityRank"))
+                            ? current.value(QStringLiteral("qualityRank")).toInt()
+                            : -1;
+  candidates.push_back(candidate);
 
   return candidates;
 }

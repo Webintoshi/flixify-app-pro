@@ -120,9 +120,15 @@ int main(int argc, char *argv[]) {
   });
 #endif
 
-  // Open in a fixed normal window instead of forcing fullscreen on startup.
   QTimer::singleShot(100, rootWindow, [rootWindow]() {
+#if defined(Q_OS_WIN)
+    const QSize fixedWindowSize(1600, 900);
+    rootWindow->setMinimumSize(fixedWindowSize);
+    rootWindow->setMaximumSize(fixedWindowSize);
+    rootWindow->resize(fixedWindowSize);
+#else
     rootWindow->resize(1600, 600);
+#endif
     rootWindow->showNormal();
     rootWindow->raise();
   });

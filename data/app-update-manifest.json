@@ -1,9 +1,9 @@
 {
   "platforms": {
     "windows-native-qt": {
-      "latestVersion": "2.2.60",
-      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.2.60/Flixify-Pro-Setup-2.2.60-x64.exe",
-      "notes": "Canli TV probe dogrulamasi, native live relay fallback ve upstream hata algilamasi guncellendi."
+      "latestVersion": "2.2.64",
+      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.2.64/Flixify-Pro-Setup-2.2.64-x64.exe",
+      "notes": "Canli TV player icin yeni ses, mute, tam ekran ve kapat kontrol dock'u eklendi."
     },
     "macos-native-qt": {
       "latestVersion": "2.2.58",
