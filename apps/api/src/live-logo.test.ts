@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createCatalogArtworkUrl,
   createSignedLiveLogoUrl,
   isBlockedArtworkHostname,
   signLiveLogoItems,
@@ -84,5 +85,25 @@ describe("live logo helpers", () => {
     expect(isBlockedArtworkHostname("[::1]")).toBe(true);
     expect(isBlockedArtworkHostname("fe80::1")).toBe(true);
     expect(isBlockedArtworkHostname("example.com")).toBe(false);
+  });
+
+  it("falls back to direct artwork urls for native clients when proxy signing rejects private hosts", () => {
+    expect(
+      createCatalogArtworkUrl({
+        sourceUrl: "http://192.168.1.25:8080/posters/movie.jpg",
+        origin: "https://api.flixify.test",
+        clientRuntime: "native"
+      })
+    ).toBe("http://192.168.1.25:8080/posters/movie.jpg");
+  });
+
+  it("keeps browser catalog artwork blocked when the source points to a private host", () => {
+    expect(
+      createCatalogArtworkUrl({
+        sourceUrl: "http://192.168.1.25:8080/posters/movie.jpg",
+        origin: "https://api.flixify.test",
+        clientRuntime: "browser"
+      })
+    ).toBeNull();
   });
 });

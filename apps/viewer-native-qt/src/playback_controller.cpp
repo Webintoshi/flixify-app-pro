@@ -2,17 +2,24 @@
 
 #include "api_client.h"
 
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QMetaObject>
 #include <QNetworkReply>
+#include <QSettings>
+#include <QStringList>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QtGlobal>
-#include <array>
 #include <algorithm>
+#include <array>
 #include <cstdint>
 
 namespace {
+
+constexpr qint64 kLiveSourceCacheTtlMs = 30'000;
+constexpr qint64 kLiveIssueWindowMs = 30'000;
 
 QString extractReplyMessage(const QByteArray &body, const QString &fallback) {
   const QJsonDocument document = QJsonDocument::fromJson(body);
@@ -48,19 +55,69 @@ bool looksTurkish(const QString &language, const QString &title) {
          normalizedTitle.contains(QStringLiteral("turk")) || normalizedTitle.contains(QStringLiteral("turkish"));
 }
 
+QString sanitizeVideoFillMode(const QString &mode) {
+  return mode.trimmed().toLower() == QStringLiteral("fill") ? QStringLiteral("fill") : QStringLiteral("fit");
 }
+
+QString sanitizeLiveCacheProfile(const QString &value) {
+  return value.trimmed().toLower() == QStringLiteral("safe") ? QStringLiteral("safe") : QStringLiteral("fast");
+}
+
+qint64 nowMs() {
+  return QDateTime::currentMSecsSinceEpoch();
+}
+
+int liveNetworkCachingMs(const QString &cacheProfile) {
+  return sanitizeLiveCacheProfile(cacheProfile) == QStringLiteral("safe") ? 1000 : 400;
+}
+
+int liveFileCachingMs(const QString &cacheProfile) {
+  return sanitizeLiveCacheProfile(cacheProfile) == QStringLiteral("safe") ? 800 : 300;
+}
+
+}
+
+#define m_player (m_playerSlots[0].player)
+#define m_videoSurfaceHandle (m_playerSlots[0].surfaceHandle)
+#define m_surfaceWidth (m_playerSlots[0].surfaceWidth)
+#define m_surfaceHeight (m_playerSlots[0].surfaceHeight)
 
 PlaybackController::PlaybackController(ApiClient *apiClient, QObject *parent)
   : QObject(parent), m_apiClient(apiClient) {
   m_timelineTimer.setInterval(500);
   connect(&m_timelineTimer, &QTimer::timeout, this, &PlaybackController::updateTimeline);
+
+  m_liveSlotStopTimer.setSingleShot(true);
+  connect(&m_liveSlotStopTimer, &QTimer::timeout, this, [this]() {
+    if (m_delayedStopSlot < 0 || m_delayedStopSlot >= static_cast<int>(m_playerSlots.size())) {
+      return;
+    }
+    if (m_delayedStopSlot != currentPlaybackSlot()) {
+      if (libvlc_media_player_t *player = playerForSlot(m_delayedStopSlot)) {
+        libvlc_media_player_stop(player);
+      }
+    }
+    m_delayedStopSlot = -1;
+  });
+
+  for (int index = 0; index < static_cast<int>(m_playerEventContexts.size()); ++index) {
+    m_playerEventContexts[index].controller = this;
+    m_playerEventContexts[index].slotIndex = index;
+  }
+
+  QSettings settings;
+  m_videoFillMode = sanitizeVideoFillMode(
+    settings.value(QStringLiteral("player/videoFillMode"), QStringLiteral("fit")).toString()
+  );
 }
 
 PlaybackController::~PlaybackController() {
   stop();
-  if (m_player) {
-    libvlc_media_player_release(m_player);
-    m_player = nullptr;
+  for (PlayerSlotState &slot : m_playerSlots) {
+    if (slot.player) {
+      libvlc_media_player_release(slot.player);
+      slot.player = nullptr;
+    }
   }
   if (m_vlc) {
     libvlc_release(m_vlc);
@@ -104,15 +161,21 @@ QString PlaybackController::videoFillMode() const {
   return m_videoFillMode;
 }
 
+int PlaybackController::activeVideoSlot() const {
+  return m_activeVideoSlot;
+}
+
 void PlaybackController::setVideoFillMode(const QString &mode) {
-  const QString normalized = mode.trimmed().toLower();
-  const QString newMode = (normalized == QStringLiteral("fill")) ? QStringLiteral("fill") : QStringLiteral("fit");
+  const QString newMode = sanitizeVideoFillMode(mode);
   if (newMode == m_videoFillMode) {
     return;
   }
   m_videoFillMode = newMode;
+  QSettings settings;
+  settings.setValue(QStringLiteral("player/videoFillMode"), m_videoFillMode);
   emit videoFillModeChanged();
-  updateVideoCrop();
+  updateVideoCrop(0);
+  updateVideoCrop(1);
 }
 
 bool PlaybackController::busy() const {
@@ -170,16 +233,25 @@ void PlaybackController::playChannel(const QString &channelId) {
 
   setActiveContent(target);
   setActiveChannelId(normalizedChannelId);
+  setActiveVideoSlot(0);
   setRecommendedNextEpisode({});
   clearSelectionState();
   resetPlaybackMetrics();
   m_pendingResumeSeconds = 0.0;
   m_lastResolvedSource = QJsonObject();
   m_requestedAudioTrackId.clear();
+  m_requestedLiveChannelId = normalizedChannelId;
+  m_requestedLiveTitle = target.title;
   m_retryingSoftwareDecode = false;
   m_retryingVodResolve = false;
   m_autoSelectingPreferredAudioTrack = false;
   m_waitingForVideoSurface = false;
+  m_liveCacheProfile = m_forceRelayRestart ? sanitizeLiveCacheProfile(m_liveCacheProfile) : QStringLiteral("fast");
+  m_liveIssueWindowStartedAt = 0;
+  m_lastLiveIssueAt = 0;
+  m_liveIssueCount = 0;
+  m_liveSwitchRequestedAt = nowMs();
+  resetLiveSwitchState();
   setLastError(QString());
   setDecoderMode(QStringLiteral("hardware"));
 
@@ -190,6 +262,10 @@ void PlaybackController::playChannel(const QString &channelId) {
   }
 
   m_candidateIndex = -1;
+  prepareLiveSlot(0, normalizedChannelId, m_liveSwitchRequestedAt);
+  if (tryOpenCachedLiveSource(normalizedChannelId, 0)) {
+    return;
+  }
   resolveCandidateAt(0);
 }
 
@@ -221,16 +297,20 @@ void PlaybackController::playVod(const QString &kind, const QString &itemId, con
 
   setActiveContent(target);
   setActiveChannelId(QString());
+  setActiveVideoSlot(0);
   clearSelectionState();
   resetPlaybackMetrics();
   m_pendingResumeSeconds = 0.0;
   setRecommendedNextEpisode({});
   m_lastResolvedSource = QJsonObject();
   m_requestedAudioTrackId.clear();
+  m_requestedLiveChannelId.clear();
+  m_requestedLiveTitle.clear();
   m_retryingSoftwareDecode = false;
   m_retryingVodResolve = false;
   m_autoSelectingPreferredAudioTrack = false;
   m_waitingForVideoSurface = false;
+  resetLiveSwitchState();
   setLastError(QString());
   setDecoderMode(QStringLiteral("hardware"));
 
@@ -239,6 +319,8 @@ void PlaybackController::playVod(const QString &kind, const QString &itemId, con
 
 void PlaybackController::retryCurrent() {
   if (isActiveLive() && !m_activeChannelId.isEmpty()) {
+    m_forceRelayRestart = true;
+    clearLiveSourceCache(m_activeChannelId);
     playChannel(m_activeChannelId);
     return;
   }
@@ -250,6 +332,8 @@ void PlaybackController::retryCurrent() {
 
 void PlaybackController::stop() {
   m_timelineTimer.stop();
+  m_liveSlotStopTimer.stop();
+  m_delayedStopSlot = -1;
   if (m_player) {
     libvlc_media_player_stop(m_player);
   }
@@ -259,6 +343,7 @@ void PlaybackController::stop() {
   m_autoSelectingPreferredAudioTrack = false;
   m_waitingForVideoSurface = false;
   m_pendingResumeSeconds = 0.0;
+  resetLiveSwitchState();
   setBusy(false);
   setPaused(true);
   setState(QStringLiteral("idle"));
@@ -306,7 +391,7 @@ void PlaybackController::setVolume(double value) {
 
   setVolumeLevel(normalized);
   setMuted(normalized <= 0.0);
-  applyAudioState(normalized > 0.0);
+  applyAudioState(currentPlayer(), normalized > 0.0);
 }
 
 void PlaybackController::toggleMuted() {
@@ -317,14 +402,14 @@ void PlaybackController::toggleMuted() {
     }
     setVolumeLevel(0.0);
     setMuted(true);
-    applyAudioState();
+    applyAudioState(currentPlayer(), false);
     return;
   }
 
   const double restoredVolume = m_lastAudibleVolume > 0.0 ? m_lastAudibleVolume : 1.0;
   setVolumeLevel(restoredVolume);
   setMuted(false);
-  applyAudioState(true);
+  applyAudioState(currentPlayer(), true);
 }
 
 void PlaybackController::seekTo(double seconds) {
@@ -369,63 +454,76 @@ void PlaybackController::playRecommendedNextEpisode() {
   playVod(QStringLiteral("episode"), nextEpisodeId, nextEpisode.value(QStringLiteral("title")).toString());
 }
 
-void PlaybackController::setVideoSurfaceHandle(qulonglong handle) {
-  if (handle == m_videoSurfaceHandle) {
+void PlaybackController::setVideoSurfaceHandle(int slotIndex, qulonglong handle) {
+  if (slotIndex < 0 || slotIndex >= static_cast<int>(m_playerSlots.size())) {
     return;
   }
 
-  m_videoSurfaceHandle = handle;
-  bindVideoSurface();
-  if (m_videoSurfaceHandle != 0 && m_waitingForVideoSurface && !m_lastResolvedSource.isEmpty()) {
+  PlayerSlotState &slot = slotState(slotIndex);
+  if (handle == slot.surfaceHandle) {
+    return;
+  }
+
+  slot.surfaceHandle = handle;
+  bindVideoSurface(slotIndex);
+  if (slot.surfaceHandle != 0 && m_waitingForVideoSurface && !slot.lastResolvedSource.isEmpty()) {
     m_waitingForVideoSurface = false;
-    const QJsonObject source = m_lastResolvedSource;
-    QTimer::singleShot(0, this, [this, source]() {
-      openResolvedSource(source);
+    const QJsonObject source = slot.lastResolvedSource;
+    QTimer::singleShot(0, this, [this, slotIndex, source]() {
+      openResolvedSource(source, slotIndex);
     });
   }
 }
 
-void PlaybackController::setVideoSurfaceGeometry(int width, int height) {
-  if (width == m_surfaceWidth && height == m_surfaceHeight) {
+void PlaybackController::setVideoSurfaceGeometry(int slotIndex, int width, int height) {
+  if (slotIndex < 0 || slotIndex >= static_cast<int>(m_playerSlots.size())) {
     return;
   }
-  m_surfaceWidth = width;
-  m_surfaceHeight = height;
-  updateVideoCrop();
+
+  PlayerSlotState &slot = slotState(slotIndex);
+  if (width == slot.surfaceWidth && height == slot.surfaceHeight) {
+    return;
+  }
+  slot.surfaceWidth = width;
+  slot.surfaceHeight = height;
+  updateVideoCrop(slotIndex);
 }
 
-QSize PlaybackController::getVideoSize() const {
-  if (!m_player) {
+QSize PlaybackController::getVideoSize(libvlc_media_player_t *player) const {
+  if (!player) {
     return QSize();
   }
   unsigned int vw = 0, vh = 0;
-  libvlc_video_get_size(m_player, 0, &vw, &vh);
+  libvlc_video_get_size(player, 0, &vw, &vh);
   if (vw > 0 && vh > 0) {
     return QSize(static_cast<int>(vw), static_cast<int>(vh));
   }
   return QSize();
 }
 
-void PlaybackController::updateVideoCrop() {
-  if (!m_player) {
+void PlaybackController::updateVideoCrop(int slotIndex) {
+  const int effectiveSlot = slotIndex >= 0 ? slotIndex : currentPlaybackSlot();
+  libvlc_media_player_t *player = playerForSlot(effectiveSlot);
+  if (!player) {
     return;
   }
 
   if (m_videoFillMode == QStringLiteral("fit")) {
-    libvlc_video_set_crop_geometry(m_player, nullptr);
+    libvlc_video_set_crop_geometry(player, nullptr);
     return;
   }
 
-  if (m_surfaceWidth <= 0 || m_surfaceHeight <= 0) {
+  const PlayerSlotState &slot = slotState(effectiveSlot);
+  if (slot.surfaceWidth <= 0 || slot.surfaceHeight <= 0) {
     return;
   }
 
-  const QSize videoSize = getVideoSize();
+  const QSize videoSize = getVideoSize(player);
   if (!videoSize.isValid() || videoSize.width() <= 0 || videoSize.height() <= 0) {
     return;
   }
 
-  const double surfaceRatio = static_cast<double>(m_surfaceWidth) / static_cast<double>(m_surfaceHeight);
+  const double surfaceRatio = static_cast<double>(slot.surfaceWidth) / static_cast<double>(slot.surfaceHeight);
   const double videoRatio = static_cast<double>(videoSize.width()) / static_cast<double>(videoSize.height());
 
   int cropX = 0, cropY = 0, cropW = videoSize.width(), cropH = videoSize.height();
@@ -440,7 +538,7 @@ void PlaybackController::updateVideoCrop() {
 
   const QString cropGeometry = QStringLiteral("%1x%2+%3+%4").arg(cropW).arg(cropH).arg(cropX).arg(cropY);
   const QByteArray cropBytes = cropGeometry.toUtf8();
-  libvlc_video_set_crop_geometry(m_player, cropBytes.constData());
+  libvlc_video_set_crop_geometry(player, cropBytes.constData());
 }
 
 void PlaybackController::setState(const QString &value) {
@@ -572,6 +670,15 @@ void PlaybackController::setRecommendedNextEpisode(const QVariantMap &value) {
   emit recommendedNextEpisodeChanged();
 }
 
+void PlaybackController::setActiveVideoSlot(int value) {
+  const int normalized = value == 1 ? 1 : 0;
+  if (normalized == m_activeVideoSlot) {
+    return;
+  }
+  m_activeVideoSlot = normalized;
+  emit activeVideoSlotChanged();
+}
+
 QList<PlaybackController::ChannelCandidate> PlaybackController::buildCandidateQueue(const QString &channelId) const {
   QList<ChannelCandidate> candidates;
   if (!m_apiClient) {
@@ -636,12 +743,18 @@ void PlaybackController::resolveCandidateAt(int index) {
   setState(QStringLiteral("resolving"));
   setActiveChannelId(m_candidates[index].channelId);
   resetPlaybackMetrics();
+  const int slotIndex = currentPlaybackSlot();
+  prepareLiveSlot(slotIndex, m_candidates[index].channelId, m_liveSwitchRequestedAt > 0 ? m_liveSwitchRequestedAt : nowMs());
+  if (tryOpenCachedLiveSource(m_candidates[index].channelId, slotIndex)) {
+    return;
+  }
 
-  const QString path = QStringLiteral("/me/native/live/%1/playback")
-                         .arg(QString::fromUtf8(QUrl::toPercentEncoding(m_candidates[index].channelId)));
+  const bool forceRelayRestart = m_forceRelayRestart;
+  const QString path = liveResolvePath(m_candidates[index].channelId, forceRelayRestart);
+  m_forceRelayRestart = false;
   const int requestedIndex = index;
   QNetworkReply *reply = m_apiClient->network()->get(m_apiClient->authorizedRequest(path));
-  connect(reply, &QNetworkReply::finished, this, [this, reply, requestedIndex]() {
+  connect(reply, &QNetworkReply::finished, this, [this, reply, requestedIndex, slotIndex, forceRelayRestart]() {
     const QByteArray body = reply->readAll();
     const bool ok = reply->error() == QNetworkReply::NoError;
     const bool authFailed = isAuthStatusCode(reply);
@@ -649,8 +762,9 @@ void PlaybackController::resolveCandidateAt(int index) {
 
     if (!ok) {
       if (authFailed && m_apiClient) {
-        m_apiClient->refreshSession([this, requestedIndex](bool success) {
+        m_apiClient->refreshSession([this, requestedIndex, forceRelayRestart](bool success) {
           if (success) {
+            m_forceRelayRestart = forceRelayRestart;
             resolveCandidateAt(requestedIndex);
             return;
           }
@@ -660,12 +774,22 @@ void PlaybackController::resolveCandidateAt(int index) {
       }
 
       const QString message = extractReplyMessage(body, QStringLiteral("Native playback source resolve failed."));
-      reportPlaybackEvent(QStringLiteral("failed"), QStringLiteral("resolve-failed"), QStringLiteral("resolve-error"), message);
+      clearLiveSourceCache(m_candidates.value(requestedIndex).channelId);
+      reportPlaybackEvent(
+        QStringLiteral("failed"),
+        QStringLiteral("resolve-failed"),
+        QStringLiteral("resolve-error"),
+        message,
+        slotIndex,
+        m_candidates.value(requestedIndex).channelId
+      );
       advanceToNextCandidate(message);
       return;
     }
 
-    openResolvedSource(QJsonDocument::fromJson(body).object());
+    const QJsonObject source = QJsonDocument::fromJson(body).object();
+    storeLiveSourceCache(m_candidates.value(requestedIndex).channelId, source, false);
+    openResolvedSource(source, slotIndex);
   });
 }
 
@@ -754,7 +878,7 @@ void PlaybackController::resolveVodSource(const QString &audioTrackId) {
         reportPlaybackEvent(QStringLiteral("audio-track-selected"), QStringLiteral("resolved"), QString(), QString());
       }
       reportPlaybackEvent(QStringLiteral("session-created"), QStringLiteral("resolved"), QString(), QString());
-      openResolvedSource(source);
+      openResolvedSource(source, 0);
       return;
     }
 
@@ -764,8 +888,8 @@ void PlaybackController::resolveVodSource(const QString &audioTrackId) {
   });
 }
 
-void PlaybackController::openResolvedSource(const QJsonObject &source) {
-  if (!ensurePlayerReady()) {
+void PlaybackController::openResolvedSource(const QJsonObject &source, int slotIndex, bool sourceFromCache, bool prefetched) {
+  if (!ensurePlayerReady(slotIndex)) {
     failActiveTarget(
       lastError().trimmed().isEmpty() ? QStringLiteral("libVLC player baslatilamadi.") : lastError(),
       QStringLiteral("player-init-failed")
@@ -779,10 +903,14 @@ void PlaybackController::openResolvedSource(const QJsonObject &source) {
     return;
   }
 
+  PlayerSlotState &slot = slotState(slotIndex);
+  slot.lastResolvedSource = source;
+  slot.sourceFromCache = sourceFromCache;
+  slot.prefetched = prefetched;
   m_lastResolvedSource = source;
   setDiagnosticsSessionId(source.value(QStringLiteral("diagnosticsSessionId")).toString());
   setState(QStringLiteral("opening"));
-  if (m_videoSurfaceHandle == 0) {
+  if (slot.surfaceHandle == 0) {
     m_waitingForVideoSurface = true;
     setBusy(true);
     setPaused(true);
@@ -800,8 +928,16 @@ void PlaybackController::openResolvedSource(const QJsonObject &source) {
     return;
   }
 
-  addMediaOption(media, QStringLiteral(":network-caching=1200"));
-  addMediaOption(media, QStringLiteral(":file-caching=1000"));
+  addMediaOption(
+    media,
+    QStringLiteral(":network-caching=%1")
+      .arg(isActiveLive() ? liveNetworkCachingMs(m_liveCacheProfile) : 1200)
+  );
+  addMediaOption(
+    media,
+    QStringLiteral(":file-caching=%1")
+      .arg(isActiveLive() ? liveFileCachingMs(m_liveCacheProfile) : 1000)
+  );
   addMediaOption(media, decoderMode() == QStringLiteral("hardware")
                            ? QStringLiteral(":avcodec-hw=any")
                            : QStringLiteral(":avcodec-hw=none"));
@@ -834,11 +970,12 @@ void PlaybackController::openResolvedSource(const QJsonObject &source) {
     );
   }
 
-  libvlc_media_player_set_media(m_player, media);
+  libvlc_media_player_t *player = playerForSlot(slotIndex);
+  libvlc_media_player_set_media(player, media);
   libvlc_media_release(media);
-  bindVideoSurface();
+  bindVideoSurface(slotIndex);
 
-  if (libvlc_media_player_play(m_player) != 0) {
+  if (libvlc_media_player_play(player) != 0) {
     if (!m_retryingSoftwareDecode && decoderMode() == QStringLiteral("hardware")) {
       retryCurrentSourceInSoftwareMode(QStringLiteral("Hardware decode open basarisiz."));
       return;
@@ -853,7 +990,7 @@ void PlaybackController::openResolvedSource(const QJsonObject &source) {
     return;
   }
 
-  applyAudioState(true);
+  applyAudioState(player, true);
   setBusy(false);
   setPaused(false);
 }
@@ -863,6 +1000,7 @@ void PlaybackController::advanceToNextCandidate(const QString &reason) {
   if (m_candidateIndex + 1 < m_candidates.size()) {
     m_retryingSoftwareDecode = false;
     setDecoderMode(QStringLiteral("hardware"));
+    clearLiveSourceCache(m_candidates.value(m_candidateIndex).channelId);
     resolveCandidateAt(m_candidateIndex + 1);
     return;
   }
@@ -876,12 +1014,14 @@ void PlaybackController::failActiveTarget(const QString &reason, const QString &
   setBusy(false);
   setPaused(true);
   m_waitingForVideoSurface = false;
+  clearLiveSourceCache(isActiveLive() ? m_activeChannelId : QString());
   setState(QStringLiteral("error"));
   reportPlaybackEvent(
     isActiveVod() ? QStringLiteral("playback-failed") : QStringLiteral("failed"),
     QStringLiteral("terminal-failure"),
     errorCode,
-    reason
+    reason,
+    currentPlaybackSlot()
   );
 }
 
@@ -898,7 +1038,8 @@ void PlaybackController::retryCurrentSourceInSoftwareMode(const QString &reason)
   m_retryingSoftwareDecode = true;
   setDecoderMode(QStringLiteral("software"));
   setLastError(reason);
-  openResolvedSource(m_lastResolvedSource);
+  noteLiveIssue(reason, false);
+  openResolvedSource(m_lastResolvedSource, currentPlaybackSlot());
 }
 
 void PlaybackController::retryResolvedVodSource(const QString &reason) {
@@ -920,8 +1061,8 @@ void PlaybackController::retryResolvedVodSource(const QString &reason) {
   resolveVodSource(m_requestedAudioTrackId);
 }
 
-bool PlaybackController::ensurePlayerReady() {
-  if (m_player && m_vlc) {
+bool PlaybackController::ensurePlayerReady(int slotIndex) {
+  if (playerForSlot(slotIndex) && m_vlc) {
     return true;
   }
 
@@ -930,8 +1071,8 @@ bool PlaybackController::ensurePlayerReady() {
       "--quiet",
       "--no-video-title-show",
       "--http-reconnect",
-      "--network-caching=1200",
-      "--file-caching=1000"
+      "--network-caching=400",
+      "--file-caching=300"
     };
     m_vlc = libvlc_new(static_cast<int>(std::size(arguments)), arguments);
     if (!m_vlc) {
@@ -944,8 +1085,8 @@ bool PlaybackController::ensurePlayerReady() {
     }
   }
 
-  recreatePlayer();
-  if (!m_player) {
+  recreatePlayer(slotIndex);
+  if (!playerForSlot(slotIndex)) {
     setState(QStringLiteral("error"));
     setLastError(QStringLiteral("libVLC player baslatilamadi."));
     return false;
@@ -954,8 +1095,8 @@ bool PlaybackController::ensurePlayerReady() {
   return true;
 }
 
-bool PlaybackController::ensureAudioOutputReady() {
-  if (!m_player) {
+bool PlaybackController::ensureAudioOutputReady(libvlc_media_player_t *player) {
+  if (!player) {
     return false;
   }
 
@@ -968,7 +1109,7 @@ bool PlaybackController::ensureAudioOutputReady() {
   };
 
   for (const char *outputName : preferredOutputs) {
-    if (libvlc_audio_output_set(m_player, outputName) == 0) {
+    if (libvlc_audio_output_set(player, outputName) == 0) {
       return true;
     }
   }
@@ -977,72 +1118,79 @@ bool PlaybackController::ensureAudioOutputReady() {
   return true;
 }
 
-void PlaybackController::applyAudioState(bool recoverOutput) {
-  if (!m_player) {
+void PlaybackController::applyAudioState(libvlc_media_player_t *player, bool recoverOutput) {
+  if (!player) {
     return;
   }
 
   if (recoverOutput) {
-    ensureAudioOutputReady();
+    ensureAudioOutputReady(player);
   }
 
   const double baseVolume = m_muted ? (m_lastAudibleVolume > 0.0 ? m_lastAudibleVolume : 1.0) : m_volume;
   const int targetVolume = qRound(std::clamp(baseVolume, 0.0, 1.0) * 100.0);
-  libvlc_audio_set_volume(m_player, targetVolume);
-  libvlc_audio_set_mute(m_player, m_muted ? 1 : 0);
+  libvlc_audio_set_volume(player, targetVolume);
+  libvlc_audio_set_mute(player, m_muted ? 1 : 0);
 
   if (!m_muted) {
-    if (libvlc_audio_get_mute(m_player) != 0) {
-      libvlc_audio_set_mute(m_player, 0);
+    if (libvlc_audio_get_mute(player) != 0) {
+      libvlc_audio_set_mute(player, 0);
     }
-    if (targetVolume > 0 && libvlc_audio_get_volume(m_player) <= 0) {
-      libvlc_audio_set_volume(m_player, targetVolume);
+    if (targetVolume > 0 && libvlc_audio_get_volume(player) <= 0) {
+      libvlc_audio_set_volume(player, targetVolume);
     }
   }
 }
 
-void PlaybackController::recreatePlayer() {
+void PlaybackController::recreatePlayer(int slotIndex) {
   if (!m_vlc) {
     return;
   }
 
-  if (m_player) {
-    libvlc_media_player_release(m_player);
-  }
-
-  m_player = libvlc_media_player_new(m_vlc);
-  attachPlayerEvents();
-  applyAudioState(true);
-  bindVideoSurface();
-}
-
-void PlaybackController::attachPlayerEvents() {
-  if (!m_player) {
+  if (slotIndex < 0 || slotIndex >= static_cast<int>(m_playerSlots.size())) {
     return;
   }
 
-  libvlc_event_manager_t *manager = libvlc_media_player_event_manager(m_player);
+  PlayerSlotState &slot = slotState(slotIndex);
+  if (slot.player) {
+    libvlc_media_player_release(slot.player);
+  }
+
+  slot.player = libvlc_media_player_new(m_vlc);
+  attachPlayerEvents(slotIndex);
+  applyAudioState(slot.player, true);
+  bindVideoSurface(slotIndex);
+}
+
+void PlaybackController::attachPlayerEvents(int slotIndex) {
+  libvlc_media_player_t *player = playerForSlot(slotIndex);
+  if (!player) {
+    return;
+  }
+
+  libvlc_event_manager_t *manager = libvlc_media_player_event_manager(player);
   if (!manager) {
     return;
   }
-  libvlc_event_attach(manager, libvlc_MediaPlayerPlaying, &PlaybackController::handleVlcEvent, this);
-  libvlc_event_attach(manager, libvlc_MediaPlayerBuffering, &PlaybackController::handleVlcEvent, this);
-  libvlc_event_attach(manager, libvlc_MediaPlayerEncounteredError, &PlaybackController::handleVlcEvent, this);
-  libvlc_event_attach(manager, libvlc_MediaPlayerStopped, &PlaybackController::handleVlcEvent, this);
-  libvlc_event_attach(manager, libvlc_MediaPlayerEndReached, &PlaybackController::handleVlcEvent, this);
+  libvlc_event_attach(manager, libvlc_MediaPlayerPlaying, &PlaybackController::handleVlcEvent, &m_playerEventContexts[slotIndex]);
+  libvlc_event_attach(manager, libvlc_MediaPlayerBuffering, &PlaybackController::handleVlcEvent, &m_playerEventContexts[slotIndex]);
+  libvlc_event_attach(manager, libvlc_MediaPlayerEncounteredError, &PlaybackController::handleVlcEvent, &m_playerEventContexts[slotIndex]);
+  libvlc_event_attach(manager, libvlc_MediaPlayerStopped, &PlaybackController::handleVlcEvent, &m_playerEventContexts[slotIndex]);
+  libvlc_event_attach(manager, libvlc_MediaPlayerEndReached, &PlaybackController::handleVlcEvent, &m_playerEventContexts[slotIndex]);
 }
 
-void PlaybackController::bindVideoSurface() {
-  if (!m_player || m_videoSurfaceHandle == 0) {
+void PlaybackController::bindVideoSurface(int slotIndex) {
+  const PlayerSlotState &slot = slotState(slotIndex);
+  if (!slot.player || slot.surfaceHandle == 0) {
     return;
   }
 
 #if defined(Q_OS_WIN)
-  libvlc_media_player_set_hwnd(m_player, reinterpret_cast<void *>(static_cast<quintptr>(m_videoSurfaceHandle)));
+  libvlc_media_player_set_hwnd(slot.player, reinterpret_cast<void *>(static_cast<quintptr>(slot.surfaceHandle)));
 #elif defined(Q_OS_MACOS)
-  libvlc_media_player_set_nsobject(m_player, reinterpret_cast<void *>(static_cast<quintptr>(m_videoSurfaceHandle)));
+  libvlc_media_player_set_nsobject(slot.player, reinterpret_cast<void *>(static_cast<quintptr>(slot.surfaceHandle)));
 #elif defined(Q_OS_LINUX)
-  libvlc_media_player_set_xwindow(m_player, static_cast<uint32_t>(m_videoSurfaceHandle));
+  libvlc_media_player_set_xwindow(slot.player, static_cast<uint32_t>(slot.surfaceHandle));
 #endif
 }
 
@@ -1050,19 +1198,26 @@ void PlaybackController::reportPlaybackEvent(
   const QString &event,
   const QString &nativeState,
   const QString &errorCode,
-  const QString &errorMessage
+  const QString &errorMessage,
+  int slotIndex,
+  const QString &channelIdOverride
 ) {
   if (!m_apiClient || m_activeTarget.itemId.isEmpty()) {
     return;
   }
 
+  const int effectiveSlot = slotIndex >= 0 ? slotIndex : currentPlaybackSlot();
+  const PlayerSlotState &slot = slotState(effectiveSlot);
   QJsonObject payload;
   payload.insert(QStringLiteral("event"), event);
   payload.insert(QStringLiteral("clientRuntime"), QStringLiteral("native"));
   payload.insert(QStringLiteral("playerEngine"), QStringLiteral("libvlc"));
   payload.insert(QStringLiteral("decoderMode"), decoderMode());
   payload.insert(QStringLiteral("diagnosticsSessionId"), diagnosticsSessionId());
-  payload.insert(QStringLiteral("sourceTransport"), m_lastResolvedSource.value(QStringLiteral("transport")).toString());
+  payload.insert(
+    QStringLiteral("sourceTransport"),
+    (slot.lastResolvedSource.isEmpty() ? m_lastResolvedSource : slot.lastResolvedSource).value(QStringLiteral("transport")).toString()
+  );
   payload.insert(QStringLiteral("openErrorCode"), errorCode);
   payload.insert(QStringLiteral("nativeState"), nativeState);
   if (!errorMessage.trimmed().isEmpty()) {
@@ -1070,12 +1225,29 @@ void PlaybackController::reportPlaybackEvent(
   }
 
   if (isActiveVod()) {
-    payload.insert(QStringLiteral("deliveryMode"), m_lastResolvedSource.value(QStringLiteral("deliveryMode")).toString());
+    payload.insert(
+      QStringLiteral("deliveryMode"),
+      (slot.lastResolvedSource.isEmpty() ? m_lastResolvedSource : slot.lastResolvedSource).value(QStringLiteral("deliveryMode")).toString()
+    );
     payload.insert(QStringLiteral("audioTrackId"), selectedAudioTrackId());
     payload.insert(QStringLiteral("currentTime"), positionSeconds());
   }
 
-  const QString path = currentPlaybackPath();
+  QJsonObject detail;
+  if (slot.requestStartedAt > 0) {
+    detail.insert(QStringLiteral("ttffMs"), static_cast<double>(qMax<qint64>(0, nowMs() - slot.requestStartedAt)));
+  }
+  if (m_liveSwitchRequestedAt > 0 && isActiveLive()) {
+    detail.insert(QStringLiteral("switchMs"), static_cast<double>(qMax<qint64>(0, nowMs() - m_liveSwitchRequestedAt)));
+  }
+  detail.insert(QStringLiteral("fallbackCount"), slot.fallbackCount);
+  detail.insert(QStringLiteral("prefetched"), slot.prefetched || slot.sourceFromCache);
+  detail.insert(QStringLiteral("rendererBackend"), rendererBackendName());
+  detail.insert(QStringLiteral("cacheProfile"), isActiveLive() ? sanitizeLiveCacheProfile(m_liveCacheProfile) : QStringLiteral("vod"));
+  detail.insert(QStringLiteral("activeCandidateIndex"), m_candidateIndex);
+  payload.insert(QStringLiteral("detail"), detail);
+
+  const QString path = currentPlaybackPath(channelIdOverride);
   if (path.isEmpty()) {
     return;
   }
@@ -1088,15 +1260,16 @@ void PlaybackController::reportPlaybackEvent(
 }
 
 void PlaybackController::updateTimeline() {
-  if (!m_player) {
+  libvlc_media_player_t *player = currentPlayer();
+  if (!player) {
     return;
   }
 
-  const libvlc_time_t positionMs = libvlc_media_player_get_time(m_player);
-  const libvlc_time_t durationMs = libvlc_media_player_get_length(m_player);
+  const libvlc_time_t positionMs = libvlc_media_player_get_time(player);
+  const libvlc_time_t durationMs = libvlc_media_player_get_length(player);
   setPositionSeconds(positionMs > 0 ? static_cast<double>(positionMs) / 1000.0 : 0.0);
   setDurationSeconds(durationMs > 0 ? static_cast<double>(durationMs) / 1000.0 : 0.0);
-  setPaused(libvlc_media_player_is_playing(m_player) == 0 && state() != QStringLiteral("buffering") &&
+  setPaused(libvlc_media_player_is_playing(player) == 0 && state() != QStringLiteral("buffering") &&
             state() != QStringLiteral("opening"));
 }
 
@@ -1129,13 +1302,14 @@ bool PlaybackController::isActiveVod() const {
   return m_activeTarget.mode == PlaybackMode::Vod;
 }
 
-QString PlaybackController::currentPlaybackPath() const {
+QString PlaybackController::currentPlaybackPath(const QString &channelIdOverride) const {
   if (isActiveLive()) {
-    if (m_activeChannelId.isEmpty()) {
+    const QString channelId =
+      !channelIdOverride.trimmed().isEmpty() ? channelIdOverride.trimmed() : m_activeChannelId.trimmed();
+    if (channelId.isEmpty()) {
       return {};
     }
-    return QStringLiteral("/me/live/%1/health")
-      .arg(QString::fromUtf8(QUrl::toPercentEncoding(m_activeChannelId)));
+    return QStringLiteral("/me/live/%1/health").arg(QString::fromUtf8(QUrl::toPercentEncoding(channelId)));
   }
 
   if (isActiveVod()) {
@@ -1216,21 +1390,257 @@ QVariantList PlaybackController::mapAudioTracks(const QJsonArray &tracks) {
   return items;
 }
 
-void PlaybackController::handlePlaying() {
+libvlc_media_player_t *PlaybackController::currentPlayer() const {
+  return playerForSlot(currentPlaybackSlot());
+}
+
+libvlc_media_player_t *PlaybackController::playerForSlot(int slotIndex) const {
+  if (slotIndex < 0 || slotIndex >= static_cast<int>(m_playerSlots.size())) {
+    return nullptr;
+  }
+  return m_playerSlots[slotIndex].player;
+}
+
+PlaybackController::PlayerSlotState &PlaybackController::slotState(int slotIndex) {
+  return m_playerSlots[slotIndex];
+}
+
+const PlaybackController::PlayerSlotState &PlaybackController::slotState(int slotIndex) const {
+  return m_playerSlots[slotIndex];
+}
+
+int PlaybackController::currentPlaybackSlot() const {
+  return m_activeVideoSlot;
+}
+
+QString PlaybackController::rendererBackendName() const {
+  const QString effective = qEnvironmentVariable("FLIXIFY_GRAPHICS_BACKEND_EFFECTIVE").trimmed().toLower();
+  if (!effective.isEmpty()) {
+    return effective;
+  }
+  const QString fallback = qEnvironmentVariable("QSG_RHI_BACKEND").trimmed().toLower();
+  return fallback.isEmpty() ? QStringLiteral("unknown") : fallback;
+}
+
+QString PlaybackController::liveResolvePath(const QString &channelId, bool forceRelayRestart) const {
+  QUrl url = m_apiClient->resolvedUrl(
+    QStringLiteral("/me/native/live/%1/playback").arg(QString::fromUtf8(QUrl::toPercentEncoding(channelId)))
+  );
+  QUrlQuery query(url);
+  query.addQueryItem(QStringLiteral("platform"), normalizedPlatformName());
+  query.addQueryItem(QStringLiteral("clientRuntime"), QStringLiteral("native"));
+  query.addQueryItem(QStringLiteral("preferRelay"), QStringLiteral("1"));
+  query.addQueryItem(QStringLiteral("cacheProfile"), sanitizeLiveCacheProfile(m_liveCacheProfile));
+  if (forceRelayRestart) {
+    query.addQueryItem(QStringLiteral("forceRelayRestart"), QStringLiteral("1"));
+  }
+  url.setQuery(query);
+  return url.toString();
+}
+
+void PlaybackController::prepareLiveSlot(int slotIndex, const QString &channelId, qint64 requestStartedAt) {
+  if (slotIndex < 0 || slotIndex >= static_cast<int>(m_playerSlots.size())) {
+    return;
+  }
+
+  PlayerSlotState &slot = slotState(slotIndex);
+  slot.channelId = channelId;
+  slot.requestStartedAt = requestStartedAt > 0 ? requestStartedAt : nowMs();
+  slot.fallbackCount = qMax(0, m_candidateIndex);
+}
+
+void PlaybackController::activateLiveSlot(int slotIndex) {
+  if (slotIndex < 0 || slotIndex >= static_cast<int>(m_playerSlots.size())) {
+    return;
+  }
+
+  setActiveVideoSlot(slotIndex);
+  const PlayerSlotState &slot = slotState(slotIndex);
+  if (!slot.channelId.isEmpty()) {
+    setActiveChannelId(slot.channelId);
+  }
+  if (!slot.lastResolvedSource.isEmpty()) {
+    m_lastResolvedSource = slot.lastResolvedSource;
+    setDiagnosticsSessionId(slot.lastResolvedSource.value(QStringLiteral("diagnosticsSessionId")).toString());
+  }
+  if (m_delayedStopSlot >= 0 && m_delayedStopSlot != slotIndex) {
+    scheduleStopSlot(m_delayedStopSlot);
+  }
+}
+
+void PlaybackController::scheduleStopSlot(int slotIndex, int delayMs) {
+  if (slotIndex < 0 || slotIndex >= static_cast<int>(m_playerSlots.size())) {
+    return;
+  }
+  m_delayedStopSlot = slotIndex;
+  m_liveSlotStopTimer.start(qMax(120, delayMs));
+}
+
+void PlaybackController::resetLiveSwitchState() {
+  m_liveSwitchInProgress = false;
+  m_pendingLiveSlot = -1;
+  m_liveSwitchRequestedAt = 0;
+}
+
+void PlaybackController::clearLiveSourceCache(const QString &channelId) {
+  const QString normalizedChannelId = channelId.trimmed();
+  if (!normalizedChannelId.isEmpty()) {
+    m_liveSourceCache.remove(normalizedChannelId);
+    return;
+  }
+
+  const qint64 expiresBefore = nowMs();
+  for (auto iterator = m_liveSourceCache.begin(); iterator != m_liveSourceCache.end();) {
+    if (iterator.value().expiresAt <= expiresBefore) {
+      iterator = m_liveSourceCache.erase(iterator);
+    } else {
+      ++iterator;
+    }
+  }
+}
+
+void PlaybackController::storeLiveSourceCache(const QString &channelId, const QJsonObject &source, bool prefetched) {
+  if (channelId.trimmed().isEmpty() || source.value(QStringLiteral("url")).toString().trimmed().isEmpty()) {
+    return;
+  }
+
+  CachedLiveSource cached;
+  cached.source = source;
+  cached.expiresAt = nowMs() + kLiveSourceCacheTtlMs;
+  cached.cacheProfile = sanitizeLiveCacheProfile(m_liveCacheProfile);
+  cached.prefetched = prefetched;
+  m_liveSourceCache.insert(channelId.trimmed(), cached);
+}
+
+bool PlaybackController::tryOpenCachedLiveSource(const QString &channelId, int slotIndex) {
+  clearLiveSourceCache();
+  const auto iterator = m_liveSourceCache.constFind(channelId.trimmed());
+  if (iterator == m_liveSourceCache.constEnd()) {
+    return false;
+  }
+  if (iterator.value().cacheProfile != sanitizeLiveCacheProfile(m_liveCacheProfile) ||
+      iterator.value().expiresAt <= nowMs()) {
+    m_liveSourceCache.remove(channelId.trimmed());
+    return false;
+  }
+
+  openResolvedSource(iterator.value().source, slotIndex, true, iterator.value().prefetched);
+  return true;
+}
+
+void PlaybackController::prefetchLiveChannel(const QString &channelId) {
+  if (!m_apiClient || channelId.trimmed().isEmpty()) {
+    return;
+  }
+
+  const auto iterator = m_liveSourceCache.constFind(channelId.trimmed());
+  if (iterator != m_liveSourceCache.constEnd() &&
+      iterator.value().cacheProfile == sanitizeLiveCacheProfile(m_liveCacheProfile) &&
+      iterator.value().expiresAt > nowMs()) {
+    return;
+  }
+
+  QNetworkReply *reply = m_apiClient->network()->get(m_apiClient->authorizedRequest(liveResolvePath(channelId, false)));
+  connect(reply, &QNetworkReply::finished, this, [this, reply, channelId]() {
+    const QByteArray body = reply->readAll();
+    const bool ok = reply->error() == QNetworkReply::NoError;
+    reply->deleteLater();
+    if (!ok) {
+      return;
+    }
+    storeLiveSourceCache(channelId, QJsonDocument::fromJson(body).object(), true);
+  });
+}
+
+void PlaybackController::prefetchLiveCandidates() {
+  if (!m_apiClient || m_candidates.isEmpty()) {
+    return;
+  }
+
+  QStringList channelsToPrefetch;
+  if (m_candidates.size() > 1) {
+    channelsToPrefetch.push_back(m_candidates[1].channelId);
+  }
+
+  const QVariantList catalog = m_apiClient->liveChannels();
+  int activeIndex = -1;
+  for (int index = 0; index < catalog.size(); ++index) {
+    if (catalog[index].toMap().value(QStringLiteral("id")).toString() == m_activeChannelId) {
+      activeIndex = index;
+      break;
+    }
+  }
+
+  if (activeIndex > 0) {
+    channelsToPrefetch.push_back(catalog[activeIndex - 1].toMap().value(QStringLiteral("id")).toString());
+  }
+  if (activeIndex >= 0 && activeIndex + 1 < catalog.size()) {
+    channelsToPrefetch.push_back(catalog[activeIndex + 1].toMap().value(QStringLiteral("id")).toString());
+  }
+
+  channelsToPrefetch.removeAll(QString());
+  channelsToPrefetch.removeDuplicates();
+  for (const QString &channelId : channelsToPrefetch) {
+    if (channelId != m_activeChannelId) {
+      prefetchLiveChannel(channelId);
+    }
+  }
+}
+
+void PlaybackController::noteLiveIssue(const QString &reason, bool escalateToSafeProfile) {
+  if (!isActiveLive()) {
+    return;
+  }
+
+  const qint64 currentTimeMs = nowMs();
+  if (m_liveIssueWindowStartedAt <= 0 || currentTimeMs - m_liveIssueWindowStartedAt > kLiveIssueWindowMs) {
+    m_liveIssueWindowStartedAt = currentTimeMs;
+    m_liveIssueCount = 0;
+  }
+
+  if (!escalateToSafeProfile && m_lastLiveIssueAt > 0 && currentTimeMs - m_lastLiveIssueAt < 1500) {
+    return;
+  }
+
+  m_lastLiveIssueAt = currentTimeMs;
+  m_liveIssueCount += 1;
+  if (!reason.trimmed().isEmpty()) {
+    setLastError(reason);
+  }
+}
+
+void PlaybackController::restartActiveLiveWithSafeProfile(const QString &reason) {
+  if (!isActiveLive() || sanitizeLiveCacheProfile(m_liveCacheProfile) == QStringLiteral("safe")) {
+    return;
+  }
+
+  m_liveCacheProfile = QStringLiteral("safe");
+  m_forceRelayRestart = true;
+  clearLiveSourceCache(!m_activeChannelId.isEmpty() ? m_activeChannelId : m_requestedLiveChannelId);
+  if (!reason.trimmed().isEmpty()) {
+    setLastError(reason);
+  }
+  if (!m_activeChannelId.isEmpty()) {
+    playChannel(m_activeChannelId);
+  }
+}
+
+void PlaybackController::handlePlaying(int slotIndex) {
   setBusy(false);
   setLastError(QString());
   setState(QStringLiteral("playing"));
   setPaused(false);
   m_waitingForVideoSurface = false;
-  applyAudioState(true);
+  activateLiveSlot(slotIndex);
+  applyAudioState(playerForSlot(slotIndex), true);
   if (!m_timelineTimer.isActive()) {
     m_timelineTimer.start();
   }
 
-  updateVideoCrop();
+  updateVideoCrop(slotIndex);
 
   if (m_pendingResumeSeconds > 0.0 && isActiveVod()) {
-    libvlc_media_player_set_time(m_player, static_cast<libvlc_time_t>(m_pendingResumeSeconds * 1000.0));
+    libvlc_media_player_set_time(playerForSlot(slotIndex), static_cast<libvlc_time_t>(m_pendingResumeSeconds * 1000.0));
     m_pendingResumeSeconds = 0.0;
   }
 
@@ -1242,25 +1652,38 @@ void PlaybackController::handlePlaying() {
       recovered ? QStringLiteral("recovered") : QStringLiteral("playing"),
       QStringLiteral("playing"),
       QString(),
-      QString()
+      QString(),
+      slotIndex,
+      slotState(slotIndex).channelId
     );
+    resetLiveSwitchState();
+    prefetchLiveCandidates();
   } else if (isActiveVod() && recovered) {
-    reportPlaybackEvent(QStringLiteral("recovered"), QStringLiteral("playing"), QString(), QString());
+    reportPlaybackEvent(QStringLiteral("recovered"), QStringLiteral("playing"), QString(), QString(), slotIndex);
   }
 
   m_retryingSoftwareDecode = false;
   m_retryingVodResolve = false;
+  m_liveIssueWindowStartedAt = nowMs();
+  m_lastLiveIssueAt = 0;
+  m_liveIssueCount = 0;
 }
 
-void PlaybackController::handleBuffering(float percent) {
+void PlaybackController::handleBuffering(int slotIndex, float percent) {
   if (percent < 100.0f) {
     setState(QStringLiteral("buffering"));
+    if (isActiveLive() && percent < 5.0f) {
+      noteLiveIssue(QStringLiteral("Canli yayin tekrar buffer dolduruyor."), false);
+      if (sanitizeLiveCacheProfile(m_liveCacheProfile) != QStringLiteral("safe") && m_liveIssueCount >= 2) {
+        restartActiveLiveWithSafeProfile(QStringLiteral("Canli yayin safe profile ile yeniden baslatiliyor."));
+      }
+    }
   }
   setPaused(false);
   updateTimeline();
 }
 
-void PlaybackController::handleEncounteredError() {
+void PlaybackController::handleEncounteredError(int slotIndex) {
   if (!m_retryingSoftwareDecode && decoderMode() == QStringLiteral("hardware")) {
     retryCurrentSourceInSoftwareMode(QStringLiteral("Hardware decode fallback tetiklendi."));
     return;
@@ -1271,10 +1694,15 @@ void PlaybackController::handleEncounteredError() {
     return;
   }
 
+  noteLiveIssue(QStringLiteral("Canli yayin fallback tetiklendi."), true);
+  if (sanitizeLiveCacheProfile(m_liveCacheProfile) != QStringLiteral("safe") && m_liveIssueCount >= 2) {
+    restartActiveLiveWithSafeProfile(QStringLiteral("Canli yayin safe profile ile yeniden baslatiliyor."));
+    return;
+  }
   advanceToNextCandidate(QStringLiteral("Kanal sonraki sibling varyanta dusuruldu."));
 }
 
-void PlaybackController::handleStopped() {
+void PlaybackController::handleStopped(int slotIndex) {
   if (state() == QStringLiteral("idle")) {
     return;
   }
@@ -1284,7 +1712,13 @@ void PlaybackController::handleStopped() {
   setState(QStringLiteral("stopped"));
 }
 
-void PlaybackController::handleEndReached() {
+void PlaybackController::handleEndReached(int slotIndex) {
+  if (isActiveLive()) {
+    noteLiveIssue(QStringLiteral("Canli yayin sona erdi."), true);
+    advanceToNextCandidate(QStringLiteral("Canli yayin sona erdi."));
+    return;
+  }
+
   m_timelineTimer.stop();
   setPaused(true);
   setState(QStringLiteral("ended"));
@@ -1295,28 +1729,39 @@ void PlaybackController::handleEndReached() {
 }
 
 void PlaybackController::handleVlcEvent(const libvlc_event_t *event, void *opaque) {
-  auto *self = static_cast<PlaybackController *>(opaque);
-  if (!self) {
+  auto *context = static_cast<PlayerSlotContext *>(opaque);
+  if (!context || !context->controller) {
     return;
   }
 
+  auto *self = context->controller;
+  const int slotIndex = context->slotIndex;
+
   switch (event->type) {
     case libvlc_MediaPlayerPlaying:
-      QMetaObject::invokeMethod(self, [self]() { self->handlePlaying(); }, Qt::QueuedConnection);
+      QMetaObject::invokeMethod(self, [self, slotIndex]() { self->handlePlaying(slotIndex); }, Qt::QueuedConnection);
       break;
     case libvlc_MediaPlayerBuffering: {
       const float percent = event->u.media_player_buffering.new_cache;
-      QMetaObject::invokeMethod(self, [self, percent]() { self->handleBuffering(percent); }, Qt::QueuedConnection);
+      QMetaObject::invokeMethod(
+        self,
+        [self, slotIndex, percent]() { self->handleBuffering(slotIndex, percent); },
+        Qt::QueuedConnection
+      );
       break;
     }
     case libvlc_MediaPlayerEncounteredError:
-      QMetaObject::invokeMethod(self, [self]() { self->handleEncounteredError(); }, Qt::QueuedConnection);
+      QMetaObject::invokeMethod(
+        self,
+        [self, slotIndex]() { self->handleEncounteredError(slotIndex); },
+        Qt::QueuedConnection
+      );
       break;
     case libvlc_MediaPlayerStopped:
-      QMetaObject::invokeMethod(self, [self]() { self->handleStopped(); }, Qt::QueuedConnection);
+      QMetaObject::invokeMethod(self, [self, slotIndex]() { self->handleStopped(slotIndex); }, Qt::QueuedConnection);
       break;
     case libvlc_MediaPlayerEndReached:
-      QMetaObject::invokeMethod(self, [self]() { self->handleEndReached(); }, Qt::QueuedConnection);
+      QMetaObject::invokeMethod(self, [self, slotIndex]() { self->handleEndReached(slotIndex); }, Qt::QueuedConnection);
       break;
     default:
       break;

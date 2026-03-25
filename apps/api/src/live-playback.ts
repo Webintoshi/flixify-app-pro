@@ -25,9 +25,28 @@ const HARD_FAIL_UPSTREAM_STATUS_CODES = new Set([400, 401, 403, 404, 410, 422]);
 const DEFAULT_FETCH_TIMEOUT_MS = 8_000;
 const DEFAULT_FETCH_ATTEMPTS = 3;
 const MAX_FETCH_ATTEMPTS = 5;
-const LIVE_MANIFEST_FETCH_POLICY = { timeoutMs: 5_000, maxAttempts: 3, initialBackoffMs: 220, maxBackoffMs: 1_100 };
-const LIVE_SEGMENT_FETCH_POLICY = { timeoutMs: 9_000, maxAttempts: 4, initialBackoffMs: 280, maxBackoffMs: 2_000 };
-const LIVE_FILE_FETCH_POLICY = { timeoutMs: 12_000, maxAttempts: 3, initialBackoffMs: 320, maxBackoffMs: 2_500 };
+export type LiveCacheProfile = "fast" | "safe";
+const LIVE_MANIFEST_FETCH_POLICIES: Record<
+  LiveCacheProfile,
+  { timeoutMs: number; maxAttempts: number; initialBackoffMs: number; maxBackoffMs: number }
+> = {
+  fast: { timeoutMs: 4_000, maxAttempts: 3, initialBackoffMs: 180, maxBackoffMs: 900 },
+  safe: { timeoutMs: 6_500, maxAttempts: 4, initialBackoffMs: 260, maxBackoffMs: 1_600 }
+};
+const LIVE_SEGMENT_FETCH_POLICIES: Record<
+  LiveCacheProfile,
+  { timeoutMs: number; maxAttempts: number; initialBackoffMs: number; maxBackoffMs: number }
+> = {
+  fast: { timeoutMs: 7_000, maxAttempts: 4, initialBackoffMs: 240, maxBackoffMs: 1_600 },
+  safe: { timeoutMs: 10_000, maxAttempts: 5, initialBackoffMs: 320, maxBackoffMs: 2_400 }
+};
+const LIVE_FILE_FETCH_POLICIES: Record<
+  LiveCacheProfile,
+  { timeoutMs: number; maxAttempts: number; initialBackoffMs: number; maxBackoffMs: number }
+> = {
+  fast: { timeoutMs: 9_000, maxAttempts: 3, initialBackoffMs: 280, maxBackoffMs: 1_800 },
+  safe: { timeoutMs: 13_000, maxAttempts: 4, initialBackoffMs: 360, maxBackoffMs: 2_800 }
+};
 const DEFAULT_FETCH_POLICY = {
   timeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
   maxAttempts: DEFAULT_FETCH_ATTEMPTS,
@@ -84,6 +103,7 @@ type ViewerLease = {
 type LiveRelaySession = {
   id: string;
   channelId: string;
+  cacheProfile: LiveCacheProfile;
   snapshotVersion: number;
   baseOrigin: string;
   sourceUrl: string;
@@ -136,6 +156,7 @@ type CreateLivePlaybackInput = {
   allowFileProxyFallback?: boolean;
   preferDirectProxy?: boolean;
   preferTranscode?: boolean;
+  cacheProfile?: LiveCacheProfile;
 };
 
 type FetchUpstreamOptions = {
@@ -426,9 +447,18 @@ function buildReadyPlaybackRecord(session: LiveRelaySession, viewer: ViewerLease
   };
 }
 
+function normalizeCacheProfile(value: LiveCacheProfile | string | null | undefined): LiveCacheProfile {
+  return value === "safe" ? "safe" : "fast";
+}
+
+function getSessionKey(channelId: string, cacheProfile: LiveCacheProfile) {
+  return `${channelId}:${cacheProfile}`;
+}
+
 function buildRelayDetail(session: LiveRelaySession, extra?: Record<string, unknown> | null) {
   return {
     viewerCount: session.viewers.size,
+    cacheProfile: session.cacheProfile,
     ffmpegMode: session.localState?.mode ?? null,
     ffmpegRestartCount: session.localState?.restartCount ?? 0,
     lastManifestSequence: session.localState?.lastManifestSequence ?? null,
@@ -443,9 +473,16 @@ function buildRelayDetail(session: LiveRelaySession, extra?: Record<string, unkn
   };
 }
 
-function createFfmpegArgs(sourceUrl: string, outputDir: string, transcode: boolean, restartCount: number) {
+function createFfmpegArgs(
+  sourceUrl: string,
+  outputDir: string,
+  transcode: boolean,
+  restartCount: number,
+  cacheProfile: LiveCacheProfile
+) {
   const segmentPattern = path.join(outputDir, `segment-${restartCount}-%05d.ts`);
   const manifestPath = path.join(outputDir, "index.m3u8");
+  const isSafeProfile = cacheProfile === "safe";
   const baseArgs = [
     "-hide_banner",
     "-loglevel",
@@ -476,9 +513,9 @@ function createFfmpegArgs(sourceUrl: string, outputDir: string, transcode: boole
     "-thread_queue_size",
     "4096",
     "-analyzeduration",
-    "8M",
+    isSafeProfile ? "4M" : "1M",
     "-probesize",
-    "8M",
+    isSafeProfile ? "4M" : "1M",
     "-user_agent",
     DEFAULT_REQUEST_HEADERS["user-agent"],
     "-headers",
@@ -534,11 +571,11 @@ function createFfmpegArgs(sourceUrl: string, outputDir: string, transcode: boole
     "-start_number",
     "0",
     "-hls_time",
-    "4",
+    isSafeProfile ? "4" : "2",
     "-hls_list_size",
-    "30",
+    isSafeProfile ? "12" : "8",
     "-hls_delete_threshold",
-    "12",
+    isSafeProfile ? "4" : "3",
     "-hls_segment_type",
     "mpegts",
     "-hls_flags",
@@ -611,8 +648,9 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
 
   async function destroySession(session: LiveRelaySession) {
     sessions.delete(session.id);
-    if (sessionIdsByChannel.get(session.channelId) === session.id) {
-      sessionIdsByChannel.delete(session.channelId);
+    const sessionKey = getSessionKey(session.channelId, session.cacheProfile);
+    if (sessionIdsByChannel.get(sessionKey) === session.id) {
+      sessionIdsByChannel.delete(sessionKey);
     }
     if (session.localState?.process && !session.localState.process.killed) {
       session.localState.process.kill("SIGKILL");
@@ -691,11 +729,11 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
 
     const defaultPolicy =
       options.kind === "manifest"
-        ? LIVE_MANIFEST_FETCH_POLICY
+        ? LIVE_MANIFEST_FETCH_POLICIES[session.cacheProfile]
         : options.kind === "segment"
-          ? LIVE_SEGMENT_FETCH_POLICY
+          ? LIVE_SEGMENT_FETCH_POLICIES[session.cacheProfile]
           : options.kind === "file"
-            ? LIVE_FILE_FETCH_POLICY
+            ? LIVE_FILE_FETCH_POLICIES[session.cacheProfile]
             : DEFAULT_FETCH_POLICY;
     const timeoutMs =
       typeof options.timeoutMs === "number" && Number.isFinite(options.timeoutMs)
@@ -784,7 +822,13 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
     await removeDirectory(session.localState.tempDir);
     await fsp.mkdir(session.localState.tempDir, { recursive: true });
 
-    const args = createFfmpegArgs(session.sourceUrl, session.localState.tempDir, transcode, session.localState.restartCount);
+    const args = createFfmpegArgs(
+      session.sourceUrl,
+      session.localState.tempDir,
+      transcode,
+      session.localState.restartCount,
+      session.cacheProfile
+    );
     let stderrOutput = "";
 
     const child = spawn(options.ffmpegBinary, args, {
@@ -986,16 +1030,19 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
       });
     }
 
+    const cacheProfile = normalizeCacheProfile(input.cacheProfile);
     const preferDirectProxy = input.preferDirectProxy !== false;
     const wantsRelay = input.sourceTransport !== "hls" && !preferDirectProxy;
+    const sessionKey = getSessionKey(input.channelId, cacheProfile);
 
     let session = (() => {
-      const existingSessionId = sessionIdsByChannel.get(input.channelId);
+      const existingSessionId = sessionIdsByChannel.get(sessionKey);
       return existingSessionId ? sessions.get(existingSessionId) ?? null : null;
     })();
 
     const needsFreshSession =
       !session ||
+      session.cacheProfile !== cacheProfile ||
       session.sourceUrl !== input.sourceUrl ||
       session.sourceTransport !== input.sourceTransport ||
       (wantsRelay && session.localState === null && input.sourceTransport !== "hls") ||
@@ -1027,6 +1074,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
       session = {
         id: crypto.randomUUID(),
         channelId: input.channelId,
+        cacheProfile,
         snapshotVersion: input.snapshotVersion,
         baseOrigin: input.baseOrigin,
         sourceUrl: input.sourceUrl,
@@ -1087,7 +1135,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
       }
 
       sessions.set(session.id, session);
-      sessionIdsByChannel.set(session.channelId, session.id);
+      sessionIdsByChannel.set(sessionKey, session.id);
 
       await emitDiagnostic({
         channelId: session.channelId,
@@ -1101,6 +1149,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
     }
 
     session.baseOrigin = input.baseOrigin;
+    session.cacheProfile = cacheProfile;
     session.snapshotVersion = input.snapshotVersion;
     session.healthStatus = input.healthStatus;
     session.lastCheckedAt = input.lastCheckedAt;

@@ -67,7 +67,41 @@ describe("resolveVodTranscodeDecision", () => {
     expect(decision.needsTranscode).toBe(false);
   });
 
-  it("transcodes unsupported desktop containers and codecs", () => {
+  it("keeps native desktop playback on direct mode for libVLC-capable containers and codecs", () => {
+    const mkvDecision = resolveVodTranscodeDecision({
+      transport: "mkv",
+      supportsByteRange: true,
+      preferTranscode: false,
+      clientRuntime: "native",
+      platform: "windows-native-qt",
+      mediaProfile: {
+        containerTransport: "mkv",
+        primaryVideoCodec: "h264",
+        audioCodecs: ["aac"],
+        audioTracks: []
+      }
+    });
+    const hevcDecision = resolveVodTranscodeDecision({
+      transport: "mp4",
+      supportsByteRange: true,
+      preferTranscode: false,
+      clientRuntime: "native",
+      platform: "windows-native-qt",
+      mediaProfile: {
+        containerTransport: "mp4",
+        primaryVideoCodec: "hevc",
+        audioCodecs: ["eac3"],
+        audioTracks: []
+      }
+    });
+
+    expect(mkvDecision.deliveryMode).toBe("file_proxy");
+    expect(mkvDecision.needsTranscode).toBe(false);
+    expect(hevcDecision.deliveryMode).toBe("file_proxy");
+    expect(hevcDecision.needsTranscode).toBe(false);
+  });
+
+  it("transcodes unsupported desktop containers and codecs for non-native app runtimes", () => {
     const mkvDecision = resolveVodTranscodeDecision({
       transport: "mkv",
       supportsByteRange: true,
@@ -99,6 +133,29 @@ describe("resolveVodTranscodeDecision", () => {
     expect(mkvDecision.needsTranscode).toBe(true);
     expect(hevcDecision.deliveryMode).toBe("hls_transcoded");
     expect(hevcDecision.needsTranscode).toBe(true);
+  });
+
+  it("forces transcode when native desktop playback needs an explicit audio track selection", () => {
+    const decision = resolveVodTranscodeDecision({
+      transport: "mkv",
+      supportsByteRange: true,
+      preferTranscode: false,
+      clientRuntime: "native",
+      platform: "windows-native-qt",
+      selectedAudioTrackId: "a2",
+      mediaProfile: {
+        containerTransport: "mkv",
+        primaryVideoCodec: "h264",
+        audioCodecs: ["aac", "aac"],
+        audioTracks: [
+          { id: "a1", sourceStreamIndex: 1, language: "en", title: "English", channels: 2, sourceDefault: true },
+          { id: "a2", sourceStreamIndex: 2, language: "tr", title: "Turkce", channels: 2, sourceDefault: false }
+        ]
+      }
+    });
+
+    expect(decision.deliveryMode).toBe("hls_transcoded");
+    expect(decision.needsTranscode).toBe(true);
   });
 
   it("uses conservative transcode mode for unknown installed platforms", () => {

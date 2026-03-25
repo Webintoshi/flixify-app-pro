@@ -125,6 +125,20 @@ void NativeVideoSurface::setMousePassthrough(bool enabled) {
   emit mousePassthroughChanged();
 }
 
+bool NativeVideoSurface::frontSurface() const {
+  return m_frontSurface;
+}
+
+void NativeVideoSurface::setFrontSurface(bool enabled) {
+  if (m_frontSurface == enabled) {
+    return;
+  }
+
+  m_frontSurface = enabled;
+  emit frontSurfaceChanged();
+  updateNativeSurfaceGeometry();
+}
+
 void NativeVideoSurface::paint(QPainter *painter) {
   painter->fillRect(boundingRect(), QColor(QStringLiteral("#121212")));
   painter->setPen(QColor(QStringLiteral("#e6e6e6")));
@@ -177,7 +191,7 @@ void NativeVideoSurface::updateNativeSurfaceGeometry() {
 
   SetWindowPos(
     surfaceWindow,
-    HWND_TOP,
+    m_frontSurface ? HWND_TOP : HWND_BOTTOM,
     targetX,
     targetY,
     targetWidth,

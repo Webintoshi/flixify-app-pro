@@ -143,6 +143,41 @@ export function createSignedLiveLogoUrl(
   return signedUrl.toString();
 }
 
+export function createCatalogArtworkUrl(input: {
+  sourceUrl: string | null | undefined;
+  origin: string;
+  clientRuntime?: "browser" | "app" | "native";
+  options?: { nowMs?: number; ttlSeconds?: number };
+}) {
+  const trimmed = typeof input.sourceUrl === "string" ? input.sourceUrl.trim() : "";
+  const normalizedSourceUrl = trimmed ? normalizeArtworkSourceUrl(trimmed) : null;
+  if (normalizedSourceUrl) {
+    const parsed = new URL(normalizedSourceUrl);
+    if (isBlockedArtworkHostname(parsed.hostname)) {
+      return input.clientRuntime === "browser" ? null : normalizedSourceUrl;
+    }
+  }
+
+  const signedUrl = createSignedLiveLogoUrl(input.sourceUrl, input.origin, input.options);
+  if (signedUrl) {
+    return signedUrl;
+  }
+
+  if (input.clientRuntime === "browser") {
+    return null;
+  }
+
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith("//")) {
+    return trimmed;
+  }
+
+  return normalizedSourceUrl;
+}
+
 export function signLiveLogoItems<T extends { logoUrl: string | null }>(
   items: readonly T[],
   origin: string,

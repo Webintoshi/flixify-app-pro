@@ -52,14 +52,21 @@ void applyWindowsCaptionStyle(QQuickWindow *window) {
 int main(int argc, char *argv[]) {
 #if defined(Q_OS_WIN)
   const QString graphicsBackend = qEnvironmentVariable("FLIXIFY_GRAPHICS_BACKEND").trimmed().toLower();
+  QByteArray effectiveGraphicsBackend = "d3d11";
   if (graphicsBackend == QStringLiteral("opengl")) {
+    effectiveGraphicsBackend = "opengl";
     qputenv("QSG_RHI_BACKEND", "opengl");
   } else if (graphicsBackend == QStringLiteral("d3d11")) {
+    effectiveGraphicsBackend = "d3d11";
     qputenv("QSG_RHI_BACKEND", "d3d11");
-  } else {
+  } else if (graphicsBackend == QStringLiteral("software")) {
+    effectiveGraphicsBackend = "software";
     qputenv("QSG_RHI_BACKEND", "software");
     qputenv("QT_OPENGL", "software");
+  } else {
+    qputenv("QSG_RHI_BACKEND", "d3d11");
   }
+  qputenv("FLIXIFY_GRAPHICS_BACKEND_EFFECTIVE", effectiveGraphicsBackend);
 #endif
 
   QGuiApplication app(argc, argv);
@@ -71,10 +78,10 @@ int main(int argc, char *argv[]) {
 #if defined(Q_OS_WIN)
   if (graphicsBackend == QStringLiteral("opengl")) {
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
-  } else if (graphicsBackend == QStringLiteral("d3d11")) {
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D11);
-  } else {
+  } else if (graphicsBackend == QStringLiteral("software")) {
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
+  } else {
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D11);
   }
 #endif
 
@@ -113,9 +120,11 @@ int main(int argc, char *argv[]) {
   });
 #endif
 
-  // Start in fullscreen mode
+  // Open in a fixed normal window instead of forcing fullscreen on startup.
   QTimer::singleShot(100, rootWindow, [rootWindow]() {
-    rootWindow->showFullScreen();
+    rootWindow->resize(1600, 600);
+    rootWindow->showNormal();
+    rootWindow->raise();
   });
 
   return app.exec();

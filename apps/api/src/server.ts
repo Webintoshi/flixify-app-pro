@@ -149,11 +149,10 @@ import {
 import { API_CORS_CONFIG } from "./cors-config.js";
 import { stripEmptyJsonContentType } from "./http-headers.js";
 import {
-  createSignedLiveLogoUrl,
+  createCatalogArtworkUrl,
   fetchLiveLogoFromUpstream,
   LIVE_LOGO_PROXY_PATH,
   LiveLogoProxyError,
-  signLiveLogoItems,
   verifySignedLiveLogoQuery
 } from "./live-logo.js";
 import {
@@ -340,9 +339,18 @@ function getRequestBaseOrigin(request: FastifyRequest) {
 }
 
 function signLiveCatalogResponse<T extends { items: LiveChannel[] }>(payload: T, request: FastifyRequest): T {
+  const requestOrigin = getRequestBaseOrigin(request);
+  const clientRuntime = normalizeClientRuntime(request.headers["x-flixify-client-runtime"]);
   return {
     ...payload,
-    items: signLiveLogoItems(payload.items, getRequestBaseOrigin(request))
+    items: payload.items.map((item) => ({
+      ...item,
+      logoUrl: createCatalogArtworkUrl({
+        sourceUrl: item.logoUrl,
+        origin: requestOrigin,
+        clientRuntime
+      })
+    }))
   };
 }
 
@@ -351,11 +359,16 @@ function signMovieCatalogResponse<T extends { items: Array<{ posterUrl: string |
   request: FastifyRequest
 ): T {
   const requestOrigin = getRequestBaseOrigin(request);
+  const clientRuntime = normalizeClientRuntime(request.headers["x-flixify-client-runtime"]);
   return {
     ...payload,
     items: payload.items.map((item) => ({
       ...item,
-      posterUrl: createSignedLiveLogoUrl(item.posterUrl, requestOrigin)
+      posterUrl: createCatalogArtworkUrl({
+        sourceUrl: item.posterUrl,
+        origin: requestOrigin,
+        clientRuntime
+      })
     }))
   };
 }
@@ -365,11 +378,16 @@ function signSeriesCatalogResponse<T extends { items: Array<{ posterUrl: string 
   request: FastifyRequest
 ): T {
   const requestOrigin = getRequestBaseOrigin(request);
+  const clientRuntime = normalizeClientRuntime(request.headers["x-flixify-client-runtime"]);
   return {
     ...payload,
     items: payload.items.map((item) => ({
       ...item,
-      posterUrl: createSignedLiveLogoUrl(item.posterUrl, requestOrigin)
+      posterUrl: createCatalogArtworkUrl({
+        sourceUrl: item.posterUrl,
+        origin: requestOrigin,
+        clientRuntime
+      })
     }))
   };
 }
@@ -433,6 +451,10 @@ function normalizeClientRuntime(value: unknown): ClientRuntime {
   }
 
   return "browser";
+}
+
+function normalizeLiveCacheProfile(value: unknown): "fast" | "safe" {
+  return typeof value === "string" && value.trim().toLowerCase() === "safe" ? "safe" : "fast";
 }
 
 function extractUpstreamStatus(errorMessage: string | null | undefined) {
@@ -729,6 +751,18 @@ function canUseVodDirectPlaybackFallback(input: {
   }
 
   if (input.transport === "hls") {
+    return true;
+  }
+
+  if (
+    input.clientRuntime === "native" &&
+    input.platform &&
+    (input.platform.startsWith("windows") ||
+      input.platform.startsWith("macos") ||
+      input.platform.startsWith("linux") ||
+      input.platform.includes("desktop")) &&
+    input.transport !== "unknown"
+  ) {
     return true;
   }
 
@@ -1539,6 +1573,7 @@ export function buildServer() {
         rawQuery?.preferTranscode === true ||
         rawQuery?.preferTranscode === "true" ||
         rawQuery?.preferTranscode === "1";
+      const cacheProfile = normalizeLiveCacheProfile(rawQuery?.cacheProfile);
       const audioTrackId =
         typeof rawQuery?.audioTrackId === "string" && rawQuery.audioTrackId.trim().length > 0
           ? rawQuery.audioTrackId.trim().slice(0, 120)
@@ -1569,7 +1604,8 @@ export function buildServer() {
             forceRelayRestart,
             allowFileProxyFallback: debugFileProxy,
             preferDirectProxy: !preferRelay,
-            preferTranscode
+            preferTranscode,
+            cacheProfile
           });
 
           if (
@@ -1744,7 +1780,8 @@ export function buildServer() {
           forceRelayRestart,
           allowFileProxyFallback: debugFileProxy || optimisticProbeFallback,
           preferDirectProxy: !preferRelay,
-          preferTranscode
+          preferTranscode,
+          cacheProfile
         });
       } catch (error) {
         request.log.warn(
@@ -1801,6 +1838,26 @@ export function buildServer() {
     try {
       const auth = await authenticateUser(request.headers.authorization);
       const { channelId } = request.params as { channelId: string };
+      const rawQuery = request.query as Record<string, unknown> | undefined;
+      const forceRelayRestart =
+        rawQuery?.forceRelayRestart === true ||
+        rawQuery?.forceRelayRestart === "true" ||
+        rawQuery?.forceRelayRestart === "1";
+      const debugFileProxy =
+        rawQuery?.debugFileProxy === true ||
+        rawQuery?.debugFileProxy === "true" ||
+        rawQuery?.debugFileProxy === "1";
+      const preferRelay =
+        rawQuery?.preferRelay === undefined
+          ? true
+          : rawQuery?.preferRelay === true ||
+            rawQuery?.preferRelay === "true" ||
+            rawQuery?.preferRelay === "1";
+      const preferTranscode =
+        rawQuery?.preferTranscode === true ||
+        rawQuery?.preferTranscode === "true" ||
+        rawQuery?.preferTranscode === "1";
+      const cacheProfile = normalizeLiveCacheProfile(rawQuery?.cacheProfile);
 
       if (isDemoMode) {
         const me = getDemoMe(auth.userId);
@@ -1818,8 +1875,41 @@ export function buildServer() {
         }
 
         const variantMetadata = buildLiveVariantMetadata(channel.title);
-        const transport =
-          channel.transport ?? detectLiveTransport(channel.streamUrl) ?? "unknown";
+        const transport = channel.transport ?? detectLiveTransport(channel.streamUrl) ?? "unknown";
+
+        try {
+          const playback = await livePlaybackManager.createPlayback({
+            channelId,
+            snapshotVersion: 1,
+            sourceUrl: channel.streamUrl,
+            baseOrigin: getRequestBaseOrigin(request),
+            sourceTransport: transport,
+            healthStatus: channel.healthStatus,
+            lastCheckedAt: channel.lastCheckedAt,
+            canPlay: true,
+            isVerified: channel.isVerified,
+            errorMessage: null,
+            forceRelayRestart,
+            allowFileProxyFallback: debugFileProxy,
+            preferDirectProxy: !preferRelay,
+            preferTranscode,
+            cacheProfile
+          });
+
+          if (playback.canPlay && typeof playback.url === "string") {
+            return buildNativeLivePlaybackResponse({
+              url: playback.url,
+              transport: playback.transport,
+              diagnosticsSessionId: playback.diagnosticsSessionId,
+              variantGroupKey: channel.variantGroupKey ?? variantMetadata.variantGroupKey,
+              qualityRank: channel.qualityRank ?? variantMetadata.qualityRank,
+              isVerified: playback.isVerified,
+              lastCheckedAt: playback.lastCheckedAt ?? channel.lastCheckedAt ?? null
+            });
+          }
+        } catch (error) {
+          request.log.warn({ err: error, channelId }, "Demo native live playback manager error");
+        }
 
         return buildNativeLivePlaybackResponse({
           url: channel.streamUrl,
@@ -1907,6 +1997,49 @@ export function buildServer() {
       }
 
       const variantMetadata = buildLiveVariantMetadata(channel.title);
+      const canAttemptRelay = Boolean(resolved.sourceUrl) && (resolved.ok || allowOptimisticNativeDirect);
+
+      try {
+        const playback = await livePlaybackManager.createPlayback({
+          channelId,
+          snapshotVersion: channel.snapshot_version,
+          sourceUrl: canAttemptRelay ? resolved.sourceUrl : null,
+          cookie: canAttemptRelay ? resolved.cookie : null,
+          baseOrigin: getRequestBaseOrigin(request),
+          sourceTransport: resolved.transport,
+          healthStatus,
+          lastCheckedAt: checkedAt,
+          canPlay: canAttemptRelay,
+          isVerified: resolved.isVerified,
+          errorMessage: canAttemptRelay ? null : errorMessage ?? "Canli yayin gecici olarak kullanilamiyor.",
+          forceRelayRestart,
+          allowFileProxyFallback: debugFileProxy || allowOptimisticNativeDirect,
+          preferDirectProxy: !preferRelay,
+          preferTranscode,
+          cacheProfile
+        });
+
+        if (playback.canPlay && typeof playback.url === "string") {
+          return buildNativeLivePlaybackResponse({
+            url: playback.url,
+            transport: playback.transport,
+            diagnosticsSessionId: playback.diagnosticsSessionId,
+            variantGroupKey: channel.variant_group_key ?? variantMetadata.variantGroupKey,
+            qualityRank: channel.quality_rank ?? variantMetadata.qualityRank,
+            isVerified: playback.isVerified,
+            lastCheckedAt: playback.lastCheckedAt ?? checkedAt
+          });
+        }
+      } catch (error) {
+        request.log.warn(
+          {
+            err: error,
+            channelId
+          },
+          "Native live playback manager error"
+        );
+      }
+
       return buildNativeLivePlaybackResponse({
         url: resolved.sourceUrl,
         transport: resolved.transport,
@@ -2399,6 +2532,28 @@ export function buildServer() {
           selectedAudioTrackId: playback.selectedAudioTrackId,
           isVerified: playback.isVerified,
           lastCheckedAt: playback.expiresAt ?? new Date().toISOString()
+        });
+      }
+
+      if (
+        typeof resolved.sourceUrl === "string" &&
+        canUseVodDirectPlaybackFallback({
+          clientRuntime: "native",
+          platform,
+          transport: resolved.transport,
+          sourceUrl: resolved.sourceUrl
+        })
+      ) {
+        return buildNativeVodPlaybackResponse({
+          url: resolved.sourceUrl,
+          transport: resolved.transport,
+          deliveryMode: "direct",
+          audioTracks: [],
+          defaultAudioTrackId: null,
+          selectedAudioTrackId: null,
+          cookie: resolved.cookie,
+          isVerified: resolved.isVerified,
+          lastCheckedAt: new Date().toISOString()
         });
       }
 

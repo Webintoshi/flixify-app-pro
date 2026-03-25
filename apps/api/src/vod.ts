@@ -988,6 +988,7 @@ export type VodTranscodeDecisionInput = {
   clientRuntime?: "browser" | "app" | "native";
   platform?: string | null;
   mediaProfile?: VodMediaProfile | null;
+  selectedAudioTrackId?: string | null;
   debugPassthrough?: boolean;
 };
 
@@ -1005,6 +1006,43 @@ function normalizePlaybackPlatform(value: string | null | undefined) {
 
 function isInstalledAppRuntime(clientRuntime: VodTranscodeDecisionInput["clientRuntime"]) {
   return clientRuntime === "app" || clientRuntime === "native";
+}
+
+function isNativeDesktopPlaybackRuntime(input: VodTranscodeDecisionInput) {
+  return input.clientRuntime === "native" && isDesktopPlaybackPlatform(normalizePlaybackPlatform(input.platform));
+}
+
+function shouldForceNativeAudioTrackTranscode(input: VodTranscodeDecisionInput) {
+  if (!isNativeDesktopPlaybackRuntime(input)) {
+    return false;
+  }
+
+  const requestedTrackId = input.selectedAudioTrackId?.trim() ?? "";
+  if (!requestedTrackId) {
+    return false;
+  }
+
+  return (input.mediaProfile?.audioTracks.length ?? 0) > 1;
+}
+
+function canUseNativeDesktopFileProxy(input: VodTranscodeDecisionInput, effectiveTransport: VodTransport) {
+  if (!isNativeDesktopPlaybackRuntime(input)) {
+    return false;
+  }
+
+  if (effectiveTransport === "hls" || effectiveTransport === "unknown") {
+    return false;
+  }
+
+  if (!input.supportsByteRange) {
+    return false;
+  }
+
+  if (shouldForceNativeAudioTrackTranscode(input)) {
+    return false;
+  }
+
+  return true;
 }
 
 function resolveEffectiveTransport(input: VodTranscodeDecisionInput) {
@@ -1075,6 +1113,15 @@ export function resolveVodTranscodeDecision(input: VodTranscodeDecisionInput): V
         useFileProxy: false,
         requiresFfmpeg: false,
         deliveryMode: "hls_proxy"
+      };
+    }
+
+    if (canUseNativeDesktopFileProxy(input, effectiveTransport)) {
+      return {
+        needsTranscode: false,
+        useFileProxy: true,
+        requiresFfmpeg: false,
+        deliveryMode: "file_proxy"
       };
     }
 
@@ -1602,6 +1649,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       clientRuntime: input.clientRuntime,
       platform: input.platform,
       mediaProfile,
+      selectedAudioTrackId: input.selectedAudioTrackId,
       debugPassthrough: debugEnabled
     });
     const canUseFfmpeg = decision.requiresFfmpeg ? await checkFfmpegAvailability() : true;

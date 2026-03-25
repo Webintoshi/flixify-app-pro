@@ -6,10 +6,10 @@ import Flixify.Native 1.0
 
 ApplicationWindow {
     id: window
-    width: 1540
-    height: 960
+    width: 1600
+    height: 600
     minimumWidth: 980
-    minimumHeight: 700
+    minimumHeight: 600
     visible: true
     title: "Flixify Pro"
     color: "#05070b"
@@ -106,7 +106,6 @@ ApplicationWindow {
     property color toastColor: info
 
     Component.onCompleted: {
-        playbackController.videoFillMode = "fill"
         currentScreen = apiClient.authenticated ? "home" : "login"
         apiClient.bootstrap()
     }
@@ -705,7 +704,23 @@ ApplicationWindow {
         return output
     }
 
-    function filteredMovies() { return apiClient.movies || [] }
+    function matchesFilter(item, search, group) {
+        if (!item) {
+            return false
+        }
+        const searchText = normalizeText(search)
+        const groupText = normalizeText(group)
+        const haystack = normalizeText(`${item.title || ""} ${item.groupTitle || ""}`)
+        if (searchText.length && haystack.indexOf(searchText) === -1) {
+            return false
+        }
+        if (groupText.length && normalizeText(item.groupTitle) !== groupText) {
+            return false
+        }
+        return true
+    }
+
+    function filteredMovies() { return filterItems(apiClient.movies || [], moviesSearchText, selectedMovieGroup) }
     function filteredSeries() { return filterItems(apiClient.series || [], seriesSearchText, selectedSeriesGroup) }
     function filteredLiveItems() { return apiClient.liveChannels || [] }
 
@@ -749,6 +764,57 @@ ApplicationWindow {
             }
         }
         return items.length ? items[0] : null
+    }
+
+    function featuredMovieItem() {
+        const preferred = selectedMovie()
+        if (preferred && matchesFilter(preferred, moviesSearchText, selectedMovieGroup)) {
+            return preferred
+        }
+        return firstPlayable(filteredMovies())
+    }
+
+    function seriesLeadEpisode(series) {
+        if (!series) {
+            return null
+        }
+        if (series.featuredEpisode && series.featuredEpisode.id) {
+            return series.featuredEpisode
+        }
+        const seasons = series.seasons || []
+        for (let seasonIndex = 0; seasonIndex < seasons.length; seasonIndex += 1) {
+            const episodes = seasons[seasonIndex].episodes || []
+            for (let episodeIndex = 0; episodeIndex < episodes.length; episodeIndex += 1) {
+                if (episodes[episodeIndex] && episodes[episodeIndex].id) {
+                    return episodes[episodeIndex]
+                }
+            }
+        }
+        return null
+    }
+
+    function featuredSeriesItem() {
+        const preferred = selectedSeries()
+        if (preferred && matchesFilter(preferred, seriesSearchText, selectedSeriesGroup)) {
+            return preferred
+        }
+        const items = filteredSeries()
+        return items.length ? items[0] : null
+    }
+
+    function seriesTotalEpisodes(series) {
+        if (!series) {
+            return 0
+        }
+        if (Number(series.episodeCount) > 0) {
+            return Number(series.episodeCount)
+        }
+        const seasons = series.seasons || []
+        let total = 0
+        for (let index = 0; index < seasons.length; index += 1) {
+            total += Number(seasons[index].episodeCount || (seasons[index].episodes || []).length || 0)
+        }
+        return total
     }
 
     function selectedLiveItem() {
@@ -2446,6 +2512,12 @@ ApplicationWindow {
                 onClicked: showToast("Favorilere eklendi")
             }
             
+            PlayerIconButton {
+                icon: playbackController.videoFillMode === "fill" ? "Fill" : "Fit"
+                tooltip: playbackController.videoFillMode === "fill" ? "Sığdır" : "Doldur"
+                onClicked: playbackController.videoFillMode = playbackController.videoFillMode === "fill" ? "fit" : "fill"
+            }
+
             // Tam Ekran
             PlayerIconButton {
                 icon: videoFullscreen ? "⤢" : "⛶"
@@ -2569,6 +2641,7 @@ ApplicationWindow {
     Component {
         id: nativeVideoSurfaceComponent
         Item {
+            property int slotIndex: 0
             anchors.fill: parent
 
             NativeVideoSurface {
@@ -2576,13 +2649,14 @@ ApplicationWindow {
                 anchors.fill: parent
                 anchors.margins: 0
                 mousePassthrough: true
+                frontSurface: playbackController.activeVideoSlot === parent.slotIndex
                 onSurfaceHandleChanged: {
-                    playbackController.setVideoSurfaceHandle(surfaceHandle)
-                    playbackController.setVideoSurfaceGeometry(width, height)
+                    playbackController.setVideoSurfaceHandle(parent.slotIndex, surfaceHandle)
+                    playbackController.setVideoSurfaceGeometry(parent.slotIndex, width, height)
                 }
-                onWidthChanged: playbackController.setVideoSurfaceGeometry(width, height)
-                onHeightChanged: playbackController.setVideoSurfaceGeometry(width, height)
-                Component.onCompleted: playbackController.setVideoSurfaceGeometry(width, height)
+                onWidthChanged: playbackController.setVideoSurfaceGeometry(parent.slotIndex, width, height)
+                onHeightChanged: playbackController.setVideoSurfaceGeometry(parent.slotIndex, width, height)
+                Component.onCompleted: playbackController.setVideoSurfaceGeometry(parent.slotIndex, width, height)
                 onPointerActivity: {
                     if (currentScreen === "live" && inlineLivePlayerVisible()) {
                         showLiveControls()
@@ -2681,6 +2755,75 @@ ApplicationWindow {
                                 anchors.bottomMargin: Number(inlineVodControls.implicitHeight) + 48
                                 active: true
                                 sourceComponent: nativeVideoSurfaceComponent
+                            }
+
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: Math.min(parent.width - 48, window.compactWindow ? 320 : 420)
+                                height: window.compactWindow ? 250 : 280
+                                radius: 26
+                                color: "#dc090c13"
+                                border.width: 1
+                                border.color: "#24ffffff"
+                                visible: playbackController.state === "error"
+
+                                Column {
+                                    anchors.fill: parent
+                                    anchors.margins: 22
+                                    spacing: 12
+
+                                    Rectangle {
+                                        width: 64
+                                        height: 64
+                                        radius: 22
+                                        color: "#16ffffff"
+                                        border.width: 1
+                                        border.color: "#24ffffff"
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: window.artworkMonogram(playbackController.activeTitle)
+                                            color: window.textPrimary
+                                            font.pixelSize: 26
+                                            font.family: "Space Grotesk"
+                                            font.bold: true
+                                        }
+                                    }
+
+                                    Text {
+                                        text: "VOD kaynagi acilamadi"
+                                        color: window.textPrimary
+                                        font.pixelSize: 26
+                                        font.family: "Space Grotesk"
+                                        font.bold: true
+                                    }
+
+                                    Text {
+                                        width: parent.width
+                                        wrapMode: Text.WordWrap
+                                        text: playbackController.lastError.length ? playbackController.lastError : "Kaynak gecici olarak hazirlanamadi."
+                                        color: "#ffb2b8"
+                                        font.pixelSize: 14
+                                    }
+
+                                    Flow {
+                                        width: parent.width
+                                        spacing: 10
+
+                                        AppButton {
+                                            text: "Tekrar Dene"
+                                            implicitWidth: 132
+                                            onClicked: playbackController.retryCurrent()
+                                        }
+
+                                        AppButton {
+                                            text: "Kapat"
+                                            secondary: true
+                                            implicitWidth: 118
+                                            onClicked: closePlayer()
+                                        }
+                                    }
+                                }
                             }
 
                             Rectangle {
@@ -4187,13 +4330,22 @@ ApplicationWindow {
                                                     visible: inlineLivePlayerVisible()
                                                     
                                                     // 1. Video Surface
-                                                    Loader {
-                                                        anchors.left: parent.left
-                                                        anchors.right: parent.right
-                                                        anchors.top: parent.top
-                                                        anchors.bottom: parent.bottom
-                                                        active: inlineLivePlayerVisible()
-                                                        sourceComponent: nativeVideoSurfaceComponent
+                                                    Repeater {
+                                                        model: 2
+                                                        delegate: Loader {
+                                                            anchors.left: parent.left
+                                                            anchors.right: parent.right
+                                                            anchors.top: parent.top
+                                                            anchors.bottom: parent.bottom
+                                                            active: inlineLivePlayerVisible()
+                                                            sourceComponent: nativeVideoSurfaceComponent
+
+                                                            onLoaded: {
+                                                                if (item) {
+                                                                    item.slotIndex = index
+                                                                }
+                                                            }
+                                                        }
                                                     }
                                                     
                                                     // 2. Player Controls Overlay
@@ -4301,7 +4453,35 @@ ApplicationWindow {
                                                         }
                                                     }
                                                 
-                                                // Error Display (if any)
+                                                Rectangle {
+                                                    anchors.horizontalCenter: parent.horizontalCenter
+                                                    anchors.bottom: parent.bottom
+                                                    anchors.bottomMargin: 140
+                                                    width: Math.min(parent.width - 72, liveNativeWarningLabel.implicitWidth + 32)
+                                                    height: liveNativeWarningLabel.implicitHeight + 16
+                                                    radius: 16
+                                                    color: "#cc151a22"
+                                                    border.width: 1
+                                                    border.color: "#307cb6ff"
+                                                    visible: playbackController.lastError.length > 0 &&
+                                                             playbackController.state !== "error" &&
+                                                             playbackController.activeContentKind === "live" &&
+                                                             inlineLivePlayerVisible()
+                                                    z: 10
+
+                                                    Text {
+                                                        id: liveNativeWarningLabel
+                                                        anchors.centerIn: parent
+                                                        width: parent.width - 22
+                                                        wrapMode: Text.WordWrap
+                                                        horizontalAlignment: Text.AlignHCenter
+                                                        text: playbackController.lastError
+                                                        color: "#d5e6ff"
+                                                        font.pixelSize: 12
+                                                    }
+                                                }
+
+                                                // Error Display (terminal)
                                                 Rectangle {
                                                     anchors.horizontalCenter: parent.horizontalCenter
                                                     anchors.bottom: parent.bottom
@@ -4312,7 +4492,10 @@ ApplicationWindow {
                                                     color: "#cc20070b"
                                                     border.width: 1
                                                     border.color: "#28ff7d86"
-                                                    visible: playbackController.lastError.length > 0 && playbackController.activeContentKind === "live" && inlineLivePlayerVisible()
+                                                    visible: playbackController.lastError.length > 0 &&
+                                                             playbackController.state === "error" &&
+                                                             playbackController.activeContentKind === "live" &&
+                                                             inlineLivePlayerVisible()
                                                     z: 10
 
                                                     Text {
@@ -4597,7 +4780,7 @@ ApplicationWindow {
                                 target: moviesScrollView.contentItem ? moviesScrollView.contentItem : null
                                 function onContentYChanged() {
                                     const flickable = moviesScrollView.contentItem
-                                    if (!flickable || inlineMoviePlayerVisible() || !apiClient.movieHasMore || apiClient.movieLoadingMore) {
+                                    if (!flickable || !apiClient.movieHasMore || apiClient.movieLoadingMore) {
                                         return
                                     }
                                     const contentBottom = flickable.contentY + moviesScrollView.height
@@ -4613,20 +4796,157 @@ ApplicationWindow {
                                 topPadding: window.compactWindow ? 18 : 20
                                 bottomPadding: window.compactWindow ? 24 : 28
                                 spacing: window.sectionSpacing
-                                Text { 
-                                    text: "Filmler"
-                                    color: window.textPrimary
-                                    font.pixelSize: 42
-                                    font.family: "Space Grotesk"
-                                    font.bold: true
-                                }
-                                AppField {
+                                property var spotlightMovie: featuredMovieItem()
+
+                                GlassCard {
                                     width: parent.width
-                                    placeholderText: "Film ara..."
-                                    text: moviesSearchText
-                                    onTextChanged: {
-                                        moviesSearchText = text
-                                        movieSearchDebounceTimer.restart()
+                                    height: window.compactWindow ? 430 : 360
+                                    radius: 32
+                                    color: "#090c13"
+                                    clip: true
+                                    visible: spotlightMovie !== null
+
+                                    ArtworkPanel {
+                                        anchors.fill: parent
+                                        title: spotlightMovie ? spotlightMovie.title || "" : "Filmler"
+                                        subtitle: spotlightMovie ? spotlightMovie.groupTitle || "Film" : "Film"
+                                        sourceUrl: spotlightMovie ? (spotlightMovie.posterUrl || "") : ""
+                                        kind: "movie"
+                                        mode: "poster"
+                                        cornerRadius: 32
+                                    }
+
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        gradient: Gradient {
+                                            GradientStop { position: 0.0; color: "#1805070b" }
+                                            GradientStop { position: 0.34; color: "#4505070b" }
+                                            GradientStop { position: 0.72; color: "#cc05070b" }
+                                            GradientStop { position: 1.0; color: "#f0080b11" }
+                                        }
+                                    }
+
+                                    Column {
+                                        anchors.fill: parent
+                                        anchors.margins: window.compactWindow ? 22 : 28
+                                        spacing: 14
+
+                                        Row {
+                                            spacing: 10
+
+                                            Rectangle {
+                                                width: 108
+                                                height: 34
+                                                radius: 17
+                                                color: "#26e50914"
+                                                border.width: 1
+                                                border.color: "#44ff6b76"
+
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: "Film Arsivi"
+                                                    color: window.textPrimary
+                                                    font.pixelSize: 12
+                                                    font.bold: true
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                width: movieReadyText.implicitWidth + 24
+                                                height: 34
+                                                radius: 17
+                                                color: spotlightMovie && spotlightMovie.playbackAllowed !== false ? "#1830d19d" : "#14ffffff"
+                                                border.width: 1
+                                                border.color: spotlightMovie && spotlightMovie.playbackAllowed !== false ? "#2d30d19d" : "#22ffffff"
+
+                                                Text {
+                                                    id: movieReadyText
+                                                    anchors.centerIn: parent
+                                                    text: spotlightMovie && spotlightMovie.playbackAllowed !== false ? "Izlemeye Hazir" : "Paket Gerekli"
+                                                    color: spotlightMovie && spotlightMovie.playbackAllowed !== false ? "#82ecc4" : window.textPrimary
+                                                    font.pixelSize: 12
+                                                    font.bold: true
+                                                }
+                                            }
+                                        }
+
+                                        Item { width: 1; height: 1 }
+
+                                        Text {
+                                            text: spotlightMovie ? spotlightMovie.title || "Film secin" : "Film secin"
+                                            width: parent.width * (window.compactWindow ? 0.96 : 0.68)
+                                            wrapMode: Text.WordWrap
+                                            color: window.textPrimary
+                                            font.pixelSize: window.compactWindow ? 34 : 48
+                                            font.family: "Space Grotesk"
+                                            font.bold: true
+                                        }
+
+                                        Text {
+                                            text: spotlightMovie ? (spotlightMovie.groupTitle || "Secili kategori") : ""
+                                            color: "#d3d9e8"
+                                            font.pixelSize: 15
+                                            visible: text.length > 0
+                                        }
+
+                                        Text {
+                                            width: parent.width * (window.compactWindow ? 0.98 : 0.6)
+                                            wrapMode: Text.WordWrap
+                                            color: "#bcc5d6"
+                                            font.pixelSize: 15
+                                            lineHeight: 1.35
+                                            text: spotlightMovie
+                                                  ? "Ayni sayfada oynatici, filtre ve katalog birlikte acik kalir. Film degistirirken ekran akisini bozmadan ilerleyebilirsiniz."
+                                                  : "Kutuphane hazir oldugunda buradan secili filmi one cikaracagiz."
+                                        }
+
+                                        Flow {
+                                            width: parent.width
+                                            spacing: 12
+
+                                            AppButton {
+                                                text: inlineMoviePlayerVisible() ? "Izlemeye Don" : "Simdi Oynat"
+                                                implicitWidth: 170
+                                                enabled: spotlightMovie && spotlightMovie.playbackAllowed !== false
+                                                onClicked: if (spotlightMovie) playMovie(spotlightMovie)
+                                            }
+
+                                            AppButton {
+                                                text: "Katalogu Yenile"
+                                                secondary: true
+                                                implicitWidth: 164
+                                                onClicked: apiClient.fetchMovieCatalog(1, 18, moviesSearchText, selectedMovieGroup)
+                                            }
+
+                                            AppButton {
+                                                text: "Filtreleri Temizle"
+                                                secondary: true
+                                                implicitWidth: 164
+                                                onClicked: applyMovieFilters("", "")
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Flow {
+                                    width: parent.width
+                                    spacing: 12
+
+                                    AppField {
+                                        width: window.compactWindow ? parent.width : Math.max(320, parent.width - 180)
+                                        placeholderText: "Film ara..."
+                                        text: moviesSearchText
+                                        onTextChanged: {
+                                            moviesSearchText = text
+                                            movieSearchDebounceTimer.restart()
+                                        }
+                                    }
+
+                                    AppButton {
+                                        text: "Yenile"
+                                        secondary: true
+                                        implicitWidth: 150
+                                        onClicked: apiClient.fetchMovieCatalog(1, 18, moviesSearchText, selectedMovieGroup)
                                     }
                                 }
                                 Flickable {
@@ -4649,6 +4969,69 @@ ApplicationWindow {
                                         }
                                     }
                                 }
+                                GlassCard {
+                                    width: parent.width
+                                    height: 76
+                                    radius: 24
+                                    color: "#090c13"
+
+                                    Flow {
+                                        anchors.fill: parent
+                                        anchors.margins: 18
+                                        spacing: 10
+
+                                        Rectangle {
+                                            width: 132
+                                            height: 38
+                                            radius: 19
+                                            color: "#14ffffff"
+
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: `${filteredMovies().length} film`
+                                                color: window.textPrimary
+                                                font.pixelSize: 12
+                                                font.bold: true
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: Math.max(160, movieGroupSummary.implicitWidth + 26)
+                                            height: 38
+                                            radius: 19
+                                            color: "#120f1722"
+                                            border.width: 1
+                                            border.color: "#1effffff"
+
+                                            Text {
+                                                id: movieGroupSummary
+                                                anchors.centerIn: parent
+                                                text: selectedMovieGroup.length ? selectedMovieGroup : "Tum Kategoriler"
+                                                color: window.textMuted
+                                                font.pixelSize: 12
+                                                font.bold: true
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: Math.max(200, movieStatusLabel.implicitWidth + 26)
+                                            height: 38
+                                            radius: 19
+                                            color: apiClient.movieLoadingMore ? "#1b1f3d" : "#10161f"
+                                            border.width: 1
+                                            border.color: apiClient.movieLoadingMore ? "#345cff" : "#1dffffff"
+
+                                            Text {
+                                                id: movieStatusLabel
+                                                anchors.centerIn: parent
+                                                text: apiClient.movieLoadingMore ? "Yeni filmler yukleniyor" : "Katalog ve oynatici ayni akista"
+                                                color: apiClient.movieLoadingMore ? "#9eb8ff" : window.textMuted
+                                                font.pixelSize: 12
+                                                font.bold: true
+                                            }
+                                        }
+                                    }
+                                }
                                 Loader {
                                     width: parent.width
                                     active: inlineMoviePlayerVisible()
@@ -4659,7 +5042,6 @@ ApplicationWindow {
                                     property int __maxCols: Math.max(1, Math.floor((parent.width + window.cardGap) / (window.posterCardWidth + window.cardGap)))
                                     property int __actualCols: Math.min(filteredMovies().length, __maxCols)
                                     width: __actualCols * window.posterCardWidth + Math.max(0, __actualCols - 1) * window.cardGap
-                                    visible: !inlineMoviePlayerVisible()
                                     spacing: window.cardGap
                                     Repeater {
                                         model: filteredMovies()
@@ -4679,7 +5061,7 @@ ApplicationWindow {
                                     width: parent.width
                                     height: 60
                                     color: "transparent"
-                                    visible: !inlineMoviePlayerVisible() && apiClient.movieLoadingMore
+                                    visible: apiClient.movieLoadingMore
 
                                     BusyIndicator {
                                         anchors.centerIn: parent
@@ -4689,7 +5071,7 @@ ApplicationWindow {
                                 GlassCard {
                                     width: parent.width
                                     height: 180
-                                    visible: !inlineMoviePlayerVisible() && filteredMovies().length === 0
+                                    visible: filteredMovies().length === 0
                                     color: "#090c13"
                                     Column {
                                         anchors.centerIn: parent
@@ -4719,10 +5101,294 @@ ApplicationWindow {
                                 topPadding: window.compactWindow ? 18 : 20
                                 bottomPadding: window.compactWindow ? 24 : 28
                                 spacing: window.sectionSpacing
-                                Text { text: "Diziler"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true }
-                                AppField { width: parent.width; placeholderText: "Dizi ara..."; text: seriesSearchText; onTextChanged: seriesSearchText = text }
-                                Flickable { width: parent.width; height: 52; contentWidth: seriesChipRow.width; clip: true; Row { id: seriesChipRow; spacing: 10; Repeater { model: [""] .concat(uniqueGroups(apiClient.series || [])); ChipButton { required property var modelData; text: modelData.length ? modelData : "Tum Diziler"; active: selectedSeriesGroup === modelData; width: Math.max(112, implicitContentWidth + 28); onClicked: selectedSeriesGroup = modelData } } } }
-                                Flow { property int __maxCols: Math.max(1, Math.floor((parent.width + window.cardGap) / (window.railCardWidth + window.cardGap))); property int __actualCols: Math.min(filteredSeries().length, __maxCols); width: __actualCols * window.railCardWidth + Math.max(0, __actualCols - 1) * window.cardGap; spacing: window.cardGap; anchors.horizontalCenter: parent.horizontalCenter; Repeater { model: filteredSeries(); RailCard { item: ({ id: modelData.id, title: modelData.title, subtitle: `${modelData.seasonCount} sezon - ${modelData.episodeCount} bolum`, posterUrl: modelData.posterUrl, playbackAllowed: Boolean(modelData.featuredEpisode && modelData.featuredEpisode.playbackAllowed) }); cardKind: "episode"; onActivated: openSeriesDetail(modelData.id) } } }
+                                property var spotlightSeries: featuredSeriesItem()
+                                property var spotlightEpisode: seriesLeadEpisode(spotlightSeries)
+
+                                GlassCard {
+                                    width: parent.width
+                                    height: window.compactWindow ? 430 : 360
+                                    radius: 32
+                                    color: "#090c13"
+                                    clip: true
+                                    visible: spotlightSeries !== null
+
+                                    ArtworkPanel {
+                                        anchors.fill: parent
+                                        title: spotlightSeries ? spotlightSeries.title || "" : "Diziler"
+                                        subtitle: spotlightSeries ? spotlightSeries.groupTitle || "Dizi" : "Dizi"
+                                        sourceUrl: spotlightSeries ? (spotlightSeries.posterUrl || "") : ""
+                                        kind: "episode"
+                                        mode: "poster"
+                                        cornerRadius: 32
+                                    }
+
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        gradient: Gradient {
+                                            GradientStop { position: 0.0; color: "#1205070b" }
+                                            GradientStop { position: 0.30; color: "#2d0c1220" }
+                                            GradientStop { position: 0.76; color: "#d105070b" }
+                                            GradientStop { position: 1.0; color: "#f0080b11" }
+                                        }
+                                    }
+
+                                    Column {
+                                        anchors.fill: parent
+                                        anchors.margins: window.compactWindow ? 22 : 28
+                                        spacing: 14
+
+                                        Row {
+                                            spacing: 10
+
+                                            Rectangle {
+                                                width: 112
+                                                height: 34
+                                                radius: 17
+                                                color: "#1b7cb6ff"
+                                                border.width: 1
+                                                border.color: "#397cb6ff"
+
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: "Dizi Hub"
+                                                    color: window.textPrimary
+                                                    font.pixelSize: 12
+                                                    font.bold: true
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                width: seriesMetaBadge.implicitWidth + 24
+                                                height: 34
+                                                radius: 17
+                                                color: "#14ffffff"
+
+                                                Text {
+                                                    id: seriesMetaBadge
+                                                    anchors.centerIn: parent
+                                                    text: spotlightSeries ? `${Number(spotlightSeries.seasonCount || 0)} sezon • ${seriesTotalEpisodes(spotlightSeries)} bolum` : "Dizi secin"
+                                                    color: window.textPrimary
+                                                    font.pixelSize: 12
+                                                    font.bold: true
+                                                }
+                                            }
+                                        }
+
+                                        Item { width: 1; height: 1 }
+
+                                        Text {
+                                            text: spotlightSeries ? spotlightSeries.title || "Dizi secin" : "Dizi secin"
+                                            width: parent.width * (window.compactWindow ? 0.96 : 0.68)
+                                            wrapMode: Text.WordWrap
+                                            color: window.textPrimary
+                                            font.pixelSize: window.compactWindow ? 34 : 48
+                                            font.family: "Space Grotesk"
+                                            font.bold: true
+                                        }
+
+                                        Text {
+                                            text: spotlightSeries ? (spotlightSeries.groupTitle || "Secili dizi vitrini") : ""
+                                            color: "#d3d9e8"
+                                            font.pixelSize: 15
+                                            visible: text.length > 0
+                                        }
+
+                                        Text {
+                                            width: parent.width * (window.compactWindow ? 0.98 : 0.6)
+                                            wrapMode: Text.WordWrap
+                                            color: "#bcc5d6"
+                                            font.pixelSize: 15
+                                            lineHeight: 1.35
+                                            text: spotlightSeries
+                                                  ? "Sezonlar, one cikan bolum ve detay akisi ayni hizada acik kalir. Dizi secip detay ekranina gecis yapmak artik daha dogrudan."
+                                                  : "Dizi katalogu hazir oldugunda buradan secili diziyi one cikaracagiz."
+                                        }
+
+                                        Flow {
+                                            width: parent.width
+                                            spacing: 12
+
+                                            AppButton {
+                                                text: "Detayi Ac"
+                                                implicitWidth: 156
+                                                enabled: spotlightSeries && spotlightSeries.id
+                                                onClicked: if (spotlightSeries) openSeriesDetail(spotlightSeries.id)
+                                            }
+
+                                            AppButton {
+                                                text: "One Cikan Bolumu Oynat"
+                                                secondary: true
+                                                implicitWidth: 220
+                                                enabled: spotlightEpisode && spotlightEpisode.playbackAllowed !== false
+                                                onClicked: if (spotlightEpisode && spotlightSeries) playEpisode(spotlightEpisode, spotlightSeries)
+                                            }
+
+                                            AppButton {
+                                                text: "Katalogu Yenile"
+                                                secondary: true
+                                                implicitWidth: 164
+                                                onClicked: apiClient.fetchSeriesCatalog(1, 200, seriesSearchText)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Flow {
+                                    width: parent.width
+                                    spacing: 12
+
+                                    AppField {
+                                        width: window.compactWindow ? parent.width : Math.max(320, parent.width - 180)
+                                        placeholderText: "Dizi ara..."
+                                        text: seriesSearchText
+                                        onTextChanged: seriesSearchText = text
+                                    }
+
+                                    AppButton {
+                                        text: "Yenile"
+                                        secondary: true
+                                        implicitWidth: 150
+                                        onClicked: apiClient.fetchSeriesCatalog(1, 200, seriesSearchText)
+                                    }
+                                }
+
+                                Flickable {
+                                    width: parent.width
+                                    height: 52
+                                    contentWidth: seriesChipRow.width
+                                    clip: true
+
+                                    Row {
+                                        id: seriesChipRow
+                                        spacing: 10
+
+                                        Repeater {
+                                            model: [""].concat(uniqueGroups(apiClient.series || []))
+
+                                            ChipButton {
+                                                required property var modelData
+                                                text: modelData.length ? modelData : "Tum Diziler"
+                                                active: selectedSeriesGroup === modelData
+                                                width: Math.max(112, implicitContentWidth + 28)
+                                                onClicked: selectedSeriesGroup = modelData
+                                            }
+                                        }
+                                    }
+                                }
+
+                                GlassCard {
+                                    width: parent.width
+                                    height: 76
+                                    radius: 24
+                                    color: "#090c13"
+
+                                    Flow {
+                                        anchors.fill: parent
+                                        anchors.margins: 18
+                                        spacing: 10
+
+                                        Rectangle {
+                                            width: 132
+                                            height: 38
+                                            radius: 19
+                                            color: "#14ffffff"
+
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: `${filteredSeries().length} dizi`
+                                                color: window.textPrimary
+                                                font.pixelSize: 12
+                                                font.bold: true
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: Math.max(170, seriesGroupSummary.implicitWidth + 26)
+                                            height: 38
+                                            radius: 19
+                                            color: "#120f1722"
+                                            border.width: 1
+                                            border.color: "#1effffff"
+
+                                            Text {
+                                                id: seriesGroupSummary
+                                                anchors.centerIn: parent
+                                                text: selectedSeriesGroup.length ? selectedSeriesGroup : "Tum Kategoriler"
+                                                color: window.textMuted
+                                                font.pixelSize: 12
+                                                font.bold: true
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: Math.max(220, seriesStageSummary.implicitWidth + 26)
+                                            height: 38
+                                            radius: 19
+                                            color: "#10161f"
+                                            border.width: 1
+                                            border.color: "#1dffffff"
+
+                                            Text {
+                                                id: seriesStageSummary
+                                                anchors.centerIn: parent
+                                                text: spotlightEpisode ? "Detaya gecmeden once bolum hazirligi" : "Once diziyi secin, sonra bolumu acin"
+                                                color: window.textMuted
+                                                font.pixelSize: 12
+                                                font.bold: true
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Flow {
+                                    property int __maxCols: Math.max(1, Math.floor((parent.width + window.cardGap) / (window.railCardWidth + window.cardGap)))
+                                    property int __actualCols: Math.min(filteredSeries().length, __maxCols)
+                                    width: __actualCols * window.railCardWidth + Math.max(0, __actualCols - 1) * window.cardGap
+                                    spacing: window.cardGap
+                                    anchors.horizontalCenter: parent.horizontalCenter
+
+                                    Repeater {
+                                        model: filteredSeries()
+
+                                        RailCard {
+                                            item: ({
+                                                id: modelData.id,
+                                                title: modelData.title,
+                                                subtitle: `${modelData.seasonCount} sezon • ${modelData.episodeCount} bolum`,
+                                                posterUrl: modelData.posterUrl,
+                                                playbackAllowed: Boolean(modelData.featuredEpisode && modelData.featuredEpisode.playbackAllowed)
+                                            })
+                                            cardKind: "episode"
+                                            onActivated: openSeriesDetail(modelData.id)
+                                        }
+                                    }
+                                }
+
+                                GlassCard {
+                                    width: parent.width
+                                    height: 180
+                                    visible: filteredSeries().length === 0
+                                    color: "#090c13"
+
+                                    Column {
+                                        anchors.centerIn: parent
+                                        spacing: 8
+
+                                        Text {
+                                            text: "Filtreye uygun dizi bulunamadi"
+                                            color: window.textPrimary
+                                            font.pixelSize: 30
+                                            font.family: "Space Grotesk"
+                                            font.bold: true
+                                        }
+
+                                        Text {
+                                            text: "Aramayi temizleyip farkli bir kategori deneyebilirsiniz."
+                                            color: window.textMuted
+                                            font.pixelSize: 14
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -4734,7 +5400,195 @@ ApplicationWindow {
                                 topPadding: window.compactWindow ? 18 : 20
                                 bottomPadding: window.compactWindow ? 24 : 28
                                 spacing: window.sectionSpacing
-                                AppButton { text: "Dizilere Dön"; secondary: true; implicitWidth: 140; onClicked: openScreen("series") }
+                                property var activeSeries: selectedSeries()
+                                property var activeEpisode: seriesLeadEpisode(activeSeries)
+
+                                Flow {
+                                    width: parent.width
+                                    spacing: 12
+
+                                    AppButton {
+                                        text: "Dizilere Don"
+                                        secondary: true
+                                        implicitWidth: 148
+                                        onClicked: openScreen("series")
+                                    }
+
+                                    AppButton {
+                                        text: "Detayi Yenile"
+                                        secondary: true
+                                        implicitWidth: 148
+                                        onClicked: apiClient.fetchSeriesCatalog(1, 200, seriesSearchText)
+                                    }
+                                }
+                                GlassCard {
+                                    width: parent.width
+                                    height: window.compactWindow ? 430 : 340
+                                    radius: 32
+                                    color: "#090c13"
+                                    clip: true
+                                    visible: activeSeries !== null
+
+                                    ArtworkPanel {
+                                        anchors.fill: parent
+                                        title: activeSeries ? activeSeries.title || "" : "Dizi"
+                                        subtitle: activeSeries ? activeSeries.groupTitle || "Premium Dizi" : "Premium Dizi"
+                                        sourceUrl: activeSeries ? (activeSeries.posterUrl || "") : ""
+                                        kind: "episode"
+                                        mode: "poster"
+                                        cornerRadius: 32
+                                    }
+
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        gradient: Gradient {
+                                            GradientStop { position: 0.0; color: "#1605070b" }
+                                            GradientStop { position: 0.28; color: "#2f0d1422" }
+                                            GradientStop { position: 0.76; color: "#d205070b" }
+                                            GradientStop { position: 1.0; color: "#f0080b11" }
+                                        }
+                                    }
+
+                                    Column {
+                                        anchors.fill: parent
+                                        anchors.margins: window.compactWindow ? 22 : 28
+                                        spacing: 14
+
+                                        Row {
+                                            spacing: 10
+
+                                            Rectangle {
+                                                width: 110
+                                                height: 34
+                                                radius: 17
+                                                color: "#1d7cb6ff"
+                                                border.width: 1
+                                                border.color: "#397cb6ff"
+
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: "Dizi Detay"
+                                                    color: window.textPrimary
+                                                    font.pixelSize: 12
+                                                    font.bold: true
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                width: detailMetaPill.implicitWidth + 24
+                                                height: 34
+                                                radius: 17
+                                                color: "#14ffffff"
+
+                                                Text {
+                                                    id: detailMetaPill
+                                                    anchors.centerIn: parent
+                                                    text: activeSeries ? `${Number(activeSeries.seasonCount || 0)} sezon • ${seriesTotalEpisodes(activeSeries)} bolum` : "Dizi secin"
+                                                    color: window.textPrimary
+                                                    font.pixelSize: 12
+                                                    font.bold: true
+                                                }
+                                            }
+                                        }
+
+                                        Item { width: 1; height: 1 }
+
+                                        Text {
+                                            text: activeSeries ? activeSeries.title || "Dizi secin" : "Dizi secin"
+                                            width: parent.width * (window.compactWindow ? 0.96 : 0.68)
+                                            wrapMode: Text.WordWrap
+                                            color: window.textPrimary
+                                            font.pixelSize: window.compactWindow ? 34 : 48
+                                            font.family: "Space Grotesk"
+                                            font.bold: true
+                                        }
+
+                                        Text {
+                                            text: activeSeries ? (activeSeries.groupTitle || "Premium dizi secimi") : ""
+                                            color: "#d3d9e8"
+                                            font.pixelSize: 15
+                                            visible: text.length > 0
+                                        }
+
+                                        Text {
+                                            width: parent.width * (window.compactWindow ? 0.98 : 0.6)
+                                            wrapMode: Text.WordWrap
+                                            color: "#bcc5d6"
+                                            font.pixelSize: 15
+                                            lineHeight: 1.35
+                                            text: activeSeries
+                                                  ? "Bolum listesi ve oynatici ayni sayfada birlikte durur. Sorun oldugunda oynatici alani kapanmadan tekrar deneme yapabilirsiniz."
+                                                  : "Bir dizi secildiginde tum sezonlar burada gosterilecek."
+                                        }
+
+                                        Flow {
+                                            width: parent.width
+                                            spacing: 12
+
+                                            AppButton {
+                                                text: "One Cikan Bolumu Ac"
+                                                implicitWidth: 210
+                                                enabled: activeEpisode && activeEpisode.playbackAllowed !== false
+                                                onClicked: if (activeEpisode && activeSeries) playEpisode(activeEpisode, activeSeries)
+                                            }
+
+                                            AppButton {
+                                                text: inlineEpisodePlayerVisible() ? "Oynaticiya Don" : "Ilk Bolumu Oynat"
+                                                secondary: true
+                                                implicitWidth: 190
+                                                enabled: activeEpisode && activeEpisode.playbackAllowed !== false
+                                                onClicked: if (activeEpisode && activeSeries) playEpisode(activeEpisode, activeSeries)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                GlassCard {
+                                    width: parent.width
+                                    height: 82
+                                    radius: 24
+                                    color: "#090c13"
+                                    visible: playbackController.lastError.length > 0 && currentScreen === "series-detail"
+
+                                    Row {
+                                        anchors.fill: parent
+                                        anchors.margins: 18
+                                        spacing: 14
+
+                                        Rectangle {
+                                            width: 44
+                                            height: 44
+                                            radius: 22
+                                            color: "#26e50914"
+
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: "!"
+                                                color: window.textPrimary
+                                                font.pixelSize: 22
+                                                font.bold: true
+                                            }
+                                        }
+
+                                        Text {
+                                            width: parent.width - 230
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            wrapMode: Text.WordWrap
+                                            text: playbackController.lastError
+                                            color: "#ffb2b8"
+                                            font.pixelSize: 14
+                                        }
+
+                                        AppButton {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: "Tekrar Dene"
+                                            secondary: true
+                                            implicitWidth: 134
+                                            onClicked: playbackController.retryCurrent()
+                                        }
+                                    }
+                                }
+
                                 Loader {
                                     width: parent.width
                                     active: inlineEpisodePlayerVisible()
@@ -4742,7 +5596,7 @@ ApplicationWindow {
                                     sourceComponent: inlineVodPlayerComponent
                                 }
                                 Flow {
-                                    visible: !inlineEpisodePlayerVisible()
+                                    visible: false
                                     width: parent.width; spacing: window.cardGap
                                     GlassCard { width: window.compactWindow ? parent.width : 320; height: window.compactWindow ? 380 : 460; color: "#090c13"; ArtworkPanel { anchors.fill: parent; title: selectedSeries() ? selectedSeries().title : "Dizi"; subtitle: selectedSeries() ? (selectedSeries().groupTitle || "Premium Dizi") : "Premium Dizi"; sourceUrl: selectedSeries() ? (selectedSeries().posterUrl || "") : ""; kind: "episode"; mode: "poster"; cornerRadius: 28 } }
                                     GlassCard {
@@ -4757,7 +5611,7 @@ ApplicationWindow {
                                     }
                                 }
                                 Repeater {
-                                    model: selectedSeries() && selectedSeries().seasons ? selectedSeries().seasons : []
+                                    model: activeSeries && activeSeries.seasons ? activeSeries.seasons : []
                                     GlassCard {
                                         width: parent.width; height: seasonContent.implicitHeight + 34; color: "#090c13"
                                         Column {
@@ -4772,7 +5626,7 @@ ApplicationWindow {
                                                         anchors.fill: parent; anchors.margins: 16; spacing: 18
                                                         Text { anchors.verticalCenter: parent.verticalCenter; text: `B${modelData.episodeNumber}`; color: "#a6ffffff"; font.pixelSize: 14; font.bold: true }
                                                         Column { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 170; spacing: 4; Text { text: modelData.title; width: parent.width; elide: Text.ElideRight; color: window.textPrimary; font.pixelSize: 18; font.bold: true } Text { text: modelData.playbackAllowed ? "Hazir" : "Paket Gerekli"; color: modelData.playbackAllowed ? "#82ecc4" : window.textMuted; font.pixelSize: 13 } }
-                                                        AppButton { anchors.verticalCenter: parent.verticalCenter; text: "Oynat"; implicitWidth: 110; enabled: modelData.playbackAllowed; onClicked: playEpisode(modelData, selectedSeries()) }
+                                                        AppButton { anchors.verticalCenter: parent.verticalCenter; text: "Oynat"; implicitWidth: 110; enabled: modelData.playbackAllowed; onClicked: playEpisode(modelData, activeSeries) }
                                                     }
                                                 }
                                             }
