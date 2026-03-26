@@ -301,7 +301,7 @@ export async function fetchLiveLogoFromUpstream(
         redirect: "manual",
         signal: abortController.signal,
         headers: {
-          accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+          accept: "image/jpeg,image/png,image/apng,image/svg+xml,image/*;q=0.8,*/*;q=0.5"
         }
       });
     } catch (error) {

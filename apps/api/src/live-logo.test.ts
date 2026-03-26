@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createCatalogArtworkUrl,
+  fetchLiveLogoFromUpstream,
   createSignedLiveLogoUrl,
   isBlockedArtworkHostname,
   signLiveLogoItems,
@@ -105,5 +106,26 @@ describe("live logo helpers", () => {
         clientRuntime: "browser"
       })
     ).toBeNull();
+  });
+
+  it("prefers jpeg and png when proxying artwork upstream", async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(Uint8Array.from([0xff, 0xd8, 0xff]), {
+        status: 200,
+        headers: {
+          "content-type": "image/jpeg"
+        }
+      })
+    );
+
+    await fetchLiveLogoFromUpstream("https://example.com/poster.jpg", { fetchImpl });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]?.[0]?.toString()).toBe("https://example.com/poster.jpg");
+    expect(fetchImpl.mock.calls[0]?.[1]).toMatchObject({
+      headers: {
+        accept: "image/jpeg,image/png,image/apng,image/svg+xml,image/*;q=0.8,*/*;q=0.5"
+      }
+    });
   });
 });
