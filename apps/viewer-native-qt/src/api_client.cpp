@@ -133,6 +133,47 @@ bool isUpdateAvailable(const QString &currentVersion, const QString &latestVersi
   return false;
 }
 
+QString preferredUpdateFileName(const QUrl &url, const QString &latestVersion) {
+  const QString remoteName = QFileInfo(url.path()).fileName().trimmed();
+  if (!remoteName.isEmpty()) {
+    return remoteName;
+  }
+
+#if defined(Q_OS_MACOS)
+  return latestVersion.isEmpty()
+    ? QStringLiteral("Flixify-Pro-latest-macos-universal.dmg")
+    : QStringLiteral("Flixify-Pro-%1-macos-universal.dmg").arg(sanitizeFileStem(latestVersion));
+#else
+  return latestVersion.isEmpty()
+    ? QStringLiteral("Flixify-Pro-Setup-latest.exe")
+    : QStringLiteral("Flixify-Pro-Setup-%1.exe").arg(sanitizeFileStem(latestVersion));
+#endif
+}
+
+bool launchUpdatePayload(const QString &payloadPath) {
+#if defined(Q_OS_MACOS)
+  return QProcess::startDetached(QStringLiteral("/usr/bin/open"), {payloadPath});
+#else
+  return QProcess::startDetached(QDir::toNativeSeparators(payloadPath), {});
+#endif
+}
+
+QString updateStartFailureMessage() {
+#if defined(Q_OS_MACOS)
+  return QStringLiteral("DMG acilamadi.");
+#else
+  return QStringLiteral("Installer baslatilamadi.");
+#endif
+}
+
+QString updateSuccessNoticeMessage() {
+#if defined(Q_OS_MACOS)
+  return QStringLiteral("Guncelleme indirildi. DMG Finder ile aciliyor.");
+#else
+  return QStringLiteral("Guncelleme indirildi. Installer baslatiliyor.");
+#endif
+}
+
 QVariantList mapJsonArray(const QJsonArray &items) {
   QVariantList mapped;
   mapped.reserve(items.size());
@@ -314,6 +355,10 @@ QVariantList ApiClient::movies() const {
 
 QVariantList ApiClient::movieGroups() const {
   return m_movieGroups;
+}
+
+int ApiClient::movieTotal() const {
+  return m_movieTotal;
 }
 
 bool ApiClient::movieHasMore() const {
@@ -776,9 +821,7 @@ void ApiClient::installAppUpdate() {
     return;
   }
 
-  const QString filename = latestVersion.isEmpty()
-    ? QStringLiteral("Flixify-Pro-Setup-latest.exe")
-    : QStringLiteral("Flixify-Pro-Setup-%1.exe").arg(sanitizeFileStem(latestVersion));
+  const QString filename = preferredUpdateFileName(url, latestVersion);
   m_updateInstallerPath = tempDir.filePath(QStringLiteral("Flixify/updates/%1").arg(filename));
 
   if (m_updateFile) {
@@ -869,9 +912,9 @@ void ApiClient::installAppUpdate() {
     }
 
     setUpdateProgress(1.0);
-    const bool started = QProcess::startDetached(QDir::toNativeSeparators(m_updateInstallerPath), {});
+    const bool started = launchUpdatePayload(m_updateInstallerPath);
     if (!started) {
-      const QString message = QStringLiteral("Installer baslatilamadi.");
+      const QString message = updateStartFailureMessage();
       setUpdateError(message);
       emit requestFailed(QStringLiteral("app-update-install"), message);
       return;
@@ -880,8 +923,10 @@ void ApiClient::installAppUpdate() {
     setSuppressedUpdateVersion(normalizeStoredUpdateVersion(latestVersion));
     setAppUpdate({});
     setUpdateError(QString());
-    setNotice(QStringLiteral("Guncelleme indirildi. Installer baslatiliyor."));
+    setNotice(updateSuccessNoticeMessage());
+#if !defined(Q_OS_MACOS)
     QTimer::singleShot(300, QCoreApplication::instance(), &QCoreApplication::quit);
+#endif
   });
 }
 
@@ -977,7 +1022,7 @@ void ApiClient::loadMoreLive() {
 
 void ApiClient::fetchMovieCatalog(int page, int pageSize, const QString &search, const QString &group) {
   const int safePage = page > 0 ? page : 1;
-  const int safePageSize = qBound(1, pageSize, 60);
+  const int safePageSize = qBound(1, pageSize, 120);
   const QString safeSearch = search;
   const QString safeGroup = group;
 
@@ -1024,7 +1069,7 @@ void ApiClient::fetchMovieCatalog(int page, int pageSize, const QString &search,
     updateMoviesCatalogFromJson(payload, safePage > 1);
     m_moviePage = safePage;
     m_moviePageSize = safePageSize;
-    m_movieTotal = payload.value(QStringLiteral("total")).toInt(m_movies.size());
+    setMovieTotal(payload.value(QStringLiteral("total")).toInt(m_movies.size()));
     m_movieSearch = safeSearch;
     m_movieGroup = safeGroup;
     setMovieHasMore(m_movies.size() < m_movieTotal);
@@ -1084,7 +1129,7 @@ void ApiClient::fetchSeriesCatalog(int page, int pageSize, const QString &search
 
 void ApiClient::fetchAllCatalogs(const QString &search, int livePageSize) {
   fetchLiveCatalog(1, livePageSize, search);
-  fetchMovieCatalog(1, 18, search);
+  fetchMovieCatalog(1, 120, search);
   fetchSeriesCatalog(1, 200, search);
 }
 
@@ -1477,6 +1522,15 @@ void ApiClient::setMovieLoadingMore(bool value) {
   emit movieLoadingMoreChanged();
 }
 
+void ApiClient::setMovieTotal(int value) {
+  if (value == m_movieTotal) {
+    return;
+  }
+
+  m_movieTotal = value;
+  emit movieTotalChanged();
+}
+
 void ApiClient::beginRequest() {
   m_activeRequests += 1;
   setBusy(m_activeRequests > 0);
@@ -1495,12 +1549,12 @@ void ApiClient::clearAuthenticatedData() {
   setLiveLoadingMore(false);
   setMovieHasMore(false);
   setMovieLoadingMore(false);
+  setMovieTotal(0);
   m_livePage = 0;
   m_liveTotal = 0;
   m_liveSearch.clear();
   m_liveGroup.clear();
   m_moviePage = 0;
-  m_movieTotal = 0;
   m_movieSearch.clear();
   m_movieGroup.clear();
   m_liveCatalogGeneration += 1;

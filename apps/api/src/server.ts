@@ -596,7 +596,7 @@ async function resolveVodSourceUrl(input: {
     if (probe.ok) {
       return {
         ok: true,
-        sourceUrl: resolvedCandidateUrl,
+        sourceUrl: candidate.url,
         transport: probe.transport,
         cookie: probe.cookie,
         errorMessage: null,
@@ -2545,42 +2545,6 @@ export function buildServer() {
           selectedAudioTrackId: playback.selectedAudioTrackId,
           isVerified: playback.isVerified,
           lastCheckedAt: playback.expiresAt ?? new Date().toISOString()
-        });
-      }
-
-      if (
-        typeof resolved.sourceUrl === "string" &&
-        canUseVodDirectPlaybackFallback({
-          clientRuntime: "native",
-          platform,
-          transport: resolved.transport,
-          sourceUrl: resolved.sourceUrl
-        })
-      ) {
-        return buildNativeVodPlaybackResponse({
-          url: resolved.sourceUrl,
-          transport: resolved.transport,
-          deliveryMode: "direct",
-          audioTracks: [],
-          defaultAudioTrackId: null,
-          selectedAudioTrackId: null,
-          cookie: resolved.cookie,
-          isVerified: resolved.isVerified,
-          lastCheckedAt: new Date().toISOString()
-        });
-      }
-
-      if (allowOptimisticNativeDirect) {
-        return buildNativeVodPlaybackResponse({
-          url: resolved.sourceUrl!,
-          transport: resolved.transport,
-          deliveryMode: "direct",
-          audioTracks: [],
-          defaultAudioTrackId: null,
-          selectedAudioTrackId: null,
-          cookie: resolved.cookie,
-          isVerified: false,
-          lastCheckedAt: new Date().toISOString()
         });
       }
 

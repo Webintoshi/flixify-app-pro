@@ -298,6 +298,7 @@ export async function probeVodStream(url: string) {
       response.status === 403 ||
       response.status === 404 ||
       response.status === 405 ||
+      response.status === 409 ||
       response.status === 416 ||
       response.status === 501
     ) {
@@ -1031,10 +1032,6 @@ function canUseNativeDesktopFileProxy(input: VodTranscodeDecisionInput, effectiv
   }
 
   if (effectiveTransport === "hls" || effectiveTransport === "unknown") {
-    return false;
-  }
-
-  if (!input.supportsByteRange) {
     return false;
   }
 
@@ -2045,6 +2042,21 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
         .status(502)
         .type("text/plain; charset=utf-8")
         .send(getUpstreamErrorMessage(error, "Upstream VOD dosyasi alinamadi."));
+    }
+    if (rangeHeader && [405, 409, 416].includes(response.status)) {
+      if (response.body) {
+        await response.body.cancel().catch(() => undefined);
+      }
+      try {
+        response = await fetchUpstream(session, session.sourceUrl, {
+          kind: "file"
+        });
+      } catch (error) {
+        return reply
+          .status(502)
+          .type("text/plain; charset=utf-8")
+          .send(getUpstreamErrorMessage(error, "Upstream VOD dosyasi alinamadi."));
+      }
     }
     if (!response.ok && response.status !== 206) {
       return reply.status(502).type("text/plain; charset=utf-8").send("Upstream VOD dosyasi alinamadi.");

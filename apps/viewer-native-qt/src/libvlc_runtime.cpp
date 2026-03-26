@@ -35,7 +35,9 @@ struct LibVlcRuntimeState {
   using MediaPlayerSetNSObjectFn = void (*)(libvlc_media_player_t *, void *);
   using MediaPlayerSetXWindowFn = void (*)(libvlc_media_player_t *, uint32_t);
   using VideoGetSizeFn = int (*)(libvlc_media_player_t *, unsigned int, unsigned int *, unsigned int *);
+  using VideoGetAspectRatioFn = char *(*)(libvlc_media_player_t *);
   using VideoSetCropGeometryFn = void (*)(libvlc_media_player_t *, const char *);
+  using FreeFn = void (*)(void *);
 
   QLibrary vlcLibrary;
   QLibrary coreLibrary;
@@ -70,7 +72,9 @@ struct LibVlcRuntimeState {
   MediaPlayerSetNSObjectFn mediaPlayerSetNSObject = nullptr;
   MediaPlayerSetXWindowFn mediaPlayerSetXWindow = nullptr;
   VideoGetSizeFn videoGetSize = nullptr;
+  VideoGetAspectRatioFn videoGetAspectRatio = nullptr;
   VideoSetCropGeometryFn videoSetCropGeometry = nullptr;
+  FreeFn freeFn = nullptr;
 
   template <typename T>
   bool resolve(const char *symbol, T &target) {
@@ -212,32 +216,38 @@ struct LibVlcRuntimeState {
   }
 
   bool resolveSymbols() {
-    return resolve("libvlc_new", newInstance) && resolve("libvlc_release", releaseInstance) &&
-           resolve("libvlc_media_new_location", mediaNewLocation) &&
-           resolve("libvlc_media_release", mediaRelease) &&
-           resolve("libvlc_media_add_option", mediaAddOption) &&
-           resolve("libvlc_media_player_new", mediaPlayerNew) &&
-           resolve("libvlc_media_player_release", mediaPlayerRelease) &&
-           resolve("libvlc_media_player_set_media", mediaPlayerSetMedia) &&
-           resolve("libvlc_media_player_play", mediaPlayerPlay) &&
-           resolve("libvlc_media_player_stop", mediaPlayerStop) &&
-           resolve("libvlc_media_player_set_pause", mediaPlayerSetPause) &&
-           resolve("libvlc_media_player_set_time", mediaPlayerSetTime) &&
-           resolve("libvlc_media_player_get_time", mediaPlayerGetTime) &&
-           resolve("libvlc_media_player_get_length", mediaPlayerGetLength) &&
-           resolve("libvlc_media_player_is_playing", mediaPlayerIsPlaying) &&
-           resolve("libvlc_media_player_event_manager", mediaPlayerEventManager) &&
-           resolve("libvlc_event_attach", eventAttach) &&
-           resolve("libvlc_audio_get_volume", audioGetVolume) &&
-           resolve("libvlc_audio_set_volume", audioSetVolume) &&
-           resolve("libvlc_audio_get_mute", audioGetMute) &&
-           resolve("libvlc_audio_set_mute", audioSetMute) &&
-           resolve("libvlc_audio_output_set", audioOutputSet) &&
-           resolve("libvlc_media_player_set_hwnd", mediaPlayerSetHwnd) &&
-           resolve("libvlc_media_player_set_nsobject", mediaPlayerSetNSObject) &&
-           resolve("libvlc_media_player_set_xwindow", mediaPlayerSetXWindow) &&
-           resolve("libvlc_video_get_size", videoGetSize) &&
-           resolve("libvlc_video_set_crop_geometry", videoSetCropGeometry);
+    const bool requiredResolved =
+      resolve("libvlc_new", newInstance) && resolve("libvlc_release", releaseInstance) &&
+      resolve("libvlc_media_new_location", mediaNewLocation) &&
+      resolve("libvlc_media_release", mediaRelease) &&
+      resolve("libvlc_media_add_option", mediaAddOption) &&
+      resolve("libvlc_media_player_new", mediaPlayerNew) &&
+      resolve("libvlc_media_player_release", mediaPlayerRelease) &&
+      resolve("libvlc_media_player_set_media", mediaPlayerSetMedia) &&
+      resolve("libvlc_media_player_play", mediaPlayerPlay) &&
+      resolve("libvlc_media_player_stop", mediaPlayerStop) &&
+      resolve("libvlc_media_player_set_pause", mediaPlayerSetPause) &&
+      resolve("libvlc_media_player_set_time", mediaPlayerSetTime) &&
+      resolve("libvlc_media_player_get_time", mediaPlayerGetTime) &&
+      resolve("libvlc_media_player_get_length", mediaPlayerGetLength) &&
+      resolve("libvlc_media_player_is_playing", mediaPlayerIsPlaying) &&
+      resolve("libvlc_media_player_event_manager", mediaPlayerEventManager) &&
+      resolve("libvlc_event_attach", eventAttach) &&
+      resolve("libvlc_audio_get_volume", audioGetVolume) &&
+      resolve("libvlc_audio_set_volume", audioSetVolume) &&
+      resolve("libvlc_audio_get_mute", audioGetMute) &&
+      resolve("libvlc_audio_set_mute", audioSetMute) &&
+      resolve("libvlc_audio_output_set", audioOutputSet) &&
+      resolve("libvlc_media_player_set_hwnd", mediaPlayerSetHwnd) &&
+      resolve("libvlc_media_player_set_nsobject", mediaPlayerSetNSObject) &&
+      resolve("libvlc_media_player_set_xwindow", mediaPlayerSetXWindow) &&
+      resolve("libvlc_video_get_size", videoGetSize) &&
+      resolve("libvlc_video_set_crop_geometry", videoSetCropGeometry);
+
+    resolve("libvlc_video_get_aspect_ratio", videoGetAspectRatio);
+    resolve("libvlc_free", freeFn);
+
+    return requiredResolved;
   }
 
   bool ensureLoaded() {
@@ -464,9 +474,21 @@ int libvlc_video_get_size(libvlc_media_player_t *player, unsigned int num, unsig
   return -1;
 }
 
+char *libvlc_video_get_aspect_ratio(libvlc_media_player_t *player) {
+  auto &state = runtime();
+  return state.ensureLoaded() && state.videoGetAspectRatio && player ? state.videoGetAspectRatio(player) : nullptr;
+}
+
 void libvlc_video_set_crop_geometry(libvlc_media_player_t *player, const char *geometry) {
   auto &state = runtime();
   if (state.ensureLoaded() && state.videoSetCropGeometry && player) {
     state.videoSetCropGeometry(player, geometry);
+  }
+}
+
+void libvlc_free(void *ptr) {
+  auto &state = runtime();
+  if (state.ensureLoaded() && state.freeFn && ptr) {
+    state.freeFn(ptr);
   }
 }

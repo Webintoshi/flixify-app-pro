@@ -103,7 +103,7 @@ NativeVideoSurface::NativeVideoSurface(QQuickItem *parent)
 }
 
 NativeVideoSurface::~NativeVideoSurface() {
-#if defined(Q_OS_WIN)
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
   destroyNativeSurface();
 #endif
 }
@@ -139,6 +139,10 @@ void NativeVideoSurface::setFrontSurface(bool enabled) {
   updateNativeSurfaceGeometry();
 }
 
+void NativeVideoSurface::notifyPointerActivity() {
+  emit pointerActivity();
+}
+
 void NativeVideoSurface::paint(QPainter *painter) {
   painter->fillRect(boundingRect(), QColor(QStringLiteral("#121212")));
   painter->setPen(QColor(QStringLiteral("#e6e6e6")));
@@ -150,7 +154,7 @@ void NativeVideoSurface::paint(QPainter *painter) {
 }
 
 void NativeVideoSurface::syncSurfaceHandle() {
-#if defined(Q_OS_WIN)
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
   if (window()) {
     ensureNativeSurface();
   } else {
@@ -199,6 +203,8 @@ void NativeVideoSurface::updateNativeSurfaceGeometry() {
     SWP_NOACTIVATE
   );
   ShowWindow(surfaceWindow, SW_SHOWNOACTIVATE);
+#elif defined(Q_OS_MACOS)
+  updateMacNativeSurfaceGeometry();
 #endif
 }
 

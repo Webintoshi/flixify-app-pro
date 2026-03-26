@@ -1,6 +1,9 @@
 <RCC>
   <qresource prefix="/">
     <file alias="qml/Main.qml">../qml/Main.qml</file>
+    <file alias="qml/LiveTvPlayerShell.qml">../qml/LiveTvPlayerShell.qml</file>
+    <file alias="qml/MoviePlayerShell.qml">../qml/MoviePlayerShell.qml</file>
+    <file alias="qml/MoviesPage.qml">../qml/MoviesPage.qml</file>
     <file alias="branding/icon.png">../resources/icon.png</file>
     <file alias="icons/whatsapp.svg">../Whatsapp logo (1).svg</file>
     <file alias="icons/telegram.svg">../Telegramlogo.svg</file>

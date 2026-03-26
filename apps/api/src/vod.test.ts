@@ -101,6 +101,26 @@ describe("resolveVodTranscodeDecision", () => {
     expect(hevcDecision.needsTranscode).toBe(false);
   });
 
+  it("keeps native desktop playback on file proxy even when byte-range is unavailable", () => {
+    const decision = resolveVodTranscodeDecision({
+      transport: "mkv",
+      supportsByteRange: false,
+      preferTranscode: false,
+      clientRuntime: "native",
+      platform: "windows-native-qt",
+      mediaProfile: {
+        containerTransport: "mkv",
+        primaryVideoCodec: "h264",
+        audioCodecs: ["aac"],
+        audioTracks: []
+      }
+    });
+
+    expect(decision.deliveryMode).toBe("file_proxy");
+    expect(decision.needsTranscode).toBe(false);
+    expect(decision.requiresFfmpeg).toBe(false);
+  });
+
   it("transcodes unsupported desktop containers and codecs for non-native app runtimes", () => {
     const mkvDecision = resolveVodTranscodeDecision({
       transport: "mkv",

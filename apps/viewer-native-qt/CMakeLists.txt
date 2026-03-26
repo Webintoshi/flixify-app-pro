@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(FlixifyNativeQt VERSION 2.2.64 LANGUAGES CXX)
+project(FlixifyNativeQt VERSION 2.2.85 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -72,7 +72,8 @@ qt_add_executable(FlixifyNativeQt
   src/main.cpp
   src/api_client.cpp
   src/libvlc_runtime.cpp
-  src/playback_controller.cpp
+  src/vod_playback_controller.cpp
+  src/live_playback_controller.cpp
   src/native_video_surface.cpp
   src/resources.qrc
   ${FLIXIFY_MACOS_SOURCES}

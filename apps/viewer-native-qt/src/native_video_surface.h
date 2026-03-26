@@ -18,6 +18,7 @@ public:
   bool frontSurface() const;
   void setFrontSurface(bool enabled);
   void paint(QPainter *painter) override;
+  void notifyPointerActivity();
 
 signals:
   void surfaceHandleChanged();
@@ -28,10 +29,13 @@ signals:
 private:
   void syncSurfaceHandle();
   void updateNativeSurfaceGeometry();
-
-#if defined(Q_OS_WIN)
   void ensureNativeSurface();
   void destroyNativeSurface();
+
+#if defined(Q_OS_WIN)
+  void *m_nativeSurfaceHandle = nullptr;
+#elif defined(Q_OS_MACOS)
+  void updateMacNativeSurfaceGeometry();
   void *m_nativeSurfaceHandle = nullptr;
 #endif
 

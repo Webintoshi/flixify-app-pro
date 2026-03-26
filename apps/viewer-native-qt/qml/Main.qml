@@ -101,16 +101,20 @@ ApplicationWindow {
     property string liveSearchText: ""
     property string playerSubtitle: ""
     property string playerImageUrl: ""
-    property bool liveControlsVisible: false
-    property bool liveVolumePressed: false
     property bool videoFullscreen: false
+    property bool videoFullscreenOwnsWindow: false
     property var pendingPackage: null
     property string selectedPaymentMethodId: ""
     property string toastMessage: ""
     property color toastColor: info
 
+    onVideoFullscreenChanged: {
+        livePlaybackController.liveFullscreenActive = videoFullscreen
+    }
+
     Component.onCompleted: {
         currentScreen = apiClient.authenticated ? "home" : "login"
+        livePlaybackController.liveFullscreenActive = videoFullscreen
         apiClient.bootstrap()
     }
 
@@ -293,6 +297,50 @@ ApplicationWindow {
 
     function artworkSource(value) {
         return normalizeArtworkUrl(value)
+    }
+
+    function fieldText(item, key) {
+        if (!item || !key || !key.length) {
+            return ""
+        }
+        const value = item[key]
+        return safeText(value)
+    }
+
+    function movieArtworkUrl(movie) {
+        if (!movie) {
+            return ""
+        }
+        return artworkSource(
+            movie["posterUrl"]
+            || movie.posterUrl
+            || movie["streamImageUrl"]
+            || movie.streamImageUrl
+            || movie["stream_icon"]
+            || movie.stream_icon
+            || movie["logoUrl"]
+            || movie.logoUrl
+            || ""
+        )
+    }
+
+    function movieViewItem(movie) {
+        if (!movie) {
+            return null
+        }
+        return movie
+    }
+
+    function movieViewItems() {
+        const items = filteredMovies()
+        const output = []
+        for (let index = 0; index < items.length; index += 1) {
+            const viewItem = movieViewItem(items[index])
+            if (viewItem) {
+                output.push(viewItem)
+            }
+        }
+        return output
     }
 
     function artworkMonogram(value) {
@@ -617,7 +665,7 @@ ApplicationWindow {
         const normalizedGroup = safeText(group)
         moviesSearchText = normalizedSearch
         selectedMovieGroup = normalizedGroup
-        apiClient.fetchMovieCatalog(1, 18, normalizedSearch, normalizedGroup)
+        apiClient.fetchMovieCatalog(1, 120, normalizedSearch, normalizedGroup)
     }
 
     function firstPlayable(items) {
@@ -696,11 +744,11 @@ ApplicationWindow {
         const output = []
         for (let index = 0; index < items.length; index += 1) {
             const item = items[index]
-            const haystack = normalizeText(`${item.title || ""} ${item.groupTitle || ""}`)
+            const haystack = normalizeText(`${fieldText(item, "title")} ${fieldText(item, "groupTitle")}`)
             if (searchText.length && haystack.indexOf(searchText) === -1) {
                 continue
             }
-            if (groupText.length && normalizeText(item.groupTitle) !== groupText) {
+            if (groupText.length && normalizeText(fieldText(item, "groupTitle")) !== groupText) {
                 continue
             }
             output.push(item)
@@ -714,11 +762,11 @@ ApplicationWindow {
         }
         const searchText = normalizeText(search)
         const groupText = normalizeText(group)
-        const haystack = normalizeText(`${item.title || ""} ${item.groupTitle || ""}`)
+        const haystack = normalizeText(`${fieldText(item, "title")} ${fieldText(item, "groupTitle")}`)
         if (searchText.length && haystack.indexOf(searchText) === -1) {
             return false
         }
-        if (groupText.length && normalizeText(item.groupTitle) !== groupText) {
+        if (groupText.length && normalizeText(fieldText(item, "groupTitle")) !== groupText) {
             return false
         }
         return true
@@ -731,7 +779,8 @@ ApplicationWindow {
     function selectedMovie() {
         const items = apiClient.movies || []
         for (let index = 0; index < items.length; index += 1) {
-            if (items[index].id === selectedMovieId) {
+            const itemId = fieldText(items[index], "id")
+            if (itemId === selectedMovieId) {
                 return items[index]
             }
         }
@@ -831,42 +880,6 @@ ApplicationWindow {
         return items.length ? items[0] : null
     }
     
-    function previousLiveChannel() {
-        const items = filteredLiveItems()
-        if (items.length < 2) return
-        
-        let currentIndex = -1
-        for (let i = 0; i < items.length; i++) {
-            if (items[i].id === selectedLiveId) {
-                currentIndex = i
-                break
-            }
-        }
-        
-        if (currentIndex === -1) currentIndex = 0
-        const previousIndex = currentIndex === 0 ? items.length - 1 : currentIndex - 1
-        selectedLiveId = items[previousIndex].id
-        playLive(items[previousIndex])
-    }
-    
-    function nextLiveChannel() {
-        const items = filteredLiveItems()
-        if (items.length < 2) return
-        
-        let currentIndex = -1
-        for (let i = 0; i < items.length; i++) {
-            if (items[i].id === selectedLiveId) {
-                currentIndex = i
-                break
-            }
-        }
-        
-        if (currentIndex === -1) currentIndex = 0
-        const nextIndex = currentIndex === items.length - 1 ? 0 : currentIndex + 1
-        selectedLiveId = items[nextIndex].id
-        playLive(items[nextIndex])
-    }
-    
     function featuredSeriesEpisodes() {
         const series = apiClient.series || []
         const output = []
@@ -950,8 +963,8 @@ ApplicationWindow {
 
     function currentPlaybackItem() {
         if (inlinePlaybackMode === "movie") return selectedMovie() || apiClient.movieById(playbackController.activeContentId)
-        if (playbackController.activeContentKind === "episode") return apiClient.episodeById(playbackController.activeContentId)
-        if (playbackController.activeContentKind === "live") return apiClient.liveChannelById(playbackController.activeContentId)
+        if (inlinePlaybackMode === "episode" || playbackController.activeContentKind === "episode") return apiClient.episodeById(playbackController.activeContentId)
+        if (inlinePlaybackMode === "live" || livePlaybackController.activeContentKind === "live") return apiClient.liveChannelById(livePlaybackController.activeContentId)
         return ({})
     }
 
@@ -1008,11 +1021,33 @@ ApplicationWindow {
     function overlayPlayerVisible() {
         return false
     }
+    function lockWindowSizeForDesktop() {
+        if (Qt.platform.os !== "windows") {
+            return
+        }
+        minimumWidth = 1600
+        minimumHeight = 900
+        maximumWidth = 1600
+        maximumHeight = 900
+        width = 1600
+        height = 900
+    }
+    function unlockWindowSizeForFullscreen() {
+        if (Qt.platform.os !== "windows") {
+            return
+        }
+        minimumWidth = 1600
+        minimumHeight = 900
+        maximumWidth = 16777215
+        maximumHeight = 16777215
+    }
     function toggleWindowFullscreen() {
         if (window.visibility === Window.FullScreen) {
             window.showNormal()
+            lockWindowSizeForDesktop()
             return
         }
+        unlockWindowSizeForFullscreen()
         window.showFullScreen()
     }
     function toggleVideoFullscreen() {
@@ -1022,13 +1057,22 @@ ApplicationWindow {
         }
         videoFullscreen = true
         if (window.visibility !== Window.FullScreen) {
+            videoFullscreenOwnsWindow = true
+            unlockWindowSizeForFullscreen()
             window.showFullScreen()
+        } else {
+            videoFullscreenOwnsWindow = false
         }
-        showLiveControls()
+        liveFullscreenRepairTimer.restart()
     }
     function exitVideoFullscreen() {
         videoFullscreen = false
-        window.showNormal()
+        if (videoFullscreenOwnsWindow && window.visibility === Window.FullScreen) {
+            window.showNormal()
+            lockWindowSizeForDesktop()
+        }
+        videoFullscreenOwnsWindow = false
+        liveFullscreenRepairTimer.restart()
     }
     function requestAppQuit() {
         if (isMacOS) {
@@ -1077,19 +1121,12 @@ ApplicationWindow {
     function platformTrialRequestNote() {
         return isMacOS ? "MacBook native cihazindan test talebi" : "Desktop native cihazindan test talebi"
     }
-    function showLiveControls() {
-        liveControlsVisible = true
-        if (currentScreen === "live" && playerVisible && selectedLiveItem() !== null && selectedLiveItem().playbackAllowed !== false) {
-            liveControlsHideTimer.restart()
-        }
-    }
-
     function openScreen(screenName) {
         if (videoFullscreen && screenName !== "live") {
             exitVideoFullscreen()
         }
         if (playerVisible && screenName !== currentScreen) {
-            closePlayer()
+            closeActivePlayer()
         }
         currentScreen = screenName
         if (screenName === "home") {
@@ -1130,32 +1167,34 @@ ApplicationWindow {
 
     function openSeriesDetail(seriesId) {
         if (playerVisible && currentScreen === "series-detail" && selectedSeriesId !== seriesId) {
-            closePlayer()
+            closeVodPlayer()
         }
         selectedSeriesId = seriesId
         currentScreen = "series-detail"
     }
 
     function playMovie(movie) {
-        if (!movie || !movie.id) return
+        if (!movie) return
+        const movieId = fieldText(movie, "id")
+        if (!movieId.length) return
         if (playerVisible && (inlinePlaybackMode !== "movie" || currentScreen !== "movies")) {
-            closePlayer()
+            closeActivePlayer()
         }
         if (currentScreen !== "movies") {
             currentScreen = "movies"
         }
-        selectedMovieId = movie.id
-        playerSubtitle = movie.groupTitle || "Film"
-        playerImageUrl = movie.posterUrl || ""
+        selectedMovieId = movieId
+        playerSubtitle = fieldText(movie, "groupTitle") || "Film"
+        playerImageUrl = movieArtworkUrl(movie)
         playerVisible = true
         inlinePlaybackMode = "movie"
-        playbackController.playVod("movie", movie.id, movie.title)
+        playbackController.playVod("movie", movieId, fieldText(movie, "title"))
     }
 
     function playEpisode(episode, series) {
         if (!episode || !episode.id) return
         if (playerVisible && (inlinePlaybackMode !== "episode" || currentScreen !== "series-detail")) {
-            closePlayer()
+            closeActivePlayer()
         }
         if (series && series.id) {
             selectedSeriesId = series.id
@@ -1173,7 +1212,7 @@ ApplicationWindow {
     function playLive(channel, forceRestart) {
         if (!channel || !channel.id) return
         if (playerVisible && (inlinePlaybackMode !== "live" || currentScreen !== "live")) {
-            closePlayer()
+            closeActivePlayer()
         }
         if (currentScreen !== "live") {
             currentScreen = "live"
@@ -1182,22 +1221,23 @@ ApplicationWindow {
         playerSubtitle = channel.groupTitle || "Canlı TV"
         playerImageUrl = channel.logoUrl || ""
         if (channel.playbackAllowed === false) {
-            if (playbackController.activeContentKind === "live") {
-                playbackController.stop()
+            if (livePlaybackController.activeContentKind === "live") {
+                livePlaybackController.stop()
             }
             playerVisible = false
             inlinePlaybackMode = "none"
-            liveControlsVisible = false
             return
         }
         playerVisible = true
         inlinePlaybackMode = "live"
-        showLiveControls()
-        const sameChannel = playbackController.activeContentKind === "live" && playbackController.activeChannelId === channel.id
+        if (livePlaybackController.videoFillMode !== "fill") {
+            livePlaybackController.videoFillMode = "fill"
+        }
+        const sameChannel = livePlaybackController.activeContentKind === "live" && livePlaybackController.activeChannelId === channel.id
         if (sameChannel && !forceRestart) {
             return
         }
-        playbackController.playChannel(channel.id)
+        livePlaybackController.playChannel(channel.id)
     }
 
     function ensureLiveAutoplay(forceRestart) {
@@ -1211,12 +1251,54 @@ ApplicationWindow {
         playLive(channel, forceRestart)
     }
 
-    function closePlayer() {
+    function closeVodPlayer() {
+        const hadVodInlineMode = inlinePlaybackMode === "movie" || inlinePlaybackMode === "episode"
+        if (hadVodInlineMode) {
+            playerVisible = false
+            inlinePlaybackMode = "none"
+        }
+        selectedMovieId = ""
+        playerSubtitle = ""
+        playerImageUrl = ""
+        if (playbackController.activeContentKind === "movie" || playbackController.activeContentKind === "episode" || hadVodInlineMode) {
+            playbackController.stop()
+        }
+    }
+
+    function closeLivePlayer() {
+        const hadLiveInlineMode = inlinePlaybackMode === "live"
+        if (hadLiveInlineMode) {
+            playerVisible = false
+            inlinePlaybackMode = "none"
+        }
+        if (videoFullscreen) {
+            exitVideoFullscreen()
+        }
+        if (livePlaybackController.activeContentKind === "live" || hadLiveInlineMode) {
+            livePlaybackController.stop()
+        }
+    }
+
+    function closeActivePlayer() {
+        if (inlinePlaybackMode === "live" || livePlaybackController.activeContentKind === "live") {
+            closeLivePlayer()
+            return
+        }
+        if (
+            inlinePlaybackMode === "movie" ||
+            inlinePlaybackMode === "episode" ||
+            playbackController.activeContentKind === "movie" ||
+            playbackController.activeContentKind === "episode"
+        ) {
+            closeVodPlayer()
+            return
+        }
         playerVisible = false
         inlinePlaybackMode = "none"
-        selectedMovieId = ""
-        liveControlsVisible = false
-        playbackController.stop()
+    }
+
+    function closePlayer() {
+        closeActivePlayer()
     }
 
     Timer {
@@ -1272,19 +1354,18 @@ ApplicationWindow {
     }
 
     Timer {
-        id: liveControlsHideTimer
-        interval: 3000
+        id: liveFullscreenRepairTimer
+        interval: 220
         repeat: false
         onTriggered: {
-            if (currentScreen !== "live" || !inlineLivePlayerVisible()) {
-                liveControlsVisible = false
+            if (!inlineLivePlayerVisible()) {
                 return
             }
-            if (liveVolumePressed) {
-                restart()
-                return
+            if (livePlayerShell && livePlayerShell.refreshSurfaceBinding) {
+                livePlayerShell.refreshSurfaceBinding()
+            } else {
+                livePlaybackController.refreshVideoLayout()
             }
-            liveControlsVisible = false
         }
     }
 
@@ -1322,7 +1403,7 @@ ApplicationWindow {
                 liveAutoplayTimer.restart()
             }
         }
-        function onLogoutCompleted() { currentScreen = "login"; authCode = ""; issuedCode = ""; showAuthCode = false; closePlayer(); pendingPackage = null; selectedPaymentMethodId = "" }
+    function onLogoutCompleted() { currentScreen = "login"; authCode = ""; issuedCode = ""; showAuthCode = false; closeActivePlayer(); pendingPackage = null; selectedPaymentMethodId = "" }
         function onNoticeChanged() { if (apiClient.notice && apiClient.notice.length) showToast(apiClient.notice, success) }
         function onRequestFailed(context, message) { showToast(message, danger) }
     }
@@ -2112,771 +2193,26 @@ ApplicationWindow {
 
     // ========== LIVE TV PLAYER CONTROL COMPONENTS ==========
     
-    // 1. Üst Bar - PIP, Cast, Fullscreen, Favori
-    component PlayerTopBar: Rectangle {
-        id: topBar
-        height: 84
-        color: "transparent"
-        readonly property bool pinnedVisible: currentScreen === "live" && inlineLivePlayerVisible() && selectedLiveItem() !== null
-        opacity: pinnedVisible || liveControlsVisible ? 1.0 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-        
-        // Modern gradient from top
-        Rectangle {
-            anchors.fill: parent
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: "#cc000000" }
-                GradientStop { position: 0.6; color: "#80000000" }
-                GradientStop { position: 1.0; color: "transparent" }
-            }
-        }
-        
-        Row {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: 24
-            spacing: 12
-            
-            // Back button
-            PlayerIconButton {
-                icon: "←"
-                tooltip: "Geri"
-                onClicked: {
-                    if (videoFullscreen) {
-                        exitVideoFullscreen()
-                    }
-                    playerVisible = false
-                    playbackController.stop()
-                }
-            }
-            
-            // Channel badge
-            Rectangle {
-                width: channelBadgeText.implicitWidth + 24
-                height: 32
-                radius: 16
-                color: "#e50914"
-                anchors.verticalCenter: parent.verticalCenter
-                visible: selectedLiveItem()
-                
-                Text {
-                    id: channelBadgeText
-                    anchors.centerIn: parent
-                    text: "CANLI"
-                    color: "#ffffff"
-                    font.pixelSize: 11
-                    font.bold: true
-                    font.letterSpacing: 1
-                }
-            }
-        }
-        
-        Row {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.rightMargin: 24
-            spacing: 12
-            
-            // Picture-in-Picture
-            PlayerIconButton {
-                icon: "◱"
-                tooltip: "Picture in Picture"
-                onClicked: showToast("PIP modu yakında geliyor")
-            }
-            
-            // Cast
-            PlayerIconButton {
-                icon: "⎔"
-                tooltip: "Cast"
-                onClicked: showToast("Cast özelliği yakında geliyor")
-            }
-            
-            // Settings
-            PlayerIconButton {
-                icon: "⚙"
-                tooltip: "Ayarlar"
-                onClicked: showToast("Ayarlar yakında geliyor")
-            }
-            
-            // Fullscreen
-            PlayerIconButton {
-                icon: videoFullscreen ? "⤢" : "⛶"
-                tooltip: videoFullscreen ? "Küçült" : "Tam Ekran"
-                onClicked: toggleVideoFullscreen()
-            }
-        }
-    }
     
-    // 2. Orta Kontroller - Önceki/Play/Sonraki
-    component PlayerCenterControls: Item {
-        width: 320
-        height: 100
-        opacity: liveControlsVisible ? 1.0 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-        
-        // Glass background
-        Rectangle {
-            anchors.centerIn: parent
-            width: parent.width
-            height: 80
-            radius: 40
-            color: "#40000000"
-            border.width: 1
-            border.color: "#25ffffff"
-            
-            // Backdrop blur effect simulation
-            Rectangle {
-                anchors.fill: parent
-                radius: 40
-                color: "#150d121c"
-            }
-        }
-        
-        Row {
-            anchors.centerIn: parent
-            spacing: 20
-            
-            // Önceki Kanal
-            PlayerControlButton {
-                icon: "‹"
-                size: 44
-                onClicked: previousLiveChannel()
-            }
-            
-            // Play/Pause (Live TV için buffer control)
-            PlayerControlButton {
-                icon: playbackController.state === "playing" ? "❚❚" : "▶"
-                size: 64
-                accent: true
-                onClicked: {
-                    if (playbackController.state === "playing") {
-                        playbackController.stop()
-                    } else {
-                        playbackController.retryCurrent()
-                    }
-                }
-            }
-            
-            // Sonraki Kanal
-            PlayerControlButton {
-                icon: "›"
-                size: 44
-                onClicked: nextLiveChannel()
-            }
-        }
-    }
     
-    // 3. Alt Bilgi Barı - Kanal Logo ve İsim (Modern)
-    component PlayerInfoBar: Rectangle {
-        height: 100
-        color: "transparent"
-        opacity: liveControlsVisible ? 1.0 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-        
-        Row {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: 24
-            spacing: 18
-            
-            // Kanal Logosu - Modern Glass Card
-            Rectangle {
-                width: 64
-                height: 64
-                radius: 16
-                color: "#1a0d121c"
-                border.width: 1
-                border.color: "#25ffffff"
-                
-                Image {
-                    id: channelLogoImage
-                    anchors.centerIn: parent
-                    width: 48
-                    height: 48
-                    source: selectedLiveItem() ? window.artworkSource(selectedLiveItem().logoUrl || "") : ""
-                    fillMode: Image.PreserveAspectFit
-                    visible: status === Image.Ready
-                }
-                
-                Text {
-                    anchors.centerIn: parent
-                    text: selectedLiveItem() ? (selectedLiveItem().title || "").substring(0, 2).toUpperCase() : "TV"
-                    color: window.textPrimary
-                    font.pixelSize: 20
-                    font.bold: true
-                    visible: !channelLogoImage.visible
-                }
-            }
-            
-            // Kanal Bilgisi
-            Column {
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 4
-                
-                // Country badge + Title
-                Row {
-                    spacing: 10
-                    anchors.verticalCenter: parent.verticalCenter
-                    
-                    // Country badge
-                    Rectangle {
-                        visible: selectedLiveItem() && selectedLiveItem().countryCode
-                        width: countryBadgeText.implicitWidth + 16
-                        height: 24
-                        radius: 6
-                        color: "#25ffffff"
-                        anchors.verticalCenter: parent.verticalCenter
-                        
-                        Text {
-                            id: countryBadgeText
-                            anchors.centerIn: parent
-                            text: selectedLiveItem() ? (selectedLiveItem().countryCode || "") : ""
-                            color: window.textPrimary
-                            font.pixelSize: 11
-                            font.bold: true
-                        }
-                    }
-                    
-                    Text {
-                        text: selectedLiveItem() ? selectedLiveItem().title : "Kanal Seçin"
-                        color: window.textPrimary
-                        font.pixelSize: 24
-                        font.family: "Space Grotesk"
-                        font.bold: true
-                    }
-                }
-                
-                Text {
-                    text: selectedLiveItem() ? (selectedLiveItem().groupTitle || "Canlı TV") : ""
-                    color: window.textMuted
-                    font.pixelSize: 14
-                }
-            }
-        }
-        
-        // Quality Badge - Modern
-        Row {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.rightMargin: 24
-            spacing: 8
-            
-            // Live indicator with pulse
-            Rectangle {
-                width: 8
-                height: 8
-                radius: 4
-                color: "#30d19d"
-                anchors.verticalCenter: parent.verticalCenter
-                
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: 16
-                    height: 16
-                    radius: 8
-                    color: "#30d19d"
-                    opacity: 0.3
-                    
-                    SequentialAnimation on scale {
-                        loops: Animation.Infinite
-                        NumberAnimation { to: 1.5; duration: 1000 }
-                        NumberAnimation { to: 1.0; duration: 1000 }
-                    }
-                    
-                    SequentialAnimation on opacity {
-                        loops: Animation.Infinite
-                        NumberAnimation { to: 0; duration: 1000 }
-                        NumberAnimation { to: 0.3; duration: 1000 }
-                    }
-                }
-            }
-            
-            Text {
-                text: "CANLI"
-                color: "#30d19d"
-                font.pixelSize: 11
-                font.bold: true
-                font.letterSpacing: 1
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            
-            // HD Badge
-            Rectangle {
-                visible: selectedLiveItem() && selectedLiveItem().quality === "HD"
-                width: 32
-                height: 20
-                radius: 4
-                color: "#e50914"
-                anchors.verticalCenter: parent.verticalCenter
-                
-                Text {
-                    anchors.centerIn: parent
-                    text: "HD"
-                    color: "#ffffff"
-                    font.pixelSize: 10
-                    font.bold: true
-                }
-            }
-        }
-    }
     
-    // 4. Alt Kontrol Barı - Ses ve Diğer Kontroller (Modern)
-    component PlayerControlBar: Rectangle {
-        height: 72
-        color: "transparent"
-        readonly property bool pinnedVisible: currentScreen === "live" && inlineLivePlayerVisible() && selectedLiveItem() !== null
-        opacity: pinnedVisible || liveControlsVisible ? 1.0 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-        
-        Row {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: 24
-            spacing: 16
-            
-            // Ses Aç/Kapa
-            PlayerIconButton {
-                icon: playbackController.muted || playbackController.volume <= 0 ? "🔇" : playbackController.volume < 0.5 ? "🔉" : "🔊"
-                tooltip: "Sesi Aç/Kapat"
-                onClicked: playbackController.toggleMuted()
-            }
-            
-            // Modern Ses Slider
-            Slider {
-                id: volumeSlider
-                width: 120
-                anchors.verticalCenter: parent.verticalCenter
-                from: 0
-                to: 1
-                value: playbackController.muted ? 0 : playbackController.volume
-                onMoved: {
-                    showLiveControls()
-                    playbackController.setVolume(value)
-                }
-                
-                background: Rectangle {
-                    x: volumeSlider.leftPadding
-                    y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
-                    implicitWidth: 120
-                    implicitHeight: 6
-                    width: volumeSlider.availableWidth
-                    height: implicitHeight
-                    radius: 3
-                    color: "#30ffffff"
-                    
-                    Rectangle {
-                        width: volumeSlider.visualPosition * parent.width
-                        height: parent.height
-                        radius: 3
-                        color: "#e50914"
-                        
-                        // Glow effect
-                        Rectangle {
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 12
-                            height: 12
-                            radius: 6
-                            color: "#e50914"
-                            opacity: 0.5
-                        }
-                    }
-                }
-                
-                handle: Rectangle {
-                    x: volumeSlider.leftPadding + volumeSlider.visualPosition * (volumeSlider.availableWidth - width)
-                    y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
-                    implicitWidth: 16
-                    implicitHeight: 16
-                    radius: 8
-                    color: "#ffffff"
-                    border.width: 2
-                    border.color: "#e50914"
-                    
-                    // Hover glow
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: 24
-                        height: 24
-                        radius: 12
-                        color: "#e50914"
-                        opacity: 0.2
-                        visible: volumeSlider.pressed
-                    }
-                }
-            }
-            
-            // Ses Seviyesi Yüzdesi - Modern
-            Rectangle {
-                width: 44
-                height: 24
-                radius: 6
-                color: "#15ffffff"
-                anchors.verticalCenter: parent.verticalCenter
-                
-                Text {
-                    anchors.centerIn: parent
-                    text: Math.round((playbackController.muted ? 0 : playbackController.volume) * 100)
-                    color: window.textPrimary
-                    font.pixelSize: 12
-                    font.bold: true
-                }
-            }
-        }
-        
-        Row {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.rightMargin: 24
-            spacing: 12
-            
-            // Favori
-            PlayerIconButton {
-                icon: "♥"
-                tooltip: "Favorilere Ekle"
-                iconColor: "#e50914"
-                onClicked: showToast("Favorilere eklendi")
-            }
-            
-            PlayerIconButton {
-                icon: playbackController.videoFillMode === "fill" ? "Fill" : "Fit"
-                tooltip: playbackController.videoFillMode === "fill" ? "Sığdır" : "Doldur"
-                onClicked: playbackController.videoFillMode = playbackController.videoFillMode === "fill" ? "fit" : "fill"
-            }
 
-            // Tam Ekran
-            PlayerIconButton {
-                icon: videoFullscreen ? "⤢" : "⛶"
-                tooltip: videoFullscreen ? "Küçült" : "Tam Ekran"
-                onClicked: toggleVideoFullscreen()
-            }
-        }
-    }
     
-    // Yardımcı Componentler - Modern
-    component LivePlayerActionButton: Rectangle {
-        property string title: ""
-        property string tooltip: ""
-        property bool accent: false
-        property bool danger: false
-        signal clicked()
-
-        width: Math.max(78, actionLabel.implicitWidth + 28)
-        height: 40
-        radius: 12
-        color: danger
-               ? (actionMouse.pressed ? "#9f0b13" : actionMouse.containsMouse ? "#d41821" : "#bf1018")
-               : accent
-                 ? (actionMouse.pressed ? "#c0040e" : actionMouse.containsMouse ? "#f11b27" : "#e50914")
-                 : (actionMouse.containsMouse ? "#30ffffff" : "#18ffffff")
-        border.width: accent || danger ? 0 : 1
-        border.color: actionMouse.containsMouse ? "#40ffffff" : "#24ffffff"
-        Behavior on color { ColorAnimation { duration: 150 } }
-        Behavior on border.color { ColorAnimation { duration: 150 } }
-
-        Text {
-            id: actionLabel
-            anchors.centerIn: parent
-            text: parent.title
-            color: "#ffffff"
-            font.pixelSize: 12
-            font.bold: true
-            font.family: "Space Grotesk"
-        }
-
-        Rectangle {
-            visible: actionMouse.containsMouse && parent.tooltip.length > 0
-            anchors.bottom: parent.top
-            anchors.bottomMargin: 8
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: dockTooltipText.implicitWidth + 18
-            height: 28
-            radius: 6
-            color: "#cc000000"
-            border.width: 1
-            border.color: "#30ffffff"
-
-            Text {
-                id: dockTooltipText
-                anchors.centerIn: parent
-                text: parent.parent.tooltip
-                color: "#ffffff"
-                font.pixelSize: 12
-            }
-        }
-
-        MouseArea {
-            id: actionMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                showLiveControls()
-                parent.clicked()
-            }
-            onEntered: showLiveControls()
-        }
-    }
-
-    component LivePlayerQuickDock: Item {
-        readonly property bool dockVisible: currentScreen === "live" && inlineLivePlayerVisible() && selectedLiveItem() !== null
-        visible: dockVisible
-        opacity: dockVisible ? 1.0 : 0.0
-        height: 58
-
-        Connections {
-            target: playbackController
-            function onVolumeChanged() { liveQuickVolumeSlider.value = playbackController.muted ? 0 : playbackController.volume }
-            function onMutedChanged() { liveQuickVolumeSlider.value = playbackController.muted ? 0 : playbackController.volume }
-        }
-
-        Rectangle {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            width: audioDockRow.implicitWidth + 28
-            height: parent.height
-            radius: 18
-            color: "#c10d121c"
-            border.width: 1
-            border.color: "#24ffffff"
-
-            Row {
-                id: audioDockRow
-                anchors.centerIn: parent
-                spacing: 14
-
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "SES"
-                    color: window.textMuted
-                    font.pixelSize: 12
-                    font.bold: true
-                }
-
-                LivePlayerActionButton {
-                    title: playbackController.muted || playbackController.volume <= 0 ? "AC" : "KAPAT"
-                    tooltip: playbackController.muted || playbackController.volume <= 0 ? "Sesi ac" : "Sesi kapat"
-                    onClicked: playbackController.toggleMuted()
-                }
-
-                Slider {
-                    id: liveQuickVolumeSlider
-                    width: 168
-                    anchors.verticalCenter: parent.verticalCenter
-                    from: 0
-                    to: 1
-                    value: playbackController.muted ? 0 : playbackController.volume
-                    onMoved: {
-                        showLiveControls()
-                        playbackController.setVolume(value)
-                    }
-                    onPressedChanged: liveVolumePressed = pressed
-
-                    background: Rectangle {
-                        x: liveQuickVolumeSlider.leftPadding
-                        y: liveQuickVolumeSlider.topPadding + liveQuickVolumeSlider.availableHeight / 2 - height / 2
-                        implicitWidth: 168
-                        implicitHeight: 6
-                        width: liveQuickVolumeSlider.availableWidth
-                        height: implicitHeight
-                        radius: 3
-                        color: "#30ffffff"
-
-                        Rectangle {
-                            width: liveQuickVolumeSlider.visualPosition * parent.width
-                            height: parent.height
-                            radius: 3
-                            color: "#e50914"
-                        }
-                    }
-
-                    handle: Rectangle {
-                        x: liveQuickVolumeSlider.leftPadding + liveQuickVolumeSlider.visualPosition * (liveQuickVolumeSlider.availableWidth - width)
-                        y: liveQuickVolumeSlider.topPadding + liveQuickVolumeSlider.availableHeight / 2 - height / 2
-                        implicitWidth: 16
-                        implicitHeight: 16
-                        radius: 8
-                        color: "#ffffff"
-                        border.width: 2
-                        border.color: "#e50914"
-                    }
-                }
-
-                Rectangle {
-                    width: 54
-                    height: 28
-                    radius: 8
-                    color: "#15ffffff"
-                    anchors.verticalCenter: parent.verticalCenter
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: `${Math.round((playbackController.muted ? 0 : playbackController.volume) * 100)}%`
-                        color: window.textPrimary
-                        font.pixelSize: 12
-                        font.bold: true
-                    }
-                }
-            }
-        }
-
-        Rectangle {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            width: actionDockRow.implicitWidth + 28
-            height: parent.height
-            radius: 18
-            color: "#c10d121c"
-            border.width: 1
-            border.color: "#24ffffff"
-
-            Row {
-                id: actionDockRow
-                anchors.centerIn: parent
-                spacing: 12
-
-                LivePlayerActionButton {
-                    title: playbackController.videoFillMode === "fill" ? "SIGDIR" : "DOLDUR"
-                    tooltip: playbackController.videoFillMode === "fill" ? "Goruntuyu sigdir" : "Goruntuyu doldur"
-                    onClicked: playbackController.videoFillMode = playbackController.videoFillMode === "fill" ? "fit" : "fill"
-                }
-
-                LivePlayerActionButton {
-                    title: videoFullscreen ? "PENCERE" : "TAM EKRAN"
-                    tooltip: videoFullscreen ? "Pencere moduna don" : "Tam ekran ac"
-                    accent: true
-                    onClicked: toggleVideoFullscreen()
-                }
-
-                LivePlayerActionButton {
-                    title: "KAPAT"
-                    tooltip: "Playeri kapat"
-                    danger: true
-                    onClicked: closePlayer()
-                }
-            }
-        }
-    }
-
-    component PlayerIconButton: Rectangle {
-        property string icon: ""
-        property string tooltip: ""
-        property color iconColor: "#ffffff"
-        signal clicked()
-        
-        width: 44
-        height: 44
-        radius: 12
-        color: mouseArea.containsMouse ? "#30ffffff" : "#18ffffff"
-        border.width: 1
-        border.color: mouseArea.containsMouse ? "#40ffffff" : "#20ffffff"
-        Behavior on color { ColorAnimation { duration: 150 } }
-        Behavior on border.color { ColorAnimation { duration: 150 } }
-        
-        Text {
-            anchors.centerIn: parent
-            text: parent.icon
-            color: parent.iconColor
-            font.pixelSize: 20
-            font.family: "Segoe UI Symbol"
-        }
-        
-        // Tooltip
-        Rectangle {
-            visible: mouseArea.containsMouse && parent.tooltip.length > 0
-            anchors.bottom: parent.top
-            anchors.bottomMargin: 8
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: tooltipText.implicitWidth + 16
-            height: 28
-            radius: 6
-            color: "#cc000000"
-            border.width: 1
-            border.color: "#30ffffff"
-            
-            Text {
-                id: tooltipText
-                anchors.centerIn: parent
-                text: parent.parent.tooltip
-                color: "#ffffff"
-                font.pixelSize: 12
-            }
-            
-            Behavior on visible { NumberAnimation { duration: 150 } }
-        }
-        
-        MouseArea {
-            id: mouseArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: parent.clicked()
-            onEntered: showLiveControls()
-        }
-    }
-    
-    component PlayerControlButton: Rectangle {
-        property string icon: ""
-        property int size: 48
-        property bool accent: false
-        signal clicked()
-        
-        width: size
-        height: size
-        radius: size / 2
-        color: accent ? (mouseArea.pressed ? "#c0040e" : "#e50914") : (mouseArea.containsMouse ? "#35ffffff" : "#22ffffff")
-        border.width: accent ? 0 : 1
-        border.color: accent ? "transparent" : (mouseArea.containsMouse ? "#45ffffff" : "#30ffffff")
-        Behavior on color { ColorAnimation { duration: 150 } }
-        
-        // Glow for accent button
-        Rectangle {
-            visible: parent.accent
-            anchors.fill: parent
-            radius: parent.radius
-            color: "#e50914"
-            opacity: 0.3
-            z: -1
-            scale: 1.2
-            
-            SequentialAnimation on opacity {
-                loops: Animation.Infinite
-                running: parent.accent && liveControlsVisible
-                NumberAnimation { to: 0.1; duration: 1500 }
-                NumberAnimation { to: 0.3; duration: 1500 }
-            }
-        }
-        
-        Text {
-            anchors.centerIn: parent
-            text: parent.icon
-            color: "#ffffff"
-            font.pixelSize: parent.size * 0.4
-            font.family: "Segoe UI Symbol"
-        }
-        
-        MouseArea {
-            id: mouseArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                showLiveControls()
-                parent.clicked()
-            }
-            onEntered: showLiveControls()
-        }
-    }
 
     Component {
-        id: nativeVideoSurfaceComponent
+        id: vodVideoSurfaceComponent
         Item {
             property int slotIndex: 0
+            property var controller: playbackController
+            signal pointerActivity()
             anchors.fill: parent
 
             function syncSurfaceBinding() {
-                playbackController.setVideoSurfaceHandle(slotIndex, nativeVideoSurface.surfaceHandle)
-                playbackController.setVideoSurfaceGeometry(slotIndex, nativeVideoSurface.width, nativeVideoSurface.height)
+                if (!controller) {
+                    return
+                }
+                controller.setVideoSurfaceHandle(slotIndex, nativeVideoSurface.surfaceHandle)
+                controller.setVideoSurfaceGeometry(slotIndex, nativeVideoSurface.width, nativeVideoSurface.height)
             }
 
             onSlotIndexChanged: syncSurfaceBinding()
@@ -2886,30 +2222,45 @@ ApplicationWindow {
                 anchors.fill: parent
                 anchors.margins: 0
                 mousePassthrough: true
-                frontSurface: playbackController.activeVideoSlot === parent.slotIndex
+                frontSurface: parent.controller ? parent.controller.activeVideoSlot === parent.slotIndex : false
                 onSurfaceHandleChanged: parent.syncSurfaceBinding()
                 onWidthChanged: parent.syncSurfaceBinding()
                 onHeightChanged: parent.syncSurfaceBinding()
+                onPointerActivity: parent.pointerActivity()
                 Component.onCompleted: parent.syncSurfaceBinding()
-                onPointerActivity: {
-                    if (currentScreen === "live" && inlineLivePlayerVisible()) {
-                        showLiveControls()
-                    }
+            }
+        }
+    }
+
+    Component {
+        id: liveVideoSurfaceComponent
+        Item {
+            property int slotIndex: 0
+            property var controller: livePlaybackController
+            signal pointerActivity()
+            anchors.fill: parent
+
+            function syncSurfaceBinding() {
+                if (!controller) {
+                    return
                 }
+                controller.setVideoSurfaceHandle(slotIndex, nativeVideoSurface.surfaceHandle)
+                controller.setVideoSurfaceGeometry(slotIndex, nativeVideoSurface.width, nativeVideoSurface.height)
             }
 
-            HoverHandler {
-                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                onHoveredChanged: {
-                    if (hovered && currentScreen === "live" && inlineLivePlayerVisible()) {
-                        showLiveControls()
-                    }
-                }
-                onPointChanged: {
-                    if (currentScreen === "live" && inlineLivePlayerVisible()) {
-                        showLiveControls()
-                    }
-                }
+            onSlotIndexChanged: syncSurfaceBinding()
+
+            NativeVideoSurface {
+                id: nativeVideoSurface
+                anchors.fill: parent
+                anchors.margins: 0
+                mousePassthrough: true
+                frontSurface: parent.controller ? parent.controller.activeVideoSlot === parent.slotIndex : false
+                onSurfaceHandleChanged: parent.syncSurfaceBinding()
+                onWidthChanged: parent.syncSurfaceBinding()
+                onHeightChanged: parent.syncSurfaceBinding()
+                onPointerActivity: parent.pointerActivity()
+                Component.onCompleted: parent.syncSurfaceBinding()
             }
         }
     }
@@ -2963,7 +2314,7 @@ ApplicationWindow {
                         text: "Kapat"
                         secondary: true
                         implicitWidth: 120
-                        onClicked: closePlayer()
+                        onClicked: closeVodPlayer()
                     }
                 }
 
@@ -2988,7 +2339,17 @@ ApplicationWindow {
                                 anchors.margins: 6
                                 anchors.bottomMargin: Number(inlineVodControls.implicitHeight) + 48
                                 active: true
-                                sourceComponent: nativeVideoSurfaceComponent
+                                sourceComponent: vodVideoSurfaceComponent
+
+                                onLoaded: {
+                                    if (item) {
+                                        item.controller = playbackController
+                                        item.slotIndex = 0
+                                        if (item.syncSurfaceBinding) {
+                                            item.syncSurfaceBinding()
+                                        }
+                                    }
+                                }
                             }
 
                             Rectangle {
@@ -3054,7 +2415,7 @@ ApplicationWindow {
                                             text: "Kapat"
                                             secondary: true
                                             implicitWidth: 118
-                                            onClicked: closePlayer()
+                                            onClicked: closeVodPlayer()
                                         }
                                     }
                                 }
@@ -4457,7 +3818,7 @@ ApplicationWindow {
                                                     playbackAllowed: Boolean(modelData && modelData["playbackAllowed"])
                                                     payload: modelData
                                                     cardKind: "movie"
-                                                    onActivated: playMovie(item)
+                                                    onActivated: function(item) { playMovie(item) }
                                                 }
                                             }
                                         }
@@ -4544,12 +3905,20 @@ ApplicationWindow {
                                         color: videoFullscreen ? "#000000" : "#090c13"
                                         radius: videoFullscreen ? 0 : 8
 
-                                        ColumnLayout {
+                                        LiveTvPlayerShell {
+                                            id: livePlayerShell
                                             anchors.fill: parent
-                                            anchors.margins: videoFullscreen ? 0 : 18
-                                            spacing: 0
+                                            channelData: selectedLiveItem()
+                                            controller: livePlaybackController
+                                            videoSurfaceComponent: liveVideoSurfaceComponent
+                                            fullscreen: videoFullscreen
+                                            playerActive: inlineLivePlayerVisible()
+                                            filteredCount: filteredLiveItems().length
+                                            onToggleFullscreenRequested: toggleVideoFullscreen()
+                                        }
 
-                                            Rectangle {
+                                        Rectangle {
+                                                visible: false
                                                 Layout.fillWidth: true
                                                 Layout.fillHeight: true
                                                 radius: videoFullscreen ? 0 : 8
@@ -4569,11 +3938,12 @@ ApplicationWindow {
                                                         anchors.right: parent.right
                                                         anchors.top: parent.top
                                                         anchors.bottom: parent.bottom
-                                                        active: inlineLivePlayerVisible()
-                                                        sourceComponent: nativeVideoSurfaceComponent
+                                                        active: false
+                                                        sourceComponent: liveVideoSurfaceComponent
 
                                                         onLoaded: {
                                                             if (item) {
+                                                                item.controller = livePlaybackController
                                                                 item.slotIndex = 0
                                                                 if (item.syncSurfaceBinding) {
                                                                     item.syncSurfaceBinding()
@@ -4588,21 +3958,6 @@ ApplicationWindow {
                                                         visible: inlineLivePlayerVisible()
                                                         z: 100
                                                         
-                                                        // Mouse Area for hover detection and double-click fullscreen
-                                                        MouseArea {
-                                                            anchors.fill: parent
-                                                            hoverEnabled: true
-                                                            acceptedButtons: Qt.LeftButton
-                                                            onEntered: showLiveControls()
-                                                            onPositionChanged: showLiveControls()
-                                                            onClicked: showLiveControls()
-                                                            onDoubleClicked: toggleVideoFullscreen()
-                                                            onWheel: function(wheel) {
-                                                                wheel.accepted = false
-                                                                showLiveControls()
-                                                            }
-                                                        }
-                                                        
                                                         // Modern Buffer/Loading State Indicator
                                                         Rectangle {
                                                             anchors.top: parent.top
@@ -4614,7 +3969,7 @@ ApplicationWindow {
                                                             color: "#cc0d121c"
                                                             border.width: 1
                                                             border.color: "#30ffffff"
-                                                            visible: playbackController.state !== "playing"
+                                                            visible: livePlaybackController.state !== "playing"
                                                             
                                                             Row {
                                                                 anchors.centerIn: parent
@@ -4649,9 +4004,9 @@ ApplicationWindow {
                                                                 Text {
                                                                     id: liveNativeStateText2
                                                                     anchors.verticalCenter: parent.verticalCenter
-                                                                    text: playbackController.state === "buffering" ? "Buffer dolduruluyor" :
-                                                                          playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazırlanıyor" :
-                                                                          playbackController.state === "error" ? "Yayın açılamadı" : "Bağlanıyor"
+                                                                    text: livePlaybackController.state === "buffering" ? "Buffer dolduruluyor" :
+                                                                          livePlaybackController.state === "resolving" || livePlaybackController.state === "opening" ? "Kaynak hazırlanıyor" :
+                                                                          livePlaybackController.state === "error" ? "Yayın açılamadı" : "Bağlanıyor"
                                                                     color: window.textPrimary
                                                                     font.pixelSize: 14
                                                                     font.bold: true
@@ -4659,45 +4014,9 @@ ApplicationWindow {
                                                             }
                                                         }
                                                         
-                                                        // Top Bar - PIP, Cast, Fullscreen, Favori
-                                                        PlayerTopBar {
-                                                            anchors.top: parent.top
-                                                            anchors.left: parent.left
-                                                            anchors.right: parent.right
-                                                            visible: false
-                                                        }
-                                                        
-                                                        // Center Controls - Previous/Play/Next
-                                                        PlayerCenterControls {
-                                                            anchors.centerIn: parent
-                                                        }
-                                                        
-                                                        // Bottom Info Bar - Channel Logo & Name
-                                                        PlayerInfoBar {
-                                                            anchors.left: parent.left
-                                                            anchors.right: parent.right
-                                                            anchors.bottom: parent.bottom
-                                                            anchors.bottomMargin: 64
-                                                        }
-                                                        
-                                                        // Bottom Control Bar - Volume & Settings
-                                                        PlayerControlBar {
-                                                            anchors.left: parent.left
-                                                            anchors.right: parent.right
-                                                            anchors.bottom: parent.bottom
-                                                            visible: false
-                                                        }
-
-                                                        LivePlayerQuickDock {
-                                                            anchors.left: parent.left
-                                                            anchors.right: parent.right
-                                                            anchors.leftMargin: 24
-                                                            anchors.rightMargin: 24
-                                                            anchors.bottom: parent.bottom
-                                                            anchors.bottomMargin: 18
-                                                            z: 120
-                                                        }
                                                     }
+
+                                                }
                                                 
                                                 Rectangle {
                                                     anchors.horizontalCenter: parent.horizontalCenter
@@ -4709,9 +4028,9 @@ ApplicationWindow {
                                                     color: "#cc151a22"
                                                     border.width: 1
                                                     border.color: "#307cb6ff"
-                                                    visible: playbackController.lastError.length > 0 &&
-                                                             playbackController.state !== "error" &&
-                                                             playbackController.activeContentKind === "live" &&
+                                                    visible: livePlaybackController.lastError.length > 0 &&
+                                                             livePlaybackController.state !== "error" &&
+                                                             livePlaybackController.activeContentKind === "live" &&
                                                              inlineLivePlayerVisible()
                                                     z: 10
 
@@ -4721,7 +4040,7 @@ ApplicationWindow {
                                                         width: parent.width - 22
                                                         wrapMode: Text.WordWrap
                                                         horizontalAlignment: Text.AlignHCenter
-                                                        text: playbackController.lastError
+                                                        text: livePlaybackController.lastError
                                                         color: "#d5e6ff"
                                                         font.pixelSize: 12
                                                     }
@@ -4738,9 +4057,9 @@ ApplicationWindow {
                                                     color: "#cc20070b"
                                                     border.width: 1
                                                     border.color: "#28ff7d86"
-                                                    visible: playbackController.lastError.length > 0 &&
-                                                             playbackController.state === "error" &&
-                                                             playbackController.activeContentKind === "live" &&
+                                                    visible: livePlaybackController.lastError.length > 0 &&
+                                                             livePlaybackController.state === "error" &&
+                                                             livePlaybackController.activeContentKind === "live" &&
                                                              inlineLivePlayerVisible()
                                                     z: 10
 
@@ -4750,7 +4069,7 @@ ApplicationWindow {
                                                         width: parent.width - 26
                                                         wrapMode: Text.WordWrap
                                                         horizontalAlignment: Text.AlignHCenter
-                                                        text: playbackController.lastError
+                                                        text: livePlaybackController.lastError
                                                         color: "#ffd5da"
                                                         font.pixelSize: 13
                                                     }
@@ -4814,10 +4133,8 @@ ApplicationWindow {
                                                     }
                                                 }
                                             }
-                                        }
-                                    }
-                                }
 
+                                        }
                                     GlassCard {
                                         Layout.preferredWidth: videoFullscreen ? 0 : (window.compactWindow ? 360 : 420)
                                         Layout.fillHeight: true
@@ -5019,324 +4336,42 @@ ApplicationWindow {
                             }
                         }
 
-                        ScrollView {
-                            id: moviesScrollView
-                            clip: true
-                            Connections {
-                                target: moviesScrollView.contentItem ? moviesScrollView.contentItem : null
-                                function onContentYChanged() {
-                                    const flickable = moviesScrollView.contentItem
-                                    if (!flickable || !apiClient.movieHasMore || apiClient.movieLoadingMore) {
-                                        return
-                                    }
-                                    const contentBottom = flickable.contentY + moviesScrollView.height
-                                    const totalHeight = flickable.contentHeight || flickable.height || 0
-                                    if (totalHeight > 0 && contentBottom > totalHeight - 400) {
-                                        apiClient.loadMoreMovies()
-                                    }
-                                }
+                        MoviesPage {
+                            id: moviesPage
+                            movieItems: filteredMovies()
+                            movieGroups: movieGroupOptions()
+                            movieTotal: apiClient.movieTotal
+                            currentMovie: selectedMovie()
+                            playbackController: playbackController
+                            videoSurfaceComponent: vodVideoSurfaceComponent
+                            selectedMovieId: selectedMovieId
+                            selectedGroup: selectedMovieGroup
+                            searchText: moviesSearchText
+                            playerVisible: inlineMoviePlayerVisible()
+                            compactWindow: window.compactWindow
+                            movieLoadingMore: apiClient.movieLoadingMore
+                            movieHasMore: apiClient.movieHasMore
+                            windowIsFullscreen: window.visibility === Window.FullScreen
+                            panelColor: window.panelStrong
+                            surfaceColor: window.panelSoft
+                            textPrimary: window.textPrimary
+                            textMuted: window.textMuted
+                            accentColor: window.accentStrong
+                            shellPadding: window.shellPadding
+                            sectionSpacing: window.sectionSpacing
+                            cardGap: window.cardGap
+                            posterCardWidth: window.posterCardWidth
+                            onSearchEdited: {
+                                moviesSearchText = text
+                                movieSearchDebounceTimer.restart()
                             }
-                            Column {
-                                width: window.pageWidth(pageStack.width)
-                                x: window.shellPadding
-                                topPadding: window.compactWindow ? 18 : 20
-                                bottomPadding: window.compactWindow ? 24 : 28
-                                spacing: window.sectionSpacing
-                                property var spotlightMovie: featuredMovieItem()
-
-                                GlassCard {
-                                    width: parent.width
-                                    height: window.compactWindow ? 430 : 360
-                                    radius: 32
-                                    color: "#090c13"
-                                    clip: true
-                                    visible: spotlightMovie !== null
-
-                                    ArtworkPanel {
-                                        anchors.fill: parent
-                                        title: spotlightMovie ? spotlightMovie.title || "" : "Filmler"
-                                        subtitle: spotlightMovie ? spotlightMovie.groupTitle || "Film" : "Film"
-                                        sourceUrl: spotlightMovie ? (spotlightMovie.posterUrl || "") : ""
-                                        kind: "movie"
-                                        mode: "poster"
-                                        cornerRadius: 32
-                                    }
-
-                                    Rectangle {
-                                        anchors.fill: parent
-                                        gradient: Gradient {
-                                            GradientStop { position: 0.0; color: "#1805070b" }
-                                            GradientStop { position: 0.34; color: "#4505070b" }
-                                            GradientStop { position: 0.72; color: "#cc05070b" }
-                                            GradientStop { position: 1.0; color: "#f0080b11" }
-                                        }
-                                    }
-
-                                    Column {
-                                        anchors.fill: parent
-                                        anchors.margins: window.compactWindow ? 22 : 28
-                                        spacing: 14
-
-                                        Row {
-                                            spacing: 10
-
-                                            Rectangle {
-                                                width: 108
-                                                height: 34
-                                                radius: 17
-                                                color: "#26e50914"
-                                                border.width: 1
-                                                border.color: "#44ff6b76"
-
-                                                Text {
-                                                    anchors.centerIn: parent
-                                                    text: "Film Arsivi"
-                                                    color: window.textPrimary
-                                                    font.pixelSize: 12
-                                                    font.bold: true
-                                                }
-                                            }
-
-                                            Rectangle {
-                                                width: movieReadyText.implicitWidth + 24
-                                                height: 34
-                                                radius: 17
-                                                color: spotlightMovie && spotlightMovie.playbackAllowed !== false ? "#1830d19d" : "#14ffffff"
-                                                border.width: 1
-                                                border.color: spotlightMovie && spotlightMovie.playbackAllowed !== false ? "#2d30d19d" : "#22ffffff"
-
-                                                Text {
-                                                    id: movieReadyText
-                                                    anchors.centerIn: parent
-                                                    text: spotlightMovie && spotlightMovie.playbackAllowed !== false ? "Izlemeye Hazir" : "Paket Gerekli"
-                                                    color: spotlightMovie && spotlightMovie.playbackAllowed !== false ? "#82ecc4" : window.textPrimary
-                                                    font.pixelSize: 12
-                                                    font.bold: true
-                                                }
-                                            }
-                                        }
-
-                                        Item { width: 1; height: 1 }
-
-                                        Text {
-                                            text: spotlightMovie ? spotlightMovie.title || "Film secin" : "Film secin"
-                                            width: parent.width * (window.compactWindow ? 0.96 : 0.68)
-                                            wrapMode: Text.WordWrap
-                                            color: window.textPrimary
-                                            font.pixelSize: window.compactWindow ? 34 : 48
-                                            font.family: "Space Grotesk"
-                                            font.bold: true
-                                        }
-
-                                        Text {
-                                            text: spotlightMovie ? (spotlightMovie.groupTitle || "Secili kategori") : ""
-                                            color: "#d3d9e8"
-                                            font.pixelSize: 15
-                                            visible: text.length > 0
-                                        }
-
-                                        Text {
-                                            width: parent.width * (window.compactWindow ? 0.98 : 0.6)
-                                            wrapMode: Text.WordWrap
-                                            color: "#bcc5d6"
-                                            font.pixelSize: 15
-                                            lineHeight: 1.35
-                                            text: spotlightMovie
-                                                  ? "Ayni sayfada oynatici, filtre ve katalog birlikte acik kalir. Film degistirirken ekran akisini bozmadan ilerleyebilirsiniz."
-                                                  : "Kutuphane hazir oldugunda buradan secili filmi one cikaracagiz."
-                                        }
-
-                                        Flow {
-                                            width: parent.width
-                                            spacing: 12
-
-                                            AppButton {
-                                                text: inlineMoviePlayerVisible() ? "Izlemeye Don" : "Simdi Oynat"
-                                                implicitWidth: 170
-                                                enabled: spotlightMovie && spotlightMovie.playbackAllowed !== false
-                                                onClicked: if (spotlightMovie) playMovie(spotlightMovie)
-                                            }
-
-                                            AppButton {
-                                                text: "Katalogu Yenile"
-                                                secondary: true
-                                                implicitWidth: 164
-                                                onClicked: apiClient.fetchMovieCatalog(1, 18, moviesSearchText, selectedMovieGroup)
-                                            }
-
-                                            AppButton {
-                                                text: "Filtreleri Temizle"
-                                                secondary: true
-                                                implicitWidth: 164
-                                                onClicked: applyMovieFilters("", "")
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Flow {
-                                    width: parent.width
-                                    spacing: 12
-
-                                    AppField {
-                                        width: window.compactWindow ? parent.width : Math.max(320, parent.width - 180)
-                                        placeholderText: "Film ara..."
-                                        text: moviesSearchText
-                                        onTextChanged: {
-                                            moviesSearchText = text
-                                            movieSearchDebounceTimer.restart()
-                                        }
-                                    }
-
-                                    AppButton {
-                                        text: "Yenile"
-                                        secondary: true
-                                        implicitWidth: 150
-                                        onClicked: apiClient.fetchMovieCatalog(1, 18, moviesSearchText, selectedMovieGroup)
-                                    }
-                                }
-                                Flickable {
-                                    width: parent.width
-                                    height: 52
-                                    contentWidth: movieChipRow.width
-                                    clip: true
-                                    Row {
-                                        id: movieChipRow
-                                        spacing: 10
-                                        Repeater {
-                                            model: movieGroupOptions()
-                                            ChipButton {
-                                                required property var modelData
-                                                text: modelData.length ? modelData : "Tum Filmler"
-                                                active: selectedMovieGroup === modelData
-                                                width: Math.max(112, implicitContentWidth + 28)
-                                                onClicked: applyMovieFilters(moviesSearchText, modelData)
-                                            }
-                                        }
-                                    }
-                                }
-                                GlassCard {
-                                    width: parent.width
-                                    height: 76
-                                    radius: 24
-                                    color: "#090c13"
-
-                                    Flow {
-                                        anchors.fill: parent
-                                        anchors.margins: 18
-                                        spacing: 10
-
-                                        Rectangle {
-                                            width: 132
-                                            height: 38
-                                            radius: 19
-                                            color: "#14ffffff"
-
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: `${filteredMovies().length} film`
-                                                color: window.textPrimary
-                                                font.pixelSize: 12
-                                                font.bold: true
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            width: Math.max(160, movieGroupSummary.implicitWidth + 26)
-                                            height: 38
-                                            radius: 19
-                                            color: "#120f1722"
-                                            border.width: 1
-                                            border.color: "#1effffff"
-
-                                            Text {
-                                                id: movieGroupSummary
-                                                anchors.centerIn: parent
-                                                text: selectedMovieGroup.length ? selectedMovieGroup : "Tum Kategoriler"
-                                                color: window.textMuted
-                                                font.pixelSize: 12
-                                                font.bold: true
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            width: Math.max(200, movieStatusLabel.implicitWidth + 26)
-                                            height: 38
-                                            radius: 19
-                                            color: apiClient.movieLoadingMore ? "#1b1f3d" : "#10161f"
-                                            border.width: 1
-                                            border.color: apiClient.movieLoadingMore ? "#345cff" : "#1dffffff"
-
-                                            Text {
-                                                id: movieStatusLabel
-                                                anchors.centerIn: parent
-                                                text: apiClient.movieLoadingMore ? "Yeni filmler yukleniyor" : "Katalog ve oynatici ayni akista"
-                                                color: apiClient.movieLoadingMore ? "#9eb8ff" : window.textMuted
-                                                font.pixelSize: 12
-                                                font.bold: true
-                                            }
-                                        }
-                                    }
-                                }
-                                Loader {
-                                    width: parent.width
-                                    active: inlineMoviePlayerVisible()
-                                    visible: active
-                                    sourceComponent: inlineVodPlayerComponent
-                                }
-                                Flow {
-                                    property int __maxCols: Math.max(1, Math.floor((parent.width + window.cardGap) / (window.posterCardWidth + window.cardGap)))
-                                    property int __actualCols: Math.min(filteredMovies().length, __maxCols)
-                                    width: __actualCols * window.posterCardWidth + Math.max(0, __actualCols - 1) * window.cardGap
-                                    spacing: window.cardGap
-                                    Repeater {
-                                        model: filteredMovies()
-                                        PosterGridCard {
-                                            titleText: (modelData && modelData["title"] ? modelData["title"] : "").toString()
-                                            subtitleText: (modelData && modelData["groupTitle"] ? modelData["groupTitle"] : "").toString()
-                                            artworkUrl: window.artworkSource(modelData ? (modelData.posterUrl || modelData.streamImageUrl || modelData.stream_icon || "") : "")
-                                            playbackAllowed: Boolean(modelData && modelData["playbackAllowed"])
-                                            payload: modelData
-                                            cardKind: "movie"
-                                            onActivated: playMovie(item)
-                                        }
-                                    }
-                                }
-                                // Loading indicator for infinite scroll
-                                Rectangle {
-                                    width: parent.width
-                                    height: 60
-                                    color: "transparent"
-                                    visible: apiClient.movieLoadingMore
-
-                                    BusyIndicator {
-                                        anchors.centerIn: parent
-                                        running: parent.visible
-                                    }
-                                }
-                                GlassCard {
-                                    width: parent.width
-                                    height: 180
-                                    visible: filteredMovies().length === 0
-                                    color: "#090c13"
-                                    Column {
-                                        anchors.centerIn: parent
-                                        spacing: 8
-                                        Text {
-                                            text: "Filtreye uygun film bulunamadi"
-                                            color: window.textPrimary
-                                            font.pixelSize: 30
-                                            font.family: "Space Grotesk"
-                                            font.bold: true
-                                        }
-                                        Text {
-                                            text: "Aramayi temizleyip baska bir kategori deneyebilirsiniz."
-                                            color: window.textMuted
-                                            font.pixelSize: 14
-                                        }
-                                    }
-                                }
-                            }
+                            onRefreshRequested: apiClient.fetchMovieCatalog(1, 120, moviesSearchText, selectedMovieGroup)
+                            onClearFiltersRequested: applyMovieFilters("", "")
+                            onGroupSelected: function(group) { applyMovieFilters(moviesSearchText, group) }
+                            onMovieSelected: function(movie) { playMovie(movie) }
+                            onLoadMoreRequested: apiClient.loadMoreMovies()
+                            onClosePlayerRequested: closeVodPlayer()
+                            onToggleWindowFullscreenRequested: toggleWindowFullscreen()
                         }
 
                         ScrollView {
@@ -6019,12 +5054,12 @@ ApplicationWindow {
                 anchors.fill: parent; anchors.margins: 18; color: "#f2080a0e"; z: 21
                 ColumnLayout {
                     anchors.fill: parent; anchors.margins: 18; spacing: 14
-                    RowLayout { Layout.fillWidth: true; ColumnLayout { Layout.fillWidth: true; spacing: 4; Text { text: playbackController.activeContentKind === "live" ? "Canlı TV" : playbackController.activeContentKind === "movie" ? "Film" : "Dizi"; color: "#c7ffffff"; font.pixelSize: 12; font.bold: true } Text { text: playbackController.activeTitle.length ? playbackController.activeTitle : "Player Hazır"; color: window.textPrimary; font.pixelSize: 28; font.family: "Space Grotesk"; font.bold: true } Text { text: playerSubtitle; color: window.textMuted; font.pixelSize: 14; visible: text.length > 0 } } AppButton { text: "Kapat"; secondary: true; implicitWidth: 120; onClicked: closePlayer() } }
+RowLayout { Layout.fillWidth: true; ColumnLayout { Layout.fillWidth: true; spacing: 4; Text { text: playbackController.activeContentKind === "live" ? "Canlı TV" : playbackController.activeContentKind === "movie" ? "Film" : "Dizi"; color: "#c7ffffff"; font.pixelSize: 12; font.bold: true } Text { text: playbackController.activeTitle.length ? playbackController.activeTitle : "Player Hazır"; color: window.textPrimary; font.pixelSize: 28; font.family: "Space Grotesk"; font.bold: true } Text { text: playerSubtitle; color: window.textMuted; font.pixelSize: 14; visible: text.length > 0 } } AppButton { text: "Kapat"; secondary: true; implicitWidth: 120; onClicked: closeVodPlayer() } }
                     RowLayout {
                         Layout.fillWidth: true; Layout.fillHeight: true; spacing: 16
                         GlassCard {
                             Layout.fillWidth: true; Layout.fillHeight: true; color: "#000000"
-                            Loader { anchors.fill: parent; anchors.margins: 6; active: overlayPlayerVisible(); sourceComponent: nativeVideoSurfaceComponent }
+Loader { anchors.fill: parent; anchors.margins: 6; active: overlayPlayerVisible(); sourceComponent: vodVideoSurfaceComponent }
                             Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 18; width: stateLabel.implicitWidth + 28; height: 40; radius: 20; color: "#c7070a0f"; border.width: 1; border.color: "#12ffffff"; Text { id: stateLabel; anchors.centerIn: parent; text: playbackController.state === "buffering" ? "Buffer dolduruluyor" : playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazırlanıyor" : playbackController.state === "error" ? "Yayın açılamadı" : "Yayın hazır"; color: window.textPrimary; font.pixelSize: 13; font.bold: true } }
                             Rectangle {
                                 anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 16; height: 78; radius: 22; color: "#c7070a0f"; border.width: 1; border.color: "#12ffffff"
@@ -6076,7 +5111,7 @@ ApplicationWindow {
                     Loader {
                         anchors.fill: parent
                         active: overlayPlayerVisible()
-                        sourceComponent: nativeVideoSurfaceComponent
+                            sourceComponent: vodVideoSurfaceComponent
                     }
 
                     Rectangle {
@@ -6129,7 +5164,7 @@ ApplicationWindow {
                                     text: "Geri"
                                     secondary: true
                                     implicitWidth: 118
-                                    onClicked: closePlayer()
+                                            onClicked: closeVodPlayer()
                                 }
 
                                 Column {
@@ -6778,7 +5813,7 @@ ApplicationWindow {
             enabled: window.isMacOS
             onActivated: {
                 if (playerVisible || overlayPlayerVisible()) {
-                    closePlayer()
+                    closeActivePlayer()
                 }
             }
         }

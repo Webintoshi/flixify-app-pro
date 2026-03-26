@@ -10,7 +10,8 @@
 
 #include "api_client.h"
 #include "native_video_surface.h"
-#include "playback_controller.h"
+#include "vod_playback_controller.h"
+#include "live_playback_controller.h"
 
 #if defined(Q_OS_WIN)
 #include <windows.h>
@@ -90,7 +91,8 @@ int main(int argc, char *argv[]) {
   ApiClient apiClient;
   apiClient.setApiBaseUrl(QStringLiteral(FLIXIFY_API_BASE_URL));
 
-  PlaybackController playbackController(&apiClient);
+  VodPlaybackController playbackController(&apiClient);
+  LivePlaybackController livePlaybackController(&apiClient);
 
   QQmlApplicationEngine engine;
   QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app, [](const QList<QQmlError> &warnings) {
@@ -100,6 +102,7 @@ int main(int argc, char *argv[]) {
   });
   engine.rootContext()->setContextProperty(QStringLiteral("apiClient"), &apiClient);
   engine.rootContext()->setContextProperty(QStringLiteral("playbackController"), &playbackController);
+  engine.rootContext()->setContextProperty(QStringLiteral("livePlaybackController"), &livePlaybackController);
   engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
 
   if (engine.rootObjects().isEmpty()) {

@@ -36,6 +36,7 @@ class ApiClient : public QObject {
   Q_PROPERTY(bool liveLoadingMore READ liveLoadingMore NOTIFY liveLoadingMoreChanged)
   Q_PROPERTY(QVariantList movies READ movies NOTIFY moviesChanged)
   Q_PROPERTY(QVariantList movieGroups READ movieGroups NOTIFY movieGroupsChanged)
+  Q_PROPERTY(int movieTotal READ movieTotal NOTIFY movieTotalChanged)
   Q_PROPERTY(bool movieHasMore READ movieHasMore NOTIFY movieHasMoreChanged)
   Q_PROPERTY(bool movieLoadingMore READ movieLoadingMore NOTIFY movieLoadingMoreChanged)
   Q_PROPERTY(QVariantList series READ series NOTIFY seriesChanged)
@@ -69,6 +70,7 @@ public:
   bool liveLoadingMore() const;
   QVariantList movies() const;
   QVariantList movieGroups() const;
+  int movieTotal() const;
   bool movieHasMore() const;
   bool movieLoadingMore() const;
   QVariantList series() const;
@@ -146,6 +148,7 @@ signals:
   void liveLoadingMoreChanged();
   void moviesChanged();
   void movieGroupsChanged();
+  void movieTotalChanged();
   void movieHasMoreChanged();
   void movieLoadingMoreChanged();
   void seriesChanged();
@@ -172,6 +175,7 @@ private:
   void setLiveLoadingMore(bool value);
   void setMovieHasMore(bool value);
   void setMovieLoadingMore(bool value);
+  void setMovieTotal(int value);
   void beginRequest();
   void endRequest();
   void clearAuthenticatedData();
