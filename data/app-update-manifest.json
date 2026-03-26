@@ -1,9 +1,9 @@
 {
   "platforms": {
     "windows-native-qt": {
-      "latestVersion": "2.2.85",
-      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.2.85/Flixify-Pro-Setup-2.2.85-x64.exe",
-      "notes": "Film oynaticisi bastan yazildi; poster-video cakismasi temizlendi ve native VOD playback fallback karari proxy odakli hale getirildi."
+      "latestVersion": "2.2.87",
+      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.2.87/Flixify-Pro-Setup-2.2.87-x64.exe",
+      "notes": "Filmler ayri native controller ile calisiyor; movie player zinciri dizilerden ayrildi ve playback akisi sadeleştirildi."
     },
     "macos-native-qt": {
       "latestVersion": "2.2.58",

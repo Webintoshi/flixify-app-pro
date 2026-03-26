@@ -91,6 +91,7 @@ int main(int argc, char *argv[]) {
   ApiClient apiClient;
   apiClient.setApiBaseUrl(QStringLiteral(FLIXIFY_API_BASE_URL));
 
+  VodPlaybackController moviePlaybackController(&apiClient);
   VodPlaybackController playbackController(&apiClient);
   LivePlaybackController livePlaybackController(&apiClient);
 
@@ -101,6 +102,7 @@ int main(int argc, char *argv[]) {
     }
   });
   engine.rootContext()->setContextProperty(QStringLiteral("apiClient"), &apiClient);
+  engine.rootContext()->setContextProperty(QStringLiteral("moviePlaybackController"), &moviePlaybackController);
   engine.rootContext()->setContextProperty(QStringLiteral("playbackController"), &playbackController);
   engine.rootContext()->setContextProperty(QStringLiteral("livePlaybackController"), &livePlaybackController);
   engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));

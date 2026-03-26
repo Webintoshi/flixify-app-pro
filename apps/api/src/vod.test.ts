@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { createFfmpegArgs, parseVodMediaProfile, resolveVodTranscodeDecision, selectVodAudioTrackId } from "./vod.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createFfmpegArgs, parseVodMediaProfile, probeVodStream, resolveVodTranscodeDecision, selectVodAudioTrackId } from "./vod.js";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("resolveVodTranscodeDecision", () => {
   it("keeps browser runtime on transcode-first mode for mp4 sources", () => {
@@ -256,6 +261,28 @@ describe("parseVodMediaProfile", () => {
       title: "Turkce",
       sourceDefault: true
     });
+  });
+});
+
+describe("probeVodStream", () => {
+  it("rejects JSON auth payloads instead of treating them as playable media", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response('{"error":"IP_BAN","message":"Your IP address is not authorized to access this service","status":401}', {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        })
+      )
+    );
+
+    const probe = await probeVodStream("https://example.com/movie/123.mkv");
+
+    expect(probe.ok).toBe(false);
+    expect(probe.transport).toBe("mkv");
+    expect(probe.errorMessage).toContain("IP_BAN");
   });
 });
 

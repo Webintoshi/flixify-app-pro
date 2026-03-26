@@ -962,7 +962,7 @@ ApplicationWindow {
     }
 
     function currentPlaybackItem() {
-        if (inlinePlaybackMode === "movie") return selectedMovie() || apiClient.movieById(playbackController.activeContentId)
+        if (inlinePlaybackMode === "movie" || moviePlaybackController.activeContentKind === "movie") return selectedMovie() || apiClient.movieById(moviePlaybackController.activeContentId)
         if (inlinePlaybackMode === "episode" || playbackController.activeContentKind === "episode") return apiClient.episodeById(playbackController.activeContentId)
         if (inlinePlaybackMode === "live" || livePlaybackController.activeContentKind === "live") return apiClient.liveChannelById(livePlaybackController.activeContentId)
         return ({})
@@ -1188,7 +1188,21 @@ ApplicationWindow {
         playerImageUrl = movieArtworkUrl(movie)
         playerVisible = true
         inlinePlaybackMode = "movie"
-        playbackController.playVod("movie", movieId, fieldText(movie, "title"))
+        moviePlaybackController.playVod("movie", movieId, fieldText(movie, "title"))
+    }
+
+    function closeMoviePlayer() {
+        const hadMovieInlineMode = inlinePlaybackMode === "movie"
+        if (hadMovieInlineMode) {
+            playerVisible = false
+            inlinePlaybackMode = "none"
+        }
+        selectedMovieId = ""
+        playerSubtitle = ""
+        playerImageUrl = ""
+        if (moviePlaybackController.activeContentKind === "movie" || hadMovieInlineMode) {
+            moviePlaybackController.stop()
+        }
     }
 
     function playEpisode(episode, series) {
@@ -1252,15 +1266,14 @@ ApplicationWindow {
     }
 
     function closeVodPlayer() {
-        const hadVodInlineMode = inlinePlaybackMode === "movie" || inlinePlaybackMode === "episode"
-        if (hadVodInlineMode) {
+        const hadEpisodeInlineMode = inlinePlaybackMode === "episode"
+        if (hadEpisodeInlineMode) {
             playerVisible = false
             inlinePlaybackMode = "none"
         }
-        selectedMovieId = ""
         playerSubtitle = ""
         playerImageUrl = ""
-        if (playbackController.activeContentKind === "movie" || playbackController.activeContentKind === "episode" || hadVodInlineMode) {
+        if (playbackController.activeContentKind === "episode" || hadEpisodeInlineMode) {
             playbackController.stop()
         }
     }
@@ -1284,12 +1297,11 @@ ApplicationWindow {
             closeLivePlayer()
             return
         }
-        if (
-            inlinePlaybackMode === "movie" ||
-            inlinePlaybackMode === "episode" ||
-            playbackController.activeContentKind === "movie" ||
-            playbackController.activeContentKind === "episode"
-        ) {
+        if (inlinePlaybackMode === "movie" || moviePlaybackController.activeContentKind === "movie") {
+            closeMoviePlayer()
+            return
+        }
+        if (inlinePlaybackMode === "episode" || playbackController.activeContentKind === "episode") {
             closeVodPlayer()
             return
         }
@@ -4342,7 +4354,7 @@ ApplicationWindow {
                             movieGroups: movieGroupOptions()
                             movieTotal: apiClient.movieTotal
                             currentMovie: selectedMovie()
-                            playbackController: playbackController
+                            playbackController: moviePlaybackController
                             videoSurfaceComponent: vodVideoSurfaceComponent
                             selectedMovieId: selectedMovieId
                             selectedGroup: selectedMovieGroup
@@ -4370,7 +4382,7 @@ ApplicationWindow {
                             onGroupSelected: function(group) { applyMovieFilters(moviesSearchText, group) }
                             onMovieSelected: function(movie) { playMovie(movie) }
                             onLoadMoreRequested: apiClient.loadMoreMovies()
-                            onClosePlayerRequested: closeVodPlayer()
+                            onClosePlayerRequested: closeMoviePlayer()
                             onToggleWindowFullscreenRequested: toggleWindowFullscreen()
                         }
 

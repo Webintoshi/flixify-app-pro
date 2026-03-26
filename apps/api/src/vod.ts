@@ -222,6 +222,30 @@ function looksLikeHtmlPayload(contentType: string | null, preview: string) {
   );
 }
 
+function extractJsonPayloadMessage(contentType: string | null, preview: string) {
+  const normalizedType = normalizeContentType(contentType ?? undefined);
+  const trimmedPreview = preview.trim();
+  const maybeJson = normalizedType.includes("application/json") || trimmedPreview.startsWith("{");
+  if (!maybeJson || !trimmedPreview.length) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmedPreview) as Record<string, unknown>;
+    if (!parsed || Array.isArray(parsed)) {
+      return "VOD akisi gecici olarak kullanilamiyor. Json yaniti alindi.";
+    }
+
+    const errorCode = typeof parsed.error === "string" ? parsed.error.trim() : "";
+    const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
+    const status = typeof parsed.status === "number" ? `status ${parsed.status}` : "";
+    const combined = [errorCode, message, status].filter((value) => value.length > 0).join(": ");
+    return combined.length > 0 ? combined : "VOD akisi gecici olarak kullanilamiyor. Json yaniti alindi.";
+  } catch {
+    return "VOD akisi gecici olarak kullanilamiyor. Json yaniti alindi.";
+  }
+}
+
 function detectTransportFromChunkBytes(chunk: Uint8Array, fallback: VodTransport) {
   if (!chunk || chunk.byteLength === 0) {
     return fallback;
@@ -340,6 +364,18 @@ export async function probeVodStream(url: string) {
         cookie,
         supportsByteRange: hasByteRangeSupport(response),
         errorMessage: "VOD akisi gecici olarak kullanilamiyor. Html yaniti alindi."
+      };
+    }
+    const jsonPayloadMessage = extractJsonPayloadMessage(response.headers.get("content-type"), preview);
+    if (jsonPayloadMessage) {
+      return {
+        ok: false,
+        statusCode: response.status,
+        finalUrl,
+        transport,
+        cookie,
+        supportsByteRange: hasByteRangeSupport(response),
+        errorMessage: jsonPayloadMessage
       };
     }
 
@@ -2060,6 +2096,20 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     }
     if (!response.ok && response.status !== 206) {
       return reply.status(502).type("text/plain; charset=utf-8").send("Upstream VOD dosyasi alinamadi.");
+    }
+
+    const upstreamContentType = response.headers.get("content-type");
+    const normalizedUpstreamContentType = normalizeContentType(upstreamContentType ?? undefined);
+    if (normalizedUpstreamContentType.includes("application/json") || normalizedUpstreamContentType.includes("text/html")) {
+      const preview = await response.text().catch(() => "");
+      const extractedJsonMessage = extractJsonPayloadMessage(upstreamContentType, preview);
+      const extractedHtmlMessage = looksLikeHtmlPayload(upstreamContentType, preview)
+        ? "VOD akisi gecici olarak kullanilamiyor. Html yaniti alindi."
+        : null;
+      return reply
+        .status(502)
+        .type("text/plain; charset=utf-8")
+        .send(extractedJsonMessage ?? extractedHtmlMessage ?? "Upstream VOD dosyasi medya yaniti donmedi.");
     }
 
     if (process.env.FLIXIFY_VOD_DEBUG === "1") {

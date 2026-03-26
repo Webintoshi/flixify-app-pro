@@ -778,6 +778,22 @@ function canUseVodDirectPlaybackFallback(input: {
   return false;
 }
 
+function shouldRescueNativeVodToDirect(message: string | null | undefined) {
+  const normalized = (message ?? "").trim().toLowerCase();
+  if (!normalized.length) {
+    return false;
+  }
+
+  return (
+    normalized.includes("ip_ban") ||
+    normalized.includes("not authorized") ||
+    normalized.includes("json yaniti") ||
+    normalized.includes("html yaniti") ||
+    normalized.includes("status 401") ||
+    normalized.includes("status 403")
+  );
+}
+
 function replyWithNativePlaybackError(
   reply: FastifyReply,
   statusCode: number,
@@ -2485,7 +2501,12 @@ export function buildServer() {
       const allowOptimisticNativeDirect =
         !resolved.ok &&
         typeof resolved.sourceUrl === "string" &&
-        canUseAppDirectPlaybackFallback("native", resolved.sourceUrl);
+        canUseVodDirectPlaybackFallback({
+          clientRuntime: "native",
+          platform,
+          transport: resolved.transport,
+          sourceUrl: resolved.sourceUrl
+        });
 
       if ((!resolved.ok || !resolved.sourceUrl) && !allowOptimisticNativeDirect) {
         return replyWithNativePlaybackError(
@@ -2493,6 +2514,20 @@ export function buildServer() {
           resolved.sourceUrl ? 502 : 503,
           resolved.errorMessage ?? "VOD kaynagi dogrudan acilamadi."
         );
+      }
+
+      if (allowOptimisticNativeDirect && resolved.sourceUrl) {
+        return buildNativeVodPlaybackResponse({
+          url: resolved.sourceUrl,
+          transport: resolved.transport,
+          deliveryMode: "direct",
+          audioTracks: [],
+          defaultAudioTrackId: null,
+          selectedAudioTrackId: null,
+          cookie: resolved.cookie,
+          isVerified: false,
+          lastCheckedAt: null
+        });
       }
 
       const baseOrigin = getRequestBaseOrigin(request);
@@ -2532,6 +2567,30 @@ export function buildServer() {
           kind,
           transport: resolved.transport,
           errorMessage: message
+        });
+      }
+
+      const shouldFallbackToDirect =
+        typeof resolved.sourceUrl === "string" &&
+        canUseVodDirectPlaybackFallback({
+          clientRuntime: "native",
+          platform,
+          transport: resolved.transport,
+          sourceUrl: resolved.sourceUrl
+        }) &&
+        shouldRescueNativeVodToDirect(playback.errorMessage);
+
+      if (shouldFallbackToDirect && resolved.sourceUrl) {
+        return buildNativeVodPlaybackResponse({
+          url: resolved.sourceUrl,
+          transport: resolved.transport,
+          deliveryMode: "direct",
+          audioTracks: [],
+          defaultAudioTrackId: null,
+          selectedAudioTrackId: null,
+          cookie: resolved.cookie,
+          isVerified: false,
+          lastCheckedAt: null
         });
       }
 
