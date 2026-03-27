@@ -103,10 +103,18 @@ ApplicationWindow {
     property string playerImageUrl: ""
     property bool videoFullscreen: false
     property bool videoFullscreenOwnsWindow: false
+    property bool movieFullscreen: false
+    property bool movieFullscreenOwnsWindow: false
+    property bool seriesFullscreen: false
+    property bool seriesFullscreenOwnsWindow: false
     property var pendingPackage: null
     property string selectedPaymentMethodId: ""
+    property string selectedCryptoAssetId: ""
     property string toastMessage: ""
     property color toastColor: info
+    property var homeMoviePreviewCache: []
+    property var homeSeriesPreviewCache: []
+    property var homeLivePreviewCache: []
 
     onVideoFullscreenChanged: {
         livePlaybackController.liveFullscreenActive = videoFullscreen
@@ -115,6 +123,7 @@ ApplicationWindow {
     Component.onCompleted: {
         currentScreen = apiClient.authenticated ? "home" : "login"
         livePlaybackController.liveFullscreenActive = videoFullscreen
+        refreshHomePreviewContent()
         apiClient.bootstrap()
     }
 
@@ -299,12 +308,39 @@ ApplicationWindow {
         return normalizeArtworkUrl(value)
     }
 
-    function fieldText(item, key) {
+    function fieldValue(item, key, fallbackValue = null) {
         if (!item || !key || !key.length) {
-            return ""
+            return fallbackValue
         }
-        const value = item[key]
-        return safeText(value)
+        const directValue = item[key]
+        if (directValue !== undefined && directValue !== null) {
+            return directValue
+        }
+        try {
+            if (item.toMap) {
+                const mapped = item.toMap()
+                const mappedValue = mapped[key]
+                if (mappedValue !== undefined && mappedValue !== null) {
+                    return mappedValue
+                }
+            }
+        } catch (error) {
+        }
+        return fallbackValue
+    }
+
+    function fieldText(item, key) {
+        return safeText(fieldValue(item, key, ""))
+    }
+
+    function fieldNumber(item, key, fallbackValue = 0) {
+        const numericValue = Number(fieldValue(item, key, fallbackValue))
+        return Number.isFinite(numericValue) ? numericValue : fallbackValue
+    }
+
+    function fieldList(item, key) {
+        const value = fieldValue(item, key, [])
+        return value && value.length !== undefined ? value : []
     }
 
     function movieArtworkUrl(movie) {
@@ -312,15 +348,10 @@ ApplicationWindow {
             return ""
         }
         return artworkSource(
-            movie["posterUrl"]
-            || movie.posterUrl
-            || movie["streamImageUrl"]
-            || movie.streamImageUrl
-            || movie["stream_icon"]
-            || movie.stream_icon
-            || movie["logoUrl"]
-            || movie.logoUrl
-            || ""
+            fieldValue(movie, "posterUrl", "")
+            || fieldValue(movie, "streamImageUrl", "")
+            || fieldValue(movie, "stream_icon", "")
+            || fieldValue(movie, "logoUrl", "")
         )
     }
 
@@ -407,9 +438,70 @@ ApplicationWindow {
     function subscriptionLabel() {
         const user = userData()
         if (user.hasActiveSubscription && user.activePackage) {
-            return `${user.activePackage.title} - ${user.activePackage.remainingDays} gun`
+            return `${user.activePackage.title} - ${user.activePackage.remainingDays} gün`
         }
-        return "Paket aktif degil"
+        return "Paket aktif değil"
+    }
+
+    function packageDurationMonths(packageData) {
+        const value = Number(packageData && packageData.durationMonths !== undefined ? packageData.durationMonths : 0)
+        return Number.isFinite(value) ? value : 0
+    }
+
+    function orderedPackages() {
+        const source = apiClient.packages || []
+        const items = []
+        for (let index = 0; index < source.length; index += 1) {
+            items.push(source[index])
+        }
+        items.sort(function(a, b) {
+            return packageDurationMonths(a) - packageDurationMonths(b)
+        })
+        return items
+    }
+
+    function packageDisplayTitle(packageData) {
+        const months = packageDurationMonths(packageData)
+        if (months > 0) {
+            return `${months} Aylık`
+        }
+        const fallback = safeText(packageData && packageData.title ? packageData.title : "")
+        return fallback.length ? fallback : "Premium Paket"
+    }
+
+    function packageDisplayCopy(packageData) {
+        const months = packageDurationMonths(packageData)
+        if (months === 1) return "Hızlı başlangıç ve premium kataloğa hemen erişim."
+        if (months === 3) return "Kısa ve orta vadede en dengeli premium kullanım."
+        if (months === 6) return "Daha uzun süre rahat kullanım isteyenler için güçlü seçim."
+        if (months === 12) return "Yıl boyu premium deneyim için en avantajlı tercih."
+        return "Film, dizi ve canlı TV erişimi için premium paket."
+    }
+
+    function packageDisplayPrice(packageData) {
+        const raw = safeText(packageData && packageData.priceLabel ? packageData.priceLabel : "")
+        if (!raw.length) {
+            return "Destek ile iletişime geçin"
+        }
+        return /[A-Za-z₺$€£]/.test(raw) ? raw : `${raw} TL`
+    }
+
+    function packageFeatureList(packageData) {
+        const months = packageDurationMonths(packageData)
+        let durationLine = "Premium katalog erişimi"
+        if (months === 1) durationLine = "Kısa süreli hızlı başlangıç"
+        else if (months === 3) durationLine = "Dengeli premium kullanım"
+        else if (months === 6) durationLine = "Uzun süre rahat erişim"
+        else if (months === 12) durationLine = "En avantajlı uzun dönem paket"
+        return [
+            "Tüm film, dizi ve canlı TV içerikleri",
+            "Paket aktif olduğunda tam katalog erişimi",
+            durationLine
+        ]
+    }
+
+    function packageRecommended(packageData) {
+        return packageDurationMonths(packageData) === 12
     }
 
     function uniqueGroups(items) {
@@ -692,6 +784,142 @@ ApplicationWindow {
         return playable.concat(locked).slice(0, maxItems)
     }
 
+    function shuffledItems(items) {
+        const output = []
+        for (let index = 0; index < (items || []).length; index += 1) {
+            output.push(items[index])
+        }
+        for (let index = output.length - 1; index > 0; index -= 1) {
+            const swapIndex = Math.floor(Math.random() * (index + 1))
+            const current = output[index]
+            output[index] = output[swapIndex]
+            output[swapIndex] = current
+        }
+        return output
+    }
+
+    function isTurkishLivePreviewItem(item) {
+        const directCode = normalizeLiveCountryCode(
+            fieldText(item, "countryCode")
+            || fieldText(item, "country_code")
+            || fieldText(item, "country")
+        )
+        if (directCode) {
+            return directCode === "TR"
+        }
+
+        const groupTitle = fieldText(item, "groupTitle")
+        const title = fieldText(item, "title")
+        const groupFilterCode = parseLiveCountryCodeFromFilter(groupTitle)
+        if (groupFilterCode) {
+            return groupFilterCode === "TR"
+        }
+
+        const prefixedGroupCode = parseLiveCountryCodeFromGroupPrefix(groupTitle)
+        if (prefixedGroupCode) {
+            return prefixedGroupCode === "TR"
+        }
+
+        const prefixedTitleCode = parseLiveCountryCodeFromGroupPrefix(title)
+        if (prefixedTitleCode) {
+            return prefixedTitleCode === "TR"
+        }
+
+        const normalizedHaystack = normalizeAsciiText(`${groupTitle} ${title}`)
+        return normalizedHaystack.indexOf("turkiye") !== -1 || normalizedHaystack.indexOf("turkey") !== -1
+    }
+
+    function buildRandomMoviePreview(limit) {
+        const maxItems = Math.max(1, Number(limit) || 12)
+        const items = apiClient.movies || []
+        const playable = []
+        const locked = []
+        for (let index = 0; index < items.length; index += 1) {
+            if (items[index].playbackAllowed === false) locked.push(items[index])
+            else playable.push(items[index])
+        }
+        return shuffledItems(playable).concat(shuffledItems(locked)).slice(0, maxItems)
+    }
+
+    function homeSeriesPreviewItems(limit) {
+        const maxItems = Math.max(1, Number(limit) || 12)
+        const items = apiClient.series || []
+        const preferred = []
+        const fallback = []
+        for (let index = 0; index < items.length; index += 1) {
+            const item = items[index]
+            const featuredEpisode = fieldValue(item, "featuredEpisode", null)
+            if (featuredEpisode && fieldText(featuredEpisode, "id").length && fieldValue(featuredEpisode, "playbackAllowed", false) !== false) {
+                preferred.push(item)
+            } else {
+                fallback.push(item)
+            }
+        }
+        return preferred.concat(fallback).slice(0, maxItems)
+    }
+
+    function buildRandomSeriesPreview(limit) {
+        const maxItems = Math.max(1, Number(limit) || 12)
+        const items = apiClient.series || []
+        const playable = []
+        const fallback = []
+        for (let index = 0; index < items.length; index += 1) {
+            const item = items[index]
+            const featuredEpisode = fieldValue(item, "featuredEpisode", null)
+            if (featuredEpisode && fieldText(featuredEpisode, "id").length && fieldValue(featuredEpisode, "playbackAllowed", false) !== false) {
+                playable.push(item)
+            } else {
+                fallback.push(item)
+            }
+        }
+        return shuffledItems(playable).concat(shuffledItems(fallback)).slice(0, maxItems)
+    }
+
+    function homeLivePreviewItems(limit) {
+        const maxItems = Math.max(1, Number(limit) || 12)
+        const sourceItems = apiClient.liveChannels || []
+        const items = []
+        for (let index = 0; index < sourceItems.length; index += 1) {
+            if (isTurkishLivePreviewItem(sourceItems[index])) {
+                items.push(sourceItems[index])
+            }
+        }
+        const playable = []
+        const locked = []
+        for (let index = 0; index < items.length; index += 1) {
+            if (items[index].playbackAllowed === false) {
+                locked.push(items[index])
+            } else {
+                playable.push(items[index])
+            }
+        }
+        return playable.concat(locked).slice(0, maxItems)
+    }
+
+    function buildRandomLivePreview(limit) {
+        const maxItems = Math.max(1, Number(limit) || 12)
+        const sourceItems = apiClient.liveChannels || []
+        const turkishItems = []
+        for (let index = 0; index < sourceItems.length; index += 1) {
+            if (isTurkishLivePreviewItem(sourceItems[index])) {
+                turkishItems.push(sourceItems[index])
+            }
+        }
+        const playable = []
+        const locked = []
+        for (let index = 0; index < turkishItems.length; index += 1) {
+            if (turkishItems[index].playbackAllowed === false) locked.push(turkishItems[index])
+            else playable.push(turkishItems[index])
+        }
+        return shuffledItems(playable).concat(shuffledItems(locked)).slice(0, maxItems)
+    }
+
+    function refreshHomePreviewContent() {
+        homeMoviePreviewCache = buildRandomMoviePreview(12)
+        homeSeriesPreviewCache = buildRandomSeriesPreview(12)
+        homeLivePreviewCache = buildRandomLivePreview(12)
+    }
+
     function homeMovieSections(maxSections, itemsPerSection) {
         const sectionLimit = Math.max(1, Number(maxSections) || 3)
         const itemLimit = Math.max(1, Number(itemsPerSection) || 10)
@@ -812,7 +1040,7 @@ ApplicationWindow {
     function selectedSeries() {
         const items = apiClient.series || []
         for (let index = 0; index < items.length; index += 1) {
-            if (items[index].id === selectedSeriesId) {
+            if (fieldText(items[index], "id") === selectedSeriesId) {
                 return items[index]
             }
         }
@@ -831,14 +1059,15 @@ ApplicationWindow {
         if (!series) {
             return null
         }
-        if (series.featuredEpisode && series.featuredEpisode.id) {
-            return series.featuredEpisode
+        const featuredEpisode = fieldValue(series, "featuredEpisode", null)
+        if (featuredEpisode && fieldText(featuredEpisode, "id").length) {
+            return featuredEpisode
         }
-        const seasons = series.seasons || []
+        const seasons = fieldList(series, "seasons")
         for (let seasonIndex = 0; seasonIndex < seasons.length; seasonIndex += 1) {
-            const episodes = seasons[seasonIndex].episodes || []
+            const episodes = fieldList(seasons[seasonIndex], "episodes")
             for (let episodeIndex = 0; episodeIndex < episodes.length; episodeIndex += 1) {
-                if (episodes[episodeIndex] && episodes[episodeIndex].id) {
+                if (episodes[episodeIndex] && fieldText(episodes[episodeIndex], "id").length) {
                     return episodes[episodeIndex]
                 }
             }
@@ -859,13 +1088,14 @@ ApplicationWindow {
         if (!series) {
             return 0
         }
-        if (Number(series.episodeCount) > 0) {
-            return Number(series.episodeCount)
+        const explicitCount = fieldNumber(series, "episodeCount", 0)
+        if (explicitCount > 0) {
+            return explicitCount
         }
-        const seasons = series.seasons || []
+        const seasons = fieldList(series, "seasons")
         let total = 0
         for (let index = 0; index < seasons.length; index += 1) {
-            total += Number(seasons[index].episodeCount || (seasons[index].episodes || []).length || 0)
+            total += fieldNumber(seasons[index], "episodeCount", fieldList(seasons[index], "episodes").length)
         }
         return total
     }
@@ -885,22 +1115,25 @@ ApplicationWindow {
         const output = []
         for (let index = 0; index < series.length; index += 1) {
             const item = series[index]
-            const episode = item.featuredEpisode && item.featuredEpisode.id
-                          ? item.featuredEpisode
-                          : item.seasons && item.seasons.length && item.seasons[0].episodes && item.seasons[0].episodes.length
-                            ? item.seasons[0].episodes[0]
+            const featuredEpisode = fieldValue(item, "featuredEpisode", null)
+            const seasons = fieldList(item, "seasons")
+            const firstSeasonEpisodes = seasons.length ? fieldList(seasons[0], "episodes") : []
+            const episode = featuredEpisode && fieldText(featuredEpisode, "id").length
+                          ? featuredEpisode
+                          : firstSeasonEpisodes.length
+                            ? firstSeasonEpisodes[0]
                             : null
             if (!episode) {
                 continue
             }
             output.push({
-                id: episode.id,
+                id: fieldText(episode, "id"),
                 kind: "episode",
-                title: item.title,
-                subtitle: `${item.seasonCount} sezon - ${item.episodeCount} bolum`,
-                posterUrl: item.posterUrl,
-                playbackAllowed: episode.playbackAllowed,
-                seriesId: item.id
+                title: fieldText(item, "title"),
+                subtitle: `${fieldNumber(item, "seasonCount", 0)} sezon - ${fieldNumber(item, "episodeCount", 0)} bölüm`,
+                posterUrl: fieldText(item, "posterUrl"),
+                playbackAllowed: Boolean(fieldValue(episode, "playbackAllowed", false)),
+                seriesId: fieldText(item, "id")
             })
         }
         return output
@@ -914,7 +1147,7 @@ ApplicationWindow {
                 id: movie.id,
                 kind: "movie",
                 title: movie.title,
-                subtitle: movie.groupTitle || "Film secimi",
+                subtitle: movie.groupTitle || "Film seçimi",
                 posterUrl: movie.posterUrl,
                 playbackAllowed: movie.playbackAllowed
             }
@@ -932,7 +1165,7 @@ ApplicationWindow {
                 id: live.id,
                 kind: "live",
                 title: live.title,
-                subtitle: live.groupTitle || "Canli TV",
+                subtitle: live.groupTitle || "Canlı TV",
                 logoUrl: live.logoUrl,
                 playbackAllowed: live.playbackAllowed
             }
@@ -961,9 +1194,181 @@ ApplicationWindow {
         return null
     }
 
+    function closePaymentModal() {
+        pendingPackage = null
+        selectedPaymentMethodId = ""
+        selectedCryptoAssetId = ""
+    }
+
+    function selectPaymentMethod(methodId) {
+        selectedPaymentMethodId = methodId || ""
+        if (selectedPaymentMethodId !== "crypto") {
+            selectedCryptoAssetId = ""
+            return
+        }
+
+        const assets = paymentCryptoAssets()
+        if (!assets.length) {
+            selectedCryptoAssetId = ""
+            return
+        }
+
+        if (selectedCryptoAssetId.length) {
+            for (let index = 0; index < assets.length; index += 1) {
+                if ((assets[index].id || "").toString() === selectedCryptoAssetId) {
+                    return
+                }
+            }
+        }
+
+        selectedCryptoAssetId = (assets[0].id || "").toString()
+    }
+
+    function paymentAmountLabel(packageData) {
+        const raw = packageData && packageData.priceLabel ? packageData.priceLabel.toString().trim() : ""
+        if (!raw.length) return "-"
+        const uppercase = raw.toUpperCase()
+        if (raw.indexOf("₺") !== -1 || uppercase.indexOf("TL") !== -1) return raw
+        return `${raw} TL`
+    }
+
+    function paymentAccountCode() {
+        const user = userData()
+        return (user.kryptoniteCode || user.code || user.id || "-").toString()
+    }
+
+    function paymentCryptoAssets() {
+        const method = selectedPaymentMethod()
+        if (!method || method.id !== "crypto") return []
+
+        const assets = method.cryptoAssets || []
+        const output = []
+        for (let index = 0; index < assets.length; index += 1) {
+            const asset = assets[index]
+            if (asset.walletAddress && asset.walletAddress.toString().trim().length) {
+                output.push(asset)
+            }
+        }
+        return output
+    }
+
+    function selectedCryptoAsset() {
+        const assets = paymentCryptoAssets()
+        if (!assets.length) return null
+        for (let index = 0; index < assets.length; index += 1) {
+            if ((assets[index].id || "").toString() === selectedCryptoAssetId) {
+                return assets[index]
+            }
+        }
+        return assets[0]
+    }
+
+    function paymentCryptoAssetAccent(assetId) {
+        switch ((assetId || "").toString()) {
+        case "usdt-trc20":
+            return "#22c55e"
+        case "tron":
+            return "#ef4444"
+        case "sol":
+            return "#8b5cf6"
+        case "btc":
+            return "#f59e0b"
+        case "usdc":
+            return "#2563eb"
+        default:
+            return "#f4f6fb"
+        }
+    }
+
+    function paymentCryptoAssetBg(assetId) {
+        switch ((assetId || "").toString()) {
+        case "usdt-trc20":
+            return "#10251a"
+        case "tron":
+            return "#261112"
+        case "sol":
+            return "#181327"
+        case "btc":
+            return "#25180f"
+        case "usdc":
+            return "#101a2d"
+        default:
+            return "#131923"
+        }
+    }
+
+    function paymentCryptoAssetSymbol(asset) {
+        const id = (asset && asset.id ? asset.id : "").toString()
+        if (id === "usdt-trc20") return "USDT"
+        if (id === "tron") return "TRX"
+        if (id === "sol") return "SOL"
+        if (id === "btc") return "BTC"
+        if (id === "usdc") return "USDC"
+        return (asset && asset.symbol ? asset.symbol : "COIN").toString()
+    }
+
+    function paymentCryptoAssetLogo(asset) {
+        const id = (asset && asset.id ? asset.id : "").toString()
+        if (id === "usdt-trc20") return "qrc:/crypto/tether-logo.png"
+        if (id === "tron") return "qrc:/crypto/tron-logo.png"
+        if (id === "sol") return "qrc:/crypto/sol-logo.png"
+        if (id === "btc") return "qrc:/crypto/btc-logo.png"
+        if (id === "usdc") return "qrc:/crypto/usdc-logo.png"
+        return ""
+    }
+
+    function paymentInstructionRows() {
+        const method = selectedPaymentMethod()
+        if (!method) return []
+
+        if (method.id === "bank-transfer-eft") {
+            const bank = method.bankTransfer || ({})
+            const rows = [
+                { key: "recipient", label: "Hesap Adi", value: (bank.recipientName || "-").toString() },
+                { key: "iban", label: "IBAN", value: (bank.iban || "-").toString() },
+                { key: "amount", label: "Ödenecek Tutar", value: paymentAmountLabel(pendingPackage) },
+                { key: "user-code", label: "Kullanıcı Hesap Numarası", value: paymentAccountCode() }
+            ]
+            if (bank.bankName && bank.bankName.toString().trim().length) {
+                rows.splice(1, 0, { key: "bank-name", label: "Banka", value: bank.bankName.toString() })
+            }
+            return rows
+        }
+
+        if (method.id === "crypto") {
+            const asset = selectedCryptoAsset()
+            const rows = []
+            if (asset && asset.walletAddress && asset.walletAddress.toString().trim().length) {
+                rows.push({
+                    key: asset.id || "crypto-wallet",
+                    label: `${asset.label || asset.symbol || "Cüzdan"} Cüzdan Adresi`,
+                    value: asset.walletAddress.toString()
+                })
+            }
+            rows.push({
+                key: "amount",
+                label: "Ödenecek Tutar",
+                value: paymentAmountLabel(pendingPackage)
+            })
+            rows.push({
+                key: "user-code",
+                label: "Kullanıcı Hesap Numarası",
+                value: paymentAccountCode()
+            })
+            return rows
+        }
+
+        return []
+    }
+
+    function copyPaymentValue(label, value) {
+        const copied = apiClient.copyText((value || "").toString())
+        showToast(copied ? `${label} kopyalandı.` : `${label} kopyalanamadı.`, copied ? success : danger)
+    }
+
     function currentPlaybackItem() {
         if (inlinePlaybackMode === "movie" || moviePlaybackController.activeContentKind === "movie") return selectedMovie() || apiClient.movieById(moviePlaybackController.activeContentId)
-        if (inlinePlaybackMode === "episode" || playbackController.activeContentKind === "episode") return apiClient.episodeById(playbackController.activeContentId)
+        if (inlinePlaybackMode === "episode" || seriesPlaybackController.activeContentKind === "episode") return apiClient.episodeById(seriesPlaybackController.activeContentId)
         if (inlinePlaybackMode === "live" || livePlaybackController.activeContentKind === "live") return apiClient.liveChannelById(livePlaybackController.activeContentId)
         return ({})
     }
@@ -1050,6 +1455,62 @@ ApplicationWindow {
         unlockWindowSizeForFullscreen()
         window.showFullScreen()
     }
+    function toggleMovieFullscreen() {
+        if (movieFullscreen) {
+            exitMovieFullscreen()
+            return
+        }
+        movieFullscreen = true
+        if (window.visibility !== Window.FullScreen) {
+            movieFullscreenOwnsWindow = true
+            unlockWindowSizeForFullscreen()
+            window.showFullScreen()
+        } else {
+            movieFullscreenOwnsWindow = false
+        }
+        if (moviePlaybackController && moviePlaybackController.refreshVideoLayout) {
+            moviePlaybackController.refreshVideoLayout()
+        }
+    }
+    function exitMovieFullscreen() {
+        movieFullscreen = false
+        if (movieFullscreenOwnsWindow && window.visibility === Window.FullScreen) {
+            window.showNormal()
+            lockWindowSizeForDesktop()
+        }
+        movieFullscreenOwnsWindow = false
+        if (moviePlaybackController && moviePlaybackController.refreshVideoLayout) {
+            moviePlaybackController.refreshVideoLayout()
+        }
+    }
+    function toggleSeriesFullscreen() {
+        if (seriesFullscreen) {
+            exitSeriesFullscreen()
+            return
+        }
+        seriesFullscreen = true
+        if (window.visibility !== Window.FullScreen) {
+            seriesFullscreenOwnsWindow = true
+            unlockWindowSizeForFullscreen()
+            window.showFullScreen()
+        } else {
+            seriesFullscreenOwnsWindow = false
+        }
+        if (seriesPlaybackController && seriesPlaybackController.refreshVideoLayout) {
+            seriesPlaybackController.refreshVideoLayout()
+        }
+    }
+    function exitSeriesFullscreen() {
+        seriesFullscreen = false
+        if (seriesFullscreenOwnsWindow && window.visibility === Window.FullScreen) {
+            window.showNormal()
+            lockWindowSizeForDesktop()
+        }
+        seriesFullscreenOwnsWindow = false
+        if (seriesPlaybackController && seriesPlaybackController.refreshVideoLayout) {
+            seriesPlaybackController.refreshVideoLayout()
+        }
+    }
     function toggleVideoFullscreen() {
         if (videoFullscreen) {
             exitVideoFullscreen()
@@ -1107,23 +1568,35 @@ ApplicationWindow {
     function appUpdateVisible() { return Boolean(appUpdatePayload().updateAvailable && appUpdatePayload().latestVersion && isUpdateNewerThanCurrent(appUpdatePayload().latestVersion) && appUpdatePayload().latestVersion !== dismissedUpdateVersion) }
     function appUpdateBannerVisible() { return appUpdateVisible() || apiClient.updateInProgress || apiClient.updateError.length > 0 }
     function updateProgressPercent() { return Math.max(0, Math.min(100, Math.round((apiClient.updateProgress || 0) * 100))) }
-    function updatePrimaryActionLabel() { return isMacOS ? "DMG Indir ve Ac" : "Guncelle ve Yeniden Baslat" }
+    function updatePrimaryActionLabel() { return isMacOS ? "DMG İndir ve Aç" : "Güncelle ve Yeniden Başlat" }
     function updateBannerProgressText() {
         return isMacOS
-            ? "Imzali DMG indiriliyor. Hazir oldugunda Finder uzerinden acilacak."
-            : "Installer indiriliyor. Hazir olunca uygulama kapanip yeni surum kurulumu baslayacak."
+            ? "İmzalı DMG indiriliyor. Hazır olduğunda Finder üzerinden açılacak."
+            : "Installer indiriliyor. Hazır olunca uygulama kapanıp yeni sürüm kurulumu başlayacak."
     }
     function updateBannerIdleText() {
         return appUpdatePayload().notes || (isMacOS
-            ? "Guncelleme imzali DMG olarak indirilebilir durumda."
-            : "Guncelleme uygulama icinden indirilebilir durumda.")
+            ? "Güncelleme imzalı DMG olarak indirilebilir durumda."
+            : "Güncelleme uygulama içinden indirilebilir durumda.")
     }
     function platformTrialRequestNote() {
         return isMacOS ? "MacBook native cihazindan test talebi" : "Desktop native cihazindan test talebi"
     }
     function openScreen(screenName) {
+        if (screenName !== "movies" && (inlinePlaybackMode === "movie" || moviePlaybackController.activeContentKind === "movie" || selectedMovieId.length > 0)) {
+            closeMoviePlayer()
+        }
+        if (screenName !== "series-detail" && (inlinePlaybackMode === "episode" || seriesPlaybackController.activeContentKind === "episode" || selectedSeriesId.length > 0)) {
+            closeVodPlayer()
+        }
         if (videoFullscreen && screenName !== "live") {
             exitVideoFullscreen()
+        }
+        if (movieFullscreen && screenName !== "movies") {
+            exitMovieFullscreen()
+        }
+        if (seriesFullscreen && screenName !== "series-detail") {
+            exitSeriesFullscreen()
         }
         if (playerVisible && screenName !== currentScreen) {
             closeActivePlayer()
@@ -1149,6 +1622,7 @@ ApplicationWindow {
             }
 
             if (apiClient.authenticated) {
+                refreshHomePreviewContent()
                 apiClient.fetchAllCatalogs()
             }
         } else if (screenName === "live") {
@@ -1162,6 +1636,15 @@ ApplicationWindow {
             apiClient.fetchPaymentRequests()
         } else if (screenName === "contact") {
             apiClient.fetchMe()
+        }
+    }
+
+    onCurrentScreenChanged: {
+        if (currentScreen !== "movies" && (inlinePlaybackMode === "movie" || moviePlaybackController.activeContentKind === "movie" || selectedMovieId.length > 0)) {
+            closeMoviePlayer()
+        }
+        if (currentScreen !== "series-detail" && (inlinePlaybackMode === "episode" || seriesPlaybackController.activeContentKind === "episode")) {
+            closeVodPlayer()
         }
     }
 
@@ -1193,6 +1676,7 @@ ApplicationWindow {
 
     function closeMoviePlayer() {
         const hadMovieInlineMode = inlinePlaybackMode === "movie"
+        exitMovieFullscreen()
         if (hadMovieInlineMode) {
             playerVisible = false
             inlinePlaybackMode = "none"
@@ -1206,21 +1690,23 @@ ApplicationWindow {
     }
 
     function playEpisode(episode, series) {
-        if (!episode || !episode.id) return
+        const episodeId = fieldText(episode, "id")
+        if (!episodeId.length) return
         if (playerVisible && (inlinePlaybackMode !== "episode" || currentScreen !== "series-detail")) {
             closeActivePlayer()
         }
-        if (series && series.id) {
-            selectedSeriesId = series.id
+        const seriesId = fieldText(series, "id")
+        if (seriesId.length) {
+            selectedSeriesId = seriesId
         }
         if (currentScreen !== "series-detail") {
             currentScreen = "series-detail"
         }
-        playerSubtitle = series && series.title ? series.title : "Dizi"
-        playerImageUrl = series && series.posterUrl ? series.posterUrl : ""
+        playerSubtitle = fieldText(series, "title") || "Dizi"
+        playerImageUrl = fieldText(series, "posterUrl")
         playerVisible = true
         inlinePlaybackMode = "episode"
-        playbackController.playVod("episode", episode.id, episode.title)
+        seriesPlaybackController.playVod("episode", episodeId, fieldText(episode, "title") || playerSubtitle)
     }
 
     function playLive(channel, forceRestart) {
@@ -1267,14 +1753,15 @@ ApplicationWindow {
 
     function closeVodPlayer() {
         const hadEpisodeInlineMode = inlinePlaybackMode === "episode"
+        exitSeriesFullscreen()
         if (hadEpisodeInlineMode) {
             playerVisible = false
             inlinePlaybackMode = "none"
         }
         playerSubtitle = ""
         playerImageUrl = ""
-        if (playbackController.activeContentKind === "episode" || hadEpisodeInlineMode) {
-            playbackController.stop()
+        if (seriesPlaybackController.activeContentKind === "episode" || hadEpisodeInlineMode) {
+            seriesPlaybackController.stop()
         }
     }
 
@@ -1301,7 +1788,7 @@ ApplicationWindow {
             closeMoviePlayer()
             return
         }
-        if (inlinePlaybackMode === "episode" || playbackController.activeContentKind === "episode") {
+        if (inlinePlaybackMode === "episode" || seriesPlaybackController.activeContentKind === "episode") {
             closeVodPlayer()
             return
         }
@@ -1407,15 +1894,24 @@ ApplicationWindow {
             }
         }
         function onLoginSucceeded() { currentScreen = "home"; premiumPopupDismissed = false; showAuthCode = false; authCode = "" }
+        function onMoviesChanged() {
+            refreshHomePreviewContent()
+        }
         function onAnonCodeIssued(code) { issuedCode = sanitizeCode(code); revealedCount = 0; scrambleSeed = 0; revealWarmupTicks = 8; registerAcknowledged = false; authCode = ""; showAuthCode = false; currentScreen = "register"; revealTimer.interval = 132; revealTimer.restart() }
-        function onSeriesChanged() { if (!selectedSeriesId && (apiClient.series || []).length) selectedSeriesId = apiClient.series[0].id }
+        function onSeriesChanged() {
+            refreshHomePreviewContent()
+            if (!selectedSeriesId && (apiClient.series || []).length) {
+                selectedSeriesId = fieldText(apiClient.series[0], "id")
+            }
+        }
         function onLiveChannelsChanged() {
+            refreshHomePreviewContent()
             syncSelectedLiveSelection()
             if (currentScreen === "live") {
                 liveAutoplayTimer.restart()
             }
         }
-    function onLogoutCompleted() { currentScreen = "login"; authCode = ""; issuedCode = ""; showAuthCode = false; closeActivePlayer(); pendingPackage = null; selectedPaymentMethodId = "" }
+    function onLogoutCompleted() { currentScreen = "login"; authCode = ""; issuedCode = ""; showAuthCode = false; closeActivePlayer(); pendingPackage = null; selectedPaymentMethodId = ""; selectedCryptoAssetId = "" }
         function onNoticeChanged() { if (apiClient.notice && apiClient.notice.length) showToast(apiClient.notice, success) }
         function onRequestFailed(context, message) { showToast(message, danger) }
     }
@@ -1501,6 +1997,60 @@ ApplicationWindow {
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
             opacity: control.enabled ? 1.0 : 0.5
+        }
+    }
+
+    component BackIconButton: Button {
+        id: backControl
+        hoverEnabled: false
+        focusPolicy: Qt.NoFocus
+        implicitWidth: 58
+        implicitHeight: 56
+        opacity: backControl.enabled ? 1.0 : 0.45
+        scale: backControl.down ? 0.97 : 1.0
+        Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+        background: Rectangle {
+            radius: 12
+            border.width: 1
+            border.color: backControl.down ? "#3b4557" : "#2a3443"
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: backControl.down ? "#222c39" : "#1b2432" }
+                GradientStop { position: 1.0; color: backControl.down ? "#161d28" : "#101722" }
+            }
+        }
+
+        contentItem: Item {
+            Canvas {
+                anchors.centerIn: parent
+                width: 22
+                height: 18
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.reset()
+                    ctx.strokeStyle = "#f4f6fb"
+                    ctx.lineWidth = 2.6
+                    ctx.lineCap = "round"
+                    ctx.lineJoin = "round"
+
+                    ctx.beginPath()
+                    ctx.moveTo(17, 2.5)
+                    ctx.lineTo(8, 9)
+                    ctx.lineTo(17, 15.5)
+                    ctx.stroke()
+
+                    ctx.beginPath()
+                    ctx.moveTo(8.5, 9)
+                    ctx.lineTo(20, 9)
+                    ctx.stroke()
+                }
+
+                Connections {
+                    target: backControl
+                    function onDownChanged() { parent.requestPaint() }
+                    function onEnabledChanged() { parent.requestPaint() }
+                }
+            }
         }
     }
 
@@ -2079,7 +2629,7 @@ ApplicationWindow {
                 color: rail.item.playbackAllowed ? "#2b30d19d" : "#14ffffff"
                 Text {
                     anchors.centerIn: parent
-                    text: rail.item.playbackAllowed ? "Hazir" : "Paket Gerekli"
+                    text: rail.item.playbackAllowed ? "Hazır" : "Paket Gerekli"
                     color: rail.item.playbackAllowed ? "#82ecc4" : window.textPrimary
                     font.pixelSize: 12
                     font.bold: true
@@ -2303,7 +2853,7 @@ ApplicationWindow {
                         }
 
                         Text {
-                            text: playbackController.activeTitle.length ? playbackController.activeTitle : "Player Hazir"
+                                            text: playbackController.activeTitle.length ? playbackController.activeTitle : "Player Hazır"
                             color: window.textPrimary
                             font.pixelSize: window.compactWindow ? 26 : 32
                             font.family: "Space Grotesk"
@@ -2398,7 +2948,7 @@ ApplicationWindow {
                                     }
 
                                     Text {
-                                        text: "VOD kaynagi acilamadi"
+                                        text: "VOD kaynağı açılamadı"
                                         color: window.textPrimary
                                         font.pixelSize: 26
                                         font.family: "Space Grotesk"
@@ -2408,7 +2958,7 @@ ApplicationWindow {
                                     Text {
                                         width: parent.width
                                         wrapMode: Text.WordWrap
-                                        text: playbackController.lastError.length ? playbackController.lastError : "Kaynak gecici olarak hazirlanamadi."
+                                        text: playbackController.lastError.length ? playbackController.lastError : "Kaynak geçici olarak hazırlanamadı."
                                         color: "#ffb2b8"
                                         font.pixelSize: 14
                                     }
@@ -2448,9 +2998,9 @@ ApplicationWindow {
                                     id: inlineVodStateLabel
                                     anchors.centerIn: parent
                                     text: playbackController.state === "buffering" ? "Buffer dolduruluyor" :
-                                          playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazirlaniyor" :
-                                          playbackController.state === "error" ? "Yayin acilamadi" :
-                                          playbackController.state === "playing" ? "Oynuyor" : "Hazir"
+                                          playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazırlanıyor" :
+                                          playbackController.state === "error" ? "Yayın açılamadı" :
+                                          playbackController.state === "playing" ? "Oynuyor" : "Hazır"
                                     color: window.textPrimary
                                     font.pixelSize: 13
                                     font.bold: true
@@ -2541,7 +3091,7 @@ ApplicationWindow {
                                         }
 
                                         AppButton {
-                                            text: "Sonraki Bolum"
+                                            text: "Sonraki Bölüm"
                                             implicitWidth: 154
                                             visible: Boolean(playbackController.recommendedNextEpisode.id)
                                             enabled: visible
@@ -2724,7 +3274,7 @@ ApplicationWindow {
                             }
 
                             Text {
-                                text: playbackController.lastError.length ? playbackController.lastError : "Native player app icinde hazir."
+                                text: playbackController.lastError.length ? playbackController.lastError : "Native player uygulama içinde hazır."
                                 width: parent.width
                                 wrapMode: Text.WordWrap
                                 color: playbackController.lastError.length ? "#ffb2b8" : window.textMuted
@@ -3387,9 +3937,9 @@ ApplicationWindow {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: window.compactWindow ? 92 : 104
+                    Layout.preferredHeight: (!videoFullscreen && !movieFullscreen && !seriesFullscreen) ? (window.compactWindow ? 92 : 104) : 0
                     color: "#ee010204"
-                    visible: !videoFullscreen
+                    visible: !videoFullscreen && !movieFullscreen && !seriesFullscreen
 
                     RowLayout {
                         anchors.fill: parent
@@ -3499,7 +4049,7 @@ ApplicationWindow {
                             MouseArea { anchors.fill: parent; onClicked: openScreen("profile") }
                         }
 
-                        AppButton { text: "Cikis"; secondary: true; implicitWidth: 110; onClicked: apiClient.logout() }
+                        AppButton { text: "Çıkış"; secondary: true; implicitWidth: 110; onClicked: apiClient.logout() }
                     }
                 }
 
@@ -3523,10 +4073,10 @@ ApplicationWindow {
                                 spacing: 4
                                 Text {
                                     text: apiClient.updateInProgress
-                                          ? `Guncelleme indiriliyor... %${updateProgressPercent()}`
+                                          ? `Güncelleme indiriliyor... %${updateProgressPercent()}`
                                           : (apiClient.updateError.length
-                                             ? "Guncelleme baslatilamadi"
-                                             : `Yeni surum hazir: v${appUpdatePayload().latestVersion || ""}`)
+                                             ? "Güncelleme başlatılamadı"
+                                             : `Yeni sürüm hazır: v${appUpdatePayload().latestVersion || ""}`)
                                     color: window.textPrimary
                                     font.pixelSize: 16
                                     font.family: "Space Grotesk"
@@ -3587,9 +4137,41 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         currentIndex: ({ "home": 0, "live": 1, "movies": 2, "series": 3, "series-detail": 4, "profile": 5, "packages": 6, "payments": 7, "settings": 8, "contact": 9 })[currentScreen] ?? 0
 
-                        ScrollView {
+                        Item {
+                            HomePage {
+                                anchors.fill: parent
+                                z: 10
+                                movieItems: homeMoviePreviewCache
+                                seriesItems: homeSeriesPreviewCache
+                                liveItems: homeLivePreviewCache
+                                compactWindow: window.compactWindow
+                                panelColor: window.panelStrong
+                                surfaceColor: window.panelSoft
+                                textPrimary: window.textPrimary
+                                textMuted: window.textMuted
+                                accentColor: window.accent
+                                shellPadding: window.shellPadding
+                                sectionSpacing: window.sectionSpacing
+                                cardGap: window.cardGap
+                                onMovieSelected: function(movie) { playMovie(movie) }
+                                onSeriesSelected: function(series) {
+                                    const seriesId = fieldText(series, "id")
+                                    if (seriesId.length) {
+                                        openSeriesDetail(seriesId)
+                                    }
+                                }
+                                onLiveSelected: function(channel) { playLive(channel) }
+                                onOpenMoviesRequested: openScreen("movies")
+                                onOpenSeriesRequested: openScreen("series")
+                                onOpenLiveRequested: openScreen("live")
+                            }
+
+                            ScrollView {
                             id: homeScrollView
+                            anchors.fill: parent
                             clip: true
+                            visible: false
+                            enabled: false
                             Connections {
                                 target: homeScrollView.contentItem ? homeScrollView.contentItem : null
                                 function onContentYChanged() {
@@ -3752,7 +4334,7 @@ ApplicationWindow {
                                     
                                     // Popüler Filmler
                                     HomeContentSection {
-                                        title: "Sizin Icin Secilen Filmler"
+                                        title: "Sizin İçin Seçilen Filmler"
                                         items: homeFeaturedMovies(12)
                                         kind: "movie"
                                         onItemClicked: function(item) { playMovie(apiClient.movieById(item.id)) }
@@ -3849,6 +4431,7 @@ ApplicationWindow {
                                     }
                                 }
                             }
+                        }
                         }
 
                         Item {
@@ -4096,7 +4679,7 @@ ApplicationWindow {
                                                     Text {
                                                         width: parent.width
                                                         horizontalAlignment: Text.AlignHCenter
-                                                        text: "Filtreye uyan kanal bulunamadi"
+                                                text: "Filtreye uyan kanal bulunamadı"
                                                         color: window.textPrimary
                                                         font.pixelSize: 28
                                                         font.family: "Space Grotesk"
@@ -4107,7 +4690,7 @@ ApplicationWindow {
                                                     Text {
                                                         width: parent.width
                                                         horizontalAlignment: Text.AlignHCenter
-                                                        text: "Aramayi temizleyin veya baska bir kategori secin."
+                                                    text: "Aramayı temizleyin veya başka bir kategori seçin."
                                                         color: window.textMuted
                                                         font.pixelSize: 14
                                                         wrapMode: Text.WordWrap
@@ -4126,7 +4709,7 @@ ApplicationWindow {
                                                         Text {
                                                             width: parent.width
                                                             horizontalAlignment: Text.AlignHCenter
-                                                            text: "Bu kanali acmak icin aktif paket gerekiyor"
+                                                            text: "Bu kanalı açmak için aktif paket gerekiyor"
                                                             color: window.textPrimary
                                                             font.pixelSize: 30
                                                             font.family: "Space Grotesk"
@@ -4137,7 +4720,7 @@ ApplicationWindow {
                                                         Text {
                                                             width: parent.width
                                                             horizontalAlignment: Text.AlignHCenter
-                                                            text: "Sag listeden baska kanal secin ya da paket durumunuzu guncelleyin."
+                                                            text: "Sağ listeden başka kanal seçin ya da paket durumunuzu güncelleyin."
                                                             color: window.textMuted
                                                             font.pixelSize: 14
                                                             wrapMode: Text.WordWrap
@@ -4360,10 +4943,10 @@ ApplicationWindow {
                             selectedGroup: selectedMovieGroup
                             searchText: moviesSearchText
                             playerVisible: inlineMoviePlayerVisible()
+                            windowIsFullscreen: movieFullscreen
                             compactWindow: window.compactWindow
                             movieLoadingMore: apiClient.movieLoadingMore
                             movieHasMore: apiClient.movieHasMore
-                            windowIsFullscreen: window.visibility === Window.FullScreen
                             panelColor: window.panelStrong
                             surfaceColor: window.panelSoft
                             textPrimary: window.textPrimary
@@ -4383,12 +4966,22 @@ ApplicationWindow {
                             onMovieSelected: function(movie) { playMovie(movie) }
                             onLoadMoreRequested: apiClient.loadMoreMovies()
                             onClosePlayerRequested: closeMoviePlayer()
-                            onToggleWindowFullscreenRequested: toggleWindowFullscreen()
+                            onToggleWindowFullscreenRequested: toggleMovieFullscreen()
                         }
 
-                        ScrollView {
-                            clip: true
-                            Column {
+                        Item {
+                            anchors.fill: parent
+
+                            ScrollView {
+                                anchors.fill: parent
+                                clip: true
+                                visible: false
+                                enabled: false
+                                height: 0
+                                opacity: 0
+                                z: -100
+
+                                Column {
                                 width: window.pageWidth(pageStack.width)
                                 x: window.shellPadding
                                 topPadding: window.compactWindow ? 18 : 20
@@ -4459,7 +5052,7 @@ ApplicationWindow {
                                                 Text {
                                                     id: seriesMetaBadge
                                                     anchors.centerIn: parent
-                                                    text: spotlightSeries ? `${Number(spotlightSeries.seasonCount || 0)} sezon • ${seriesTotalEpisodes(spotlightSeries)} bolum` : "Dizi secin"
+                                                    text: spotlightSeries ? `${Number(spotlightSeries.seasonCount || 0)} sezon • ${seriesTotalEpisodes(spotlightSeries)} bölüm` : "Dizi seçin"
                                                     color: window.textPrimary
                                                     font.pixelSize: 12
                                                     font.bold: true
@@ -4470,7 +5063,7 @@ ApplicationWindow {
                                         Item { width: 1; height: 1 }
 
                                         Text {
-                                            text: spotlightSeries ? spotlightSeries.title || "Dizi secin" : "Dizi secin"
+                                            text: spotlightSeries ? spotlightSeries.title || "Dizi seçin" : "Dizi seçin"
                                             width: parent.width * (window.compactWindow ? 0.96 : 0.68)
                                             wrapMode: Text.WordWrap
                                             color: window.textPrimary
@@ -4480,7 +5073,7 @@ ApplicationWindow {
                                         }
 
                                         Text {
-                                            text: spotlightSeries ? (spotlightSeries.groupTitle || "Secili dizi vitrini") : ""
+                                            text: spotlightSeries ? (spotlightSeries.groupTitle || "Seçili dizi vitrini") : ""
                                             color: "#d3d9e8"
                                             font.pixelSize: 15
                                             visible: text.length > 0
@@ -4493,8 +5086,8 @@ ApplicationWindow {
                                             font.pixelSize: 15
                                             lineHeight: 1.35
                                             text: spotlightSeries
-                                                  ? "Sezonlar, one cikan bolum ve detay akisi ayni hizada acik kalir. Dizi secip detay ekranina gecis yapmak artik daha dogrudan."
-                                                  : "Dizi katalogu hazir oldugunda buradan secili diziyi one cikaracagiz."
+                                                  ? "Sezonlar, öne çıkan bölüm ve detay akışı aynı hizada açık kalır. Dizi seçip detay ekranına geçiş yapmak artık daha doğrudan."
+                                                  : "Dizi kataloğu hazır olduğunda buradan seçili diziyi öne çıkaracağız."
                                         }
 
                                         Flow {
@@ -4502,22 +5095,22 @@ ApplicationWindow {
                                             spacing: 12
 
                                             AppButton {
-                                                text: "Detayi Ac"
+                                                text: "Detayı Aç"
                                                 implicitWidth: 156
-                                                enabled: spotlightSeries && spotlightSeries.id
-                                                onClicked: if (spotlightSeries) openSeriesDetail(spotlightSeries.id)
+                                                enabled: spotlightSeries && fieldText(spotlightSeries, "id").length
+                                                onClicked: if (spotlightSeries) openSeriesDetail(fieldText(spotlightSeries, "id"))
                                             }
 
                                             AppButton {
-                                                text: "One Cikan Bolumu Oynat"
+                                                text: "Öne Çıkan Bölümü Oynat"
                                                 secondary: true
                                                 implicitWidth: 220
-                                                enabled: spotlightEpisode && spotlightEpisode.playbackAllowed !== false
+                                                enabled: spotlightEpisode && Boolean(fieldValue(spotlightEpisode, "playbackAllowed", false))
                                                 onClicked: if (spotlightEpisode && spotlightSeries) playEpisode(spotlightEpisode, spotlightSeries)
                                             }
 
                                             AppButton {
-                                                text: "Katalogu Yenile"
+                                                text: "Kataloğu Yenile"
                                                 secondary: true
                                                 implicitWidth: 164
                                                 onClicked: apiClient.fetchSeriesCatalog(1, 200, seriesSearchText)
@@ -4560,7 +5153,7 @@ ApplicationWindow {
 
                                             ChipButton {
                                                 required property var modelData
-                                                text: modelData.length ? modelData : "Tum Diziler"
+                                                text: modelData.length ? modelData : "Tüm Diziler"
                                                 active: selectedSeriesGroup === modelData
                                                 width: Math.max(112, implicitContentWidth + 28)
                                                 onClicked: selectedSeriesGroup = modelData
@@ -4606,7 +5199,7 @@ ApplicationWindow {
                                             Text {
                                                 id: seriesGroupSummary
                                                 anchors.centerIn: parent
-                                                text: selectedSeriesGroup.length ? selectedSeriesGroup : "Tum Kategoriler"
+                                                text: selectedSeriesGroup.length ? selectedSeriesGroup : "Tüm Kategoriler"
                                                 color: window.textMuted
                                                 font.pixelSize: 12
                                                 font.bold: true
@@ -4624,7 +5217,7 @@ ApplicationWindow {
                                             Text {
                                                 id: seriesStageSummary
                                                 anchors.centerIn: parent
-                                                text: spotlightEpisode ? "Detaya gecmeden once bolum hazirligi" : "Once diziyi secin, sonra bolumu acin"
+                                                text: spotlightEpisode ? "Detaya geçmeden önce bölüm hazırlığı" : "Önce diziyi seçin, sonra bölümü açın"
                                                 color: window.textMuted
                                                 font.pixelSize: 12
                                                 font.bold: true
@@ -4645,14 +5238,19 @@ ApplicationWindow {
 
                                         RailCard {
                                             item: ({
-                                                id: modelData.id,
-                                                title: modelData.title,
-                                                subtitle: `${modelData.seasonCount} sezon • ${modelData.episodeCount} bolum`,
-                                                posterUrl: modelData.posterUrl,
-                                                playbackAllowed: Boolean(modelData.featuredEpisode && modelData.featuredEpisode.playbackAllowed)
+                                                id: fieldText(modelData, "id"),
+                                                title: fieldText(modelData, "title") || "Dizi",
+                                                subtitle: `${fieldNumber(modelData, "seasonCount", 0)} sezon • ${fieldNumber(modelData, "episodeCount", 0)} bölüm`,
+                                                posterUrl: fieldText(modelData, "posterUrl"),
+                                                playbackAllowed: Boolean(fieldValue(fieldValue(modelData, "featuredEpisode", null), "playbackAllowed", false))
                                             })
                                             cardKind: "episode"
-                                            onActivated: openSeriesDetail(modelData.id)
+                                            onActivated: {
+                                                const seriesId = fieldText(modelData, "id")
+                                                if (seriesId.length) {
+                                                    openSeriesDetail(seriesId)
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -4668,7 +5266,7 @@ ApplicationWindow {
                                         spacing: 8
 
                                         Text {
-                                            text: "Filtreye uygun dizi bulunamadi"
+                                                text: "Filtreye uygun dizi bulunamadı"
                                             color: window.textPrimary
                                             font.pixelSize: 30
                                             font.family: "Space Grotesk"
@@ -4676,17 +5274,62 @@ ApplicationWindow {
                                         }
 
                                         Text {
-                                            text: "Aramayi temizleyip farkli bir kategori deneyebilirsiniz."
+                                            text: "Aramayı temizleyip farklı bir kategori deneyebilirsiniz."
                                             color: window.textMuted
                                             font.pixelSize: 14
                                         }
                                     }
                                 }
                             }
+                            }
+
+                            SeriesCatalogPage {
+                                anchors.fill: parent
+                                z: 100
+                                seriesItems: filteredSeries()
+                                seriesGroups: [""].concat(uniqueGroups(apiClient.series || []))
+                                seriesTotal: (apiClient.series || []).length
+                                selectedSeriesId: selectedSeriesId
+                                selectedGroup: selectedSeriesGroup
+                                searchText: seriesSearchText
+                                compactWindow: window.compactWindow
+                                panelColor: "#090c13"
+                                surfaceColor: "#131923"
+                                textPrimary: window.textPrimary
+                                textMuted: window.textMuted
+                                accentColor: window.accent
+                                shellPadding: window.shellPadding
+                                sectionSpacing: window.sectionSpacing
+                                cardGap: window.cardGap
+                                posterCardWidth: window.posterCardWidth
+                                onSearchEdited: {
+                                    seriesSearchText = text
+                                }
+                                onRefreshRequested: apiClient.fetchSeriesCatalog(1, 200, seriesSearchText)
+                                onClearFiltersRequested: {
+                                    seriesSearchText = ""
+                                    selectedSeriesGroup = ""
+                                }
+                                onGroupSelected: function(group) {
+                                    selectedSeriesGroup = group
+                                }
+                                onSeriesSelected: function(series) {
+                                    const seriesId = fieldText(series, "id")
+                                    if (seriesId.length) {
+                                        openSeriesDetail(seriesId)
+                                    }
+                                }
+                            }
                         }
 
-                        ScrollView {
-                            clip: true
+                        Item {
+                            anchors.fill: parent
+
+                            ScrollView {
+                                anchors.fill: parent
+                                clip: true
+                                visible: false
+                                enabled: false
                             Column {
                                 width: window.pageWidth(pageStack.width)
                                 x: window.shellPadding
@@ -4708,7 +5351,7 @@ ApplicationWindow {
                                     }
 
                                     AppButton {
-                                        text: "Detayi Yenile"
+                                                text: "Detayı Yenile"
                                         secondary: true
                                         implicitWidth: 148
                                         onClicked: apiClient.fetchSeriesCatalog(1, 200, seriesSearchText)
@@ -4776,7 +5419,7 @@ ApplicationWindow {
                                                 Text {
                                                     id: detailMetaPill
                                                     anchors.centerIn: parent
-                                                    text: activeSeries ? `${Number(activeSeries.seasonCount || 0)} sezon • ${seriesTotalEpisodes(activeSeries)} bolum` : "Dizi secin"
+                                            text: activeSeries ? `${Number(activeSeries.seasonCount || 0)} sezon • ${seriesTotalEpisodes(activeSeries)} bölüm` : "Dizi seçin"
                                                     color: window.textPrimary
                                                     font.pixelSize: 12
                                                     font.bold: true
@@ -4787,7 +5430,7 @@ ApplicationWindow {
                                         Item { width: 1; height: 1 }
 
                                         Text {
-                                            text: activeSeries ? activeSeries.title || "Dizi secin" : "Dizi secin"
+                                            text: activeSeries ? activeSeries.title || "Dizi seçin" : "Dizi seçin"
                                             width: parent.width * (window.compactWindow ? 0.96 : 0.68)
                                             wrapMode: Text.WordWrap
                                             color: window.textPrimary
@@ -4797,7 +5440,7 @@ ApplicationWindow {
                                         }
 
                                         Text {
-                                            text: activeSeries ? (activeSeries.groupTitle || "Premium dizi secimi") : ""
+                                            text: activeSeries ? (activeSeries.groupTitle || "Premium dizi seçimi") : ""
                                             color: "#d3d9e8"
                                             font.pixelSize: 15
                                             visible: text.length > 0
@@ -4810,8 +5453,8 @@ ApplicationWindow {
                                             font.pixelSize: 15
                                             lineHeight: 1.35
                                             text: activeSeries
-                                                  ? "Bolum listesi ve oynatici ayni sayfada birlikte durur. Sorun oldugunda oynatici alani kapanmadan tekrar deneme yapabilirsiniz."
-                                                  : "Bir dizi secildiginde tum sezonlar burada gosterilecek."
+                                                  ? "Bölüm listesi ve oynatıcı aynı sayfada birlikte durur. Sorun olduğunda oynatıcı alanı kapanmadan tekrar deneme yapabilirsiniz."
+                                                  : "Bir dizi seçildiğinde tüm sezonlar burada gösterilecek."
                                         }
 
                                         Flow {
@@ -4819,14 +5462,14 @@ ApplicationWindow {
                                             spacing: 12
 
                                             AppButton {
-                                                text: "One Cikan Bolumu Ac"
+                                                text: "Öne Çıkan Bölümü Aç"
                                                 implicitWidth: 210
                                                 enabled: activeEpisode && activeEpisode.playbackAllowed !== false
                                                 onClicked: if (activeEpisode && activeSeries) playEpisode(activeEpisode, activeSeries)
                                             }
 
                                             AppButton {
-                                                text: inlineEpisodePlayerVisible() ? "Oynaticiya Don" : "Ilk Bolumu Oynat"
+                                                text: inlineEpisodePlayerVisible() ? "Oynatıcıya Dön" : "İlk Bölümü Oynat"
                                                 secondary: true
                                                 implicitWidth: 190
                                                 enabled: activeEpisode && activeEpisode.playbackAllowed !== false
@@ -4884,8 +5527,8 @@ ApplicationWindow {
 
                                 Loader {
                                     width: parent.width
-                                    active: inlineEpisodePlayerVisible()
-                                    visible: active
+                                    active: false
+                                    visible: false
                                     sourceComponent: inlineVodPlayerComponent
                                 }
                                 Flow {
@@ -4896,10 +5539,10 @@ ApplicationWindow {
                                         width: window.compactWindow ? parent.width : parent.width - (320 + window.cardGap); height: window.compactWindow ? 320 : 460; color: "#090c13"
                                         Column {
                                             anchors.fill: parent; anchors.margins: window.compactWindow ? 22 : 28; spacing: 14
-                                            Text { text: selectedSeries() ? selectedSeries().title : "Dizi secin"; color: window.textPrimary; font.pixelSize: window.compactWindow ? 34 : 46; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap }
-                                            Text { text: selectedSeries() ? (selectedSeries().groupTitle || "Seckin dizi") : ""; color: window.textMuted; font.pixelSize: 16 }
-                                            Text { width: parent.width * (window.compactWindow ? 1.0 : 0.8); wrapMode: Text.WordWrap; text: "Sezonlari gezin, bolumu secin ve native player yuzeyinde branded playback deneyimini kullanin."; color: window.textMuted; font.pixelSize: 15 }
-                                            AppButton { text: "One Cikan Bolumu Ac"; implicitWidth: 190; enabled: selectedSeries() && selectedSeries().featuredEpisode && selectedSeries().featuredEpisode.id; onClicked: playEpisode(selectedSeries().featuredEpisode, selectedSeries()) }
+                                            Text { text: selectedSeries() ? selectedSeries().title : "Dizi seçin"; color: window.textPrimary; font.pixelSize: window.compactWindow ? 34 : 46; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap }
+                                            Text { text: selectedSeries() ? (selectedSeries().groupTitle || "Seçkin dizi") : ""; color: window.textMuted; font.pixelSize: 16 }
+                                            Text { width: parent.width * (window.compactWindow ? 1.0 : 0.8); wrapMode: Text.WordWrap; text: "Sezonları gezin, bölümü seçin ve native player yüzeyinde branded playback deneyimini kullanın."; color: window.textMuted; font.pixelSize: 15 }
+                                            AppButton { text: "Öne Çıkan Bölümü Aç"; implicitWidth: 190; enabled: selectedSeries() && selectedSeries().featuredEpisode && selectedSeries().featuredEpisode.id; onClicked: playEpisode(selectedSeries().featuredEpisode, selectedSeries()) }
                                         }
                                     }
                                 }
@@ -4910,7 +5553,7 @@ ApplicationWindow {
                                         Column {
                                             id: seasonContent
                                             anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 18; spacing: 14
-                                            Text { text: `${modelData.title} - ${modelData.episodeCount} bolum`; color: window.textPrimary; font.pixelSize: 26; font.family: "Space Grotesk"; font.bold: true }
+                                            Text { text: `${modelData.title} - ${modelData.episodeCount} bölüm`; color: window.textPrimary; font.pixelSize: 26; font.family: "Space Grotesk"; font.bold: true }
                                             Repeater {
                                                 model: modelData.episodes || []
                                                 Rectangle {
@@ -4918,7 +5561,7 @@ ApplicationWindow {
                                                     Row {
                                                         anchors.fill: parent; anchors.margins: 16; spacing: 18
                                                         Text { anchors.verticalCenter: parent.verticalCenter; text: `B${modelData.episodeNumber}`; color: "#a6ffffff"; font.pixelSize: 14; font.bold: true }
-                                                        Column { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 170; spacing: 4; Text { text: modelData.title; width: parent.width; elide: Text.ElideRight; color: window.textPrimary; font.pixelSize: 18; font.bold: true } Text { text: modelData.playbackAllowed ? "Hazir" : "Paket Gerekli"; color: modelData.playbackAllowed ? "#82ecc4" : window.textMuted; font.pixelSize: 13 } }
+                                                        Column { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 170; spacing: 4; Text { text: modelData.title; width: parent.width; elide: Text.ElideRight; color: window.textPrimary; font.pixelSize: 18; font.bold: true } Text { text: modelData.playbackAllowed ? "Hazır" : "Paket Gerekli"; color: modelData.playbackAllowed ? "#82ecc4" : window.textMuted; font.pixelSize: 13 } }
                                                         AppButton { anchors.verticalCenter: parent.verticalCenter; text: "Oynat"; implicitWidth: 110; enabled: modelData.playbackAllowed; onClicked: playEpisode(modelData, activeSeries) }
                                                     }
                                                 }
@@ -4926,6 +5569,34 @@ ApplicationWindow {
                                         }
                                     }
                                 }
+                            }
+                            }
+
+                            SeriesDetailPage {
+                                anchors.fill: parent
+                                visible: true
+                                activeSeries: selectedSeries()
+                                activeEpisode: seriesLeadEpisode(selectedSeries())
+                                playbackController: seriesPlaybackController
+                                videoSurfaceComponent: vodVideoSurfaceComponent
+                                playerVisible: inlineEpisodePlayerVisible()
+                                windowIsFullscreen: seriesFullscreen
+                                compactWindow: window.compactWindow
+                                panelColor: window.panelStrong
+                                surfaceColor: window.panelSoft
+                                textPrimary: window.textPrimary
+                                textMuted: window.textMuted
+                                accentColor: window.accentStrong
+                                shellPadding: window.shellPadding
+                                sectionSpacing: window.sectionSpacing
+                                onPlayEpisodeRequested: function(episode, series) { playEpisode(episode, series) }
+                                onExitDetailRequested: {
+                                    closeVodPlayer()
+                                    currentScreen = "series"
+                                }
+                                onClosePlayerRequested: closeVodPlayer()
+                                onToggleWindowFullscreenRequested: toggleSeriesFullscreen()
+                                onRetryPlaybackRequested: seriesPlaybackController.retryCurrent()
                             }
                         }
 
@@ -4942,9 +5613,9 @@ ApplicationWindow {
                                     width: parent.width; spacing: 18
                                     Repeater {
                                         model: [
-                                            { title: "Profil Ayarlari", copy: "Kullanici ve baglanti bilgilerini goruntuleyin.", action: "Ayarlar", screen: "settings" },
-                                            { title: "Paketler", copy: "Aktif paketleri gorup satin alim talebi olusturun.", action: "Paketleri Gor", screen: "packages" },
-                                            { title: "Odeme Bildirimi", copy: "Odeme taleplerinin durumunu takip edin.", action: "Bildirimleri Gor", screen: "payments" },
+                                            { title: "Profil Ayarları", copy: "Kullanıcı ve bağlantı bilgilerini görüntüleyin.", action: "Ayarlar", screen: "settings" },
+                                            { title: "Paketler", copy: "Aktif paketleri görüp satın alım talebi oluşturun.", action: "Paketleri Gör", screen: "packages" },
+                                            { title: "Ödeme Bildirimi", copy: "Ödeme taleplerinin durumunu takip edin.", action: "Bildirimleri Gör", screen: "payments" },
                                             { title: "İletişim", copy: "Destek ekibine WhatsApp veya Telegram üzerinden ulaşın.", action: "İletişime Geç", screen: "contact" }
                                         ]
                                         GlassCard {
@@ -4954,6 +5625,7 @@ ApplicationWindow {
                                     }
                                 }
                             }
+
                         }
 
                         ScrollView {
@@ -4963,15 +5635,154 @@ ApplicationWindow {
                                 x: window.shellPadding
                                 topPadding: window.compactWindow ? 18 : 20
                                 bottomPadding: window.compactWindow ? 24 : 28
-                                spacing: window.sectionSpacing
-                                Row { spacing: 12; AppButton { text: "Geri"; secondary: true; implicitWidth: 110; onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "Paketler"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
+                                spacing: 24
+                                Row {
+                                    width: parent.width
+                                    spacing: 14
+
+                                    BackIconButton { onClicked: openScreen("profile") }
+
+                                    Column {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: 2
+
+                                        Text {
+                                            text: "Premium Paketler"
+                                            color: window.textPrimary
+                                            font.pixelSize: 42
+                                            font.family: "Space Grotesk"
+                                            font.bold: true
+                                        }
+
+                                    }
+                                }
+
                                 Flow {
-                                    width: parent.width; spacing: 18
+                                    width: parent.width
+                                    spacing: 18
+
                                     Repeater {
-                                        model: apiClient.packages
+                                        model: orderedPackages()
+
                                         GlassCard {
-                                            width: window.gridCardWidth(parent.width, 250, 3); height: 240; color: "#090c13"
-                                            Column { anchors.fill: parent; anchors.margins: 22; spacing: 10; Rectangle { width: 82; height: 34; radius: 17; color: "#14ffffff"; Text { anchors.centerIn: parent; text: `${modelData.durationMonths} ay`; color: window.textPrimary; font.pixelSize: 12; font.bold: true } } Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 30; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap } Text { text: modelData.priceLabel || "Fiyat bilgisi destek ekibinden alinir."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 14 } AppButton { text: "Paket Al"; implicitWidth: 132; onClicked: { pendingPackage = modelData; selectedPaymentMethodId = ""; apiClient.fetchPaymentMethods() } } }
+                                            width: window.compactWindow
+                                                   ? window.gridCardWidth(parent.width, 280, 2)
+                                                   : Math.floor((parent.width - 54) / 4)
+                                            height: 392
+                                            color: packageRecommended(modelData) ? "#0b1019" : "#090c13"
+                                            border.color: packageRecommended(modelData) ? "#44ff4b56" : "#18ffffff"
+
+                                            Rectangle {
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                anchors.top: parent.top
+                                                height: 5
+                                                radius: 3
+                                                gradient: Gradient {
+                                                    GradientStop { position: 0.0; color: packageRecommended(modelData) ? "#00ff2432" : "#00ffffff" }
+                                                    GradientStop { position: 0.35; color: packageRecommended(modelData) ? "#c7ff2432" : "#3ce50914" }
+                                                    GradientStop { position: 1.0; color: "#00ffffff" }
+                                                }
+                                            }
+
+                                            Column {
+                                                anchors.fill: parent
+                                                anchors.margins: 24
+                                                spacing: 14
+
+                                                Text {
+                                                    width: parent.width
+                                                    text: packageDisplayTitle(modelData)
+                                                    color: window.textPrimary
+                                                    font.pixelSize: 34
+                                                    font.family: "Space Grotesk"
+                                                    font.bold: true
+                                                    wrapMode: Text.WordWrap
+                                                }
+
+                                                Row {
+                                                    width: parent.width
+                                                    spacing: 8
+
+                                                    Text {
+                                                        text: packageDisplayPrice(modelData)
+                                                        color: window.textPrimary
+                                                        font.pixelSize: 32
+                                                        font.family: "Space Grotesk"
+                                                        font.bold: true
+                                                    }
+
+                                                    Text {
+                                                        anchors.baseline: parent.children[0].baseline
+                                                        text: "tek ödeme"
+                                                        color: "#95a0b3"
+                                                        font.pixelSize: 13
+                                                    }
+                                                }
+
+                                                Column {
+                                                    width: parent.width
+                                                    spacing: 12
+
+                                                    Repeater {
+                                                        model: packageFeatureList(modelData)
+
+                                                        Row {
+                                                            id: featureRow
+                                                            width: parent.width
+                                                            spacing: 10
+
+                                                            Rectangle {
+                                                                width: 14
+                                                                height: 14
+                                                                radius: 7
+                                                                anchors.verticalCenter: parent.verticalCenter
+                                                                color: packageRecommended(modelData) ? "#ff2432" : "#2b3443"
+
+                                                                Rectangle {
+                                                                    width: 6
+                                                                    height: 6
+                                                                    radius: 3
+                                                                    anchors.centerIn: parent
+                                                                    color: "#ffffff"
+                                                                }
+                                                            }
+
+                                                            Text {
+                                                                width: featureRow.width - 24
+                                                                wrapMode: Text.WordWrap
+                                                                text: modelData
+                                                                color: window.textPrimary
+                                                                font.pixelSize: 14
+                                                                lineHeight: 1.2
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                Item { width: 1; height: 8 }
+
+                                                Rectangle {
+                                                    width: parent.width
+                                                    height: 1
+                                                    color: "#14ffffff"
+                                                }
+
+                                                Item { width: 1; height: 6 }
+
+                                                AppButton {
+                                                    width: parent.width
+                                                    text: "Paketi Seç"
+                                                    glow: packageRecommended(modelData)
+                                                    onClicked: {
+                                                        pendingPackage = modelData
+                                                        selectedPaymentMethodId = ""
+                                                        selectedCryptoAssetId = ""
+                                                        apiClient.fetchPaymentMethods()
+                                                    }
+                                                }
+                                            }
+
                                         }
                                     }
                                 }
@@ -4986,7 +5797,7 @@ ApplicationWindow {
                                 topPadding: window.compactWindow ? 18 : 20
                                 bottomPadding: window.compactWindow ? 24 : 28
                                 spacing: window.sectionSpacing
-                                Row { spacing: 12; AppButton { text: "Geri"; secondary: true; implicitWidth: 110; onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "Odeme Bildirimi"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
+                                Row { spacing: 12; BackIconButton { onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "Ödeme Bildirimi"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
                                 Repeater {
                                     model: apiClient.paymentRequests
                                     GlassCard { width: parent.width; height: 104; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 6; Text { text: modelData.packageTitle; color: window.textPrimary; font.pixelSize: 22; font.family: "Space Grotesk"; font.bold: true } Text { text: modelData.status; color: window.textMuted; font.pixelSize: 14 } Text { text: modelData.createdAt; color: "#8e98aa"; font.pixelSize: 13 } } }
@@ -5002,12 +5813,12 @@ ApplicationWindow {
                                 topPadding: window.compactWindow ? 18 : 20
                                 bottomPadding: window.compactWindow ? 24 : 28
                                 spacing: window.sectionSpacing
-                                Row { spacing: 12; AppButton { text: "Geri"; secondary: true; implicitWidth: 110; onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "Ayarlar"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
+                                Row { spacing: 12; BackIconButton { onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "Ayarlar"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
                                 Flow {
                                     width: parent.width; spacing: 18
                                     Repeater {
                                         model: [
-                                            { label: "Kullanici Kodu", value: userData().kryptoniteCode || "-" },
+                                            { label: "Kullanıcı Kodu", value: userData().kryptoniteCode || "-" },
                                             { label: "Aktif Paket", value: userData().activePackage ? userData().activePackage.title : "Yok" },
                                             { label: "Link Durumu", value: userData().hasAssignedLink ? "Bagli" : "Admin atamasi bekleniyor" },
                                             { label: "Abonelik", value: subscriptionLabel() }
@@ -5027,13 +5838,13 @@ ApplicationWindow {
                                 topPadding: window.compactWindow ? 18 : 20
                                 bottomPadding: window.compactWindow ? 24 : 28
                                 spacing: window.sectionSpacing
-                                Row { spacing: 12; AppButton { text: "Geri"; secondary: true; implicitWidth: 110; onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "İletişim"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
+                                Row { spacing: 12; BackIconButton { onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "İletişim"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
                                 GlassCard {
                                     width: parent.width; height: 200; color: "#090c13"
                                     Column {
                                         anchors.fill: parent; anchors.margins: 24; spacing: 12
-                                        Text { text: "Destek ekibine hizli ulasin"; color: window.textPrimary; font.pixelSize: 32; font.family: "Space Grotesk"; font.bold: true }
-                                        Text { text: "Aktivasyon, paket ve odeme surecleri icin WhatsApp veya Telegram kullanin."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 15 }
+                                        Text { text: "Destek ekibine hızlı ulaşın"; color: window.textPrimary; font.pixelSize: 32; font.family: "Space Grotesk"; font.bold: true }
+                                        Text { text: "Aktivasyon, paket ve ödeme süreçleri için WhatsApp veya Telegram kullanın."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 15 }
                                         Row { spacing: 12; AppButton { text: "WhatsApp"; implicitWidth: 140; onClicked: Qt.openUrlExternally(contactData().whatsapp || "") } AppButton { text: "Telegram"; secondary: true; implicitWidth: 140; onClicked: Qt.openUrlExternally(contactData().telegram || "") } }
                                     }
                                 }
@@ -5060,444 +5871,271 @@ ApplicationWindow {
             }
         }
 
-        Rectangle {
-            anchors.fill: parent; color: "#d9030508"; visible: overlayPlayerVisible(); z: 29
-            GlassCard {
-                anchors.fill: parent; anchors.margins: 18; color: "#f2080a0e"; z: 21
-                ColumnLayout {
-                    anchors.fill: parent; anchors.margins: 18; spacing: 14
-RowLayout { Layout.fillWidth: true; ColumnLayout { Layout.fillWidth: true; spacing: 4; Text { text: playbackController.activeContentKind === "live" ? "Canlı TV" : playbackController.activeContentKind === "movie" ? "Film" : "Dizi"; color: "#c7ffffff"; font.pixelSize: 12; font.bold: true } Text { text: playbackController.activeTitle.length ? playbackController.activeTitle : "Player Hazır"; color: window.textPrimary; font.pixelSize: 28; font.family: "Space Grotesk"; font.bold: true } Text { text: playerSubtitle; color: window.textMuted; font.pixelSize: 14; visible: text.length > 0 } } AppButton { text: "Kapat"; secondary: true; implicitWidth: 120; onClicked: closeVodPlayer() } }
-                    RowLayout {
-                        Layout.fillWidth: true; Layout.fillHeight: true; spacing: 16
-                        GlassCard {
-                            Layout.fillWidth: true; Layout.fillHeight: true; color: "#000000"
-Loader { anchors.fill: parent; anchors.margins: 6; active: overlayPlayerVisible(); sourceComponent: vodVideoSurfaceComponent }
-                            Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 18; width: stateLabel.implicitWidth + 28; height: 40; radius: 20; color: "#c7070a0f"; border.width: 1; border.color: "#12ffffff"; Text { id: stateLabel; anchors.centerIn: parent; text: playbackController.state === "buffering" ? "Buffer dolduruluyor" : playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazırlanıyor" : playbackController.state === "error" ? "Yayın açılamadı" : "Yayın hazır"; color: window.textPrimary; font.pixelSize: 13; font.bold: true } }
-                            Rectangle {
-                                anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 16; height: 78; radius: 22; color: "#c7070a0f"; border.width: 1; border.color: "#12ffffff"
-                                Row {
-                                    anchors.fill: parent; anchors.margins: 14; spacing: 10
-                                    AppButton { text: playbackController.paused ? "Play" : "Pause"; secondary: true; implicitWidth: 104; onClicked: playbackController.togglePause() }
-                                    AppButton { text: "Geri 15sn"; secondary: true; implicitWidth: 110; enabled: playbackController.activeContentKind === "movie" || playbackController.activeContentKind === "episode"; onClicked: playbackController.seekBy(-15) }
-                                    AppButton { text: "Ileri 30sn"; secondary: true; implicitWidth: 116; enabled: playbackController.activeContentKind === "movie" || playbackController.activeContentKind === "episode"; onClicked: playbackController.seekBy(30) }
-                                    AppButton { text: "Tekrar Dene"; secondary: true; implicitWidth: 126; onClicked: playbackController.retryCurrent() }
-                                    AppButton { text: "Sonraki Bolum"; implicitWidth: 146; visible: Boolean(playbackController.recommendedNextEpisode.id); enabled: visible; onClicked: playbackController.playRecommendedNextEpisode() }
-                                    Item { width: 1; height: 1 }
-                                    Column { anchors.verticalCenter: parent.verticalCenter; spacing: 6; Text { text: `Pozisyon: ${playbackController.positionSeconds.toFixed(1)} / ${playbackController.durationSeconds.toFixed(1)}`; color: window.textPrimary; font.pixelSize: 13 } ComboBox { width: window.compactWindow ? 200 : 260; model: playbackController.audioTracks; textRole: "title"; enabled: playbackController.audioTracks.length > 0; currentIndex: activeAudioTrackIndex(); onActivated: function(index) { const track = playbackController.audioTracks[index]; if (track && track.id) playbackController.selectAudioTrack(track.id) } } }
-                                }
-                            }
-                        }
-                        GlassCard { Layout.preferredWidth: window.compactWindow ? 260 : 320; Layout.fillHeight: true; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 12; Text { text: "Yayın Bilgisi"; color: window.textPrimary; font.pixelSize: 20; font.family: "Space Grotesk"; font.bold: true } Rectangle { width: parent.width; height: window.compactWindow ? 148 : 180; radius: 22; color: "#08ffffff"; border.width: 1; border.color: window.borderSoft; ArtworkPanel { anchors.fill: parent; title: playbackController.activeTitle.length ? playbackController.activeTitle : "Flixify"; subtitle: playerSubtitle; sourceUrl: playerImageUrl; kind: playbackController.activeContentKind || "movie"; mode: playbackController.activeContentKind === "live" ? "logo" : "poster"; cornerRadius: 22 } } Text { text: playbackController.lastError.length ? playbackController.lastError : "Native player branded shell içinde hazır."; width: parent.width; wrapMode: Text.WordWrap; color: playbackController.lastError.length ? "#ffb2b8" : window.textMuted; font.pixelSize: 14 } } }
-                    }
-                }
-            }
-        }
-
-        Rectangle {
-            anchors.fill: parent
-            color: "#f004070b"
-            visible: false && overlayPlayerVisible()
-            z: 29
-
-            Rectangle {
-                anchors.fill: parent
-                anchors.margins: 12
-                radius: 30
-                color: "#080a0ef2"
-                border.width: 1
-                border.color: "#1effffff"
-            }
-
-            Item {
-                anchors.fill: parent
-                anchors.margins: window.compactWindow ? 12 : 16
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: 26
-                    color: "#000000"
-                    border.width: 1
-                    border.color: "#14ffffff"
-                    clip: true
-
-                    Loader {
-                        anchors.fill: parent
-                        active: overlayPlayerVisible()
-                            sourceComponent: vodVideoSurfaceComponent
-                    }
-
-                    Rectangle {
-                        anchors.fill: parent
-                        color: "#05070b"
-                        opacity: playbackController.state === "playing" ? 0.04 : 0.18
-                    }
-
-                    WindowContainer {
-                        anchors.fill: parent
-                        z: 6
-                        visible: overlayPlayerVisible()
-
-                        window: Window {
-                            flags: Qt.FramelessWindowHint
-                            visible: overlayPlayerVisible()
-                            color: "transparent"
-
-                            Item {
-                                anchors.fill: parent
-
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.top: parent.top
-                                    height: Math.max(156, parent.height * 0.28)
-                                    gradient: Gradient {
-                                        GradientStop { position: 0.0; color: "#d905070b" }
-                                        GradientStop { position: 0.56; color: "#6005070b" }
-                                        GradientStop { position: 1.0; color: "#0005070b" }
-                                    }
-                                }
-
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.bottom: parent.bottom
-                                    height: Math.max(180, parent.height * 0.3)
-                                    gradient: Gradient {
-                                        GradientStop { position: 0.0; color: "#0005070b" }
-                                        GradientStop { position: 0.36; color: "#7405070b" }
-                                        GradientStop { position: 1.0; color: "#ed05070b" }
-                                    }
-                                }
-
-                                AppButton {
-                                    anchors.left: parent.left
-                                    anchors.top: parent.top
-                                    anchors.margins: 18
-                                    text: "Geri"
-                                    secondary: true
-                                    implicitWidth: 118
-                                            onClicked: closeVodPlayer()
-                                }
-
-                                Column {
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.top: parent.top
-                                    anchors.margins: 18
-                                    anchors.leftMargin: 152
-                                    spacing: 8
-
-                                    Rectangle {
-                                        width: vodPlaybackKindBadge.implicitWidth + 20
-                                        height: 28
-                                        radius: 14
-                                        color: "#14ffffff"
-
-                                        Text {
-                                            id: vodPlaybackKindBadge
-                                            anchors.centerIn: parent
-                                            text: playbackKindLabel(playbackController.activeContentKind)
-                                            color: "#ffffffc8"
-                                            font.pixelSize: 11
-                                            font.bold: true
-                                        }
-                                    }
-
-                                    Text {
-                                        text: playbackController.activeTitle.length ? playbackController.activeTitle : "Flixify"
-                                        color: window.textPrimary
-                                        font.pixelSize: window.compactWindow ? 28 : 34
-                                        font.family: "Space Grotesk"
-                                        font.bold: true
-                                        width: parent.width
-                                        elide: Text.ElideRight
-                                    }
-
-                                    Text {
-                                        text: playerSubtitle
-                                        color: window.textMuted
-                                        font.pixelSize: 14
-                                        width: parent.width
-                                        elide: Text.ElideRight
-                                        visible: text.length > 0
-                                    }
-                                }
-
-                                Rectangle {
-                                    anchors.right: parent.right
-                                    anchors.top: parent.top
-                                    anchors.margins: 18
-                                    width: vodStateText.implicitWidth + 28
-                                    height: 40
-                                    radius: 8
-                                    color: "#c7070a0f"
-                                    border.width: 1
-                                    border.color: "#12ffffff"
-
-                                    Text {
-                                        id: vodStateText
-                                        anchors.centerIn: parent
-                                        text: playbackController.state === "buffering" ? "Buffer dolduruluyor" :
-                                              playbackController.state === "resolving" || playbackController.state === "opening" ? "Kaynak hazırlanıyor" :
-                                              playbackController.state === "error" ? "Yayın açılamadı" :
-                                              playbackController.state === "playing" ? "Oynuyor" : "Hazır"
-                                        color: window.textPrimary
-                                        font.pixelSize: 13
-                                        font.bold: true
-                                    }
-                                }
-
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.bottom: parent.bottom
-                                    anchors.margins: 18
-                                    height: vodControlsColumn.implicitHeight + 36
-                                    radius: 24
-                                    color: "#d90a0e15"
-                                    border.width: 1
-                                    border.color: "#18ffffff"
-
-                                    Column {
-                                        id: vodControlsColumn
-                                        anchors.fill: parent
-                                        anchors.margins: 18
-                                        spacing: 14
-
-                                        Row {
-                                            width: parent.width
-                                            spacing: 12
-
-                                            Text {
-                                                text: formatPlaybackClock(playbackController.positionSeconds)
-                                                color: window.textPrimary
-                                                font.pixelSize: 13
-                                                font.bold: true
-                                            }
-
-                                            Rectangle {
-                                                width: Math.max(120, parent.width - 260)
-                                                height: 6
-                                                radius: 3
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                color: "#24ffffff"
-
-                                                Rectangle {
-                                                    width: parent.width * playbackProgressRatio()
-                                                    height: parent.height
-                                                    radius: parent.radius
-                                                    color: window.accentStrong
-                                                }
-                                            }
-
-                                            Text {
-                                                text: formatPlaybackClock(playbackController.durationSeconds)
-                                                color: window.textMuted
-                                                font.pixelSize: 13
-                                                font.bold: true
-                                            }
-                                        }
-
-                                        Flow {
-                                            width: parent.width
-                                            spacing: 12
-
-                                            AppButton {
-                                                text: playbackController.paused ? "Oynat" : "Durdur"
-                                                secondary: true
-                                                implicitWidth: 118
-                                                onClicked: playbackController.togglePause()
-                                            }
-
-                                            AppButton {
-                                                text: "-10 sn"
-                                                secondary: true
-                                                implicitWidth: 102
-                                                onClicked: playbackController.seekBy(-10)
-                                            }
-
-                                            AppButton {
-                                                text: "+10 sn"
-                                                secondary: true
-                                                implicitWidth: 102
-                                                onClicked: playbackController.seekBy(10)
-                                            }
-
-                                            AppButton {
-                                                text: "Tekrar Dene"
-                                                secondary: true
-                                                implicitWidth: 126
-                                                onClicked: playbackController.retryCurrent()
-                                            }
-
-                                            AppButton {
-                                                text: "Sonraki Bölüm"
-                                                implicitWidth: 154
-                                                visible: Boolean(playbackController.recommendedNextEpisode.id)
-                                                enabled: visible
-                                                onClicked: playbackController.playRecommendedNextEpisode()
-                                            }
-
-                                            Row {
-                                                spacing: 10
-
-                                                Rectangle {
-                                                    width: 44
-                                                    height: 44
-                                                    radius: 22
-                                                    color: "#16ffffff"
-                                                    border.width: 1
-                                                    border.color: "#1effffff"
-
-                                                    Canvas {
-                                                        anchors.fill: parent
-                                                        anchors.margins: 11
-                                                        antialiasing: true
-                                                        onPaint: {
-                                                            const ctx = getContext("2d")
-                                                            ctx.reset()
-                                                            ctx.clearRect(0, 0, width, height)
-                                                            ctx.fillStyle = "#ffffff"
-                                                            ctx.strokeStyle = "#ffffff"
-                                                            ctx.lineWidth = 2.2
-                                                            ctx.lineCap = "round"
-                                                            ctx.lineJoin = "round"
-
-                                                            ctx.beginPath()
-                                                            ctx.moveTo(width * 0.14, height * 0.38)
-                                                            ctx.lineTo(width * 0.34, height * 0.38)
-                                                            ctx.lineTo(width * 0.54, height * 0.18)
-                                                            ctx.lineTo(width * 0.54, height * 0.82)
-                                                            ctx.lineTo(width * 0.34, height * 0.62)
-                                                            ctx.lineTo(width * 0.14, height * 0.62)
-                                                            ctx.closePath()
-                                                            ctx.fill()
-
-                                                            if (!(playbackController.muted || playbackController.volume <= 0)) {
-                                                                ctx.beginPath()
-                                                                ctx.arc(width * 0.58, height * 0.5, width * 0.12, -0.75, 0.75)
-                                                                ctx.stroke()
-                                                                ctx.beginPath()
-                                                                ctx.arc(width * 0.62, height * 0.5, width * 0.2, -0.75, 0.75)
-                                                                ctx.stroke()
-                                                            } else {
-                                                                ctx.beginPath()
-                                                                ctx.moveTo(width * 0.60, height * 0.28)
-                                                                ctx.lineTo(width * 0.84, height * 0.72)
-                                                                ctx.stroke()
-                                                            }
-                                                        }
-                                                    }
-
-                                                    MouseArea {
-                                                        anchors.fill: parent
-                                                        hoverEnabled: true
-                                                        cursorShape: Qt.PointingHandCursor
-                                                        onClicked: playbackController.toggleMuted()
-                                                    }
-                                                }
-
-                                                Slider {
-                                                    id: vodVolumeSlider
-                                                    width: window.compactWindow ? 120 : 160
-                                                    from: 0
-                                                    to: 1
-                                                    value: playbackController.muted ? 0 : playbackController.volume
-                                                    stepSize: 0.01
-                                                    onMoved: playbackController.setVolume(value)
-
-                                                    background: Rectangle {
-                                                        x: vodVolumeSlider.leftPadding
-                                                        y: vodVolumeSlider.topPadding + vodVolumeSlider.availableHeight / 2 - height / 2
-                                                        implicitWidth: 150
-                                                        implicitHeight: 6
-                                                        width: vodVolumeSlider.availableWidth
-                                                        height: implicitHeight
-                                                        radius: 3
-                                                        color: "#24ffffff"
-
-                                                        Rectangle {
-                                                            width: vodVolumeSlider.visualPosition * parent.width
-                                                            height: parent.height
-                                                            radius: 3
-                                                            color: window.accentStrong
-                                                        }
-                                                    }
-
-                                                    handle: Rectangle {
-                                                        x: vodVolumeSlider.leftPadding + vodVolumeSlider.visualPosition * (vodVolumeSlider.availableWidth - width)
-                                                        y: vodVolumeSlider.topPadding + vodVolumeSlider.availableHeight / 2 - height / 2
-                                                        implicitWidth: 16
-                                                        implicitHeight: 16
-                                                        radius: 8
-                                                        color: "#ffffff"
-                                                        border.width: 1
-                                                        border.color: "#44ffffff"
-                                                    }
-                                                }
-
-                                                ComboBox {
-                                                    width: window.compactWindow ? 170 : 220
-                                                    model: playbackController.audioTracks
-                                                    textRole: "title"
-                                                    enabled: playbackController.audioTracks.length > 0
-                                                    currentIndex: activeAudioTrackIndex()
-                                                    onActivated: function(index) {
-                                                        const track = playbackController.audioTracks[index]
-                                                        if (track && track.id) playbackController.selectAudioTrack(track.id)
-                                                    }
-                                                }
-
-                                                AppButton {
-                                                    text: window.visibility === Window.FullScreen ? "Pencereli" : "Tam Ekran"
-                                                    secondary: true
-                                                    implicitWidth: 142
-                                                    onClicked: toggleWindowFullscreen()
-                                                }
-                                            }
-                                        }
-
-                                        Text {
-                                            text: playbackController.lastError
-                                            color: "#ffb2b8"
-                                            font.pixelSize: 13
-                                            width: parent.width
-                                            wrapMode: Text.WordWrap
-                                            visible: playbackController.lastError.length > 0
-                                        }
-                                    }
-                                }
-
-                                Connections {
-                                    target: playbackController
-                                    function onVolumeChanged() { vodVolumeSlider.value = playbackController.muted ? 0 : playbackController.volume }
-                                    function onMutedChanged() { vodVolumeSlider.value = playbackController.muted ? 0 : playbackController.volume }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         Rectangle {
             anchors.fill: parent; color: "#d9030508"; visible: pendingPackage !== null; z: 30
             GlassCard {
-                width: window.modalPanelWidth; height: paymentContent.implicitHeight + 40; anchors.centerIn: parent; color: "#0b0f17"; z: 31
+                width: window.modalPanelWidth; height: paymentContent.implicitHeight + 44; anchors.centerIn: parent; color: "#0b0f17"; z: 31
                 Column {
                     id: paymentContent
-                    anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 16
-                    Row { width: parent.width; Text { text: "Odeme Yontemi"; color: "#d8ffffff"; font.pixelSize: 12; font.bold: true } Item { width: 1; height: 1 } AppButton { text: "Kapat"; secondary: true; implicitWidth: 96; onClicked: { pendingPackage = null; selectedPaymentMethodId = "" } } }
-                    Text { text: pendingPackage ? `${pendingPackage.title} paketi icin odeme yontemi secin` : ""; color: window.textPrimary; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 34; font.family: "Space Grotesk"; font.bold: true }
+                    anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 22; spacing: 18
+                    Item {
+                        width: parent.width
+                        height: 44
+                        Text {
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Ödeme Yöntemi"
+                            color: "#d8ffffff"
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                        Rectangle {
+                            width: 46
+                            height: 46
+                            radius: 23
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: "#131923"
+                            border.color: "#2a3140"
+                            Canvas {
+                                anchors.centerIn: parent
+                                width: 18
+                                height: 18
+                                onPaint: {
+                                    const ctx = getContext("2d")
+                                    ctx.reset()
+                                    ctx.strokeStyle = "#f4f6fb"
+                                    ctx.lineWidth = 2.2
+                                    ctx.lineCap = "round"
+                                    ctx.beginPath()
+                                    ctx.moveTo(4, 4)
+                                    ctx.lineTo(width - 4, height - 4)
+                                    ctx.moveTo(width - 4, 4)
+                                    ctx.lineTo(4, height - 4)
+                                    ctx.stroke()
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: closePaymentModal()
+                            }
+                        }
+                    }
+                    Text {
+                        text: pendingPackage ? `${pendingPackage.title} paketi için ödeme yöntemi seçin` : ""
+                        color: window.textPrimary
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 34
+                        font.family: "Space Grotesk"
+                        font.bold: true
+                    }
                     Flow {
                         width: parent.width; spacing: 12
                         Repeater {
                             model: paymentMethods()
-                            GlassCard { width: window.gridCardWidth(parent.width, 280, 2); height: 94; color: selectedPaymentMethodId === modelData.id ? "#22e50914" : "#131923"; border.color: selectedPaymentMethodId === modelData.id ? "#30ffffff" : "#2a3140"; Column { anchors.fill: parent; anchors.margins: 16; spacing: 6; Text { text: modelData.label || modelData.id; color: window.textPrimary; font.pixelSize: 18; font.bold: true } Text { text: modelData.details || "Onay sureci destek ekibi tarafindan baslatilir."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 13 } } MouseArea { anchors.fill: parent; onClicked: selectedPaymentMethodId = modelData.id } }
+                            GlassCard {
+                                width: window.gridCardWidth(parent.width, 300, 2)
+                                height: 108
+                                color: selectedPaymentMethodId === modelData.id ? "#1be50914" : "#131923"
+                                border.color: selectedPaymentMethodId === modelData.id ? "#b91c1c" : "#2a3140"
+                                Column {
+                                    anchors.fill: parent
+                                    anchors.margins: 18
+                                    spacing: 8
+                                    Text {
+                                        text: modelData.label || modelData.id
+                                        color: window.textPrimary
+                                        font.pixelSize: 20
+                                        font.bold: true
+                                        font.family: "Space Grotesk"
+                                    }
+                                    Text {
+                                        text: modelData.details || "Ödeme onayı destek ekibi tarafından tamamlanır."
+                                        width: parent.width
+                                        wrapMode: Text.WordWrap
+                                        color: window.textMuted
+                                        font.pixelSize: 13
+                                    }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: selectPaymentMethod(modelData.id)
+                                }
+                            }
                         }
                     }
-                    AppButton { width: parent.width; text: "Odeme Bildir"; enabled: selectedPaymentMethod() !== null && !apiClient.busy; onClicked: { apiClient.requestPayment(pendingPackage.slug); if (contactData().whatsapp) Qt.openUrlExternally(contactData().whatsapp); pendingPackage = null; selectedPaymentMethodId = ""; openScreen("payments") } }
-                    AppButton { width: parent.width; text: "Vazgec"; secondary: true; onClicked: { pendingPackage = null; selectedPaymentMethodId = "" } }
+                    Rectangle {
+                        width: parent.width
+                        visible: selectedPaymentMethod() !== null
+                        implicitHeight: detailsColumn.implicitHeight + 28
+                        radius: 24
+                        color: "#101620"
+                        border.color: "#222b38"
+                        Column {
+                            id: detailsColumn
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 18
+                            spacing: 12
+                            Text {
+                                text: selectedPaymentMethodId === "bank-transfer-eft"
+                                    ? "Banka transfer bilgileri"
+                                    : selectedPaymentMethodId === "crypto"
+                                        ? "Kripto ödeme bilgileri"
+                                        : "Ödeme detayları"
+                                color: window.textPrimary
+                                font.pixelSize: 20
+                                font.bold: true
+                                font.family: "Space Grotesk"
+                            }
+                            Flow {
+                                width: parent.width
+                                spacing: 12
+                                visible: selectedPaymentMethodId === "crypto"
+                                Repeater {
+                                    model: paymentCryptoAssets()
+                                    Rectangle {
+                                        width: 168
+                                        height: 74
+                                        radius: 20
+                                        color: selectedCryptoAssetId === (modelData.id || "").toString()
+                                            ? paymentCryptoAssetBg(modelData.id)
+                                            : "#0c1119"
+                                        border.color: selectedCryptoAssetId === (modelData.id || "").toString()
+                                            ? paymentCryptoAssetAccent(modelData.id)
+                                            : "#212a36"
+                                        Row {
+                                            anchors.fill: parent
+                                            anchors.margins: 14
+                                            spacing: 12
+                                            Rectangle {
+                                                width: 44
+                                                height: 44
+                                                radius: 22
+                                                color: "#ffffff"
+                                                border.width: 1
+                                                border.color: "#18ffffff"
+                                                clip: true
+                                                Image {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 7
+                                                    source: paymentCryptoAssetLogo(modelData)
+                                                    fillMode: Image.PreserveAspectFit
+                                                    smooth: true
+                                                    mipmap: true
+                                                    visible: source.length > 0 && status === Image.Ready
+                                                }
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: paymentCryptoAssetSymbol(modelData)
+                                                    color: "#0b0f17"
+                                                    font.pixelSize: paymentCryptoAssetSymbol(modelData).length > 3 ? 10 : 12
+                                                    font.bold: true
+                                                    font.family: "Space Grotesk"
+                                                    visible: !paymentCryptoAssetLogo(modelData).length
+                                                }
+                                            }
+                                            Column {
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                spacing: 4
+                                                Text {
+                                                    text: modelData.label || modelData.symbol || "Kripto"
+                                                    color: window.textPrimary
+                                                    font.pixelSize: 15
+                                                    font.bold: true
+                                                    font.family: "Space Grotesk"
+                                                    width: 84
+                                                    elide: Text.ElideRight
+                                                }
+                                                Text {
+                                                    text: paymentCryptoAssetSymbol(modelData)
+                                                    color: window.textMuted
+                                                    font.pixelSize: 12
+                                                }
+                                            }
+                                        }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            hoverEnabled: false
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: selectedCryptoAssetId = (modelData.id || "").toString()
+                                        }
+                                    }
+                                }
+                            }
+                            Repeater {
+                                model: paymentInstructionRows()
+                                Rectangle {
+                                    width: detailsColumn.width
+                                    implicitHeight: infoRow.implicitHeight + 24
+                                    radius: 18
+                                    color: "#0c1119"
+                                    border.color: "#212a36"
+                                    Row {
+                                        id: infoRow
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
+                                        anchors.margins: 14
+                                        spacing: 14
+                                        Column {
+                                            width: parent.width - 126
+                                            spacing: 6
+                                            Text {
+                                                text: modelData.label
+                                                color: window.textMuted
+                                                font.pixelSize: 12
+                                                font.bold: true
+                                            }
+                                            Text {
+                                                text: modelData.value
+                                                width: parent.width
+                                                wrapMode: Text.WrapAnywhere
+                                                color: window.textPrimary
+                                                font.pixelSize: 17
+                                                font.bold: true
+                                                font.family: "Space Grotesk"
+                                            }
+                                        }
+                                        AppButton {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: "Kopyala"
+                                            secondary: true
+                                            implicitWidth: 112
+                                            implicitHeight: 46
+                                            onClicked: copyPaymentValue(modelData.label, modelData.value)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    AppButton {
+                        width: parent.width
+                        text: "Ödeme Bildir"
+                        enabled: selectedPaymentMethod() !== null
+                                 && (selectedPaymentMethodId !== "crypto" || selectedCryptoAsset() !== null)
+                                 && !apiClient.busy
+                        onClicked: {
+                            apiClient.requestPayment(
+                                pendingPackage.slug,
+                                selectedPaymentMethodId,
+                                selectedPaymentMethodId === "crypto" && selectedCryptoAsset()
+                                    ? (selectedCryptoAsset().id || "").toString()
+                                    : ""
+                            )
+                            if (contactData().whatsapp) Qt.openUrlExternally(contactData().whatsapp)
+                            closePaymentModal()
+                            openScreen("payments")
+                        }
+                    }
                 }
             }
         }
@@ -5521,24 +6159,24 @@ Loader { anchors.fill: parent; anchors.margins: 6; active: overlayPlayerVisible(
                 Column {
                     id: premiumContent
                     anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 22; spacing: 16
-                    Row { width: parent.width; Rectangle { width: 112; height: 34; radius: 17; color: "#33e50914"; Text { anchors.centerIn: parent; text: "Premium Erisim"; color: "#ffd7da"; font.pixelSize: 12; font.bold: true } } Item { width: 1; height: 1 } AppButton { text: "Kapat"; secondary: true; implicitWidth: 96; onClicked: premiumPopupDismissed = true } }
-                    Text { text: "Tum iceriklere erismek icin aktif bir paket satin alin"; color: window.textPrimary; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 34; font.family: "Space Grotesk"; font.bold: true }
-                    Text { text: "Giris basarili. Paketiniz aktif olunca kataloglarin tamami acilacak."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 15 }
+                    Row { width: parent.width; Rectangle { width: 112; height: 34; radius: 17; color: "#33e50914"; Text { anchors.centerIn: parent; text: "Premium Erişim"; color: "#ffd7da"; font.pixelSize: 12; font.bold: true } } Item { width: 1; height: 1 } AppButton { text: "Kapat"; secondary: true; implicitWidth: 96; onClicked: premiumPopupDismissed = true } }
+                    Text { text: "Tüm içeriklere erişmek için aktif bir paket satın alın"; color: window.textPrimary; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 34; font.family: "Space Grotesk"; font.bold: true }
+                    Text { text: "Giriş başarılı. Paketiniz aktif olunca katalogların tamamı açılacak."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 15 }
                     Row {
                         spacing: 12
                         AppButton {
-                            text: "Test Yapmak Istiyorum"
+                            text: "Test Yapmak İstiyorum"
                             implicitWidth: 190
                             onClicked: apiClient.requestTrial(platformTrialRequestNote())
                         }
                         AppButton {
-                            text: "WhatsApp ile Iletisime Gec"
+                            text: "WhatsApp ile İletişime Geç"
                             secondary: true
                             implicitWidth: 220
                             onClicked: openScreen("contact")
                         }
                         AppButton {
-                            text: "Paket Satin Al"
+                            text: "Paket Satın Al"
                             secondary: true
                             implicitWidth: 170
                             onClicked: openScreen("packages")
@@ -5730,7 +6368,7 @@ Loader { anchors.fill: parent; anchors.margins: 6; active: overlayPlayerVisible(
 
                     Text {
                         Layout.alignment: Qt.AlignHCenter
-                        text: "Cikis yapmak istiyor musunuz?"
+                        text: "Çıkış yapmak istiyor musunuz?"
                         color: window.textPrimary
                         font.pixelSize: 22 * fontScale
                         font.bold: true
@@ -5759,7 +6397,7 @@ Loader { anchors.fill: parent; anchors.margins: 6; active: overlayPlayerVisible(
                         }
 
                         AppButton {
-                            text: "Cikis"
+                            text: "Çıkış"
                             implicitWidth: 120
                             onClicked: Qt.quit()
                         }
@@ -5774,6 +6412,10 @@ Loader { anchors.fill: parent; anchors.margins: 6; active: overlayPlayerVisible(
             onActivated: {
                 if (videoFullscreen) {
                     exitVideoFullscreen()
+                } else if (movieFullscreen) {
+                    exitMovieFullscreen()
+                } else if (seriesFullscreen) {
+                    exitSeriesFullscreen()
                 } else if (window.visibility === Window.FullScreen) {
                     window.showNormal()
                 } else if (confirmExitDialog.visible) {
@@ -5796,6 +6438,10 @@ Loader { anchors.fill: parent; anchors.margins: 6; active: overlayPlayerVisible(
             onActivated: {
                 if (inlineLivePlayerVisible()) {
                     toggleVideoFullscreen()
+                } else if (inlineMoviePlayerVisible()) {
+                    toggleMovieFullscreen()
+                } else if (inlineEpisodePlayerVisible()) {
+                    toggleSeriesFullscreen()
                 } else {
                     toggleWindowFullscreen()
                 }
@@ -5808,6 +6454,10 @@ Loader { anchors.fill: parent; anchors.margins: 6; active: overlayPlayerVisible(
             onActivated: {
                 if (inlineLivePlayerVisible()) {
                     toggleVideoFullscreen()
+                } else if (inlineMoviePlayerVisible()) {
+                    toggleMovieFullscreen()
+                } else if (inlineEpisodePlayerVisible()) {
+                    toggleSeriesFullscreen()
                 } else {
                     toggleWindowFullscreen()
                 }

@@ -1,6 +1,9 @@
 #include <QGuiApplication>
 #include <QDebug>
 #include <QIcon>
+#include <QFile>
+#include <QFileInfo>
+#include <QTextStream>
 #include <QQuickWindow>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -51,6 +54,18 @@ void applyWindowsCaptionStyle(QQuickWindow *window) {
 #endif
 
 int main(int argc, char *argv[]) {
+  const QString earlyStartupLogPath =
+    QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath() + QStringLiteral("/flixify-startup.log");
+  auto appendEarlyStartupLog = [earlyStartupLogPath](const QString &line) {
+    QFile file(earlyStartupLogPath);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+      QTextStream stream(&file);
+      stream << line << Qt::endl;
+    }
+  };
+  QFile::remove(earlyStartupLogPath);
+  appendEarlyStartupLog(QStringLiteral("startup: enter-main"));
+
 #if defined(Q_OS_WIN)
   const QString graphicsBackend = qEnvironmentVariable("FLIXIFY_GRAPHICS_BACKEND").trimmed().toLower();
   QByteArray effectiveGraphicsBackend = "d3d11";
@@ -71,6 +86,7 @@ int main(int argc, char *argv[]) {
 #endif
 
   QGuiApplication app(argc, argv);
+  appendEarlyStartupLog(QStringLiteral("startup: app-created"));
   QCoreApplication::setOrganizationName(QStringLiteral("Flixify"));
   QCoreApplication::setApplicationName(QStringLiteral("Flixify Pro"));
   QCoreApplication::setApplicationVersion(QStringLiteral(FLIXIFY_APP_VERSION));
@@ -92,29 +108,51 @@ int main(int argc, char *argv[]) {
   apiClient.setApiBaseUrl(QStringLiteral(FLIXIFY_API_BASE_URL));
 
   VodPlaybackController moviePlaybackController(&apiClient);
+  VodPlaybackController seriesPlaybackController(&apiClient);
   VodPlaybackController playbackController(&apiClient);
   LivePlaybackController livePlaybackController(&apiClient);
 
   QQmlApplicationEngine engine;
+  const QString startupLogPath =
+    QCoreApplication::applicationDirPath() + QStringLiteral("/flixify-startup.log");
+  auto appendStartupLog = [startupLogPath](const QString &line) {
+    QFile file(startupLogPath);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+      QTextStream stream(&file);
+      stream << line << Qt::endl;
+    }
+  };
+  appendStartupLog(QStringLiteral("startup: engine-created"));
   QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app, [](const QList<QQmlError> &warnings) {
     for (const QQmlError &warning : warnings) {
       qWarning().noquote() << warning.toString();
     }
   });
+  QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app, [appendStartupLog](const QList<QQmlError> &warnings) {
+    for (const QQmlError &warning : warnings) {
+      appendStartupLog(QStringLiteral("qml-warning: %1").arg(warning.toString()));
+    }
+  });
   engine.rootContext()->setContextProperty(QStringLiteral("apiClient"), &apiClient);
   engine.rootContext()->setContextProperty(QStringLiteral("moviePlaybackController"), &moviePlaybackController);
+  engine.rootContext()->setContextProperty(QStringLiteral("seriesPlaybackController"), &seriesPlaybackController);
   engine.rootContext()->setContextProperty(QStringLiteral("playbackController"), &playbackController);
   engine.rootContext()->setContextProperty(QStringLiteral("livePlaybackController"), &livePlaybackController);
+  appendStartupLog(QStringLiteral("startup: loading-main-qml"));
   engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
+  appendStartupLog(QStringLiteral("startup: root-count=%1").arg(engine.rootObjects().size()));
 
   if (engine.rootObjects().isEmpty()) {
+    appendStartupLog(QStringLiteral("startup: root-empty"));
     return 1;
   }
 
   auto *rootWindow = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
   if (!rootWindow) {
+    appendStartupLog(QStringLiteral("startup: root-not-window"));
     return 1;
   }
+  appendStartupLog(QStringLiteral("startup: root-window-ready visible=%1").arg(rootWindow->isVisible()));
 
 #if defined(Q_OS_WIN)
   QTimer::singleShot(0, rootWindow, [rootWindow]() {
@@ -136,6 +174,15 @@ int main(int argc, char *argv[]) {
 #endif
     rootWindow->showNormal();
     rootWindow->raise();
+  });
+  QTimer::singleShot(250, rootWindow, [rootWindow, appendStartupLog]() {
+    appendStartupLog(
+      QStringLiteral("startup: post-show visible=%1 exposed=%2 width=%3 height=%4")
+        .arg(rootWindow->isVisible())
+        .arg(rootWindow->isExposed())
+        .arg(rootWindow->width())
+        .arg(rootWindow->height())
+    );
   });
 
   return app.exec();

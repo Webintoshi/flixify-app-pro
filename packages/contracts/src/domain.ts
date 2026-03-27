@@ -11,6 +11,8 @@ export type PaymentRequestStatus = z.infer<typeof paymentRequestStatusSchema>;
 
 export const paymentMethodIdSchema = z.enum(["bank-transfer-eft", "crypto", "bank-card"]);
 export type PaymentMethodId = z.infer<typeof paymentMethodIdSchema>;
+export const cryptoAssetIdSchema = z.enum(["usdt-trc20", "tron", "sol", "btc", "usdc"]);
+export type CryptoAssetId = z.infer<typeof cryptoAssetIdSchema>;
 
 export const trialRequestStatusSchema = z.enum(["pending", "approved", "rejected"]);
 export type TrialRequestStatus = z.infer<typeof trialRequestStatusSchema>;
@@ -128,7 +130,7 @@ export const paymentMethodOptionSchema = z.object({
   cryptoAssets: z
     .array(
       z.object({
-        id: z.enum(["usdt-trc20", "tron", "sol", "btc", "usdc"]),
+        id: cryptoAssetIdSchema,
         label: z.string().trim().min(1).max(120),
         symbol: z.string().trim().min(1).max(20),
         walletAddress: z.string().trim().max(500).nullable()

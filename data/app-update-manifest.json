@@ -1,9 +1,9 @@
 {
   "platforms": {
     "windows-native-qt": {
-      "latestVersion": "2.2.87",
-      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.2.87/Flixify-Pro-Setup-2.2.87-x64.exe",
-      "notes": "Filmler ayri native controller ile calisiyor; movie player zinciri dizilerden ayrildi ve playback akisi sadeleştirildi."
+      "latestVersion": "2.3.22",
+      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.3.22/Flixify-Pro-Setup-2.3.22-x64.exe",
+      "notes": "Odeme bildirimi secilen yontemle kaydediliyor ve Telegram bot yeni odeme taleplerini paket, yontem ve kullanici kodu ile iletiyor."
     },
     "macos-native-qt": {
       "latestVersion": "2.2.58",

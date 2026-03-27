@@ -12,22 +12,30 @@ import {
   nativePlaybackSourceSchema,
   nativeVodPlaybackSourceSchema,
   packageSchema,
+  paymentMethodIdSchema,
   paymentMethodOptionSchema,
   pagedResponseSchema,
   playerEngineSchema,
   seriesSchema,
   subscriptionRecordSchema,
+  cryptoAssetIdSchema,
   userSummarySchema,
   vodPlaybackSchema
 } from "./domain";
 
+const installationIdSchema = z.string().trim().min(16).max(120);
+
 export const registerAnonInputSchema = z.object({
   deviceName: z.string().max(120).optional(),
-  platform: z.string().max(60).optional()
+  platform: z.string().max(60).optional(),
+  installationId: installationIdSchema
 });
 
-export const loginByCodeInputSchema = registerAnonInputSchema.extend({
-  code: z.string().trim().regex(/^[A-Z0-9]{16}$/)
+export const loginByCodeInputSchema = z.object({
+  code: z.string().trim().regex(/^[A-Z0-9]{16}$/),
+  deviceName: z.string().max(120).optional(),
+  platform: z.string().max(60).optional(),
+  installationId: installationIdSchema.optional()
 });
 
 export const refreshInputSchema = z.object({
@@ -41,9 +49,28 @@ export const authResponseSchema = z.object({
   kryptoniteCode: z.string().regex(/^[A-Z0-9]{16}$/).nullable()
 });
 
-export const paymentRequestInputSchema = z.object({
-  packageSlug: z.string().min(2)
-});
+export const paymentRequestInputSchema = z
+  .object({
+    packageSlug: z.string().min(2),
+    paymentMethodId: paymentMethodIdSchema,
+    cryptoAssetId: cryptoAssetIdSchema.nullable().optional()
+  })
+  .superRefine((value, ctx) => {
+    if (value.paymentMethodId === "crypto" && !value.cryptoAssetId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cryptoAssetId"],
+        message: "Kripto odeme icin coin secimi zorunludur."
+      });
+    }
+    if (value.paymentMethodId !== "crypto" && value.cryptoAssetId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cryptoAssetId"],
+        message: "Kripto varlik secimi yalnizca kripto odemelerde kullanilabilir."
+      });
+    }
+  });
 
 export const paymentMethodSettingsSchema = z.object({
   bankTransferEftEnabled: z.boolean(),
@@ -239,7 +266,9 @@ export const paymentRequestRecordSchema = z.object({
   status: z.enum(["pending-review", "approved", "rejected"]),
   packageTitle: z.string(),
   createdAt: z.string(),
-  userId: z.string().uuid()
+  userId: z.string().uuid(),
+  paymentMethodId: paymentMethodIdSchema.nullable().optional(),
+  cryptoAssetId: cryptoAssetIdSchema.nullable().optional()
 });
 
 export const trialRequestRecordSchema = z.object({

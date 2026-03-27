@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import sharp from "sharp";
 import {
   createCatalogArtworkUrl,
   fetchLiveLogoFromUpstream,
@@ -124,8 +125,39 @@ describe("live logo helpers", () => {
     expect(fetchImpl.mock.calls[0]?.[0]?.toString()).toBe("https://example.com/poster.jpg");
     expect(fetchImpl.mock.calls[0]?.[1]).toMatchObject({
       headers: {
-        accept: "image/jpeg,image/png,image/apng,image/svg+xml,image/*;q=0.8,*/*;q=0.5"
+        accept: "image/jpeg,image/png,image/webp,image/gif,image/apng,image/svg+xml,image/*;q=0.8,*/*;q=0.5"
       }
     });
+  });
+
+  it("converts avif artwork into png for native compatibility", async () => {
+    const avifBuffer = await sharp({
+      create: {
+        width: 2,
+        height: 2,
+        channels: 4,
+        background: { r: 255, g: 0, b: 0, alpha: 1 }
+      }
+    })
+      .avif()
+      .toBuffer();
+
+    const proxiedLogo = await fetchLiveLogoFromUpstream("https://example.com/poster.avif", {
+      fetchImpl: vi.fn(async () =>
+        new Response(avifBuffer, {
+          status: 200,
+          headers: {
+            "content-type": "image/avif",
+            etag: "\"upstream-avif\"",
+            "last-modified": "Tue, 24 Mar 2026 12:00:00 GMT"
+          }
+        })
+      )
+    });
+
+    expect(proxiedLogo.contentType).toBe("image/png");
+    expect(proxiedLogo.etag).toBeNull();
+    expect(proxiedLogo.lastModified).toBeNull();
+    expect(proxiedLogo.body.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   });
 });

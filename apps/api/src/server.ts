@@ -40,6 +40,7 @@ import {
   createTrialRequest,
   createUser,
   findUserByCodeLookup,
+  findActiveUserByInstallationId,
   getEpisodeForPlayback,
   getAdminDashboard,
   getAdminUserDetail,
@@ -189,6 +190,8 @@ type AppUpdateManifest = {
 const LOCAL_APP_UPDATE_MANIFEST_PATH = new URL("../../../data/app-update-manifest.json", import.meta.url);
 const isDemoMode = env.APP_DEMO_MODE;
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+const MULTI_ACCOUNT_BLOCK_MESSAGE =
+  "Bu cihazda zaten bir hesabınız bulunmaktadır. Yeni hesap oluşturmak için mevcut hesabın sistemden silinmesi gerekir.";
 const appUpdateManifestCache: {
   expiresAt: number;
   value: AppUpdateManifest | null;
@@ -254,6 +257,24 @@ const vodPlaybackManager = createVodPlaybackManager({
 
 function createRateLimitKey(scope: string, value: string) {
   return `${scope}:${value}`;
+}
+
+function getDatabaseErrorCode(error: unknown) {
+  if (!error || typeof error !== "object" || !("code" in error)) {
+    return null;
+  }
+
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
+}
+
+function getDatabaseConstraint(error: unknown) {
+  if (!error || typeof error !== "object" || !("constraint" in error)) {
+    return null;
+  }
+
+  const constraint = (error as { constraint?: unknown }).constraint;
+  return typeof constraint === "string" ? constraint : null;
 }
 
 function checkRateLimit(key: string, limit: number, windowMs: number) {
@@ -1296,6 +1317,11 @@ export function buildServer() {
       return registerDemoUser(payload);
     }
 
+    const existingUser = await findActiveUserByInstallationId(payload.installationId);
+    if (existingUser) {
+      return reply.status(409).send({ message: MULTI_ACCOUNT_BLOCK_MESSAGE });
+    }
+
     let rawCode = "";
     let userId = "";
 
@@ -1305,7 +1331,25 @@ export function buildServer() {
       const collision = await findUserByCodeLookup(codeLookup);
       if (!collision) {
         rawCode = candidate;
-        userId = await createUser(codeLookup, await hashSecret(candidate), candidate.slice(-4), candidate);
+        try {
+          userId = await createUser(
+            codeLookup,
+            await hashSecret(candidate),
+            candidate.slice(-4),
+            candidate,
+            payload.installationId
+          );
+        } catch (error) {
+          const databaseCode = getDatabaseErrorCode(error);
+          const constraint = getDatabaseConstraint(error);
+          if (
+            databaseCode === "23505" &&
+            constraint === "idx_users_registration_installation_active_unique"
+          ) {
+            return reply.status(409).send({ message: MULTI_ACCOUNT_BLOCK_MESSAGE });
+          }
+          throw error;
+        }
         break;
       }
     }
@@ -2708,11 +2752,11 @@ export function buildServer() {
       const payload = paymentRequestInputSchema.parse(request.body);
 
       if (isDemoMode) {
-        createDemoPaymentRequest(auth.userId, payload.packageSlug);
+        createDemoPaymentRequest(auth.userId, payload.packageSlug, payload.paymentMethodId, payload.cryptoAssetId ?? null);
         return { ok: true };
       }
 
-      await createPaymentRequest(auth.userId, payload.packageSlug);
+      await createPaymentRequest(auth.userId, payload.packageSlug, payload.paymentMethodId, payload.cryptoAssetId ?? null);
       return { ok: true };
     } catch (error) {
       if (isUserRouteAuthError(error)) {

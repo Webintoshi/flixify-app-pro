@@ -16,6 +16,7 @@
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrlQuery>
+#include <QUuid>
 #include <QtGlobal>
 
 namespace {
@@ -40,6 +41,18 @@ QString extractApiErrorReason(const QByteArray &body) {
   }
 
   return document.object().value(QStringLiteral("reason")).toString().trimmed();
+}
+
+QString installationIdForClient() {
+  QSettings settings;
+  QString installationId = settings.value(QStringLiteral("device/installationId")).toString().trimmed();
+  if (!installationId.isEmpty()) {
+    return installationId;
+  }
+
+  installationId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  settings.setValue(QStringLiteral("device/installationId"), installationId);
+  return installationId;
 }
 
 bool isAuthStatus(const QNetworkReply *reply) {
@@ -160,17 +173,17 @@ bool launchUpdatePayload(const QString &payloadPath) {
 
 QString updateStartFailureMessage() {
 #if defined(Q_OS_MACOS)
-  return QStringLiteral("DMG acilamadi.");
+  return QStringLiteral("DMG açılamadı.");
 #else
-  return QStringLiteral("Installer baslatilamadi.");
+  return QStringLiteral("Installer başlatılamadı.");
 #endif
 }
 
 QString updateSuccessNoticeMessage() {
 #if defined(Q_OS_MACOS)
-  return QStringLiteral("Guncelleme indirildi. DMG Finder ile aciliyor.");
+  return QStringLiteral("Güncelleme indirildi. DMG Finder ile açılıyor.");
 #else
-  return QStringLiteral("Guncelleme indirildi. Installer baslatiliyor.");
+  return QStringLiteral("Güncelleme indirildi. Installer başlatılıyor.");
 #endif
 }
 
@@ -435,6 +448,7 @@ void ApiClient::issueAnonCode(const QString &deviceName, const QString &platform
     QStringLiteral("platform"),
     platform.trimmed().isEmpty() ? normalizedPlatformName() : platform.trimmed()
   );
+  payload.insert(QStringLiteral("installationId"), installationIdForClient());
 
   QNetworkReply *reply = m_network.post(
     makeJsonRequest(resolvedUrl(QStringLiteral("/auth/register-anon"))),
@@ -448,7 +462,7 @@ void ApiClient::issueAnonCode(const QString &deviceName, const QString &platform
     endRequest();
 
     if (!ok) {
-      const QString message = extractApiErrorMessage(body, QStringLiteral("Kayit kodu olusturulamadi."));
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Kayıt kodu oluşturulamadı."));
       setLastError(message);
       emit requestFailed(QStringLiteral("register"), message);
       return;
@@ -457,7 +471,7 @@ void ApiClient::issueAnonCode(const QString &deviceName, const QString &platform
     const QString code = QJsonDocument::fromJson(body).object().value(QStringLiteral("kryptoniteCode")).toString().trimmed();
     if (!code.isEmpty()) {
       emit anonCodeIssued(code);
-      setNotice(QStringLiteral("Hesap numarasi olusturuldu."));
+      setNotice(QStringLiteral("Hesap numarası oluşturuldu."));
     }
   });
 }
@@ -474,6 +488,7 @@ void ApiClient::loginByCode(const QString &code, const QString &deviceName, cons
     QStringLiteral("platform"),
     platform.trimmed().isEmpty() ? normalizedPlatformName() : platform.trimmed()
   );
+  payload.insert(QStringLiteral("installationId"), installationIdForClient());
 
   QNetworkReply *reply = m_network.post(
     makeJsonRequest(resolvedUrl(QStringLiteral("/auth/login-by-code"))),
@@ -568,7 +583,7 @@ void ApiClient::refreshSession(std::function<void(bool)> completion) {
         setSessionTokens(QString(), QString());
         clearAuthenticatedData();
       } else {
-        setNotice(QStringLiteral("Baglanti sorunu nedeniyle oturum korunuyor. Yeniden denenecek."));
+        setNotice(QStringLiteral("Bağlantı sorunu nedeniyle oturum korunuyor. Yeniden denenecek."));
         m_sessionRefreshRetryTimer.start();
       }
       for (const auto &callback : completions) {
@@ -643,7 +658,7 @@ void ApiClient::fetchPackages() {
     endRequest();
 
     if (!ok) {
-      const QString message = extractApiErrorMessage(body, QStringLiteral("Paketler alinamadi."));
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Paketler alınamadı."));
       setLastError(message);
       emit requestFailed(QStringLiteral("packages"), message);
       return;
@@ -664,7 +679,7 @@ void ApiClient::fetchPaymentMethods() {
     endRequest();
 
     if (!ok) {
-      const QString message = extractApiErrorMessage(body, QStringLiteral("Odeme yontemleri alinamadi."));
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Ödeme yöntemleri alınamadı."));
       setLastError(message);
       emit requestFailed(QStringLiteral("payment-methods"), message);
       return;
@@ -696,7 +711,7 @@ void ApiClient::fetchPaymentRequests() {
         return;
       }
 
-      const QString message = extractApiErrorMessage(body, QStringLiteral("Odeme talepleri alinamadi."));
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Ödeme talepleri alınamadı."));
       setLastError(message);
       emit requestFailed(QStringLiteral("payments"), message);
       return;
@@ -788,7 +803,7 @@ void ApiClient::installAppUpdate() {
   const QString downloadUrl = m_appUpdate.value(QStringLiteral("downloadUrl")).toString().trimmed();
   const QString latestVersion = m_appUpdate.value(QStringLiteral("latestVersion")).toString().trimmed();
   if (downloadUrl.isEmpty()) {
-    const QString message = QStringLiteral("Guncelleme baglantisi bulunamadi.");
+      const QString message = QStringLiteral("Güncelleme bağlantısı bulunamadı.");
     setUpdateError(message);
     emit requestFailed(QStringLiteral("app-update-install"), message);
     return;
@@ -796,7 +811,7 @@ void ApiClient::installAppUpdate() {
 
   QUrl url(downloadUrl);
   if (!url.isValid()) {
-    const QString message = QStringLiteral("Guncelleme baglantisi gecersiz.");
+      const QString message = QStringLiteral("Güncelleme bağlantısı geçersiz.");
     setUpdateError(message);
     emit requestFailed(QStringLiteral("app-update-install"), message);
     return;
@@ -807,7 +822,7 @@ void ApiClient::installAppUpdate() {
     tempRoot = QDir::tempPath();
   }
   if (tempRoot.trimmed().isEmpty()) {
-    const QString message = QStringLiteral("Gecici klasor bulunamadi.");
+      const QString message = QStringLiteral("Geçici klasör bulunamadı.");
     setUpdateError(message);
     emit requestFailed(QStringLiteral("app-update-install"), message);
     return;
@@ -815,7 +830,7 @@ void ApiClient::installAppUpdate() {
 
   QDir tempDir(tempRoot);
   if (!tempDir.mkpath(QStringLiteral("Flixify/updates"))) {
-    const QString message = QStringLiteral("Guncelleme klasoru olusturulamadi.");
+      const QString message = QStringLiteral("Güncelleme klasörü oluşturulamadı.");
     setUpdateError(message);
     emit requestFailed(QStringLiteral("app-update-install"), message);
     return;
@@ -836,7 +851,7 @@ void ApiClient::installAppUpdate() {
 
   m_updateFile = new QFile(m_updateInstallerPath, this);
   if (!m_updateFile->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-    const QString message = QStringLiteral("Guncelleme dosyasi yazilamadi.");
+      const QString message = QStringLiteral("Güncelleme dosyası yazılamadı.");
     setUpdateError(message);
     emit requestFailed(QStringLiteral("app-update-install"), message);
     m_updateFile->deleteLater();
@@ -896,7 +911,7 @@ void ApiClient::installAppUpdate() {
 
     if (!ok || status < 200 || status >= 300) {
       QFile::remove(m_updateInstallerPath);
-      const QString message = QStringLiteral("Guncelleme indirilemedi.");
+      const QString message = QStringLiteral("Güncelleme indirilemedi.");
       setUpdateError(message);
       emit requestFailed(QStringLiteral("app-update-install"), message);
       return;
@@ -905,7 +920,7 @@ void ApiClient::installAppUpdate() {
     QFileInfo installerInfo(m_updateInstallerPath);
     if (!installerInfo.exists() || installerInfo.size() <= 0) {
       QFile::remove(m_updateInstallerPath);
-      const QString message = QStringLiteral("Guncelleme dosyasi eksik indirildi.");
+      const QString message = QStringLiteral("Güncelleme dosyası eksik indirildi.");
       setUpdateError(message);
       emit requestFailed(QStringLiteral("app-update-install"), message);
       return;
@@ -1133,9 +1148,11 @@ void ApiClient::fetchAllCatalogs(const QString &search, int livePageSize) {
   fetchSeriesCatalog(1, 200, search);
 }
 
-void ApiClient::requestPayment(const QString &packageSlug) {
+void ApiClient::requestPayment(const QString &packageSlug, const QString &paymentMethodId, const QString &cryptoAssetId) {
   const QString normalizedPackageSlug = packageSlug.trimmed();
-  if (normalizedPackageSlug.isEmpty() || !authenticated()) {
+  const QString normalizedPaymentMethodId = paymentMethodId.trimmed();
+  const QString normalizedCryptoAssetId = cryptoAssetId.trimmed();
+  if (normalizedPackageSlug.isEmpty() || normalizedPaymentMethodId.isEmpty() || !authenticated()) {
     return;
   }
 
@@ -1144,34 +1161,38 @@ void ApiClient::requestPayment(const QString &packageSlug) {
 
   QJsonObject payload;
   payload.insert(QStringLiteral("packageSlug"), normalizedPackageSlug);
+  payload.insert(QStringLiteral("paymentMethodId"), normalizedPaymentMethodId);
+  if (!normalizedCryptoAssetId.isEmpty()) {
+    payload.insert(QStringLiteral("cryptoAssetId"), normalizedCryptoAssetId);
+  }
 
   QNetworkReply *reply = m_network.post(
     authorizedRequest(QStringLiteral("/me/payment-requests")),
     QJsonDocument(payload).toJson(QJsonDocument::Compact)
   );
 
-  connect(reply, &QNetworkReply::finished, this, [this, reply, normalizedPackageSlug]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, normalizedPackageSlug, normalizedPaymentMethodId, normalizedCryptoAssetId]() {
     const QByteArray body = reply->readAll();
     const bool ok = reply->error() == QNetworkReply::NoError;
     const bool authFailed = isAuthStatus(reply);
     reply->deleteLater();
     endRequest();
 
-    if (!ok) {
-      if (authFailed) {
-        handleAuthFailure(QStringLiteral("payment-request"), [this, normalizedPackageSlug]() {
-          requestPayment(normalizedPackageSlug);
-        });
-        return;
-      }
+      if (!ok) {
+        if (authFailed) {
+          handleAuthFailure(QStringLiteral("payment-request"), [this, normalizedPackageSlug, normalizedPaymentMethodId, normalizedCryptoAssetId]() {
+            requestPayment(normalizedPackageSlug, normalizedPaymentMethodId, normalizedCryptoAssetId);
+          });
+          return;
+        }
 
-      const QString message = extractApiErrorMessage(body, QStringLiteral("Odeme talebi olusturulamadi."));
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Ödeme talebi oluşturulamadı."));
       setLastError(message);
       emit requestFailed(QStringLiteral("payment-request"), message);
       return;
     }
 
-    setNotice(QStringLiteral("Odeme talebi olusturuldu. Lutfen destek ekibi ile iletisime gecin."));
+    setNotice(QStringLiteral("Ödeme talebi oluşturuldu. Lütfen destek ekibi ile iletişime geçin."));
     fetchPaymentRequests();
   });
 }
@@ -1210,13 +1231,13 @@ void ApiClient::requestTrial(const QString &note) {
         return;
       }
 
-      const QString message = extractApiErrorMessage(body, QStringLiteral("Deneme talebi olusturulamadi."));
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Deneme talebi oluşturulamadı."));
       setLastError(message);
       emit requestFailed(QStringLiteral("trial-request"), message);
       return;
     }
 
-    setNotice(QStringLiteral("Deneme talebiniz olusturuldu."));
+    setNotice(QStringLiteral("Deneme talebiniz oluşturuldu."));
   });
 }
 
@@ -1583,7 +1604,7 @@ void ApiClient::clearAuthenticatedData() {
 
 void ApiClient::handleAuthFailure(const QString &context, std::function<void()> retry) {
   if (m_refreshToken.trimmed().isEmpty()) {
-    setLastError(QStringLiteral("Oturum suresi doldu. Lutfen tekrar giris yapin."));
+    setLastError(QStringLiteral("Oturum süresi doldu. Lütfen tekrar giriş yapın."));
     emit requestFailed(context, m_lastError);
     logout();
     return;
@@ -1599,13 +1620,13 @@ void ApiClient::handleAuthFailure(const QString &context, std::function<void()> 
 
     setRestoringSession(false);
     if (m_lastRefreshAuthInvalid) {
-      setLastError(QStringLiteral("Oturum suresi doldu. Lutfen tekrar giris yapin."));
+      setLastError(QStringLiteral("Oturum süresi doldu. Lütfen tekrar giriş yapın."));
       emit requestFailed(context, m_lastError);
       logout();
       return;
     }
 
-    const QString message = QStringLiteral("Baglanti sorunu nedeniyle oturum korunuyor. Tekrar denenecek.");
+    const QString message = QStringLiteral("Bağlantı sorunu nedeniyle oturum korunuyor. Tekrar denenecek.");
     setLastError(message);
     emit requestFailed(context, message);
   });

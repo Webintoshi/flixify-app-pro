@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildLiveVariantMetadata } from "./live-variants";
 import {
+  registerAnonInputSchema,
   loginByCodeInputSchema,
   nativeLivePlaybackResponseSchema,
   nativeVodPlaybackResponseSchema,
@@ -8,11 +9,22 @@ import {
 } from "./schemas";
 
 describe("contracts", () => {
+  it("requires installation id when creating anonymous accounts", () => {
+    const payload = registerAnonInputSchema.parse({
+      deviceName: "Apple TV",
+      platform: "tvos",
+      installationId: "install-1234567890abcd"
+    });
+
+    expect(payload.installationId).toBe("install-1234567890abcd");
+  });
+
   it("accepts valid kryptonite code payloads", () => {
     const payload = loginByCodeInputSchema.parse({
       code: "ABCD1234EFGH5678",
       deviceName: "Apple TV",
-      platform: "tvos"
+      platform: "tvos",
+      installationId: "install-1234567890abcd"
     });
 
     expect(payload.code).toBe("ABCD1234EFGH5678");

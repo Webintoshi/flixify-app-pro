@@ -11,6 +11,7 @@ type RegisterResponse = {
 };
 
 const authPrefillCodeKey = "flixify-auth-prefill-code";
+const installationIdStorageKey = "flixify-installation-id";
 
 function getErrorMessage(error: unknown) {
   if (!(error instanceof Error)) {
@@ -33,6 +34,25 @@ function formatCodeBlocks(value: string) {
   if (!sanitized) return "---- ---- ---- ----";
   const groups = sanitized.match(/.{1,4}/g);
   return groups ? groups.join(" ") : sanitized;
+}
+
+function getInstallationId() {
+  if (typeof window === "undefined") {
+    return "web-installation-unavailable";
+  }
+
+  const existing = window.localStorage.getItem(installationIdStorageKey)?.trim();
+  if (existing) {
+    return existing;
+  }
+
+  const nextId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `web-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
+
+  window.localStorage.setItem(installationIdStorageKey, nextId);
+  return nextId;
 }
 
 function downloadCodeAsText(code: string) {
@@ -215,7 +235,8 @@ export default function RegisterPage() {
         method: "POST",
         body: {
           deviceName: "Flixify Public Web",
-          platform: "web"
+          platform: "web",
+          installationId: getInstallationId()
         }
       });
       const normalized = normalizeCode(response.kryptoniteCode ?? "");

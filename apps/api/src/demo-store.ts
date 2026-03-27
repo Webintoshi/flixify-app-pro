@@ -45,6 +45,8 @@ type DemoPaymentRequest = {
   packageTitle: string;
   createdAt: string;
   userId: string;
+  paymentMethodId: "bank-transfer-eft" | "crypto" | "bank-card" | null;
+  cryptoAssetId: "usdt-trc20" | "tron" | "sol" | "btc" | "usdc" | null;
 };
 
 type DemoTrialRequest = {
@@ -1029,7 +1031,12 @@ export function resolveDemoVodPlayback(
   };
 }
 
-export function createDemoPaymentRequest(userId: string, packageSlug: string) {
+export function createDemoPaymentRequest(
+  userId: string,
+  packageSlug: string,
+  paymentMethodId: DemoPaymentRequest["paymentMethodId"] = null,
+  cryptoAssetId: DemoPaymentRequest["cryptoAssetId"] = null
+) {
   const pack = packages.find((item) => item.slug === packageSlug && item.isActive);
   if (!pack) {
     throw new Error("Paket bulunamadi");
@@ -1040,7 +1047,9 @@ export function createDemoPaymentRequest(userId: string, packageSlug: string) {
     status: "pending-review",
     packageTitle: pack.title,
     createdAt: now(),
-    userId
+    userId,
+    paymentMethodId,
+    cryptoAssetId
   });
 }
 

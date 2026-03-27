@@ -35,6 +35,7 @@ class PlaybackController : public QObject {
   Q_PROPERTY(QString selectedAudioTrackId READ selectedAudioTrackId NOTIFY selectedAudioTrackIdChanged)
   Q_PROPERTY(QVariantMap recommendedNextEpisode READ recommendedNextEpisode NOTIFY recommendedNextEpisodeChanged)
   Q_PROPERTY(QString videoFillMode READ videoFillMode WRITE setVideoFillMode NOTIFY videoFillModeChanged)
+  Q_PROPERTY(bool liveFullscreenActive READ liveFullscreenActive WRITE setLiveFullscreenActive NOTIFY liveFullscreenActiveChanged)
   Q_PROPERTY(int activeVideoSlot READ activeVideoSlot NOTIFY activeVideoSlotChanged)
 
 public:
@@ -59,8 +60,10 @@ public:
   QString selectedAudioTrackId() const;
   QVariantMap recommendedNextEpisode() const;
   QString videoFillMode() const;
+  bool liveFullscreenActive() const;
   int activeVideoSlot() const;
   void setVideoFillMode(const QString &mode);
+  void setLiveFullscreenActive(bool active);
 
   Q_INVOKABLE void playChannel(const QString &channelId);
   Q_INVOKABLE void playVod(const QString &kind, const QString &itemId, const QString &title = QString());
@@ -77,6 +80,7 @@ public:
   Q_INVOKABLE void playRecommendedNextEpisode();
   Q_INVOKABLE void setVideoSurfaceHandle(int slotIndex, qulonglong handle);
   Q_INVOKABLE void setVideoSurfaceGeometry(int slotIndex, int width, int height);
+  Q_INVOKABLE void refreshVideoLayout();
 
 signals:
   void stateChanged();
@@ -97,6 +101,7 @@ signals:
   void selectedAudioTrackIdChanged();
   void recommendedNextEpisodeChanged();
   void videoFillModeChanged();
+  void liveFullscreenActiveChanged();
   void activeVideoSlotChanged();
 
 private:
@@ -239,6 +244,7 @@ private:
   bool m_liveSwitchInProgress = false;
   bool m_forceRelayRestart = false;
   QString m_videoFillMode = QStringLiteral("fit");
+  bool m_liveFullscreenActive = false;
   int m_activeVideoSlot = 0;
   int m_pendingLiveSlot = -1;
   int m_delayedStopSlot = -1;

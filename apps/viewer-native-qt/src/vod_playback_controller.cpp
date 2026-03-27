@@ -497,8 +497,15 @@ void VodPlaybackController::seekTo(double seconds) {
   }
 
   const double normalizedSeconds = qMax(0.0, seconds);
-  libvlc_media_player_set_time(m_player, static_cast<libvlc_time_t>(normalizedSeconds * 1000.0));
-  setPositionSeconds(normalizedSeconds);
+  const double boundedSeconds =
+    m_durationSeconds > 0.0 ? std::clamp(normalizedSeconds, 0.0, m_durationSeconds) : normalizedSeconds;
+
+  libvlc_media_player_set_time(m_player, static_cast<libvlc_time_t>(boundedSeconds * 1000.0));
+
+  QTimer::singleShot(80, this, [this]() {
+    updateTimeline();
+  });
+  setPositionSeconds(boundedSeconds);
 }
 
 void VodPlaybackController::seekBy(double seconds) {

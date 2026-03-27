@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 import type {
   AdminAuditLogRecord,
   CatalogGroup,
+  CryptoAssetId,
   DeviceSessionRecord,
   LiveHealthStatus,
   LivePlaybackRecord,
@@ -10,6 +11,7 @@ import type {
   LiveChannel,
   MovieRecord,
   PaymentMethodOption,
+  PaymentMethodId,
   PackageDuration,
   PackageRecord,
   SeriesSeasonRecord,
@@ -157,6 +159,26 @@ const PACKAGE_PRICE_COLUMN_SQL = `
   add column if not exists price_label text;
 `;
 
+const PAYMENT_REQUEST_METHOD_COLUMNS_SQL = `
+  alter table public.payment_requests
+  add column if not exists payment_method_id text,
+  add column if not exists crypto_asset_id text;
+`;
+
+const USER_INSTALLATION_GUARD_COLUMNS_SQL = `
+  alter table public.users
+  add column if not exists registration_installation_id text,
+  add column if not exists deleted_at timestamptz;
+
+  create unique index if not exists idx_users_registration_installation_active_unique
+  on public.users (registration_installation_id)
+  where registration_installation_id is not null
+    and deleted_at is null;
+
+  create index if not exists idx_users_registration_installation_lookup
+  on public.users (registration_installation_id, deleted_at);
+`;
+
 const LIVE_VARIANT_COLUMNS_SQL = `
   alter table public.shared_live_channels
   add column if not exists variant_group_key text,
@@ -252,6 +274,18 @@ const NATIVE_PLAYBACK_DIAGNOSTIC_COLUMNS_SQL = `
 `;
 
 let ensuredNativePlaybackSchemaPromise: Promise<void> | null = null;
+let ensuredUserInstallationGuardSchemaPromise: Promise<void> | null = null;
+
+export async function ensureUserInstallationGuardSchema() {
+  if (!ensuredUserInstallationGuardSchemaPromise) {
+    ensuredUserInstallationGuardSchemaPromise = query(USER_INSTALLATION_GUARD_COLUMNS_SQL).catch((error) => {
+      ensuredUserInstallationGuardSchemaPromise = null;
+      throw error;
+    });
+  }
+
+  await ensuredUserInstallationGuardSchemaPromise;
+}
 
 export async function ensureNativePlaybackSchema() {
   if (!ensuredNativePlaybackSchemaPromise) {
@@ -492,6 +526,20 @@ function isMissingPackagePriceColumnError(error: unknown) {
   return message.includes("price_label");
 }
 
+function isMissingPaymentRequestMethodColumnsError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const maybeError = error as { code?: string; message?: string };
+  if (maybeError.code === "42703") {
+    return true;
+  }
+
+  const message = typeof maybeError.message === "string" ? maybeError.message : "";
+  return message.includes("payment_method_id") || message.includes("crypto_asset_id");
+}
+
 function hasAssignedSource(row: Pick<UserContextRow, "iptv_username" | "iptv_password" | "source_base_url">) {
   return Boolean(row.iptv_username && row.iptv_password && row.source_base_url);
 }
@@ -626,15 +674,48 @@ export async function findUserByCodeLookup(codeLookup: string) {
   return result.rows[0] ?? null;
 }
 
+export async function findActiveUserByInstallationId(installationId: string) {
+  await ensureUserInstallationGuardSchema();
+
+  const result = await query<{
+    id: string;
+    status: "new" | "active" | "blocked";
+    deleted_at: string | null;
+  }>(
+    `
+      select id, status, deleted_at
+      from public.users
+      where registration_installation_id = $1
+        and deleted_at is null
+      limit 1
+    `,
+    [installationId]
+  );
+  return result.rows[0] ?? null;
+}
+
 export async function createUser(
   codeLookup: string,
   codeHash: string,
   codeSuffix: string | null,
-  kryptoniteCode: string | null
+  kryptoniteCode: string | null,
+  registrationInstallationId: string | null = null
 ) {
+  await ensureUserInstallationGuardSchema();
+
   const result = await query<{ id: string }>(
-    "insert into public.users (code_lookup, code_hash, code_suffix, kryptonite_code, status) values ($1, $2, $3, $4, 'new') returning id",
-    [codeLookup, codeHash, codeSuffix, kryptoniteCode]
+    `
+      insert into public.users (
+        code_lookup,
+        code_hash,
+        code_suffix,
+        kryptonite_code,
+        registration_installation_id,
+        status
+      ) values ($1, $2, $3, $4, $5, 'new')
+      returning id
+    `,
+    [codeLookup, codeHash, codeSuffix, kryptoniteCode, registrationInstallationId]
   );
   return result.rows[0]?.id;
 }
@@ -2103,21 +2184,35 @@ export async function getEpisodeForPlayback(snapshotVersion: number, episodeId: 
   };
 }
 
-export async function createPaymentRequest(userId: string, packageSlug: string) {
-  const result = await query(
-    `
-      insert into public.payment_requests (user_id, package_id)
-      select $1, id
-      from public.packages
-      where slug = $2
-        and is_active = true
-      limit 1
-    `,
-    [userId, packageSlug]
-  );
+export async function createPaymentRequest(
+  userId: string,
+  packageSlug: string,
+  paymentMethodId: PaymentMethodId,
+  cryptoAssetId: CryptoAssetId | null = null
+) {
+  try {
+    const result = await query(
+      `
+        insert into public.payment_requests (user_id, package_id, payment_method_id, crypto_asset_id)
+        select $1, id, $3, $4
+        from public.packages
+        where slug = $2
+          and is_active = true
+        limit 1
+      `,
+      [userId, packageSlug, paymentMethodId, cryptoAssetId]
+    );
 
-  if (result.rowCount === 0) {
-    throw new Error("Package not found");
+    if (result.rowCount === 0) {
+      throw new Error("Package not found");
+    }
+  } catch (error) {
+    if (!isMissingPaymentRequestMethodColumnsError(error)) {
+      throw error;
+    }
+
+    await query(PAYMENT_REQUEST_METHOD_COLUMNS_SQL);
+    return createPaymentRequest(userId, packageSlug, paymentMethodId, cryptoAssetId);
   }
 }
 
@@ -2767,55 +2862,82 @@ export async function activateTestSubscription24Hours(userId: string, adminId: s
 }
 
 export async function listPaymentRequests(userId?: string) {
-  const result = await query<{
-    id: string;
-    status: "pending-review" | "approved" | "rejected";
-    title: string;
-    created_at: string;
-    user_id: string;
-  }>(
-    `
-      select pr.id, pr.status, p.title, pr.created_at, pr.user_id
-      from public.payment_requests pr
-      join public.packages p on p.id = pr.package_id
-      where ($1::uuid is null or pr.user_id = $1)
-      order by pr.created_at desc
-    `,
-    [userId ?? null]
-  );
+  try {
+    const result = await query<{
+      id: string;
+      status: "pending-review" | "approved" | "rejected";
+      title: string;
+      created_at: string;
+      user_id: string;
+      payment_method_id: PaymentMethodId | null;
+      crypto_asset_id: CryptoAssetId | null;
+    }>(
+      `
+        select pr.id, pr.status, p.title, pr.created_at, pr.user_id, pr.payment_method_id, pr.crypto_asset_id
+        from public.payment_requests pr
+        join public.packages p on p.id = pr.package_id
+        where ($1::uuid is null or pr.user_id = $1)
+        order by pr.created_at desc
+      `,
+      [userId ?? null]
+    );
 
-  return result.rows.map((row) => ({
-    id: row.id,
-    status: row.status,
-    packageTitle: row.title,
-    createdAt: row.created_at,
-    userId: row.user_id
-  }));
+    return result.rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      packageTitle: row.title,
+      createdAt: row.created_at,
+      userId: row.user_id,
+      paymentMethodId: row.payment_method_id ?? null,
+      cryptoAssetId: row.crypto_asset_id ?? null
+    }));
+  } catch (error) {
+    if (!isMissingPaymentRequestMethodColumnsError(error)) {
+      throw error;
+    }
+
+    await query(PAYMENT_REQUEST_METHOD_COLUMNS_SQL);
+    return listPaymentRequests(userId);
+  }
 }
 
 export async function listMyPaymentRequests(userId: string) {
-  const result = await query<{
-    id: string;
-    status: "pending-review" | "approved" | "rejected";
-    title: string;
-    created_at: string;
-  }>(
-    `
-      select pr.id, pr.status, p.title, pr.created_at
-      from public.payment_requests pr
-      join public.packages p on p.id = pr.package_id
-      where pr.user_id = $1
-      order by pr.created_at desc
-    `,
-    [userId]
-  );
+  try {
+    const result = await query<{
+      id: string;
+      status: "pending-review" | "approved" | "rejected";
+      title: string;
+      created_at: string;
+      payment_method_id: PaymentMethodId | null;
+      crypto_asset_id: CryptoAssetId | null;
+    }>(
+      `
+        select pr.id, pr.status, p.title, pr.created_at, pr.payment_method_id, pr.crypto_asset_id
+        from public.payment_requests pr
+        join public.packages p on p.id = pr.package_id
+        where pr.user_id = $1
+        order by pr.created_at desc
+      `,
+      [userId]
+    );
 
-  return result.rows.map((row) => ({
-    id: row.id,
-    status: row.status,
-    packageTitle: row.title,
-    createdAt: row.created_at
-  }));
+    return result.rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      packageTitle: row.title,
+      createdAt: row.created_at,
+      userId,
+      paymentMethodId: row.payment_method_id ?? null,
+      cryptoAssetId: row.crypto_asset_id ?? null
+    }));
+  } catch (error) {
+    if (!isMissingPaymentRequestMethodColumnsError(error)) {
+      throw error;
+    }
+
+    await query(PAYMENT_REQUEST_METHOD_COLUMNS_SQL);
+    return listMyPaymentRequests(userId);
+  }
 }
 
 export async function approvePaymentRequest(paymentRequestId: string, adminId: string) {

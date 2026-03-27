@@ -5,20 +5,13 @@ import QtQuick.Layouts
 Item {
     id: root
 
-    property var movieItems: []
-    property var movieGroups: []
-    property int movieTotal: 0
-    property var currentMovie: null
-    property var playbackController: null
-    property Component videoSurfaceComponent: null
-    property string selectedMovieId: ""
+    property var seriesItems: []
+    property var seriesGroups: []
+    property int seriesTotal: 0
+    property string selectedSeriesId: ""
     property string selectedGroup: ""
     property string searchText: ""
-    property bool playerVisible: false
     property bool compactWindow: false
-    property bool movieLoadingMore: false
-    property bool movieHasMore: false
-    property bool windowIsFullscreen: false
     property color panelColor: "#090c13"
     property color surfaceColor: "#131923"
     property color textPrimary: "#f7f8fb"
@@ -33,30 +26,68 @@ Item {
     signal refreshRequested()
     signal clearFiltersRequested()
     signal groupSelected(string group)
-    signal movieSelected(var movie)
-    signal loadMoreRequested()
-    signal closePlayerRequested()
-    signal toggleWindowFullscreenRequested()
+    signal seriesSelected(var series)
 
-    function posterUrl(movie) {
-        if (!movie) {
-            return ""
+    function fieldValue(item, key, fallbackValue = null) {
+        if (!item || !key || !key.length) {
+            return fallbackValue
         }
-        return (movie["posterUrl"] || movie.posterUrl || movie["artworkUrl"] || movie.artworkUrl || movie["streamImageUrl"] || movie.streamImageUrl || movie["stream_icon"] || movie.stream_icon || movie["logoUrl"] || movie.logoUrl || "").toString()
+        const directValue = item[key]
+        if (directValue !== undefined && directValue !== null) {
+            return directValue
+        }
+        try {
+            if (item.toMap) {
+                const mapped = item.toMap()
+                const mappedValue = mapped[key]
+                if (mappedValue !== undefined && mappedValue !== null) {
+                    return mappedValue
+                }
+            }
+        } catch (error) {
+        }
+        return fallbackValue
     }
 
-    function movieTitle(movie) {
-        if (!movie) {
-            return ""
-        }
-        return movie["title"] || movie.title || ""
+    function fieldText(item, key) {
+        const value = fieldValue(item, key, "")
+        return value === null || value === undefined ? "" : value.toString()
     }
 
-    function movieGroup(movie) {
-        if (!movie) {
+    function fieldNumber(item, key, fallbackValue = 0) {
+        const numericValue = Number(fieldValue(item, key, fallbackValue))
+        return Number.isFinite(numericValue) ? numericValue : fallbackValue
+    }
+
+    function posterUrl(series) {
+        if (!series) {
             return ""
         }
-        return movie["groupTitle"] || movie.groupTitle || ""
+        return (series["posterUrl"] || series.posterUrl
+            || series["artworkUrl"] || series.artworkUrl
+            || series["streamImageUrl"] || series.streamImageUrl
+            || series["stream_icon"] || series.stream_icon
+            || "").toString()
+    }
+
+    function titleText(series) {
+        if (!series) {
+            return ""
+        }
+        return (series["title"] || series.title || "").toString()
+    }
+
+    function subtitleText(series) {
+        if (!series) {
+            return "Dizi"
+        }
+        const seasons = Number(series["seasonCount"] || series.seasonCount || 0)
+        const episodes = Number(series["episodeCount"] || series.episodeCount || 0)
+        const group = (series["groupTitle"] || series.groupTitle || "").toString()
+        if (seasons > 0 || episodes > 0) {
+            return `${seasons} sezon | ${episodes} bölüm`
+        }
+        return group.length ? group : "Dizi"
     }
 
     function monogram(value) {
@@ -171,30 +202,10 @@ Item {
     }
 
     ScrollView {
-        id: pageScroll
         anchors.fill: parent
         clip: true
-        visible: !root.playerVisible
-        enabled: visible
-
-        Connections {
-            target: pageScroll.contentItem ? pageScroll.contentItem : null
-
-            function onContentYChanged() {
-                const flickable = pageScroll.contentItem
-                if (!flickable || !root.movieHasMore || root.movieLoadingMore) {
-                    return
-                }
-                const contentBottom = flickable.contentY + pageScroll.height
-                const totalHeight = flickable.contentHeight || flickable.height || 0
-                if (totalHeight > 0 && contentBottom > totalHeight - 360) {
-                    root.loadMoreRequested()
-                }
-            }
-        }
 
         Column {
-            id: contentColumn
             width: Math.max(320, root.width - root.shellPadding * 2)
             x: root.shellPadding
             topPadding: root.compactWindow ? 18 : 22
@@ -208,7 +219,7 @@ Item {
                 SearchField {
                     width: root.compactWindow ? parent.width : Math.max(340, parent.width - 360)
                     text: root.searchText
-                    placeholderText: "Film ara..."
+                    placeholderText: "Dizi ara..."
                     onTextEdited: root.searchEdited(text)
                 }
 
@@ -238,13 +249,13 @@ Item {
                     spacing: 10
 
                     Repeater {
-                        model: root.movieGroups
+                        model: root.seriesGroups
 
                         Button {
                             required property var modelData
                             hoverEnabled: true
                             focusPolicy: Qt.NoFocus
-                            text: modelData.length ? modelData : "Tüm Filmler"
+                            text: modelData.length ? modelData : "Tüm Diziler"
                             implicitHeight: 42
                             leftPadding: 18
                             rightPadding: 18
@@ -273,23 +284,23 @@ Item {
 
             Flow {
                 property int __maxCols: Math.max(1, Math.floor((parent.width + root.cardGap) / (root.posterCardWidth + root.cardGap)))
-                property int __actualCols: Math.min(root.movieItems.length, __maxCols)
+                property int __actualCols: Math.min(root.seriesItems.length, __maxCols)
                 width: __actualCols * root.posterCardWidth + Math.max(0, __actualCols - 1) * root.cardGap
                 spacing: root.cardGap
                 anchors.horizontalCenter: parent.horizontalCenter
 
                 Repeater {
-                    model: root.movieItems
+                    model: root.seriesItems
 
                     Item {
-                        id: movieCard
+                        id: seriesCard
                         required property var modelData
                         width: root.posterCardWidth
                         readonly property real posterHeight: Math.round(root.posterCardWidth * 1.48)
-                        readonly property string titleText: root.movieTitle(modelData)
-                        readonly property string subtitleText: root.movieGroup(modelData) || "Film"
+                        readonly property string titleValue: root.titleText(modelData)
+                        readonly property string subtitleValue: root.subtitleText(modelData)
                         readonly property string posterSource: root.posterUrl(modelData)
-                        readonly property string movieId: (modelData && modelData["id"] ? modelData["id"] : "").toString()
+                        readonly property string seriesId: ((modelData && (modelData["id"] || modelData.id)) || "").toString()
                         height: posterHeight + 82
 
                         Rectangle {
@@ -297,7 +308,7 @@ Item {
                             radius: 24
                             color: root.surfaceColor
                             border.width: 1
-                            border.color: root.selectedMovieId === movieCard.movieId
+                            border.color: root.selectedSeriesId === seriesCard.seriesId
                                           ? root.accentColor
                                           : cardArea.containsMouse ? "#2effffff" : "#18ffffff"
                         }
@@ -315,7 +326,7 @@ Item {
                                 id: posterImage
                                 anchors.fill: parent
                                 anchors.margins: 1
-                                source: movieCard.posterSource
+                                source: seriesCard.posterSource
                                 fillMode: Image.PreserveAspectCrop
                                 asynchronous: true
                                 cache: true
@@ -344,7 +355,7 @@ Item {
 
                                 Text {
                                     anchors.centerIn: parent
-                                    text: root.monogram(movieCard.titleText)
+                                    text: root.monogram(seriesCard.titleValue)
                                     color: root.textPrimary
                                     font.pixelSize: 28
                                     font.bold: true
@@ -361,6 +372,24 @@ Item {
                                     GradientStop { position: 1.0; color: "#ea05070b" }
                                 }
                             }
+
+                            Rectangle {
+                                width: 64
+                                height: 32
+                                radius: 16
+                                anchors.left: parent.left
+                                anchors.top: parent.top
+                                anchors.margins: 16
+                                color: "#14ffffff"
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "Dizi"
+                                    color: root.textPrimary
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                            }
                         }
 
                         Column {
@@ -372,7 +401,7 @@ Item {
 
                             Text {
                                 width: parent.width
-                                text: movieCard.titleText
+                                text: seriesCard.titleValue
                                 color: root.textPrimary
                                 font.pixelSize: 16
                                 font.bold: true
@@ -383,7 +412,7 @@ Item {
 
                             Text {
                                 width: parent.width
-                                text: movieCard.subtitleText
+                                text: seriesCard.subtitleValue
                                 color: root.textMuted
                                 font.pixelSize: 12
                                 elide: Text.ElideRight
@@ -395,34 +424,8 @@ Item {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.movieSelected(modelData)
+                            onClicked: root.seriesSelected(modelData)
                         }
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 64
-                radius: 20
-                color: "#0b1018"
-                border.width: 1
-                border.color: "#16ffffff"
-                visible: root.movieLoadingMore
-
-                Row {
-                    anchors.centerIn: parent
-                    spacing: 12
-
-                    BusyIndicator {
-                        running: parent.visible
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "Daha fazla film yükleniyor"
-                        color: root.textMuted
-                        font.pixelSize: 13
                     }
                 }
             }
@@ -434,14 +437,14 @@ Item {
                 color: root.panelColor
                 border.width: 1
                 border.color: "#16ffffff"
-                visible: !root.movieLoadingMore && root.movieItems.length === 0
+                visible: root.seriesItems.length === 0
 
                 Column {
                     anchors.centerIn: parent
                     spacing: 8
 
                     Text {
-                        text: "Film bulunamadı"
+                        text: "Dizi bulunamadı"
                         color: root.textPrimary
                         font.pixelSize: 28
                         font.bold: true
@@ -452,48 +455,6 @@ Item {
                         color: root.textMuted
                         font.pixelSize: 14
                     }
-                }
-            }
-        }
-    }
-
-    Rectangle {
-        anchors.fill: parent
-        visible: root.playerVisible
-        color: "#05070b"
-        z: 20
-
-        Rectangle {
-            anchors.fill: parent
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: "#f4060910" }
-                GradientStop { position: 0.48; color: "#f205070b" }
-                GradientStop { position: 1.0; color: "#fa040608" }
-            }
-        }
-
-        Loader {
-            id: overlayMoviePlayerLoader
-            anchors.fill: parent
-            active: root.playerVisible
-            visible: active
-
-            sourceComponent: Component {
-                MoviePlayerShell {
-                    width: root.width
-                    height: root.height
-                    controller: root.playbackController
-                    movieData: root.currentMovie
-                    videoSurfaceComponent: root.videoSurfaceComponent
-                    titleText: root.movieTitle(root.currentMovie)
-                    subtitleText: root.movieGroup(root.currentMovie) || "Film"
-                    artworkUrl: root.posterUrl(root.currentMovie)
-                    textPrimary: root.textPrimary
-                    textMuted: root.textMuted
-                    compactWindow: root.compactWindow
-                    windowIsFullscreen: root.windowIsFullscreen
-                    onCloseRequested: root.closePlayerRequested()
-                    onToggleWindowFullscreenRequested: root.toggleWindowFullscreenRequested()
                 }
             }
         }

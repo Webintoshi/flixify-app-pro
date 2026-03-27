@@ -3,116 +3,248 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
 
-Rectangle {
+Item {
     id: root
-
     property var controller: null
     property var movieData: null
     property Component videoSurfaceComponent: null
+    property string contentKind: "movie"
     property string titleText: ""
     property string subtitleText: ""
     property string artworkUrl: ""
-    property color accentColor: "#ff2432"
     property color textPrimary: "#f7f8fb"
     property color textMuted: "#b1bac9"
     property bool compactWindow: false
     property bool windowIsFullscreen: false
-    property bool audioMenuOpen: false
     property bool controlsVisible: true
-    property bool draggingSeek: false
-    property real pendingSeekSeconds: 0
-
+    property double seekPreviewSeconds: 0
     signal closeRequested()
     signal toggleWindowFullscreenRequested()
-
-    readonly property real gap: compactWindow ? 14 : 18
-    readonly property real headerHeight: compactWindow ? 90 : 98
-    readonly property real viewportHeight: Math.max(compactWindow ? 340 : 420, Math.min(compactWindow ? 460 : 620, width * 0.54))
-    readonly property bool surfaceActive: controller && controller.activeContentKind === "movie"
-    readonly property bool posterReady: posterImage.status === Image.Ready && artworkUrl.length > 0
-    readonly property bool playbackStarted: controller && (controller.state === "playing" || controller.state === "buffering" || controller.positionSeconds > 0 || controller.durationSeconds > 0)
-    readonly property bool posterVisible: posterReady && !playbackStarted
-    readonly property bool showCenterState: controller && (controller.state === "opening" || controller.state === "resolving" || controller.state === "error") && !playbackStarted
-    readonly property bool keepControlsVisible: audioMenuOpen || seekSlider.pressed || volumeSlider.pressed
-    readonly property var audioTrackItems: controller && controller.audioTracks ? controller.audioTracks : []
+    readonly property string contentLabel: contentKind === "episode" ? "Bölüm" : "Film"
+    readonly property bool surfaceActive: controller && controller.activeContentKind === contentKind
+    readonly property bool playbackStarted: controller && (controller.state === "playing" || controller.state === "paused" || controller.state === "buffering" || controller.state === "ended" || controller.positionSeconds > 0 || controller.durationSeconds > 0)
+    readonly property bool posterVisible: posterImage.status === Image.Ready && artworkUrl.length > 0 && !playbackStarted
+    readonly property bool showStatusOverlay: controller && (controller.state === "opening" || controller.state === "resolving" || controller.state === "error")
+    readonly property bool keepControlsVisible: timelineSlider.pressed || volumeSlider.pressed
+    readonly property bool autoHideEnabled: playbackStarted && controller && !controller.paused && !showStatusOverlay && !keepControlsVisible
+    readonly property bool overlayChromeVisible: controlsVisible || keepControlsVisible || !playbackStarted || (controller && controller.state === "error")
     readonly property int volumePercent: Math.round(((controller && controller.muted) ? 0 : (controller ? controller.volume : 1)) * 100)
-    readonly property bool overlayWindowActive: viewport.visible && viewport.width > 1 && viewport.height > 1
-    readonly property real currentPosition: draggingSeek ? pendingSeekSeconds : (controller ? controller.positionSeconds : 0)
-    readonly property real progressMaximum: Math.max(1, controller ? controller.durationSeconds : 0)
-    readonly property string stateText: !controller
-                                        ? "Hazır"
-                                        : controller.state === "playing"
-                                          ? "Oynuyor"
-                                          : controller.state === "buffering"
-                                            ? "Buffer"
-                                            : controller.state === "error"
-                                              ? "Hata"
-                                              : controller.state === "opening" || controller.state === "resolving"
-                                                ? "Hazırlanıyor"
-                                                : "Hazır"
+    readonly property bool overlayWindowActive: visible
+                                              && viewport.visible
+                                              && viewport.width > 1
+                                              && viewport.height > 1
+                                              && root.Window.window
+                                              && root.Window.window.visible
+                                              && root.Window.window.active
+                                              && Qt.application.state === Qt.ApplicationActive
+    readonly property string playbackStateText: !controller ? "" : controller.state === "paused" ? "DURAKLATILDI" : controller.state === "buffering" ? "YÜKLENİYOR" : controller.state === "opening" || controller.state === "resolving" ? "HAZIRLANIYOR" : controller.state === "error" ? "HATA" : controller.state === "ended" ? "BİTTİ" : ""
+    readonly property bool playbackPausedVisual: !controller || controller.paused || controller.state === "paused" || controller.state === "stopped" || controller.state === "ended" || controller.state === "idle" || controller.state === "error"
+    focus: true
 
-    color: windowIsFullscreen ? "#000000" : "#090c13"
-    radius: windowIsFullscreen ? 0 : 28
-    border.width: windowIsFullscreen ? 0 : 1
-    border.color: "#16ffffff"
-    clip: true
-    implicitHeight: headerHeight + gap + viewportHeight
-
-    function monogram(value) {
-        const parts = (value || "").toString().trim().split(/\s+/).slice(0, 2)
-        let output = ""
-        for (let index = 0; index < parts.length; index += 1) {
-            output += (parts[index][0] || "").toUpperCase()
-        }
-        return output.length ? output : "FX"
+    function formatClock(totalSeconds) {
+        if (totalSeconds <= 0 || !isFinite(totalSeconds)) return "00:00"
+        const roundedSeconds = Math.max(0, Math.floor(totalSeconds))
+        const hours = Math.floor(roundedSeconds / 3600)
+        const minutes = Math.floor((roundedSeconds % 3600) / 60)
+        const seconds = roundedSeconds % 60
+        const minuteText = (minutes < 10 ? "0" : "") + minutes
+        const secondText = (seconds < 10 ? "0" : "") + seconds
+        if (hours > 0) return hours + ":" + minuteText + ":" + secondText
+        return minuteText + ":" + secondText
     }
 
-    function formatClock(seconds) {
-        const totalSeconds = Math.max(0, Math.floor(Number(seconds) || 0))
-        const hours = Math.floor(totalSeconds / 3600)
-        const minutes = Math.floor((totalSeconds % 3600) / 60)
-        const remainingSeconds = totalSeconds % 60
-        if (hours > 0) {
-            return `${hours}:${minutes.toString().padStart(2, "0")}:${remainingSeconds.toString().padStart(2, "0")}`
-        }
-        return `${minutes.toString().padStart(2, "0")}:${remainingSeconds.toString().padStart(2, "0")}`
+    function secondaryFill(button, active) {
+        if (!button.enabled) return "#3610161f"
+        if (button.down) return active ? "#8be50914" : "#7a1b2634"
+        if (button.hovered) return active ? "#b2e50914" : "#96212e40"
+        return active ? "#8fe50914" : "#6b131c28"
     }
 
-    function currentAudioIndex() {
-        const tracks = audioTrackItems
-        for (let index = 0; index < tracks.length; index += 1) {
-            if (tracks[index].id === controller.selectedAudioTrackId) {
-                return index
+    function secondaryBorder(button, active) {
+        if (!button.enabled) return "#16ffffff"
+        if (active) return "#8dffffff"
+        return button.hovered ? "#52ffffff" : "#26ffffff"
+    }
+
+    function accentFill(button) {
+        if (!button.enabled) return "#7a481316"
+        if (button.down) return "#cbcf0914"
+        if (button.hovered) return "#e7ff2432"
+        return "#dce50914"
+    }
+
+    component PlayerIcon: Item {
+        id: iconRoot
+        property string name: "play"
+        property color strokeColor: "#ffffff"
+        implicitWidth: 20
+        implicitHeight: 20
+        onNameChanged: canvas.requestPaint()
+        onStrokeColorChanged: canvas.requestPaint()
+        onWidthChanged: canvas.requestPaint()
+        onHeightChanged: canvas.requestPaint()
+
+        Canvas {
+            id: canvas
+            anchors.fill: parent
+            antialiasing: true
+
+            onPaint: {
+                const ctx = getContext("2d")
+                ctx.reset()
+                ctx.clearRect(0, 0, width, height)
+                ctx.strokeStyle = iconRoot.strokeColor
+                ctx.fillStyle = iconRoot.strokeColor
+                ctx.lineWidth = Math.max(1.8, width * 0.1)
+                ctx.lineCap = "round"
+                ctx.lineJoin = "round"
+
+                if (iconRoot.name === "play") {
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.3, height * 0.2)
+                    ctx.lineTo(width * 0.78, height * 0.5)
+                    ctx.lineTo(width * 0.3, height * 0.8)
+                    ctx.closePath()
+                    ctx.fill()
+                    return
+                }
+
+                if (iconRoot.name === "pause") {
+                    const barWidth = width * 0.18
+                    ctx.fillRect(width * 0.25, height * 0.2, barWidth, height * 0.6)
+                    ctx.fillRect(width * 0.57, height * 0.2, barWidth, height * 0.6)
+                    return
+                }
+
+                if (iconRoot.name === "volume") {
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.2, height * 0.4)
+                    ctx.lineTo(width * 0.36, height * 0.4)
+                    ctx.lineTo(width * 0.55, height * 0.22)
+                    ctx.lineTo(width * 0.55, height * 0.78)
+                    ctx.lineTo(width * 0.36, height * 0.6)
+                    ctx.lineTo(width * 0.2, height * 0.6)
+                    ctx.closePath()
+                    ctx.fill()
+                    ctx.beginPath()
+                    ctx.arc(width * 0.56, height * 0.5, width * 0.18, -0.75, 0.75)
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.arc(width * 0.56, height * 0.5, width * 0.28, -0.75, 0.75)
+                    ctx.stroke()
+                    return
+                }
+
+                if (iconRoot.name === "muted") {
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.2, height * 0.4)
+                    ctx.lineTo(width * 0.36, height * 0.4)
+                    ctx.lineTo(width * 0.55, height * 0.22)
+                    ctx.lineTo(width * 0.55, height * 0.78)
+                    ctx.lineTo(width * 0.36, height * 0.6)
+                    ctx.lineTo(width * 0.2, height * 0.6)
+                    ctx.closePath()
+                    ctx.fill()
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.68, height * 0.3)
+                    ctx.lineTo(width * 0.9, height * 0.7)
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.9, height * 0.3)
+                    ctx.lineTo(width * 0.68, height * 0.7)
+                    ctx.stroke()
+                    return
+                }
+
+                if (iconRoot.name === "fullscreen") {
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.18, height * 0.38)
+                    ctx.lineTo(width * 0.18, height * 0.18)
+                    ctx.lineTo(width * 0.38, height * 0.18)
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.62, height * 0.18)
+                    ctx.lineTo(width * 0.82, height * 0.18)
+                    ctx.lineTo(width * 0.82, height * 0.38)
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.18, height * 0.62)
+                    ctx.lineTo(width * 0.18, height * 0.82)
+                    ctx.lineTo(width * 0.38, height * 0.82)
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.62, height * 0.82)
+                    ctx.lineTo(width * 0.82, height * 0.82)
+                    ctx.lineTo(width * 0.82, height * 0.62)
+                    ctx.stroke()
+                    return
+                }
+
+                if (iconRoot.name === "fullscreen-exit") {
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.18, height * 0.32)
+                    ctx.lineTo(width * 0.38, height * 0.32)
+                    ctx.lineTo(width * 0.38, height * 0.18)
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.62, height * 0.18)
+                    ctx.lineTo(width * 0.62, height * 0.32)
+                    ctx.lineTo(width * 0.82, height * 0.32)
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.18, height * 0.68)
+                    ctx.lineTo(width * 0.38, height * 0.68)
+                    ctx.lineTo(width * 0.38, height * 0.82)
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.62, height * 0.82)
+                    ctx.lineTo(width * 0.62, height * 0.68)
+                    ctx.lineTo(width * 0.82, height * 0.68)
+                    ctx.stroke()
+                    return
+                }
+
+                if (iconRoot.name === "close") {
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.24, height * 0.24)
+                    ctx.lineTo(width * 0.76, height * 0.76)
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.76, height * 0.24)
+                    ctx.lineTo(width * 0.24, height * 0.76)
+                    ctx.stroke()
+                }
             }
         }
-        return -1
     }
 
     function showControls() {
         controlsVisible = true
-        if (overlayWindowActive && !keepControlsVisible) {
-            controlsHideTimer.restart()
-        } else {
-            controlsHideTimer.stop()
-        }
-        scheduleOverlaySync()
-    }
-
-    function scheduleOverlaySync() {
+        if (autoHideEnabled) controlsHideTimer.restart()
+        else controlsHideTimer.stop()
         overlayGeometrySyncTimer.restart()
     }
 
-    function syncOverlayWindowGeometry() {
-        if (!overlayWindow) {
+    function togglePlayback() {
+        if (!controller) {
             return
         }
 
+        if (playbackPausedVisual) {
+            controller.resume()
+        } else {
+            controller.pause()
+        }
+
+        showControls()
+    }
+
+    function syncOverlayWindowGeometry() {
         const hostWindow = root.Window.window
         if (!hostWindow || !overlayWindowActive) {
             overlayWindow.visible = false
             return
         }
-
         const topLeft = viewport.mapToGlobal(0, 0)
         overlayWindow.x = Math.round(topLeft.x)
         overlayWindow.y = Math.round(topLeft.y)
@@ -121,345 +253,99 @@ Rectangle {
         overlayWindow.visible = true
     }
 
-    function refreshSurfaceBinding() {
-        if (videoSurfaceLoader.item) {
-            videoSurfaceLoader.item.controller = root.controller
-            videoSurfaceLoader.item.slotIndex = 0
-            if (videoSurfaceLoader.item.syncSurfaceBinding) {
-                videoSurfaceLoader.item.syncSurfaceBinding()
+    Keys.onPressed: function(event) {
+        if (!controller) return
+        if (event.key === Qt.Key_Space) { controller.togglePause(); showControls(); event.accepted = true; return }
+        if (event.key === Qt.Key_Left) { controller.seekBy(-10); showControls(); event.accepted = true; return }
+        if (event.key === Qt.Key_Right) { controller.seekBy(10); showControls(); event.accepted = true; return }
+        if (event.key === Qt.Key_Up) { controller.setVolume(Math.min(1, controller.volume + 0.05)); showControls(); event.accepted = true; return }
+        if (event.key === Qt.Key_Down) { controller.setVolume(Math.max(0, controller.volume - 0.05)); showControls(); event.accepted = true; return }
+        if (event.key === Qt.Key_M) { controller.toggleMuted(); showControls(); event.accepted = true; return }
+        if (event.key === Qt.Key_F || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.toggleWindowFullscreenRequested(); showControls(); event.accepted = true; return }
+        if (event.key === Qt.Key_Escape) {
+            if (root.windowIsFullscreen) root.toggleWindowFullscreenRequested()
+            else root.closeRequested()
+            event.accepted = true
+        }
+    }
+
+    Component.onCompleted: { forceActiveFocus(); showControls() }
+    Component.onDestruction: {
+        controlsHideTimer.stop()
+        overlayGeometrySyncTimer.stop()
+        if (overlayWindow) {
+            overlayWindow.visible = false
+        }
+    }
+    onVisibleChanged: {
+        if (visible) {
+            forceActiveFocus()
+            showControls()
+        } else {
+            controlsHideTimer.stop()
+            overlayGeometrySyncTimer.stop()
+            overlayWindow.visible = false
+            if (controller && controller.activeContentKind === contentKind && controller.state !== "idle") {
+                controller.stop()
             }
         }
-        if (root.controller && root.controller.refreshVideoLayout) {
-            root.controller.refreshVideoLayout()
-        }
     }
-
-    function headerButtonFill(button, accent) {
-        if (!button.enabled) return "#28131a24"
-        if (accent) return button.down ? "#d71320" : button.hovered ? "#ef2a37" : root.accentColor
-        if (button.down) return "#283243"
-        if (button.hovered) return "#212b3b"
-        return "#18212d"
-    }
-
-    component HeaderButton: Button {
-        id: headerButton
-        property bool accent: false
-        hoverEnabled: true
-        focusPolicy: Qt.NoFocus
-        implicitHeight: 44
-        leftPadding: 18
-        rightPadding: 18
-
-        background: Rectangle {
-            radius: 16
-            color: root.headerButtonFill(headerButton, headerButton.accent)
-            border.width: headerButton.accent ? 0 : 1
-            border.color: headerButton.accent ? "transparent" : "#24ffffff"
-        }
-
-        contentItem: Text {
-            text: headerButton.text
-            color: "#ffffff"
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-        }
-    }
-
-    component OverlayButton: Button {
-        id: overlayButton
-        property bool accent: false
-        hoverEnabled: true
-        focusPolicy: Qt.NoFocus
-        implicitHeight: 42
-        leftPadding: 16
-        rightPadding: 16
-
-        background: Rectangle {
-            radius: 16
-            color: overlayButton.accent
-                   ? (overlayButton.down ? "#d71320" : overlayButton.hovered ? "#ef2a37" : root.accentColor)
-                   : (overlayButton.down ? "#af111721" : overlayButton.hovered ? "#97141b27" : "#7d0d131c")
-            border.width: overlayButton.accent ? 0 : 1
-            border.color: overlayButton.accent ? "transparent" : "#2effffff"
-        }
-
-        contentItem: Text {
-            text: overlayButton.text
-            color: "#ffffff"
-            font.pixelSize: 13
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-        }
-    }
-
-    onAudioMenuOpenChanged: {
-        if (audioTrackItems.length === 0) {
-            audioMenuOpen = false
+    onOverlayWindowActiveChanged: {
+        if (!overlayWindow) {
             return
         }
-        showControls()
+        if (!overlayWindowActive) {
+            controlsHideTimer.stop()
+            overlayGeometrySyncTimer.stop()
+            overlayWindow.visible = false
+            return
+        }
+        overlayGeometrySyncTimer.restart()
     }
-
-    onWindowIsFullscreenChanged: {
-        showControls()
-        scheduleOverlaySync()
-    }
-
-    onPlaybackStartedChanged: {
-        showControls()
-        scheduleOverlaySync()
-    }
-
-    Rectangle {
-        id: headerCard
-        width: parent.width
-        height: root.headerHeight
-        radius: root.windowIsFullscreen ? 0 : 28
-        color: "#0a0e15"
-        border.width: root.windowIsFullscreen ? 0 : 1
-        border.color: "#18ffffff"
-
-        RowLayout {
-            anchors.fill: parent
-            anchors.margins: compactWindow ? 16 : 18
-            spacing: 16
-
-            Rectangle {
-                Layout.preferredWidth: compactWindow ? 58 : 64
-                Layout.preferredHeight: compactWindow ? 58 : 64
-                radius: 20
-                color: "#101722"
-                border.width: 1
-                border.color: "#1effffff"
-                clip: true
-
-                Image {
-                    anchors.fill: parent
-                    anchors.margins: 1
-                    source: root.artworkUrl
-                    fillMode: Image.PreserveAspectCrop
-                    asynchronous: true
-                    cache: true
-                    visible: root.posterReady
-                }
-
-                Text {
-                    anchors.centerIn: parent
-                    visible: !root.posterReady
-                    text: root.monogram(root.titleText)
-                    color: root.textPrimary
-                    font.pixelSize: 22
-                    font.bold: true
-                }
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 4
-
-                Text {
-                    text: root.titleText.length ? root.titleText : "Film seçin"
-                    color: root.textPrimary
-                    font.pixelSize: compactWindow ? 24 : 30
-                    font.bold: true
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-
-                Text {
-                    text: root.subtitleText.length ? root.subtitleText : "Film"
-                    color: root.textMuted
-                    font.pixelSize: 13
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-            }
-
-            Rectangle {
-                Layout.alignment: Qt.AlignVCenter
-                Layout.preferredWidth: headerStateText.implicitWidth + 24
-                Layout.preferredHeight: 34
-                radius: 17
-                color: root.controller && root.controller.state === "error" ? "#35161c" : "#141c27"
-                border.width: 1
-                border.color: root.controller && root.controller.state === "error" ? "#44ff7d86" : "#24ffffff"
-
-                Text {
-                    id: headerStateText
-                    anchors.centerIn: parent
-                    text: root.stateText
-                    color: root.textPrimary
-                    font.pixelSize: 12
-                    font.bold: true
-                }
-            }
-
-            HeaderButton {
-                text: root.windowIsFullscreen ? "Pencereli" : "Tam Ekran"
-                onClicked: root.toggleWindowFullscreenRequested()
-            }
-
-            HeaderButton {
-                text: "Kapat"
-                onClicked: root.closeRequested()
-            }
+    onWindowIsFullscreenChanged: { showControls(); if (controller && controller.refreshVideoLayout) controller.refreshVideoLayout() }
+    onKeepControlsVisibleChanged: { if (keepControlsVisible) { controlsHideTimer.stop(); controlsVisible = true } else showControls() }
+    onPlaybackStartedChanged: showControls()
+    onAutoHideEnabledChanged: {
+        if (autoHideEnabled) {
+            controlsHideTimer.restart()
+        } else {
+            controlsHideTimer.stop()
+            controlsVisible = true
         }
     }
 
-    Rectangle {
-        id: viewport
-        y: headerCard.height + root.gap
-        width: parent.width
-        height: root.viewportHeight
-        radius: root.windowIsFullscreen ? 0 : 28
-        color: "#000000"
-        border.width: root.windowIsFullscreen ? 0 : 1
-        border.color: "#18ffffff"
-        clip: true
-        onXChanged: root.scheduleOverlaySync()
-        onYChanged: root.scheduleOverlaySync()
-        onWidthChanged: root.scheduleOverlaySync()
-        onHeightChanged: root.scheduleOverlaySync()
-        onVisibleChanged: root.scheduleOverlaySync()
+    Connections {
+        target: root.controller
+        ignoreUnknownSignals: true
 
-        Rectangle {
-            anchors.fill: parent
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: "#2ce50914" }
-                GradientStop { position: 0.46; color: "#183364c7" }
-                GradientStop { position: 1.0; color: "#f0060910" }
+        function onPausedChanged() {
+            if (!root.controller) {
+                return
             }
-            visible: !root.playbackStarted
-        }
-
-        Image {
-            id: posterImage
-            anchors.fill: parent
-            anchors.margins: root.windowIsFullscreen ? 0 : 1
-            source: root.artworkUrl
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            cache: true
-            visible: root.posterVisible
-        }
-
-        Loader {
-            id: videoSurfaceLoader
-            anchors.fill: parent
-            active: root.surfaceActive
-            visible: active
-            sourceComponent: root.videoSurfaceComponent
-
-            onLoaded: {
-                if (item) {
-                    item.controller = root.controller
-                    item.slotIndex = 0
-                    if (item.syncSurfaceBinding) {
-                        item.syncSurfaceBinding()
-                    }
-                }
-                root.scheduleOverlaySync()
+            root.controlsVisible = true
+            if (root.controller.paused) {
+                controlsHideTimer.stop()
+            } else if (root.autoHideEnabled) {
+                controlsHideTimer.restart()
             }
+            overlayGeometrySyncTimer.restart()
         }
 
-        Connections {
-            target: videoSurfaceLoader.item
-
-            function onPointerActivity() {
+        function onStateChanged() {
+            if (!root.controller) {
+                return
+            }
+            if (root.controller.state === "playing") {
                 root.showControls()
+                return
             }
-        }
-
-        MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            acceptedButtons: Qt.LeftButton
-            onEntered: root.showControls()
-            onPositionChanged: root.showControls()
-            onPressed: root.showControls()
-            onDoubleClicked: {
-                root.showControls()
-                root.toggleWindowFullscreenRequested()
-            }
-            onClicked: {
-                root.audioMenuOpen = false
-                root.showControls()
-            }
-        }
-
-        Rectangle {
-            anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.margins: 18
-            width: filmBadgeText.implicitWidth + 24
-            height: 34
-            radius: 17
-            color: "#cc0d121c"
-            border.width: 1
-            border.color: "#24ffffff"
-            visible: !root.playbackStarted
-
-            Text {
-                id: filmBadgeText
-                anchors.centerIn: parent
-                text: "Film Oynatıcı"
-                color: root.textPrimary
-                font.pixelSize: 12
-                font.bold: true
-            }
-        }
-
-        Rectangle {
-            anchors.centerIn: parent
-            width: Math.min(parent.width - 56, compactWindow ? 340 : 420)
-            height: compactWindow ? 184 : 204
-            radius: 24
-            color: "#df0c111a"
-            border.width: 1
-            border.color: "#2effffff"
-            visible: root.showCenterState
-
-            Column {
-                anchors.fill: parent
-                anchors.margins: 20
-                spacing: 10
-
-                Text {
-                    text: root.controller && root.controller.state === "error" ? "Film kaynağı açılamadı" : "Film hazırlanıyor"
-                    color: root.textPrimary
-                    font.pixelSize: 24
-                    font.bold: true
-                }
-
-                Text {
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    text: root.controller && root.controller.lastError.length
-                          ? root.controller.lastError
-                          : "Native VOD kaynağı açılıyor. İlk kare geldikten sonra poster otomatik gizlenecek."
-                    color: root.controller && root.controller.state === "error" ? "#ffb2b8" : root.textMuted
-                    font.pixelSize: 14
-                }
-
-                Row {
-                    spacing: 10
-
-                    HeaderButton {
-                        text: "Tekrar Dene"
-                        accent: true
-                        visible: root.controller && root.controller.state === "error"
-                        onClicked: if (root.controller) root.controller.retryCurrent()
-                    }
-
-                    HeaderButton {
-                        text: "Kapat"
-                        onClicked: root.closeRequested()
-                    }
-                }
+            if (root.controller.state === "paused" ||
+                root.controller.state === "stopped" ||
+                root.controller.state === "ended" ||
+                root.controller.state === "error") {
+                root.controlsVisible = true
+                controlsHideTimer.stop()
+                overlayGeometrySyncTimer.restart()
             }
         }
     }
@@ -468,12 +354,78 @@ Rectangle {
         target: root.Window.window
         ignoreUnknownSignals: true
 
-        function onXChanged() { root.scheduleOverlaySync() }
-        function onYChanged() { root.scheduleOverlaySync() }
-        function onWidthChanged() { root.scheduleOverlaySync() }
-        function onHeightChanged() { root.scheduleOverlaySync() }
-        function onVisibilityChanged() { root.scheduleOverlaySync() }
-        function onVisibleChanged() { root.scheduleOverlaySync() }
+        function onActiveChanged() {
+            if (!root.Window.window || !root.Window.window.active) {
+                controlsHideTimer.stop()
+                overlayGeometrySyncTimer.stop()
+                if (overlayWindow) {
+                    overlayWindow.visible = false
+                }
+                return
+            }
+            overlayGeometrySyncTimer.restart()
+        }
+    }
+
+    Rectangle { anchors.fill: parent; color: "#05070b" }
+
+    Item {
+        anchors.fill: parent
+        anchors.margins: root.windowIsFullscreen ? 0 : (root.compactWindow ? 18 : 26)
+
+        Rectangle {
+            id: viewport
+            anchors.fill: parent
+            radius: root.windowIsFullscreen ? 0 : 30
+            color: "#000000"
+            border.width: root.windowIsFullscreen ? 0 : 1
+            border.color: "#1cffffff"
+            clip: true
+            onXChanged: overlayGeometrySyncTimer.restart()
+            onYChanged: overlayGeometrySyncTimer.restart()
+            onWidthChanged: overlayGeometrySyncTimer.restart()
+            onHeightChanged: overlayGeometrySyncTimer.restart()
+            onVisibleChanged: overlayGeometrySyncTimer.restart()
+
+            Loader {
+                id: videoSurfaceLoader
+                anchors.fill: parent
+                active: root.surfaceActive
+                visible: active
+                sourceComponent: root.videoSurfaceComponent
+                onLoaded: {
+                    if (!item) return
+                    item.controller = root.controller
+                    item.slotIndex = 0
+                    if (item.syncSurfaceBinding) item.syncSurfaceBinding()
+                }
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                acceptedButtons: Qt.LeftButton
+                onEntered: root.showControls()
+                onPositionChanged: root.showControls()
+                onPressed: root.showControls()
+                onDoubleClicked: { root.toggleWindowFullscreenRequested(); root.showControls() }
+                onClicked: {
+                    if (root.controller && root.playbackStarted && !root.showStatusOverlay) {
+                        root.togglePlayback()
+                    }
+                }
+            }
+
+            Image {
+                id: posterImage
+                anchors.fill: parent
+                source: root.artworkUrl
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+                cache: true
+                visible: root.posterVisible
+            }
+        }
     }
 
     Window {
@@ -486,12 +438,6 @@ Rectangle {
         width: 1
         height: 1
 
-        onVisibleChanged: {
-            if (!visible) {
-                root.audioMenuOpen = false
-            }
-        }
-
         Item {
             anchors.fill: parent
 
@@ -502,296 +448,259 @@ Rectangle {
                 onEntered: root.showControls()
                 onPositionChanged: root.showControls()
                 onPressed: root.showControls()
-                onDoubleClicked: {
-                    root.showControls()
-                    root.toggleWindowFullscreenRequested()
-                }
+                onDoubleClicked: { root.toggleWindowFullscreenRequested(); root.showControls() }
                 onClicked: {
-                    root.audioMenuOpen = false
-                    root.showControls()
-                }
-            }
-
-            Rectangle {
-                anchors.fill: parent
-                color: "#00000000"
-            }
-
-            Rectangle {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: 180
-                visible: root.controlsVisible
-                color: "#00000000"
-
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    height: 132
-                    gradient: Gradient {
-                        GradientStop { position: 0.0; color: "#00000000" }
-                        GradientStop { position: 1.0; color: "#d7000000" }
+                    if (root.controller && root.playbackStarted && !root.showStatusOverlay) {
+                        root.togglePlayback()
                     }
                 }
             }
 
             Rectangle {
-                id: audioMenuPanel
-                anchors.right: bottomBar.right
-                anchors.bottom: bottomBar.top
-                anchors.bottomMargin: 10
-                width: 240
-                radius: 18
-                color: "#c90d131c"
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 64, root.compactWindow ? 360 : 460)
+                height: root.compactWindow ? 170 : 186
+                radius: 24
+                color: "#d0121720"
                 border.width: 1
-                border.color: "#2effffff"
-                visible: root.controlsVisible && root.audioMenuOpen && root.audioTrackItems.length > 0
-
+                border.color: root.controller && root.controller.state === "error" ? "#34ff7d86" : "#2effffff"
+                visible: root.showStatusOverlay && !root.playbackStarted
                 Column {
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 8
-
-                    Repeater {
-                        model: root.audioTrackItems
-
-                        Rectangle {
-                            required property var modelData
-                            width: parent.width
-                            height: 42
-                            radius: 12
-                            color: root.controller && root.controller.selectedAudioTrackId === modelData.id ? "#1b2634" : audioTrackMouse.containsMouse ? "#141d29" : "#0c121a"
-                            border.width: 1
-                            border.color: root.controller && root.controller.selectedAudioTrackId === modelData.id ? "#7cb6ff" : "#1affffff"
-
-                            Text {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.verticalCenter: parent.verticalCenter
-                                anchors.leftMargin: 14
-                                anchors.rightMargin: 14
-                                text: (modelData.title || modelData.language || "Ses parçası").toString()
-                                color: "#f7f8fb"
-                                font.pixelSize: 13
-                                elide: Text.ElideRight
-                            }
-
-                            MouseArea {
-                                id: audioTrackMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (root.controller) {
-                                        root.controller.selectAudioTrack(modelData.id)
-                                    }
-                                    root.audioMenuOpen = false
-                                    root.showControls()
-                                }
-                            }
-                        }
+                    anchors.margins: 22
+                    spacing: 12
+                    BusyIndicator { running: root.controller && root.controller.state !== "error"; visible: running }
+                    Text { text: root.controller && root.controller.state === "error" ? `${root.contentLabel} açılamadı` : `${root.contentLabel} hazırlanıyor`; color: root.textPrimary; font.pixelSize: 24; font.bold: true }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: root.controller && root.controller.lastError.length ? root.controller.lastError : `${root.contentLabel} bağlanıyor. İlk kare geldiğinde oynatıcı aktif hale gelir.`
+                        color: root.controller && root.controller.state === "error" ? "#ffd2d7" : root.textMuted
+                        font.pixelSize: 13
                     }
                 }
             }
 
             Rectangle {
-                id: bottomBar
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.topMargin: root.windowIsFullscreen ? 18 : 14
+                anchors.rightMargin: root.windowIsFullscreen ? 18 : 14
+                width: 56
+                height: 56
+                radius: 28
+                color: root.windowIsFullscreen ? "#82101822" : "#a1101822"
+                border.width: 1
+                border.color: "#26ffffff"
+                opacity: root.overlayChromeVisible ? 1.0 : 0.0
+                visible: opacity > 0.0
+                z: 3
+                Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+
+                RoundButton {
+                    id: closeButton
+                    anchors.fill: parent
+                    anchors.margins: 5
+                    flat: true
+                    focusPolicy: Qt.NoFocus
+                    hoverEnabled: true
+                    onClicked: root.closeRequested()
+                    background: Rectangle {
+                        radius: width / 2
+                        color: closeButton.down ? "#44ff2432" : (closeButton.hovered ? "#2fff2432" : "transparent")
+                    }
+                    contentItem: PlayerIcon {
+                        name: "close"
+                        strokeColor: "#ffffff"
+                        anchors.centerIn: parent
+                    }
+                }
+            }
+
+            Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                anchors.leftMargin: root.windowIsFullscreen ? 24 : 18
-                anchors.rightMargin: root.windowIsFullscreen ? 24 : 18
-                anchors.bottomMargin: root.windowIsFullscreen ? 24 : 18
-                height: root.compactWindow ? 102 : 112
-                radius: 24
-                color: "#bf0a1016"
+                anchors.leftMargin: root.windowIsFullscreen ? 18 : 14
+                anchors.rightMargin: root.windowIsFullscreen ? 18 : 14
+                anchors.bottomMargin: root.windowIsFullscreen ? 18 : 14
+                height: 94
+                radius: 26
+                color: root.windowIsFullscreen ? "#82101822" : "#a1101822"
                 border.width: 1
-                border.color: "#2effffff"
-                visible: root.controlsVisible
+                border.color: "#26ffffff"
+                opacity: root.overlayChromeVisible ? 1.0 : 0.0
+                visible: opacity > 0.0
+                Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: root.compactWindow ? 14 : 16
-                    spacing: 12
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
+                    anchors.topMargin: 14
+                    anchors.bottomMargin: 14
+                    spacing: 10
 
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 12
-
-                        Text {
-                            text: root.formatClock(root.currentPosition)
-                            color: root.textPrimary
-                            font.pixelSize: 13
-                            font.bold: true
-                        }
-
+                        Text { text: root.formatClock(timelineSlider.pressed ? root.seekPreviewSeconds : (root.controller ? root.controller.positionSeconds : 0)); color: root.textPrimary; font.pixelSize: 13; font.bold: true }
                         Slider {
-                            id: seekSlider
+                            id: timelineSlider
                             Layout.fillWidth: true
                             from: 0
-                            to: root.progressMaximum
-                            value: root.draggingSeek ? root.pendingSeekSeconds : (root.controller ? root.controller.positionSeconds : 0)
+                            to: Math.max(1, root.controller ? root.controller.durationSeconds : 0)
+                            value: pressed ? root.seekPreviewSeconds : (root.controller ? root.controller.positionSeconds : 0)
                             enabled: root.controller && root.controller.durationSeconds > 0
-
-                            onMoved: {
-                                root.draggingSeek = true
-                                root.pendingSeekSeconds = value
-                                root.showControls()
-                            }
-
-                            onPressedChanged: {
-                                root.showControls()
-                                if (pressed) {
-                                    root.draggingSeek = true
-                                    root.pendingSeekSeconds = value
-                                    return
-                                }
-                                if (root.controller) {
-                                    root.controller.seekTo(value)
-                                }
-                                root.draggingSeek = false
-                            }
-
+                            onPressedChanged: { root.showControls(); if (pressed) root.seekPreviewSeconds = root.controller ? root.controller.positionSeconds : 0; else if (root.controller) root.controller.seekTo(root.seekPreviewSeconds) }
+                            onMoved: { root.seekPreviewSeconds = value; root.showControls() }
                             background: Rectangle {
-                                x: seekSlider.leftPadding
-                                y: seekSlider.topPadding + seekSlider.availableHeight / 2 - height / 2
-                                width: seekSlider.availableWidth
+                                x: timelineSlider.leftPadding
+                                y: timelineSlider.topPadding + timelineSlider.availableHeight / 2 - height / 2
+                                width: timelineSlider.availableWidth
                                 height: 6
                                 radius: 3
-                                color: "#22ffffff"
-
-                                Rectangle {
-                                    width: seekSlider.visualPosition * parent.width
-                                    height: parent.height
-                                    radius: 3
-                                    color: root.accentColor
-                                }
+                                color: "#2bffffff"
+                                Rectangle { width: timelineSlider.visualPosition * parent.width; height: parent.height; radius: 3; color: "#ff2432" }
                             }
-
                             handle: Rectangle {
-                                x: seekSlider.leftPadding + seekSlider.visualPosition * (seekSlider.availableWidth - width)
-                                y: seekSlider.topPadding + seekSlider.availableHeight / 2 - height / 2
-                                width: 16
-                                height: 16
-                                radius: 8
+                                x: timelineSlider.leftPadding + timelineSlider.visualPosition * (timelineSlider.availableWidth - width)
+                                y: timelineSlider.topPadding + timelineSlider.availableHeight / 2 - height / 2
+                                implicitWidth: 18
+                                implicitHeight: 18
+                                radius: 9
                                 color: "#ffffff"
-                                border.width: 1
-                                border.color: "#44ffffff"
+                                border.width: 2
+                                border.color: "#ff2432"
                             }
                         }
-
-                        Text {
-                            text: root.formatClock(root.controller ? root.controller.durationSeconds : 0)
-                            color: root.textMuted
-                            font.pixelSize: 13
-                            font.bold: true
-                        }
+                        Text { text: root.formatClock(root.controller ? root.controller.durationSeconds : 0); color: root.textPrimary; font.pixelSize: 13; font.bold: true }
                     }
 
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 10
 
-                        OverlayButton {
-                            text: root.controller && root.controller.paused ? "Play" : "Pause"
-                            accent: true
-                            enabled: root.controller !== null
-                            onClicked: if (root.controller) root.controller.togglePause()
+                        RoundButton {
+                            id: playPauseButton
+                            enabled: root.controller && root.controller.state !== "idle" && root.controller.state !== "opening"
+                            focusPolicy: Qt.NoFocus
+                            hoverEnabled: true
+                            implicitWidth: 46
+                            implicitHeight: 46
+                            flat: true
+                            onClicked: root.togglePlayback()
+                            background: Rectangle {
+                                radius: width / 2
+                                color: root.accentFill(playPauseButton)
+                            }
+                            contentItem: Item {
+                                anchors.fill: parent
+
+                                PlayerIcon {
+                                    visible: root.playbackPausedVisual
+                                    name: "play"
+                                    strokeColor: "#ffffff"
+                                    anchors.centerIn: parent
+                                }
+
+                                PlayerIcon {
+                                    visible: !root.playbackPausedVisual
+                                    name: "pause"
+                                    strokeColor: "#ffffff"
+                                    anchors.centerIn: parent
+                                }
+                            }
                         }
 
-                        OverlayButton {
-                            text: root.controller && (root.controller.muted || root.controller.volume <= 0) ? "Ses Aç" : "Sessiz"
-                            enabled: root.controller !== null
-                            onClicked: if (root.controller) root.controller.toggleMuted()
+                        RoundButton {
+                            id: muteButton
+                            enabled: root.controller
+                            focusPolicy: Qt.NoFocus
+                            hoverEnabled: true
+                            implicitWidth: 46
+                            implicitHeight: 46
+                            flat: true
+                            onClicked: {
+                                if (root.controller) {
+                                    root.controller.toggleMuted()
+                                }
+                                root.showControls()
+                            }
+                            background: Rectangle {
+                                radius: width / 2
+                                color: root.secondaryFill(muteButton, false)
+                                border.width: 1
+                                border.color: root.secondaryBorder(muteButton, false)
+                            }
+                            contentItem: PlayerIcon {
+                                name: root.controller && (root.controller.muted || root.controller.volume <= 0) ? "muted" : "volume"
+                                strokeColor: "#ffffff"
+                                anchors.centerIn: parent
+                            }
                         }
 
                         Slider {
                             id: volumeSlider
-                            Layout.preferredWidth: root.compactWindow ? 120 : 160
+                            Layout.preferredWidth: root.windowIsFullscreen ? 190 : 160
                             from: 0
                             to: 1
                             value: root.controller && root.controller.muted ? 0 : (root.controller ? root.controller.volume : 1)
-                            stepSize: 0.01
-                            enabled: root.controller !== null
-
-                            onMoved: {
-                                if (root.controller) {
-                                    root.controller.setVolume(value)
-                                }
-                                root.showControls()
-                            }
-
+                            enabled: root.controller
+                            onMoved: { if (root.controller) root.controller.setVolume(value); root.showControls() }
                             onPressedChanged: root.showControls()
-
                             background: Rectangle {
                                 x: volumeSlider.leftPadding
                                 y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
                                 width: volumeSlider.availableWidth
                                 height: 6
                                 radius: 3
-                                color: "#22ffffff"
-
-                                Rectangle {
-                                    width: volumeSlider.visualPosition * parent.width
-                                    height: parent.height
-                                    radius: 3
-                                    color: root.accentColor
-                                }
+                                color: "#2bffffff"
+                                Rectangle { width: volumeSlider.visualPosition * parent.width; height: parent.height; radius: 3; color: "#ff2432" }
                             }
-
                             handle: Rectangle {
                                 x: volumeSlider.leftPadding + volumeSlider.visualPosition * (volumeSlider.availableWidth - width)
                                 y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
-                                width: 16
-                                height: 16
-                                radius: 8
+                                implicitWidth: 18
+                                implicitHeight: 18
+                                radius: 9
                                 color: "#ffffff"
-                                border.width: 1
-                                border.color: "#44ffffff"
+                                border.width: 2
+                                border.color: "#ff2432"
                             }
                         }
 
                         Rectangle {
-                            Layout.preferredWidth: 68
-                            Layout.preferredHeight: 38
-                            radius: 19
-                            color: "#6b151d28"
+                            Layout.preferredWidth: 64
+                            Layout.preferredHeight: 36
+                            radius: 18
+                            color: "#72111a25"
                             border.width: 1
                             border.color: "#24ffffff"
+                            Text { anchors.centerIn: parent; text: root.volumePercent + "%"; color: root.textPrimary; font.pixelSize: 12; font.bold: true }
+                        }
 
-                            Text {
+                        Item { Layout.fillWidth: true }
+
+                        RoundButton {
+                            id: fullscreenButton
+                            focusPolicy: Qt.NoFocus
+                            hoverEnabled: true
+                            implicitWidth: 46
+                            implicitHeight: 46
+                            flat: true
+                            onClicked: { root.toggleWindowFullscreenRequested(); root.showControls() }
+                            background: Rectangle {
+                                radius: width / 2
+                                color: root.secondaryFill(fullscreenButton, false)
+                                border.width: 1
+                                border.color: root.secondaryBorder(fullscreenButton, false)
+                            }
+                            contentItem: PlayerIcon {
+                                name: root.windowIsFullscreen ? "fullscreen-exit" : "fullscreen"
+                                strokeColor: "#ffffff"
                                 anchors.centerIn: parent
-                                text: `${root.volumePercent}%`
-                                color: root.textPrimary
-                                font.pixelSize: 12
-                                font.bold: true
                             }
-                        }
-
-                        Item {
-                            Layout.fillWidth: true
-                        }
-
-                        OverlayButton {
-                            text: "Dil"
-                            visible: root.audioTrackItems.length > 0
-                            enabled: visible
-                            onClicked: {
-                                root.audioMenuOpen = !root.audioMenuOpen
-                                root.showControls()
-                            }
-                        }
-
-                        OverlayButton {
-                            text: root.windowIsFullscreen ? "Pencereli" : "Tam Ekran"
-                            onClicked: root.toggleWindowFullscreenRequested()
-                        }
-
-                        OverlayButton {
-                            text: "Kapat"
-                            onClicked: root.closeRequested()
                         }
                     }
                 }
@@ -799,41 +708,27 @@ Rectangle {
         }
     }
 
+    Connections {
+        target: root.Window.window
+        ignoreUnknownSignals: true
+        function onXChanged() { overlayGeometrySyncTimer.restart() }
+        function onYChanged() { overlayGeometrySyncTimer.restart() }
+        function onWidthChanged() { overlayGeometrySyncTimer.restart() }
+        function onHeightChanged() { overlayGeometrySyncTimer.restart() }
+        function onVisibilityChanged() { overlayGeometrySyncTimer.restart() }
+        function onVisibleChanged() { overlayGeometrySyncTimer.restart() }
+    }
+
+    Timer { id: overlayGeometrySyncTimer; interval: 16; repeat: false; onTriggered: root.syncOverlayWindowGeometry() }
     Timer {
         id: controlsHideTimer
         interval: 3000
         repeat: false
         onTriggered: {
-            if (!root.keepControlsVisible) {
+            if (root.autoHideEnabled) {
                 root.controlsVisible = false
-                root.scheduleOverlaySync()
+                overlayGeometrySyncTimer.restart()
             }
-        }
-    }
-
-    Timer {
-        id: overlayGeometrySyncTimer
-        interval: 0
-        repeat: false
-        onTriggered: root.syncOverlayWindowGeometry()
-    }
-
-    Connections {
-        target: root.controller
-
-        function onVolumeChanged() {
-            root.showControls()
-        }
-
-        function onMutedChanged() {
-            root.showControls()
-        }
-
-        function onStateChanged() {
-            if (root.controller && root.controller.state === "playing") {
-                root.draggingSeek = false
-            }
-            root.showControls()
         }
     }
 }

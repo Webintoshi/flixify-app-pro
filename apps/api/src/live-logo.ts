@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
+import sharp from "sharp";
 import { env } from "./env.js";
 
 export const LIVE_LOGO_PROXY_PATH = "/artwork/live-logo";
@@ -10,6 +11,25 @@ export const LIVE_LOGO_PROXY_MAX_REDIRECTS = 3;
 export const LIVE_LOGO_PROXY_MAX_BYTES = 2 * 1024 * 1024;
 
 const LIVE_LOGO_PROXY_PURPOSE = "live-logo";
+const ARTWORK_PROXY_ACCEPT_HEADER =
+  "image/jpeg,image/png,image/webp,image/gif,image/apng,image/svg+xml,image/*;q=0.8,*/*;q=0.5";
+const SAFE_NATIVE_ARTWORK_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/svg+xml",
+  "image/bmp",
+  "image/x-icon",
+  "image/vnd.microsoft.icon",
+  "image/tiff",
+  "image/x-tga",
+  "image/x-portable-bitmap",
+  "image/x-portable-graymap",
+  "image/x-portable-pixmap",
+  "image/x-portable-anymap",
+  "image/wbmp"
+]);
 const blockedAddressList = new BlockList();
 
 blockedAddressList.addAddress("0.0.0.0", "ipv4");
@@ -274,6 +294,40 @@ function isRedirectStatus(statusCode: number) {
   return statusCode === 301 || statusCode === 302 || statusCode === 303 || statusCode === 307 || statusCode === 308;
 }
 
+function normalizeArtworkContentType(contentType: string) {
+  return contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+}
+
+async function normalizeArtworkForNativeClient(body: Buffer, contentType: string) {
+  const normalizedContentType = normalizeArtworkContentType(contentType);
+  if (!normalizedContentType.startsWith("image/")) {
+    throw new LiveLogoProxyError("Logo kaynagi gorsel donmedi.", 502);
+  }
+
+  if (SAFE_NATIVE_ARTWORK_TYPES.has(normalizedContentType)) {
+    return {
+      body,
+      contentType,
+      transformed: false
+    };
+  }
+
+  try {
+    const convertedBody = await sharp(body, { animated: true }).png().toBuffer();
+    return {
+      body: convertedBody,
+      contentType: "image/png",
+      transformed: true
+    };
+  } catch {
+    return {
+      body,
+      contentType,
+      transformed: false
+    };
+  }
+}
+
 export async function fetchLiveLogoFromUpstream(
   sourceUrl: string,
   options: {
@@ -301,7 +355,7 @@ export async function fetchLiveLogoFromUpstream(
         redirect: "manual",
         signal: abortController.signal,
         headers: {
-          accept: "image/jpeg,image/png,image/apng,image/svg+xml,image/*;q=0.8,*/*;q=0.5"
+          accept: ARTWORK_PROXY_ACCEPT_HEADER
         }
       });
     } catch (error) {
@@ -332,7 +386,8 @@ export async function fetchLiveLogoFromUpstream(
     }
 
     const contentType = response.headers.get("content-type")?.trim() ?? "";
-    if (!contentType.toLowerCase().startsWith("image/")) {
+    const normalizedContentType = normalizeArtworkContentType(contentType);
+    if (!normalizedContentType.startsWith("image/")) {
       throw new LiveLogoProxyError("Logo kaynagi gorsel donmedi.", 502);
     }
 
@@ -350,11 +405,13 @@ export async function fetchLiveLogoFromUpstream(
       throw new LiveLogoProxyError("Logo dosyasi cok buyuk.", 502);
     }
 
+    const normalizedArtwork = await normalizeArtworkForNativeClient(body, contentType);
+
     return {
-      body,
-      contentType,
-      etag: response.headers.get("etag"),
-      lastModified: response.headers.get("last-modified")
+      body: normalizedArtwork.body,
+      contentType: normalizedArtwork.contentType,
+      etag: normalizedArtwork.transformed ? null : response.headers.get("etag"),
+      lastModified: normalizedArtwork.transformed ? null : response.headers.get("last-modified")
     };
   }
 

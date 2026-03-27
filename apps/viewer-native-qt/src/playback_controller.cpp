@@ -20,6 +20,8 @@ namespace {
 
 constexpr qint64 kLiveSourceCacheTtlMs = 30'000;
 constexpr qint64 kLiveIssueWindowMs = 30'000;
+constexpr double kLiveInlineFillOverscanFactor = 1.06;
+constexpr double kLiveFullscreenFillOverscanFactor = 1.0;
 
 QString extractReplyMessage(const QByteArray &body, const QString &fallback) {
   const QJsonDocument document = QJsonDocument::fromJson(body);
@@ -32,6 +34,48 @@ QString extractReplyMessage(const QByteArray &body, const QString &fallback) {
 
   const QString text = QString::fromUtf8(body).trimmed();
   return text.isEmpty() ? fallback : text;
+}
+
+double parseAspectRatioString(const QString &value) {
+  const QString normalized = value.trimmed();
+  if (normalized.isEmpty()) {
+    return 0.0;
+  }
+
+  const QStringList tokens = normalized.split(QChar(':'), Qt::SkipEmptyParts);
+  if (tokens.size() == 2) {
+    bool numeratorOk = false;
+    bool denominatorOk = false;
+    const double numerator = tokens[0].toDouble(&numeratorOk);
+    const double denominator = tokens[1].toDouble(&denominatorOk);
+    if (numeratorOk && denominatorOk && numerator > 0.0 && denominator > 0.0) {
+      return numerator / denominator;
+    }
+  }
+
+  bool ratioOk = false;
+  const double ratio = normalized.toDouble(&ratioOk);
+  return ratioOk && ratio > 0.0 ? ratio : 0.0;
+}
+
+double videoDisplayAspectRatio(libvlc_media_player_t *player, const QSize &videoSize) {
+  if (!player || !videoSize.isValid() || videoSize.width() <= 0 || videoSize.height() <= 0) {
+    return 0.0;
+  }
+
+  const double fallbackRatio =
+    static_cast<double>(videoSize.width()) / static_cast<double>(videoSize.height());
+
+  char *aspectRaw = libvlc_video_get_aspect_ratio(player);
+  if (!aspectRaw) {
+    return fallbackRatio;
+  }
+
+  const QString aspectString = QString::fromUtf8(aspectRaw);
+  libvlc_free(aspectRaw);
+
+  const double parsedRatio = parseAspectRatioString(aspectString);
+  return parsedRatio > 0.0 ? parsedRatio : fallbackRatio;
 }
 
 bool isAuthStatusCode(const QNetworkReply *reply) {
@@ -161,6 +205,10 @@ QString PlaybackController::videoFillMode() const {
   return m_videoFillMode;
 }
 
+bool PlaybackController::liveFullscreenActive() const {
+  return m_liveFullscreenActive;
+}
+
 int PlaybackController::activeVideoSlot() const {
   return m_activeVideoSlot;
 }
@@ -174,6 +222,17 @@ void PlaybackController::setVideoFillMode(const QString &mode) {
   QSettings settings;
   settings.setValue(QStringLiteral("player/videoFillMode"), m_videoFillMode);
   emit videoFillModeChanged();
+  updateVideoCrop(0);
+  updateVideoCrop(1);
+}
+
+void PlaybackController::setLiveFullscreenActive(bool active) {
+  if (m_liveFullscreenActive == active) {
+    return;
+  }
+
+  m_liveFullscreenActive = active;
+  emit liveFullscreenActiveChanged();
   updateVideoCrop(0);
   updateVideoCrop(1);
 }
@@ -509,6 +568,15 @@ void PlaybackController::setVideoSurfaceGeometry(int slotIndex, int width, int h
   updateVideoCrop(slotIndex);
 }
 
+void PlaybackController::refreshVideoLayout() {
+  for (int slotIndex = 0; slotIndex < static_cast<int>(m_playerSlots.size()); ++slotIndex) {
+    if (libvlc_media_player_t *player = playerForSlot(slotIndex)) {
+      libvlc_video_set_crop_geometry(player, nullptr);
+    }
+    updateVideoCrop(slotIndex);
+  }
+}
+
 QSize PlaybackController::getVideoSize(libvlc_media_player_t *player) const {
   if (!player) {
     return QSize();
@@ -544,17 +612,37 @@ void PlaybackController::updateVideoCrop(int slotIndex) {
   }
 
   const double surfaceRatio = static_cast<double>(slot.surfaceWidth) / static_cast<double>(slot.surfaceHeight);
-  const double videoRatio = static_cast<double>(videoSize.width()) / static_cast<double>(videoSize.height());
+  const double displayRatio = videoDisplayAspectRatio(player, videoSize);
+  const double pixelAspectRatio =
+    displayRatio > 0.0
+      ? displayRatio / (static_cast<double>(videoSize.width()) / static_cast<double>(videoSize.height()))
+      : 1.0;
 
   int cropX = 0, cropY = 0, cropW = videoSize.width(), cropH = videoSize.height();
 
-  if (videoRatio > surfaceRatio) {
-    cropW = qRound(videoSize.height() * surfaceRatio);
+  if (displayRatio > surfaceRatio) {
+    cropW = qRound((static_cast<double>(videoSize.height()) * surfaceRatio) / pixelAspectRatio);
     cropX = (videoSize.width() - cropW) / 2;
-  } else if (videoRatio < surfaceRatio) {
-    cropH = qRound(videoSize.width() / surfaceRatio);
+  } else if (displayRatio < surfaceRatio) {
+    cropH = qRound((static_cast<double>(videoSize.width()) * pixelAspectRatio) / surfaceRatio);
     cropY = (videoSize.height() - cropH) / 2;
   }
+
+  const double liveOverscanFactor =
+    isActiveLive()
+      ? (m_liveFullscreenActive ? kLiveFullscreenFillOverscanFactor : kLiveInlineFillOverscanFactor)
+      : 1.0;
+  if (liveOverscanFactor > 1.0) {
+    const int overscannedW = qMax(2, qRound(static_cast<double>(cropW) / liveOverscanFactor));
+    const int overscannedH = qMax(2, qRound(static_cast<double>(cropH) / liveOverscanFactor));
+    cropX += (cropW - overscannedW) / 2;
+    cropY += (cropH - overscannedH) / 2;
+    cropW = overscannedW;
+    cropH = overscannedH;
+  }
+
+  cropX = qBound(0, cropX, qMax(0, videoSize.width() - cropW));
+  cropY = qBound(0, cropY, qMax(0, videoSize.height() - cropH));
 
   const QString cropGeometry = QStringLiteral("%1x%2+%3+%4").arg(cropW).arg(cropH).arg(cropX).arg(cropY);
   const QByteArray cropBytes = cropGeometry.toUtf8();

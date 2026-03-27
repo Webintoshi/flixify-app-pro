@@ -294,6 +294,32 @@ function getUserSnapshot(detail) {
   };
 }
 
+function formatCryptoAssetLabel(assetId) {
+  const normalized = String(assetId ?? "").trim().toLowerCase();
+  const labels = {
+    "usdt-trc20": "USDT (TRC20)",
+    tron: "TRX",
+    sol: "SOL",
+    btc: "BTC",
+    usdc: "USDC"
+  };
+  return labels[normalized] ?? (normalized || "-");
+}
+
+function formatPaymentMethodLabel(paymentMethodId, cryptoAssetId = null) {
+  const normalized = String(paymentMethodId ?? "").trim().toLowerCase();
+  if (normalized === "bank-transfer-eft") {
+    return "Banka Havale / EFT";
+  }
+  if (normalized === "crypto") {
+    return cryptoAssetId ? `Kripto / ${formatCryptoAssetLabel(cryptoAssetId)}` : "Kripto";
+  }
+  if (normalized === "bank-card") {
+    return "Banka Karti";
+  }
+  return normalized || "-";
+}
+
 function buildCallbackData(...parts) {
   const data = parts.join(":");
   if (data.length > CALLBACK_MAX_LENGTH) {
@@ -307,6 +333,7 @@ function createDefaultNotifierState() {
     version: 1,
     bootstrapped: false,
     knownPendingUserIds: [],
+    knownPendingPaymentRequestIds: [],
     lastSyncAt: null
   };
 }
@@ -330,6 +357,9 @@ function sanitizeNotifierState(value) {
     version: 1,
     bootstrapped: Boolean(value.bootstrapped),
     knownPendingUserIds: dedupeIds(Array.isArray(value.knownPendingUserIds) ? value.knownPendingUserIds : []),
+    knownPendingPaymentRequestIds: dedupeIds(
+      Array.isArray(value.knownPendingPaymentRequestIds) ? value.knownPendingPaymentRequestIds : []
+    ),
     lastSyncAt: typeof value.lastSyncAt === "string" ? value.lastSyncAt : null
   };
 }
@@ -558,6 +588,12 @@ async function listAllPendingUsers() {
   return aggregatedItems;
 }
 
+async function listPendingPaymentRequests() {
+  const payload = await flixifyRequest("/admin/payment-requests");
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  return items.filter((item) => String(item?.status ?? "").trim() === "pending-review");
+}
+
 async function listFlixifyPackages() {
   return flixifyRequest("/admin/packages");
 }
@@ -600,6 +636,37 @@ function resolvePanelCredentials(userDetail) {
   return {
     username: code,
     password: code
+  };
+}
+
+function normalizePanelLine(panelLine, requestedCredentials) {
+  const line = panelLine && typeof panelLine === "object" ? panelLine : {};
+
+  const username =
+    String(
+      line.username ??
+        line.user_name ??
+        line.line_username ??
+        line.lineUsername ??
+        requestedCredentials.username
+    ).trim() || requestedCredentials.username;
+  const password =
+    String(
+      line.password ??
+        line.user_password ??
+        line.line_password ??
+        line.linePassword ??
+        requestedCredentials.password
+    ).trim() || requestedCredentials.password;
+  const id =
+    String(line.id ?? line.line_id ?? line.lineId ?? line.user_id ?? line.userId ?? "-").trim() || "-";
+
+  return {
+    ...line,
+    id,
+    username,
+    password,
+    exp_date: line.exp_date ?? line.expDate ?? line.expires_at ?? line.expiresAt ?? null
   };
 }
 
@@ -730,6 +797,19 @@ function buildUserCardKeyboard(userId, page) {
   };
 }
 
+function buildPaymentNotificationKeyboard(userId) {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: "\u{1F464} Kullanici Detayi",
+          callback_data: buildCallbackData("detail", 1, userId)
+        }
+      ]
+    ]
+  };
+}
+
 function buildDetailKeyboard(userId, page) {
   return {
     inline_keyboard: [
@@ -842,6 +922,22 @@ function renderUserCardText(detail) {
     `\u{23F3} <b>Kalan:</b> <b>${escapeHtml(snapshot.remainingLabel)}</b>`,
     "",
     "Asagidaki butonlardan birini secin."
+  ].join("\n");
+}
+
+function renderPaymentRequestText(paymentRequest, detail) {
+  const snapshot = getUserSnapshot(detail);
+  const packageTitle = String(paymentRequest?.packageTitle ?? "-").trim() || "-";
+  const paymentMethod = formatPaymentMethodLabel(paymentRequest?.paymentMethodId, paymentRequest?.cryptoAssetId);
+  const createdAt = paymentRequest?.createdAt ?? null;
+
+  return [
+    "\u{1F4B8} <b>Yeni Odeme Bildirimi</b>",
+    "",
+    `\u{1F464} <b>Kullanici Kodu:</b> <code>${escapeHtml(snapshot.code)}</code>`,
+    `\u{1F39F}\u{FE0F} <b>Paket:</b> <b>${escapeHtml(packageTitle)}</b>`,
+    `\u{1F4B3} <b>Odeme Yontemi:</b> <b>${escapeHtml(paymentMethod)}</b>`,
+    `\u{1F552} <b>Tarih:</b> ${escapeHtml(formatDate(createdAt))}`
   ].join("\n");
 }
 
@@ -1038,18 +1134,23 @@ async function assignPackageToUser(chatId, userId, page, packageKey, messageId =
     messageId
   );
 
-  const panelLine = await createPanelLine(detail, packageConfig);
+  const requestedCredentials = resolvePanelCredentials(detail);
+  const panelLine = normalizePanelLine(
+    await createPanelLine(detail, packageConfig),
+    requestedCredentials
+  );
 
   try {
     await attachM3UCredentials(userId, {
-      username: panelLine.username,
-      password: panelLine.password
+      username: requestedCredentials.username,
+      password: requestedCredentials.password
     });
     await activateFlixifySubscription(userId, packageConfig);
+    const updatedDetail = await getUserDetail(userId);
 
     return upsertMessage(
       chatId,
-      renderSuccessText(detail, packageConfig, panelLine),
+      renderSuccessText(updatedDetail, packageConfig, panelLine),
       {
         parse_mode: "HTML",
         reply_markup: buildResultKeyboard(userId, page)
@@ -1092,6 +1193,19 @@ async function notifyNewUser(userId) {
   });
 }
 
+async function notifyPaymentRequest(paymentRequest) {
+  const userId = String(paymentRequest?.userId ?? "").trim();
+  if (!userId) {
+    return;
+  }
+
+  const detail = await getUserDetail(userId);
+  await bot.sendMessage(config.telegramAdminId, renderPaymentRequestText(paymentRequest, detail), {
+    parse_mode: "HTML",
+    reply_markup: buildPaymentNotificationKeyboard(userId)
+  });
+}
+
 async function pollNewUsers({ seedOnly = false } = {}) {
   if (notifierTickInFlight) {
     return;
@@ -1100,15 +1214,24 @@ async function pollNewUsers({ seedOnly = false } = {}) {
   notifierTickInFlight = true;
 
   try {
-    const items = await listAllPendingUsers();
+    const [items, paymentRequests] = await Promise.all([
+      listAllPendingUsers(),
+      listPendingPaymentRequests()
+    ]);
     const knownIds = new Set(notifierState.knownPendingUserIds);
+    const knownPaymentRequestIds = new Set(notifierState.knownPendingPaymentRequestIds);
     const currentIds = dedupeIds(items.map((item) => item?.id));
+    const currentPaymentRequestIds = dedupeIds(paymentRequests.map((item) => item?.id));
 
     if (seedOnly || !notifierState.bootstrapped) {
       notifierState = {
         ...notifierState,
         bootstrapped: true,
         knownPendingUserIds: dedupeIds([...notifierState.knownPendingUserIds, ...currentIds]),
+        knownPendingPaymentRequestIds: dedupeIds([
+          ...notifierState.knownPendingPaymentRequestIds,
+          ...currentPaymentRequestIds
+        ]),
         lastSyncAt: new Date().toISOString()
       };
       await saveNotifierState();
@@ -1119,6 +1242,16 @@ async function pollNewUsers({ seedOnly = false } = {}) {
       .filter((item) => {
         const pendingUserId = String(item?.id ?? "").trim();
         return pendingUserId.length > 0 && !knownIds.has(pendingUserId);
+      })
+        .sort((left, right) => {
+          const leftTime = new Date(left?.createdAt ?? 0).getTime();
+          const rightTime = new Date(right?.createdAt ?? 0).getTime();
+          return leftTime - rightTime;
+        });
+    const freshPaymentRequests = paymentRequests
+      .filter((item) => {
+        const paymentRequestId = String(item?.id ?? "").trim();
+        return paymentRequestId.length > 0 && !knownPaymentRequestIds.has(paymentRequestId);
       })
       .sort((left, right) => {
         const leftTime = new Date(left?.createdAt ?? 0).getTime();
@@ -1140,10 +1273,28 @@ async function pollNewUsers({ seedOnly = false } = {}) {
       }
     }
 
+    for (const item of freshPaymentRequests) {
+      const paymentRequestId = String(item?.id ?? "").trim();
+      if (!paymentRequestId) {
+        continue;
+      }
+
+      try {
+        await notifyPaymentRequest(item);
+        knownPaymentRequestIds.add(paymentRequestId);
+      } catch (error) {
+        console.error(
+          `telegram-panel-bot notifier failed for payment request ${paymentRequestId}:`,
+          normalizeErrorMessage(error)
+        );
+      }
+    }
+
     notifierState = {
       ...notifierState,
       bootstrapped: true,
       knownPendingUserIds: dedupeIds([...knownIds, ...currentIds]),
+      knownPendingPaymentRequestIds: dedupeIds([...knownPaymentRequestIds, ...currentPaymentRequestIds]),
       lastSyncAt: new Date().toISOString()
     };
     await saveNotifierState();
@@ -1350,9 +1501,21 @@ process.on("SIGTERM", async () => {
   process.exit(0);
 });
 
-startNotifier()
-  .then(() => {
-    console.log("telegram-panel-bot started");
+process.on("unhandledRejection", (error) => {
+  console.error("telegram-panel-bot unhandled rejection:", normalizeErrorMessage(error));
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("telegram-panel-bot uncaught exception:", normalizeErrorMessage(error));
+});
+
+Promise.resolve()
+  .then(async () => {
+    const me = await bot.getMe();
+    await startNotifier();
+    console.log(
+      `telegram-panel-bot started as @${me?.username || me?.first_name || me?.id} for admin ${config.telegramAdminId}`
+    );
   })
   .catch(async (error) => {
     console.error("telegram-panel-bot failed to start:", normalizeErrorMessage(error));

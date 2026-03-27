@@ -110,7 +110,11 @@ public:
   Q_INVOKABLE void loadMoreMovies();
   Q_INVOKABLE void fetchSeriesCatalog(int page = 1, int pageSize = 200, const QString &search = QString());
   Q_INVOKABLE void fetchAllCatalogs(const QString &search = QString(), int livePageSize = 300);
-  Q_INVOKABLE void requestPayment(const QString &packageSlug);
+  Q_INVOKABLE void requestPayment(
+    const QString &packageSlug,
+    const QString &paymentMethodId,
+    const QString &cryptoAssetId = QString()
+  );
   Q_INVOKABLE void requestTrial(const QString &note = QString());
   Q_INVOKABLE bool copyText(const QString &value) const;
   Q_INVOKABLE QString saveTextFile(const QString &nameHint, const QString &content) const;

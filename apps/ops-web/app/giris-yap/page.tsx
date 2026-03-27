@@ -27,6 +27,7 @@ type PublicSettingsResponse = {
 
 const storageKey = "flixify-public-session";
 const authPrefillCodeKey = "flixify-auth-prefill-code";
+const installationIdStorageKey = "flixify-installation-id";
 const fallbackWhatsappUrl =
   process.env.NEXT_PUBLIC_SUPPORT_WHATSAPP ??
   process.env.PUBLIC_SUPPORT_WHATSAPP ??
@@ -56,6 +57,25 @@ function formatCodeDisplay(value: string) {
     parts.push(cleaned.slice(i, i + 4));
   }
   return parts.join(" ");
+}
+
+function getInstallationId() {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  const existing = window.localStorage.getItem(installationIdStorageKey)?.trim();
+  if (existing) {
+    return existing;
+  }
+
+  const nextId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `web-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
+
+  window.localStorage.setItem(installationIdStorageKey, nextId);
+  return nextId;
 }
 
 // Eye icon component - crossed out when code is visible (click to hide)
@@ -190,7 +210,8 @@ export default function LoginPage() {
         body: {
           code: normalizeCode(code),
           deviceName: "Flixify Public Web",
-          platform: "web"
+          platform: "web",
+          installationId: getInstallationId()
         }
       });
 

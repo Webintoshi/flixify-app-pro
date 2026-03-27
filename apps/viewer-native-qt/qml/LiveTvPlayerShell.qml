@@ -25,7 +25,14 @@ Rectangle {
     readonly property bool keepControlsVisible: audioMenuOpen || overlayVolumeSlider.pressed
     readonly property var audioTrackItems: controller && controller.audioTracks ? controller.audioTracks : []
     readonly property int volumePercent: Math.round(((controller && controller.muted) ? 0 : (controller ? controller.volume : 1)) * 100)
-    readonly property bool overlayWindowActive: showVideoSurface && viewport.visible && viewport.width > 1 && viewport.height > 1
+    readonly property bool overlayWindowActive: showVideoSurface
+                                              && viewport.visible
+                                              && viewport.width > 1
+                                              && viewport.height > 1
+                                              && root.Window.window
+                                              && root.Window.window.visible
+                                              && root.Window.window.active
+                                              && Qt.application.state === Qt.ApplicationActive
     readonly property string stateText: !controller
                                         ? "HAZIR"
                                         : controller.state === "playing"
@@ -55,9 +62,12 @@ Rectangle {
     onShowVideoSurfaceChanged: {
         if (!showVideoSurface) {
             controlsHideTimer.stop()
+            overlayGeometrySyncTimer.stop()
             controlsVisible = true
             audioMenuOpen = false
-            scheduleOverlaySync()
+            if (overlayWindow) {
+                overlayWindow.visible = false
+            }
             return
         }
         showControls()
@@ -72,6 +82,38 @@ Rectangle {
         }
         if (showVideoSurface) {
             controlsHideTimer.restart()
+        }
+    }
+
+    onVisibleChanged: {
+        if (!visible) {
+            controlsHideTimer.stop()
+            overlayGeometrySyncTimer.stop()
+            audioMenuOpen = false
+            if (overlayWindow) {
+                overlayWindow.visible = false
+            }
+        }
+    }
+
+    onOverlayWindowActiveChanged: {
+        if (!overlayWindow) {
+            return
+        }
+        if (!overlayWindowActive) {
+            overlayGeometrySyncTimer.stop()
+            audioMenuOpen = false
+            overlayWindow.visible = false
+            return
+        }
+        scheduleOverlaySync()
+    }
+
+    Component.onDestruction: {
+        controlsHideTimer.stop()
+        overlayGeometrySyncTimer.stop()
+        if (overlayWindow) {
+            overlayWindow.visible = false
         }
     }
 
@@ -265,7 +307,7 @@ Rectangle {
 
             Text {
                 width: parent.width
-                text: "Aramayi temizleyin veya baska bir kategori secin."
+                text: "Aramayı temizleyin veya başka bir kategori seçin."
                 color: "#b1bac9"
                 font.pixelSize: 14
                 horizontalAlignment: Text.AlignHCenter
@@ -281,7 +323,7 @@ Rectangle {
 
             Text {
                 width: parent.width
-                text: "Bu kanali acmak icin aktif paket gerekiyor"
+                text: "Bu kanalı açmak için aktif paket gerekiyor"
                 color: "#f7f8fb"
                 font.pixelSize: 30
                 font.family: "Space Grotesk"
@@ -292,7 +334,7 @@ Rectangle {
 
             Text {
                 width: parent.width
-                text: "Sag listeden baska kanal secin ya da paket durumunuzu guncelleyin."
+                text: "Sağ listeden başka kanal seçin ya da paket durumunuzu güncelleyin."
                 color: "#b1bac9"
                 font.pixelSize: 14
                 horizontalAlignment: Text.AlignHCenter
@@ -312,6 +354,18 @@ Rectangle {
         function onHeightChanged() { root.scheduleOverlaySync() }
         function onVisibilityChanged() { root.scheduleOverlaySync() }
         function onVisibleChanged() { root.scheduleOverlaySync() }
+        function onActiveChanged() {
+            if (!root.Window.window || !root.Window.window.active) {
+                root.controlsHideTimer.stop()
+                root.overlayGeometrySyncTimer.stop()
+                root.audioMenuOpen = false
+                if (overlayWindow) {
+                    overlayWindow.visible = false
+                }
+                return
+            }
+            root.scheduleOverlaySync()
+        }
     }
 
     Window {
