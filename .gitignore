@@ -27,3 +27,6 @@ output
 supabase/.temp
 
 coolify/.env.production
+logs/*.log
+data/telegram-panel-bot-state.json
+data/telegram-panel-bot-heartbeat.json

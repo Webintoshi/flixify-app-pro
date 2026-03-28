@@ -9,6 +9,10 @@ on:
   pull_request:
     branches: [ main, master ]
 
+concurrency:
+  group: native-qt-release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   QT_VERSION: '6.8.0'
   BUILD_TYPE: Release
@@ -16,7 +20,7 @@ env:
 jobs:
   build:
     runs-on: windows-latest
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -82,9 +86,12 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && github.event_name == 'push'
+
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
     - name: Download artifacts
       uses: actions/download-artifact@v4
       with:
@@ -100,28 +107,30 @@ jobs:
         echo "Version: $VERSION"
 
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: v${{ steps.get_version.outputs.VERSION }}
         name: Flixify Pro v${{ steps.get_version.outputs.VERSION }}
         body: |
           ## Flixify Pro Windows Release v${{ steps.get_version.outputs.VERSION }}
-          
-          ### Değişiklikler
-          - Otomatik build
-          
+
+          ### Degisiklikler
+          - Native Qt istemcisi icin otomatik Windows build ve paketleme
+
           ### Kurulum
-          1. `Flixify-Pro-Setup-*-x64.exe` dosyasını indirin
-          2. Kurulum sihirbazını çalıştırın
-          3. Uygulamayı başlatın
-          
+          1. `Flixify-Pro-Setup-*-x64.exe` dosyasini indirin
+          2. Kurulum sihirbazini calistirin
+          3. Uygulamayi baslatin
+
           ### Sistem Gereksinimleri
           - Windows 10/11 64-bit
           - Visual C++ Redistributable 2022
         files: |
           artifacts/FlixifyNativeQt-Windows-x64/**/*
           artifacts/FlixifyNativeQt-Windows-Full/**/*
+        append_body: true
         fail_on_unmatched_files: false
+        overwrite_files: true
         draft: false
         prerelease: false
       env:

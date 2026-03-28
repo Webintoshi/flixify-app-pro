@@ -8,51 +8,261 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function existingPath(candidates) {
   for (const candidate of candidates) {
-    if (candidate && fs.existsSync(candidate)) {
-      return candidate;
+    if (!candidate) {
+      continue;
+    }
+
+    const resolved = path.resolve(candidate);
+    if (fs.existsSync(resolved)) {
+      return resolved;
     }
   }
+
   return null;
 }
 
-export function resolveAppRoot() {
-  return path.resolve(__dirname, "..");
-}
-
-export function resolvePreset(defaultWin = "windows-x64-debug", defaultOther = "macos-universal-release") {
-  const presetArgIndex = process.argv.findIndex((value) => value === "--preset");
-  if (presetArgIndex >= 0 && process.argv[presetArgIndex + 1]) {
-    return process.argv[presetArgIndex + 1];
+function commandExists(command, args = ["--version"]) {
+  if (!command) {
+    return false;
   }
 
-  return process.env.FLIXIFY_NATIVE_QT_PRESET || (process.platform === "win32" ? defaultWin : defaultOther);
+  const result = spawnSync(command, args, {
+    stdio: "ignore",
+    shell: false
+  });
+
+  return !result.error && result.status === 0;
 }
 
-function resolveCmakeTool(executableName) {
-  return existingPath([
-    process.env[executableName.toUpperCase().replace(".", "_")],
-    path.join(process.env.APPDATA ?? "", "Python", "Python314", "Scripts", executableName)
-  ]);
+function captureStdout(command, args) {
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    shell: false
+  });
+
+  if (result.error || result.status !== 0) {
+    return null;
+  }
+
+  return result.stdout.trim() || null;
+}
+
+function normalizeQtRoot(candidate) {
+  if (!candidate) {
+    return null;
+  }
+
+  const resolved = path.resolve(candidate);
+  const normalized = path.normalize(resolved);
+  const knownSuffixes = [
+    path.join("lib", "cmake", "Qt6"),
+    path.join("lib64", "cmake", "Qt6")
+  ];
+
+  for (const suffix of knownSuffixes) {
+    if (normalized.endsWith(suffix)) {
+      return normalized.slice(0, -suffix.length - 1);
+    }
+  }
+
+  if (fs.existsSync(path.join(normalized, "bin"))) {
+    return normalized;
+  }
+
+  return null;
+}
+
+function compareVersionNames(left, right) {
+  const leftParts = left.split(".").map((item) => Number.parseInt(item, 10) || 0);
+  const rightParts = right.split(".").map((item) => Number.parseInt(item, 10) || 0);
+  const length = Math.max(leftParts.length, rightParts.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const leftValue = leftParts[index] ?? 0;
+    const rightValue = rightParts[index] ?? 0;
+    if (leftValue !== rightValue) {
+      return rightValue - leftValue;
+    }
+  }
+
+  return 0;
+}
+
+function findQtInstallations(baseDir, platformFolders) {
+  if (!baseDir || !fs.existsSync(baseDir)) {
+    return [];
+  }
+
+  const roots = [];
+  const versionDirs = fs
+    .readdirSync(baseDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort(compareVersionNames);
+
+  for (const versionDir of versionDirs) {
+    for (const platformFolder of platformFolders) {
+      const candidate = normalizeQtRoot(path.join(baseDir, versionDir, platformFolder));
+      if (candidate && !roots.includes(candidate)) {
+        roots.push(candidate);
+      }
+    }
+  }
+
+  return roots;
+}
+
+function resolveToolBinary(baseName, windowsFallbacks = []) {
+  const envNames = [
+    `${baseName.toUpperCase()}_BIN`,
+    `${baseName.toUpperCase()}_EXECUTABLE`,
+    `${baseName.toUpperCase()}_PATH`
+  ];
+  const executableNames = process.platform === "win32" ? [`${baseName}.exe`, baseName] : [baseName];
+  const envCandidates = envNames.flatMap((name) => {
+    const value = process.env[name];
+    if (!value) {
+      return [];
+    }
+
+    if (fs.existsSync(value)) {
+      return [path.resolve(value)];
+    }
+
+    return [value];
+  });
+
+  for (const candidate of [...envCandidates, ...windowsFallbacks]) {
+    if (!candidate) {
+      continue;
+    }
+
+    if (fs.existsSync(candidate)) {
+      return path.resolve(candidate);
+    }
+
+    if (commandExists(candidate)) {
+      return candidate;
+    }
+  }
+
+  for (const executableName of executableNames) {
+    if (commandExists(executableName)) {
+      return executableName;
+    }
+  }
+
+  return null;
+}
+
+function normalizeLibVlcRoot(candidate) {
+  if (!candidate) {
+    return null;
+  }
+
+  let resolved = path.resolve(candidate);
+  if (resolved.endsWith(".app")) {
+    resolved = path.join(resolved, "Contents", "MacOS");
+  }
+
+  if (
+    process.platform === "darwin" &&
+    path.basename(resolved) === "lib" &&
+    fs.existsSync(path.join(resolved, "libvlc.dylib"))
+  ) {
+    resolved = path.dirname(resolved);
+  }
+
+  return resolved;
+}
+
+function libVlcRootLooksValid(candidate) {
+  if (!candidate) {
+    return false;
+  }
+
+  if (process.platform === "win32") {
+    return (
+      fs.existsSync(path.join(candidate, "libvlc.dll")) ||
+      fs.existsSync(path.join(candidate, "lib", "libvlc.dll"))
+    );
+  }
+
+  if (process.platform === "darwin") {
+    return (
+      fs.existsSync(path.join(candidate, "lib", "libvlc.dylib")) ||
+      fs.existsSync(path.join(candidate, "libvlc.dylib"))
+    );
+  }
+
+  return (
+    fs.existsSync(path.join(candidate, "lib", "libvlc.so")) ||
+    fs.existsSync(path.join(candidate, "libvlc.so"))
+  );
 }
 
 function resolveQtRoot() {
-  return (
-    process.env.QT_ROOT ||
-    existingPath([
-      "C:\\Qt\\6.8.2\\msvc2022_64",
-      "C:\\Qt\\6.8.2\\mingw_64"
-    ])
-  );
+  const derivedFromQt6Dir = normalizeQtRoot(process.env.Qt6_DIR ?? process.env.QT6_DIR ?? process.env.QT_DIR);
+  const homeQtDir = path.join(os.homedir(), "Qt");
+  const macPlatformFolders = ["macos", "clang_64"];
+  const windowsPlatformFolders = ["msvc2022_64", "mingw_64"];
+
+  const candidates = [
+    normalizeQtRoot(process.env.QT_ROOT),
+    normalizeQtRoot(process.env.QTDIR),
+    derivedFromQt6Dir
+  ];
+
+  if (process.platform === "win32") {
+    candidates.push(...findQtInstallations("C:\\Qt", windowsPlatformFolders));
+  } else if (process.platform === "darwin") {
+    candidates.push(...findQtInstallations(homeQtDir, macPlatformFolders));
+    const brewQtPrefix = captureStdout("brew", ["--prefix", "qt"]);
+    candidates.push(normalizeQtRoot(brewQtPrefix));
+  } else {
+    candidates.push(normalizeQtRoot(captureStdout("brew", ["--prefix", "qt"])));
+    candidates.push(normalizeQtRoot("/usr/local/opt/qt"));
+    candidates.push(normalizeQtRoot("/opt/homebrew/opt/qt"));
+  }
+
+  for (const candidate of candidates) {
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function resolveLibVlcRoot() {
-  return (
-    process.env.LIBVLC_ROOT ||
-    existingPath([
-      "C:\\Program Files\\VideoLAN\\VLC",
-      "C:\\Program Files (x86)\\VideoLAN\\VLC"
-    ])
-  );
+  const candidates = [normalizeLibVlcRoot(process.env.LIBVLC_ROOT)];
+
+  if (process.platform === "win32") {
+    candidates.push(
+      normalizeLibVlcRoot("C:\\Program Files\\VideoLAN\\VLC"),
+      normalizeLibVlcRoot("C:\\Program Files (x86)\\VideoLAN\\VLC")
+    );
+  } else if (process.platform === "darwin") {
+    candidates.push(
+      normalizeLibVlcRoot("/Applications/VLC.app"),
+      normalizeLibVlcRoot(path.join(os.homedir(), "Applications", "VLC.app"))
+    );
+  } else {
+    candidates.push(
+      normalizeLibVlcRoot("/usr/lib/vlc"),
+      normalizeLibVlcRoot("/usr/local/lib/vlc"),
+      normalizeLibVlcRoot("/opt/homebrew/Cellar/vlc")
+    );
+  }
+
+  for (const candidate of candidates) {
+    if (candidate && libVlcRootLooksValid(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function resolveVcVars() {
@@ -101,14 +311,46 @@ function resolveMsvcEnvironment(baseEnv) {
     }
     env[line.slice(0, separatorIndex)] = line.slice(separatorIndex + 1);
   }
+
   return env;
+}
+
+function resolveToolDirectory(binary) {
+  if (!binary) {
+    return null;
+  }
+
+  if (!binary.includes(path.sep) && !binary.includes("/")) {
+    return null;
+  }
+
+  return path.dirname(binary);
+}
+
+export function resolveAppRoot() {
+  return path.resolve(__dirname, "..");
+}
+
+export function resolvePreset(defaultWin = "windows-x64-debug", defaultOther = "macos-universal-release") {
+  const presetArgIndex = process.argv.findIndex((value) => value === "--preset");
+  if (presetArgIndex >= 0 && process.argv[presetArgIndex + 1]) {
+    return process.argv[presetArgIndex + 1];
+  }
+
+  return process.env.FLIXIFY_NATIVE_QT_PRESET || (process.platform === "win32" ? defaultWin : defaultOther);
 }
 
 export function resolveNativeQtToolchain() {
   const appRoot = resolveAppRoot();
-  const cmakeBinary = resolveCmakeTool("cmake.exe");
-  const cpackBinary = resolveCmakeTool("cpack.exe");
-  const ninjaBinary = resolveCmakeTool("ninja.exe");
+  const cmakeBinary = resolveToolBinary("cmake", [
+    path.join(process.env.APPDATA ?? "", "Python", "Python314", "Scripts", "cmake.exe")
+  ]);
+  const cpackBinary = resolveToolBinary("cpack", [
+    path.join(process.env.APPDATA ?? "", "Python", "Python314", "Scripts", "cpack.exe")
+  ]);
+  const ninjaBinary = resolveToolBinary("ninja", [
+    path.join(process.env.APPDATA ?? "", "Python", "Python314", "Scripts", "ninja.exe")
+  ]);
   const qtRoot = resolveQtRoot();
   const libVlcRoot = resolveLibVlcRoot();
   const nsisRoot = resolveNsisRoot();
@@ -136,7 +378,14 @@ export function resolveNativeQtToolchain() {
     FLIXIFY_API_BASE_URL: process.env.FLIXIFY_API_BASE_URL || "https://api.flixify.pro"
   };
   const env = resolveMsvcEnvironment(baseEnv);
-  env.PATH = [path.dirname(cmakeBinary), path.dirname(ninjaBinary), path.join(qtRoot, "bin"), nsisRoot, env.PATH]
+
+  env.PATH = [
+    resolveToolDirectory(cmakeBinary),
+    resolveToolDirectory(ninjaBinary),
+    path.join(qtRoot, "bin"),
+    process.platform === "win32" ? nsisRoot : null,
+    env.PATH
+  ]
     .filter(Boolean)
     .join(path.delimiter);
   env.CMAKE_PREFIX_PATH = [qtRoot, env.CMAKE_PREFIX_PATH].filter(Boolean).join(path.delimiter);

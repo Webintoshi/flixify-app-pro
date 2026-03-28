@@ -3,6 +3,7 @@
 #include <QIcon>
 #include <QFile>
 #include <QFileInfo>
+#include <QScreen>
 #include <QTextStream>
 #include <QQuickWindow>
 #include <QQmlApplicationEngine>
@@ -28,6 +29,34 @@ constexpr DWORD kDwmUseImmersiveDarkMode = 20;
 constexpr DWORD kDwmBorderColor = 34;
 constexpr DWORD kDwmCaptionColor = 35;
 constexpr DWORD kDwmTextColor = 36;
+
+QSize chooseDesktopWindowSize(const QRect &availableGeometry) {
+  static const QSize kProfiles[] = {
+    QSize(1600, 900),
+    QSize(1280, 720),
+    QSize(1024, 576)
+  };
+
+  for (const QSize &profile : kProfiles) {
+    if (profile.width() <= availableGeometry.width() && profile.height() <= availableGeometry.height()) {
+      return profile;
+    }
+  }
+
+  int fallbackWidth = availableGeometry.width();
+  int fallbackHeight = (fallbackWidth * 9) / 16;
+  if (fallbackHeight > availableGeometry.height()) {
+    fallbackHeight = availableGeometry.height();
+    fallbackWidth = (fallbackHeight * 16) / 9;
+  }
+
+  fallbackWidth = qMax(960, fallbackWidth);
+  fallbackHeight = qMax(540, fallbackHeight);
+  fallbackWidth = qMin(fallbackWidth, availableGeometry.width());
+  fallbackHeight = qMin(fallbackHeight, availableGeometry.height());
+
+  return QSize(fallbackWidth, fallbackHeight);
+}
 
 void applyWindowsCaptionStyle(QQuickWindow *window) {
   if (!window) {
@@ -112,6 +141,15 @@ int main(int argc, char *argv[]) {
   VodPlaybackController playbackController(&apiClient);
   LivePlaybackController livePlaybackController(&apiClient);
 
+  QSize desktopWindowSize(1600, 600);
+#if defined(Q_OS_WIN)
+  if (QScreen *primaryScreen = app.primaryScreen()) {
+    desktopWindowSize = chooseDesktopWindowSize(primaryScreen->availableGeometry());
+  } else {
+    desktopWindowSize = QSize(1280, 720);
+  }
+#endif
+
   QQmlApplicationEngine engine;
   const QString startupLogPath =
     QCoreApplication::applicationDirPath() + QStringLiteral("/flixify-startup.log");
@@ -138,6 +176,8 @@ int main(int argc, char *argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("seriesPlaybackController"), &seriesPlaybackController);
   engine.rootContext()->setContextProperty(QStringLiteral("playbackController"), &playbackController);
   engine.rootContext()->setContextProperty(QStringLiteral("livePlaybackController"), &livePlaybackController);
+  engine.rootContext()->setContextProperty(QStringLiteral("desktopWindowWidth"), desktopWindowSize.width());
+  engine.rootContext()->setContextProperty(QStringLiteral("desktopWindowHeight"), desktopWindowSize.height());
   appendStartupLog(QStringLiteral("startup: loading-main-qml"));
   engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
   appendStartupLog(QStringLiteral("startup: root-count=%1").arg(engine.rootObjects().size()));
@@ -163,12 +203,11 @@ int main(int argc, char *argv[]) {
   });
 #endif
 
-  QTimer::singleShot(100, rootWindow, [rootWindow]() {
+  QTimer::singleShot(100, rootWindow, [rootWindow, desktopWindowSize]() {
 #if defined(Q_OS_WIN)
-    const QSize fixedWindowSize(1600, 900);
-    rootWindow->setMinimumSize(fixedWindowSize);
-    rootWindow->setMaximumSize(fixedWindowSize);
-    rootWindow->resize(fixedWindowSize);
+    rootWindow->setMinimumSize(desktopWindowSize);
+    rootWindow->setMaximumSize(desktopWindowSize);
+    rootWindow->resize(desktopWindowSize);
 #else
     rootWindow->resize(1600, 600);
 #endif

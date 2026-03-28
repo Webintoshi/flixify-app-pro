@@ -10,11 +10,13 @@ const DEFAULT_PENDING_PAGE_SIZE = 6;
 const DEFAULT_NOTIFY_PAGE_SIZE = 50;
 const DEFAULT_NEW_USER_POLL_SECONDS = 20;
 const DEFAULT_STATE_MAX_USERS = 5000;
+const DEFAULT_HEARTBEAT_STALE_SECONDS = 90;
 const CALLBACK_MAX_LENGTH = 64;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEFAULT_STATE_FILE = path.resolve(__dirname, "..", "data", "telegram-panel-bot-state.json");
+const DEFAULT_HEARTBEAT_FILE = path.resolve(__dirname, "..", "data", "telegram-panel-bot-heartbeat.json");
 
 const config = loadConfig();
 const bot = new TelegramBot(config.telegramBotToken, { polling: true });
@@ -27,6 +29,9 @@ let cachedAdminSession = config.flixifyAdminAccessToken
 let notifierState = createDefaultNotifierState();
 let notifierTimer = null;
 let notifierTickInFlight = false;
+let heartbeatTimer = null;
+let pollingRecoveryInFlight = false;
+let botIdentity = null;
 
 function normalizeBaseUrl(value, fallback = null) {
   if (typeof value !== "string") {
@@ -174,6 +179,11 @@ function loadConfig() {
     DEFAULT_NEW_USER_POLL_SECONDS
   );
   const stateFilePath = normalizeFilePath(process.env.TELEGRAM_PANEL_STATE_FILE, DEFAULT_STATE_FILE);
+  const heartbeatFilePath = normalizeFilePath(process.env.TELEGRAM_PANEL_HEARTBEAT_FILE, DEFAULT_HEARTBEAT_FILE);
+  const heartbeatStaleSeconds = parsePositiveInt(
+    process.env.TELEGRAM_PANEL_HEARTBEAT_STALE_SECONDS,
+    DEFAULT_HEARTBEAT_STALE_SECONDS
+  );
   const packageMap = parsePackageMap(process.env.TELEGRAM_PANEL_PACKAGE_MAP);
 
   if (!telegramBotToken) {
@@ -215,6 +225,8 @@ function loadConfig() {
     allowReassign,
     newUserPollSeconds,
     stateFilePath,
+    heartbeatFilePath,
+    heartbeatStaleSeconds,
     packageMap,
     packageMapByKey: new Map(packageMap.map((item) => [item.key, item]))
   };
@@ -379,6 +391,86 @@ async function loadNotifierState() {
 async function saveNotifierState() {
   await fs.mkdir(path.dirname(config.stateFilePath), { recursive: true });
   await fs.writeFile(config.stateFilePath, `${JSON.stringify(notifierState, null, 2)}\n`, "utf8");
+}
+
+async function writeHeartbeat(fields = {}) {
+  const payload = {
+    pid: process.pid,
+    botUsername: botIdentity?.username ?? null,
+    adminId: config.telegramAdminId,
+    isPolling: typeof bot.isPolling === "function" ? bot.isPolling() : null,
+    bootstrapped: Boolean(notifierState.bootstrapped),
+    lastSyncAt: notifierState.lastSyncAt ?? null,
+    lastHeartbeatAt: new Date().toISOString(),
+    ...fields
+  };
+
+  try {
+    await fs.mkdir(path.dirname(config.heartbeatFilePath), { recursive: true });
+    await fs.writeFile(config.heartbeatFilePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  } catch (error) {
+    console.error("telegram-panel-bot heartbeat write failed:", normalizeErrorMessage(error));
+  }
+}
+
+async function recoverPolling(reason) {
+  if (pollingRecoveryInFlight) {
+    return;
+  }
+
+  pollingRecoveryInFlight = true;
+  console.error(`telegram-panel-bot polling recovery: ${reason}`);
+  await writeHeartbeat({
+    status: "recovering",
+    recoveryReason: reason,
+    recoveryAt: new Date().toISOString()
+  });
+
+  try {
+    await bot.stopPolling({ cancel: true, reason });
+  } catch (error) {
+    console.error("telegram-panel-bot stopPolling during recovery failed:", normalizeErrorMessage(error));
+  }
+
+  try {
+    await bot.startPolling({ restart: true });
+    await writeHeartbeat({
+      status: "running",
+      recoveryReason: reason,
+      recoveredAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error("telegram-panel-bot startPolling during recovery failed:", normalizeErrorMessage(error));
+    await writeHeartbeat({
+      status: "recovery-failed",
+      recoveryReason: reason,
+      recoveryError: normalizeErrorMessage(error)
+    });
+  } finally {
+    pollingRecoveryInFlight = false;
+  }
+}
+
+async function ensureHealthyPolling() {
+  if (pollingRecoveryInFlight) {
+    return;
+  }
+
+  const isPolling = typeof bot.isPolling === "function" ? bot.isPolling() : true;
+  const lastSyncTime = notifierState.lastSyncAt ? new Date(notifierState.lastSyncAt).getTime() : 0;
+  const heartbeatAgeSeconds = lastSyncTime > 0 ? (Date.now() - lastSyncTime) / 1000 : Number.POSITIVE_INFINITY;
+
+  if (!isPolling) {
+    await recoverPolling("polling-inactive");
+    return;
+  }
+
+  if (heartbeatAgeSeconds > config.heartbeatStaleSeconds) {
+    await recoverPolling(`stale-heartbeat-${Math.round(heartbeatAgeSeconds)}s`);
+    return;
+  }
+
+  await writeHeartbeat({ status: "running" });
 }
 
 async function upsertMessage(chatId, text, options = {}, messageId = null) {
@@ -1235,6 +1327,7 @@ async function pollNewUsers({ seedOnly = false } = {}) {
         lastSyncAt: new Date().toISOString()
       };
       await saveNotifierState();
+      await writeHeartbeat({ status: "running", seedOnly: true });
       return;
     }
 
@@ -1298,8 +1391,13 @@ async function pollNewUsers({ seedOnly = false } = {}) {
       lastSyncAt: new Date().toISOString()
     };
     await saveNotifierState();
+    await writeHeartbeat({ status: "running" });
   } catch (error) {
     console.error("telegram-panel-bot notifier poll failed:", normalizeErrorMessage(error));
+    await writeHeartbeat({
+      status: "poll-failed",
+      pollError: normalizeErrorMessage(error)
+    });
   } finally {
     notifierTickInFlight = false;
   }
@@ -1307,10 +1405,14 @@ async function pollNewUsers({ seedOnly = false } = {}) {
 
 async function startNotifier() {
   notifierState = await loadNotifierState();
+  await writeHeartbeat({ status: "starting" });
   await pollNewUsers({ seedOnly: !notifierState.bootstrapped });
   notifierTimer = setInterval(() => {
     void pollNewUsers();
   }, config.newUserPollSeconds * 1000);
+  heartbeatTimer = setInterval(() => {
+    void ensureHealthyPolling();
+  }, 30_000);
 }
 
 async function stopNotifier() {
@@ -1318,6 +1420,11 @@ async function stopNotifier() {
     clearInterval(notifierTimer);
     notifierTimer = null;
   }
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+  await writeHeartbeat({ status: "stopped" });
 }
 
 bot.onText(/\/start$/, async (message) => {
@@ -1487,6 +1594,7 @@ bot.on("callback_query", async (query) => {
 
 bot.on("polling_error", (error) => {
   console.error("telegram-panel-bot polling error:", error?.message ?? error);
+  void recoverPolling(normalizeErrorMessage(error));
 });
 
 process.on("SIGINT", async () => {
@@ -1512,7 +1620,9 @@ process.on("uncaughtException", (error) => {
 Promise.resolve()
   .then(async () => {
     const me = await bot.getMe();
+    botIdentity = me ?? null;
     await startNotifier();
+    await writeHeartbeat({ status: "running" });
     console.log(
       `telegram-panel-bot started as @${me?.username || me?.first_name || me?.id} for admin ${config.telegramAdminId}`
     );
