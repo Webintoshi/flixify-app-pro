@@ -6,12 +6,14 @@ import Flixify.Native 1.0
 
 ApplicationWindow {
     id: window
-    width: 1600
-    height: Qt.platform.os === "windows" ? 900 : 600
-    minimumWidth: Qt.platform.os === "windows" ? 1600 : 980
-    minimumHeight: Qt.platform.os === "windows" ? 900 : 600
-    maximumWidth: Qt.platform.os === "windows" ? 1600 : 16777215
-    maximumHeight: Qt.platform.os === "windows" ? 900 : 16777215
+    readonly property int desktopBaseWidth: Qt.platform.os === "windows" ? Math.max(1024, Number(desktopWindowWidth) || 1600) : 1600
+    readonly property int desktopBaseHeight: Qt.platform.os === "windows" ? Math.max(576, Number(desktopWindowHeight) || 900) : 600
+    width: desktopBaseWidth
+    height: Qt.platform.os === "windows" ? desktopBaseHeight : 600
+    minimumWidth: Qt.platform.os === "windows" ? desktopBaseWidth : 980
+    minimumHeight: Qt.platform.os === "windows" ? desktopBaseHeight : 600
+    maximumWidth: Qt.platform.os === "windows" ? desktopBaseWidth : 16777215
+    maximumHeight: Qt.platform.os === "windows" ? desktopBaseHeight : 16777215
     visible: true
     title: "Flixify Pro"
     color: "#05070b"
@@ -88,7 +90,6 @@ ApplicationWindow {
     property bool registerAcknowledged: false
     property bool playerVisible: false
     property string inlinePlaybackMode: "none"
-    property bool premiumPopupDismissed: false
     property string dismissedUpdateVersion: ""
     property string selectedMovieId: ""
     property string selectedSeriesId: ""
@@ -115,6 +116,7 @@ ApplicationWindow {
     property var homeMoviePreviewCache: []
     property var homeSeriesPreviewCache: []
     property var homeLivePreviewCache: []
+    property bool lastKnownHasActiveSubscription: false
 
     onVideoFullscreenChanged: {
         livePlaybackController.liveFullscreenActive = videoFullscreen
@@ -427,7 +429,17 @@ ApplicationWindow {
     }
 
     function contactData() {
-        return apiClient.me && apiClient.me.contact ? apiClient.me.contact : ({})
+        if (apiClient.me && apiClient.me.contact) {
+            return apiClient.me.contact
+        }
+        return {
+            whatsapp: apiClient.publicSettings && apiClient.publicSettings.supportWhatsappUrl
+                ? apiClient.publicSettings.supportWhatsappUrl
+                : "",
+            telegram: apiClient.publicSettings && apiClient.publicSettings.supportTelegramUrl
+                ? apiClient.publicSettings.supportTelegramUrl
+                : ""
+        }
     }
 
     function hasLoadedUser() {
@@ -1397,7 +1409,6 @@ ApplicationWindow {
         return apiClient.authenticated &&
             Boolean(user.id) &&
             !user.hasActiveSubscription &&
-            !premiumPopupDismissed &&
             !pendingPackage &&
             !playerVisible &&
             !popupSuppressedOnScreen
@@ -1430,19 +1441,19 @@ ApplicationWindow {
         if (Qt.platform.os !== "windows") {
             return
         }
-        minimumWidth = 1600
-        minimumHeight = 900
-        maximumWidth = 1600
-        maximumHeight = 900
-        width = 1600
-        height = 900
+        minimumWidth = desktopBaseWidth
+        minimumHeight = desktopBaseHeight
+        maximumWidth = desktopBaseWidth
+        maximumHeight = desktopBaseHeight
+        width = desktopBaseWidth
+        height = desktopBaseHeight
     }
     function unlockWindowSizeForFullscreen() {
         if (Qt.platform.os !== "windows") {
             return
         }
-        minimumWidth = 1600
-        minimumHeight = 900
+        minimumWidth = desktopBaseWidth
+        minimumHeight = desktopBaseHeight
         maximumWidth = 16777215
         maximumHeight = 16777215
     }
@@ -1880,6 +1891,18 @@ ApplicationWindow {
         }
     }
 
+    Timer {
+        id: subscriptionRefreshTimer
+        interval: 15000
+        repeat: true
+        running: apiClient.authenticated
+        onTriggered: {
+            if (apiClient.authenticated && !apiClient.restoringSession) {
+                apiClient.fetchMe()
+            }
+        }
+    }
+
     Connections {
         target: apiClient
         function onAuthenticatedChanged() {
@@ -1889,11 +1912,25 @@ ApplicationWindow {
                 }
                 return
             }
+            lastKnownHasActiveSubscription = false
             if (!apiClient.restoringSession && currentScreen !== "register") {
                 currentScreen = "login"
             }
         }
-        function onLoginSucceeded() { currentScreen = "home"; premiumPopupDismissed = false; showAuthCode = false; authCode = "" }
+        function onLoginSucceeded() { currentScreen = "home"; lastKnownHasActiveSubscription = false; showAuthCode = false; authCode = "" }
+        function onMeChanged() {
+            const user = userData()
+            const hasActiveSubscription = Boolean(user && user.hasActiveSubscription)
+            if (lastKnownHasActiveSubscription !== hasActiveSubscription) {
+                if (hasActiveSubscription) {
+                    apiClient.fetchAllCatalogs()
+                    apiClient.fetchPaymentRequests()
+                } else if (lastKnownHasActiveSubscription) {
+                    closeActivePlayer()
+                }
+            }
+            lastKnownHasActiveSubscription = hasActiveSubscription
+        }
         function onMoviesChanged() {
             refreshHomePreviewContent()
         }
@@ -1911,7 +1948,7 @@ ApplicationWindow {
                 liveAutoplayTimer.restart()
             }
         }
-    function onLogoutCompleted() { currentScreen = "login"; authCode = ""; issuedCode = ""; showAuthCode = false; closeActivePlayer(); pendingPackage = null; selectedPaymentMethodId = ""; selectedCryptoAssetId = "" }
+    function onLogoutCompleted() { currentScreen = "login"; authCode = ""; issuedCode = ""; showAuthCode = false; closeActivePlayer(); pendingPackage = null; selectedPaymentMethodId = ""; selectedCryptoAssetId = ""; lastKnownHasActiveSubscription = false }
         function onNoticeChanged() { if (apiClient.notice && apiClient.notice.length) showToast(apiClient.notice, success) }
         function onRequestFailed(context, message) { showToast(message, danger) }
     }
@@ -6002,6 +6039,7 @@ ApplicationWindow {
                                 Repeater {
                                     model: paymentCryptoAssets()
                                     Rectangle {
+                                        readonly property string cryptoLogoSource: paymentCryptoAssetLogo(modelData)
                                         width: 168
                                         height: 74
                                         radius: 20
@@ -6024,13 +6062,14 @@ ApplicationWindow {
                                                 border.color: "#18ffffff"
                                                 clip: true
                                                 Image {
+                                                    id: cryptoLogoImage
                                                     anchors.fill: parent
                                                     anchors.margins: 7
-                                                    source: paymentCryptoAssetLogo(modelData)
+                                                    source: cryptoLogoSource
                                                     fillMode: Image.PreserveAspectFit
                                                     smooth: true
                                                     mipmap: true
-                                                    visible: source.length > 0 && status === Image.Ready
+                                                    visible: cryptoLogoSource.length > 0 && status === Image.Ready
                                                 }
                                                 Text {
                                                     anchors.centerIn: parent
@@ -6039,7 +6078,7 @@ ApplicationWindow {
                                                     font.pixelSize: paymentCryptoAssetSymbol(modelData).length > 3 ? 10 : 12
                                                     font.bold: true
                                                     font.family: "Space Grotesk"
-                                                    visible: !paymentCryptoAssetLogo(modelData).length
+                                                    visible: cryptoLogoSource.length === 0 || cryptoLogoImage.status === Image.Error
                                                 }
                                             }
                                             Column {
@@ -6159,7 +6198,7 @@ ApplicationWindow {
                 Column {
                     id: premiumContent
                     anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 22; spacing: 16
-                    Row { width: parent.width; Rectangle { width: 112; height: 34; radius: 17; color: "#33e50914"; Text { anchors.centerIn: parent; text: "Premium Erişim"; color: "#ffd7da"; font.pixelSize: 12; font.bold: true } } Item { width: 1; height: 1 } AppButton { text: "Kapat"; secondary: true; implicitWidth: 96; onClicked: premiumPopupDismissed = true } }
+                    Row { width: parent.width; Rectangle { width: 112; height: 34; radius: 17; color: "#33e50914"; Text { anchors.centerIn: parent; text: "Premium Erişim"; color: "#ffd7da"; font.pixelSize: 12; font.bold: true } } }
                     Text { text: "Tüm içeriklere erişmek için aktif bir paket satın alın"; color: window.textPrimary; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 34; font.family: "Space Grotesk"; font.bold: true }
                     Text { text: "Giriş başarılı. Paketiniz aktif olunca katalogların tamamı açılacak."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 15 }
                     Row {

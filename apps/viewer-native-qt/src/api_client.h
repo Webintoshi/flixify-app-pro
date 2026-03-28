@@ -23,6 +23,7 @@ class ApiClient : public QObject {
   Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
   Q_PROPERTY(QString appVersion READ appVersion CONSTANT)
   Q_PROPERTY(QVariantMap me READ me NOTIFY meChanged)
+  Q_PROPERTY(QVariantMap publicSettings READ publicSettings NOTIFY publicSettingsChanged)
   Q_PROPERTY(QVariantList packages READ packages NOTIFY packagesChanged)
   Q_PROPERTY(QVariantList paymentMethods READ paymentMethods NOTIFY paymentMethodsChanged)
   Q_PROPERTY(QVariantList paymentRequests READ paymentRequests NOTIFY paymentRequestsChanged)
@@ -57,6 +58,7 @@ public:
   QString notice() const;
   QString appVersion() const;
   QVariantMap me() const;
+  QVariantMap publicSettings() const;
   QVariantList packages() const;
   QVariantList paymentMethods() const;
   QVariantList paymentRequests() const;
@@ -87,6 +89,7 @@ public:
   );
   Q_INVOKABLE void logout();
   Q_INVOKABLE void fetchMe();
+  Q_INVOKABLE void fetchPublicSettings();
   Q_INVOKABLE void fetchPackages();
   Q_INVOKABLE void fetchPaymentMethods();
   Q_INVOKABLE void fetchPaymentRequests();
@@ -139,6 +142,7 @@ signals:
   void lastErrorChanged();
   void noticeChanged();
   void meChanged();
+  void publicSettingsChanged();
   void packagesChanged();
   void paymentMethodsChanged();
   void paymentRequestsChanged();
@@ -168,6 +172,7 @@ private:
   void setNotice(const QString &value);
   void setSuppressedUpdateVersion(const QString &value);
   void setMe(const QVariantMap &value);
+  void setPublicSettings(const QVariantMap &value);
   void setPackages(const QVariantList &value);
   void setPaymentMethods(const QVariantList &value);
   void setPaymentRequests(const QVariantList &value);
@@ -209,6 +214,7 @@ private:
   QString m_notice;
   QString m_suppressedUpdateVersion;
   QVariantMap m_me;
+  QVariantMap m_publicSettings;
   QVariantList m_packages;
   QVariantList m_paymentMethods;
   QVariantList m_paymentRequests;

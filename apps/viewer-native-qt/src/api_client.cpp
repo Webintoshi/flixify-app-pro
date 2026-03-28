@@ -318,6 +318,10 @@ QVariantMap ApiClient::me() const {
   return m_me;
 }
 
+QVariantMap ApiClient::publicSettings() const {
+  return m_publicSettings;
+}
+
 QVariantList ApiClient::packages() const {
   return m_packages;
 }
@@ -413,6 +417,7 @@ QNetworkRequest ApiClient::authorizedRequest(const QString &path) const {
 
 void ApiClient::bootstrap() {
   setLastError(QString());
+  fetchPublicSettings();
   fetchPackages();
   fetchPaymentMethods();
 
@@ -528,6 +533,7 @@ void ApiClient::logout() {
   setNotice(QString());
   setRestoringSession(false);
   emit logoutCompleted();
+  fetchPublicSettings();
   fetchPackages();
   fetchPaymentMethods();
 }
@@ -645,6 +651,26 @@ void ApiClient::fetchMe() {
     }
 
     setMe(QJsonDocument::fromJson(body).object().toVariantMap());
+  });
+}
+
+void ApiClient::fetchPublicSettings() {
+  beginRequest();
+  QNetworkReply *reply = m_network.get(makeJsonRequest(resolvedUrl(QStringLiteral("/settings/public"))));
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool ok = reply->error() == QNetworkReply::NoError;
+    reply->deleteLater();
+    endRequest();
+
+    if (!ok) {
+      const QString message = extractApiErrorMessage(body, QStringLiteral("Genel ayarlar alinamadi."));
+      setLastError(message);
+      emit requestFailed(QStringLiteral("public-settings"), message);
+      return;
+    }
+
+    setPublicSettings(QJsonDocument::fromJson(body).object().toVariantMap());
   });
 }
 
@@ -1441,6 +1467,15 @@ void ApiClient::setMe(const QVariantMap &value) {
 
   m_me = value;
   emit meChanged();
+}
+
+void ApiClient::setPublicSettings(const QVariantMap &value) {
+  if (value == m_publicSettings) {
+    return;
+  }
+
+  m_publicSettings = value;
+  emit publicSettingsChanged();
 }
 
 void ApiClient::setPackages(const QVariantList &value) {
