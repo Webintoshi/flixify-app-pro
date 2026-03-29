@@ -4,7 +4,7 @@ import path from "node:path";
 import { resolveNativeQtToolchain, resolvePreset, spawnChecked } from "./toolchain.mjs";
 
 const preset = resolvePreset("windows-x64-debug", "macos-universal-release");
-const { appRoot, env } = resolveNativeQtToolchain();
+const { appRoot, env } = resolveNativeQtToolchain(preset);
 const binaryDir = path.join(appRoot, "build", preset);
 
 const candidates =

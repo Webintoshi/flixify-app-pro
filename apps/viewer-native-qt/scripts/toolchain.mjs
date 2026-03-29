@@ -235,6 +235,77 @@ function resolveQtRoot() {
   return null;
 }
 
+function isAndroidPreset(preset) {
+  return typeof preset === "string" && preset.startsWith("android");
+}
+
+function resolveAndroidSdkRoot() {
+  return existingPath([
+    process.env.ANDROID_SDK_ROOT,
+    process.env.ANDROID_HOME,
+    path.join(os.homedir(), "AppData", "Local", "Android", "Sdk")
+  ]);
+}
+
+function resolveAndroidNdkRoot(androidSdkRoot) {
+  const explicit = existingPath([
+    process.env.ANDROID_NDK_ROOT,
+    process.env.ANDROID_NDK_HOME
+  ]);
+  if (explicit) {
+    return explicit;
+  }
+
+  if (!androidSdkRoot) {
+    return null;
+  }
+
+  const ndkBaseDir = path.join(androidSdkRoot, "ndk");
+  if (!fs.existsSync(ndkBaseDir)) {
+    return null;
+  }
+
+  return fs
+    .readdirSync(ndkBaseDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(ndkBaseDir, entry.name))
+    .sort((left, right) => compareVersionNames(path.basename(left), path.basename(right)))[0] ?? null;
+}
+
+function resolveJavaHome() {
+  const candidates = [
+    process.env.JAVA_HOME,
+    "C:\\Program Files\\Microsoft\\jdk-17.0.18.8-hotspot",
+    "C:\\Program Files\\Microsoft\\jdk-17.0.17.10-hotspot",
+    "C:\\Program Files\\Microsoft\\jdk-17.0.16.8-hotspot"
+  ];
+
+  return existingPath(candidates);
+}
+
+function resolveAndroidQtRoot(preset = "") {
+  const envQtRoot = normalizeQtRoot(process.env.QT_ANDROID_ROOT);
+  if (envQtRoot) {
+    return envQtRoot;
+  }
+
+  const preferredFolders = preset.includes("x86_64")
+    ? ["android_x86_64", "android_arm64_v8a", "android_armv7"]
+    : ["android_arm64_v8a", "android_x86_64", "android_armv7"];
+  const candidates = findQtInstallations("C:\\Qt", preferredFolders);
+  return candidates[0] ?? null;
+}
+
+function resolveQtHostRoot() {
+  const envQtHostRoot = normalizeQtRoot(process.env.QT_HOST_PATH ?? process.env.QT_HOST_ROOT);
+  if (envQtHostRoot) {
+    return envQtHostRoot;
+  }
+
+  const candidates = findQtInstallations("C:\\Qt", ["msvc2022_64", "mingw_64"]);
+  return candidates[0] ?? null;
+}
+
 function resolveLibVlcRoot() {
   const candidates = [normalizeLibVlcRoot(process.env.LIBVLC_ROOT)];
 
@@ -340,29 +411,113 @@ export function resolvePreset(defaultWin = "windows-x64-debug", defaultOther = "
   return process.env.FLIXIFY_NATIVE_QT_PRESET || (process.platform === "win32" ? defaultWin : defaultOther);
 }
 
-export function resolveNativeQtToolchain() {
+export function resolveNativeQtToolchain(preset = resolvePreset()) {
   const appRoot = resolveAppRoot();
-  const cmakeBinary = resolveToolBinary("cmake", [
-    path.join(process.env.APPDATA ?? "", "Python", "Python314", "Scripts", "cmake.exe")
-  ]);
-  const cpackBinary = resolveToolBinary("cpack", [
-    path.join(process.env.APPDATA ?? "", "Python", "Python314", "Scripts", "cpack.exe")
-  ]);
-  const ninjaBinary = resolveToolBinary("ninja", [
-    path.join(process.env.APPDATA ?? "", "Python", "Python314", "Scripts", "ninja.exe")
-  ]);
+  const androidPreset = isAndroidPreset(preset);
+  const cmakeFallbacks = [path.join(process.env.APPDATA ?? "", "Python", "Python314", "Scripts", "cmake.exe")];
+  const cpackFallbacks = [path.join(process.env.APPDATA ?? "", "Python", "Python314", "Scripts", "cpack.exe")];
+  const ninjaFallbacks = [path.join(process.env.APPDATA ?? "", "Python", "Python314", "Scripts", "ninja.exe")];
+  const rawCmakeBinary = resolveToolBinary("cmake", cmakeFallbacks);
+  const cpackBinary = androidPreset ? null : resolveToolBinary("cpack", cpackFallbacks);
+  const ninjaBinary = resolveToolBinary("ninja", ninjaFallbacks);
+  const nsisRoot = androidPreset ? null : resolveNsisRoot();
+
+  if (!ninjaBinary) {
+    throw new Error("ninja bulunamadi.");
+  }
+
+  if (androidPreset) {
+    const qtRoot = resolveAndroidQtRoot(preset);
+    const qtHostRoot = resolveQtHostRoot();
+    const androidSdkRoot = resolveAndroidSdkRoot();
+    const androidNdkRoot = resolveAndroidNdkRoot(androidSdkRoot);
+    const javaHome = resolveJavaHome();
+
+    if (!qtRoot) {
+      throw new Error("QT_ANDROID_ROOT bulunamadi.");
+    }
+    if (!qtHostRoot) {
+      throw new Error("QT_HOST_PATH bulunamadi.");
+    }
+    if (!androidSdkRoot) {
+      throw new Error("ANDROID_SDK_ROOT bulunamadi.");
+    }
+    if (!androidNdkRoot) {
+      throw new Error("ANDROID_NDK_ROOT bulunamadi.");
+    }
+    if (!javaHome) {
+      throw new Error("JAVA_HOME bulunamadi.");
+    }
+
+    const qtCmakeBinary = existingPath([
+      path.join(qtRoot, "bin", "qt-cmake.bat"),
+      path.join(qtRoot, "bin", "qt-cmake")
+    ]);
+    if (!qtCmakeBinary) {
+      throw new Error("qt-cmake Android kitinde bulunamadi.");
+    }
+
+    const androidDeployQtBinary = existingPath([
+      path.join(qtHostRoot, "bin", "androiddeployqt.exe"),
+      path.join(qtHostRoot, "bin", "androiddeployqt6.exe")
+    ]);
+    if (!androidDeployQtBinary) {
+      throw new Error("androiddeployqt bulunamadi.");
+    }
+
+    const baseEnv = {
+      ...process.env,
+      QT_ROOT: qtRoot,
+      QT_HOST_PATH: qtHostRoot,
+      JAVA_HOME: javaHome,
+      ANDROID_HOME: androidSdkRoot,
+      ANDROID_SDK_ROOT: androidSdkRoot,
+      ANDROID_NDK_ROOT: androidNdkRoot,
+      ANDROID_NDK_HOME: androidNdkRoot,
+      FLIXIFY_API_BASE_URL: process.env.FLIXIFY_API_BASE_URL || "https://api.flixify.pro"
+    };
+
+    baseEnv.PATH = [
+      path.join(qtRoot, "bin"),
+      path.join(qtHostRoot, "bin"),
+      path.join(javaHome, "bin"),
+      path.join(androidSdkRoot, "platform-tools"),
+      path.join(androidSdkRoot, "cmdline-tools", "latest", "bin"),
+      resolveToolDirectory(ninjaBinary),
+      resolveToolDirectory(rawCmakeBinary),
+      baseEnv.PATH
+    ]
+      .filter(Boolean)
+      .join(path.delimiter);
+    baseEnv.CMAKE_PREFIX_PATH = [qtRoot, baseEnv.CMAKE_PREFIX_PATH].filter(Boolean).join(path.delimiter);
+
+    return {
+      appRoot,
+      env: baseEnv,
+      cmakeBinary: qtCmakeBinary,
+      buildCmakeBinary: rawCmakeBinary,
+      cpackBinary,
+      ninjaBinary,
+      qtRoot,
+      qtHostRoot,
+      androidSdkRoot,
+      androidNdkRoot,
+      javaHome,
+      androidDeployQtBinary,
+      libVlcRoot: null,
+      nsisRoot
+    };
+  }
+
+  const cmakeBinary = rawCmakeBinary;
   const qtRoot = resolveQtRoot();
   const libVlcRoot = resolveLibVlcRoot();
-  const nsisRoot = resolveNsisRoot();
 
   if (!cmakeBinary) {
     throw new Error("cmake bulunamadi.");
   }
   if (!cpackBinary) {
     throw new Error("cpack bulunamadi.");
-  }
-  if (!ninjaBinary) {
-    throw new Error("ninja bulunamadi.");
   }
   if (!qtRoot) {
     throw new Error("QT_ROOT bulunamadi.");
@@ -394,6 +549,7 @@ export function resolveNativeQtToolchain() {
     appRoot,
     env,
     cmakeBinary,
+    buildCmakeBinary: cmakeBinary,
     cpackBinary,
     ninjaBinary,
     qtRoot,
@@ -403,10 +559,21 @@ export function resolveNativeQtToolchain() {
 }
 
 export function spawnChecked(command, args, options = {}) {
-  const result = spawnSync(command, args, {
-    stdio: "inherit",
-    ...options
-  });
+  const isWindowsBatch =
+    process.platform === "win32" &&
+    typeof command === "string" &&
+    /\.(bat|cmd)$/iu.test(command);
+
+  const result = isWindowsBatch
+    ? spawnSync(command, args, {
+        stdio: "inherit",
+        shell: true,
+        ...options
+      })
+    : spawnSync(command, args, {
+        stdio: "inherit",
+        ...options
+      });
 
   if (result.status !== 0) {
     process.exit(result.status ?? 1);

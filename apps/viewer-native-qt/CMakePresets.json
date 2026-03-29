@@ -58,8 +58,24 @@
       }
     },
     {
+      "name": "android-x86_64-release",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_SYSTEM_NAME": "Android",
+        "CMAKE_ANDROID_ARCH_ABI": "x86_64"
+      }
+    },
+    {
       "name": "android-tv-arm64-release",
       "inherits": "android-arm64-release",
+      "cacheVariables": {
+        "FLIXIFY_ANDROID_TV": "ON"
+      }
+    },
+    {
+      "name": "android-tv-x86_64-release",
+      "inherits": "android-x86_64-release",
       "cacheVariables": {
         "FLIXIFY_ANDROID_TV": "ON"
       }
@@ -83,8 +99,16 @@
       "configurePreset": "android-arm64-release"
     },
     {
+      "name": "android-x86_64-release",
+      "configurePreset": "android-x86_64-release"
+    },
+    {
       "name": "android-tv-arm64-release",
       "configurePreset": "android-tv-arm64-release"
+    },
+    {
+      "name": "android-tv-x86_64-release",
+      "configurePreset": "android-tv-x86_64-release"
     }
   ]
 }

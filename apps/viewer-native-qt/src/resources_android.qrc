@@ -1,0 +1,25 @@
+<RCC>
+  <qresource prefix="/">
+    <file alias="qml/MainAndroidTv.qml">../qml/MainAndroidTv.qml</file>
+    <file alias="qml/AndroidProfilePage.qml">../qml/AndroidProfilePage.qml</file>
+    <file alias="qml/AndroidPackagesPage.qml">../qml/AndroidPackagesPage.qml</file>
+    <file alias="qml/AndroidPaymentsPage.qml">../qml/AndroidPaymentsPage.qml</file>
+    <file alias="qml/AndroidContactPage.qml">../qml/AndroidContactPage.qml</file>
+    <file alias="qml/AndroidPlaybackController.qml">../qml/AndroidPlaybackController.qml</file>
+    <file alias="qml/AndroidVideoSurface.qml">../qml/AndroidVideoSurface.qml</file>
+    <file alias="qml/HomePage.qml">../qml/HomePage.qml</file>
+    <file alias="qml/LiveTvPlayerShell.qml">../qml/LiveTvPlayerShell.qml</file>
+    <file alias="qml/MoviePlayerShell.qml">../qml/MoviePlayerShell.qml</file>
+    <file alias="qml/MoviesPage.qml">../qml/MoviesPage.qml</file>
+    <file alias="qml/SeriesCatalogPage.qml">../qml/SeriesCatalogPage.qml</file>
+    <file alias="qml/SeriesDetailPage.qml">../qml/SeriesDetailPage.qml</file>
+    <file alias="branding/icon.png">../resources/icon.png</file>
+    <file alias="crypto/btc-logo.png">../kripto-logolar/btc-logo.png</file>
+    <file alias="crypto/sol-logo.png">../kripto-logolar/sol-logo.png</file>
+    <file alias="crypto/tether-logo.png">../kripto-logolar/tether-logo.png</file>
+    <file alias="crypto/tron-logo.png">../kripto-logolar/tron-logo.png</file>
+    <file alias="crypto/usdc-logo.png">../kripto-logolar/usdc-logo.png</file>
+    <file alias="icons/whatsapp.svg">../Whatsapp logo (1).svg</file>
+    <file alias="icons/telegram.svg">../Telegramlogo.svg</file>
+  </qresource>
+</RCC>

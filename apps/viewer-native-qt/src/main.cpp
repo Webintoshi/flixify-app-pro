@@ -13,9 +13,11 @@
 #include <QTimer>
 
 #include "api_client.h"
+#if !defined(Q_OS_ANDROID)
 #include "native_video_surface.h"
 #include "vod_playback_controller.h"
 #include "live_playback_controller.h"
+#endif
 
 #if defined(Q_OS_WIN)
 #include <windows.h>
@@ -131,15 +133,16 @@ int main(int argc, char *argv[]) {
   }
 #endif
 
-  qmlRegisterType<NativeVideoSurface>("Flixify.Native", 1, 0, "NativeVideoSurface");
-
   ApiClient apiClient;
   apiClient.setApiBaseUrl(QStringLiteral(FLIXIFY_API_BASE_URL));
 
+#if !defined(Q_OS_ANDROID)
+  qmlRegisterType<NativeVideoSurface>("Flixify.Native", 1, 0, "NativeVideoSurface");
   VodPlaybackController moviePlaybackController(&apiClient);
   VodPlaybackController seriesPlaybackController(&apiClient);
   VodPlaybackController playbackController(&apiClient);
   LivePlaybackController livePlaybackController(&apiClient);
+#endif
 
   QSize desktopWindowSize(1600, 600);
 #if defined(Q_OS_WIN)
@@ -172,14 +175,20 @@ int main(int argc, char *argv[]) {
     }
   });
   engine.rootContext()->setContextProperty(QStringLiteral("apiClient"), &apiClient);
+#if !defined(Q_OS_ANDROID)
   engine.rootContext()->setContextProperty(QStringLiteral("moviePlaybackController"), &moviePlaybackController);
   engine.rootContext()->setContextProperty(QStringLiteral("seriesPlaybackController"), &seriesPlaybackController);
   engine.rootContext()->setContextProperty(QStringLiteral("playbackController"), &playbackController);
   engine.rootContext()->setContextProperty(QStringLiteral("livePlaybackController"), &livePlaybackController);
   engine.rootContext()->setContextProperty(QStringLiteral("desktopWindowWidth"), desktopWindowSize.width());
   engine.rootContext()->setContextProperty(QStringLiteral("desktopWindowHeight"), desktopWindowSize.height());
+#endif
   appendStartupLog(QStringLiteral("startup: loading-main-qml"));
+#if defined(Q_OS_ANDROID)
+  engine.load(QUrl(QStringLiteral("qrc:/qml/MainAndroidTv.qml")));
+#else
   engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
+#endif
   appendStartupLog(QStringLiteral("startup: root-count=%1").arg(engine.rootObjects().size()));
 
   if (engine.rootObjects().isEmpty()) {
@@ -203,6 +212,7 @@ int main(int argc, char *argv[]) {
   });
 #endif
 
+#if !defined(Q_OS_ANDROID)
   QTimer::singleShot(100, rootWindow, [rootWindow, desktopWindowSize]() {
 #if defined(Q_OS_WIN)
     rootWindow->setMinimumSize(desktopWindowSize);
@@ -223,6 +233,7 @@ int main(int argc, char *argv[]) {
         .arg(rootWindow->height())
     );
   });
+#endif
 
   return app.exec();
 }

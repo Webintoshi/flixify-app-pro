@@ -10,7 +10,8 @@ const publicNavigation = [
   { href: "/", label: "Ana Sayfa" },
   { href: "/filmler", label: "Filmler" },
   { href: "/diziler", label: "Diziler" },
-  { href: "/canli-tv", label: "Canli TV" }
+  { href: "/canli-tv", label: "Canli TV" },
+  { href: "/android-tv", label: "Android TV" }
 ];
 
 const adminNavigation = [

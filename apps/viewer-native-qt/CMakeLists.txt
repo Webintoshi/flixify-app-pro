@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(FlixifyNativeQt VERSION 2.3.39 LANGUAGES CXX)
+project(FlixifyNativeQt VERSION 2.3.40 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,11 +15,13 @@ if(APPLE)
 endif()
 
 option(FLIXIFY_ENABLE_INSTALL "Enable install targets for packaging" ON)
+option(FLIXIFY_ANDROID_TV "Enable Android TV specific packaging" OFF)
 set(FLIXIFY_API_BASE_URL "$ENV{FLIXIFY_API_BASE_URL}" CACHE STRING "Flixify API base URL")
 set(LIBVLC_ROOT "$ENV{LIBVLC_ROOT}" CACHE PATH "Path to the libVLC runtime root")
 set(FLIXIFY_WINDOWS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico")
 set(FLIXIFY_MACOS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.icns")
 set(FLIXIFY_MACOS_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Info.plist.in")
+set(FLIXIFY_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android")
 
 if(FLIXIFY_API_BASE_URL STREQUAL "")
   set(FLIXIFY_API_BASE_URL "https://api.flixify.pro")
@@ -39,13 +41,18 @@ elseif(LIBVLC_ROOT STREQUAL "" AND APPLE)
   endif()
 endif()
 
-if(LIBVLC_ROOT STREQUAL "")
+if(NOT ANDROID AND LIBVLC_ROOT STREQUAL "")
   message(FATAL_ERROR "LIBVLC_ROOT tanimli degil. libVLC runtime dizini gerekli.")
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Quick Qml QuickControls2 Network)
+set(FLIXIFY_QT_COMPONENTS Core Gui Quick Qml QuickControls2 Network)
+if(ANDROID)
+  list(APPEND FLIXIFY_QT_COMPONENTS Multimedia)
+endif()
+
+find_package(Qt6 6.5 REQUIRED COMPONENTS ${FLIXIFY_QT_COMPONENTS})
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -68,17 +75,28 @@ if(WIN32)
   )
 endif()
 
-qt_add_executable(FlixifyNativeQt
+set(FLIXIFY_APP_SOURCES
   src/main.cpp
   src/api_client.cpp
-  src/libvlc_runtime.cpp
-  src/vod_playback_controller.cpp
-  src/live_playback_controller.cpp
-  src/native_video_surface.cpp
-  src/resources.qrc
-  ${FLIXIFY_MACOS_SOURCES}
-  $<$<PLATFORM_ID:Windows>:${CMAKE_CURRENT_BINARY_DIR}/windows_app.rc>
 )
+
+if(ANDROID)
+  list(APPEND FLIXIFY_APP_SOURCES
+    src/resources_android.qrc
+  )
+else()
+  list(APPEND FLIXIFY_APP_SOURCES
+    src/libvlc_runtime.cpp
+    src/vod_playback_controller.cpp
+    src/live_playback_controller.cpp
+    src/native_video_surface.cpp
+    src/resources.qrc
+    ${FLIXIFY_MACOS_SOURCES}
+    $<$<PLATFORM_ID:Windows>:${CMAKE_CURRENT_BINARY_DIR}/windows_app.rc>
+  )
+endif()
+
+qt_add_executable(FlixifyNativeQt ${FLIXIFY_APP_SOURCES})
 
 target_include_directories(FlixifyNativeQt PRIVATE src)
 
@@ -91,6 +109,13 @@ target_link_libraries(FlixifyNativeQt
     Qt6::QuickControls2
     Qt6::Network
 )
+
+if(ANDROID)
+  target_link_libraries(FlixifyNativeQt PRIVATE Qt6::Multimedia)
+  set_target_properties(FlixifyNativeQt PROPERTIES
+    QT_ANDROID_PACKAGE_SOURCE_DIR "${FLIXIFY_ANDROID_PACKAGE_SOURCE_DIR}"
+  )
+endif()
 
 if(WIN32)
   target_link_libraries(FlixifyNativeQt PRIVATE dwmapi)
@@ -116,7 +141,13 @@ set_target_properties(FlixifyNativeQt PROPERTIES
   OUTPUT_NAME "Flixify Pro"
 )
 
-if(FLIXIFY_ENABLE_INSTALL)
+if(ANDROID)
+  set_target_properties(FlixifyNativeQt PROPERTIES OUTPUT_NAME "FlixifyProTv")
+endif()
+
+qt_finalize_executable(FlixifyNativeQt)
+
+if(FLIXIFY_ENABLE_INSTALL AND NOT ANDROID)
   include(GNUInstallDirs)
   if(WIN32)
     set(CMAKE_INSTALL_BINDIR "." CACHE STRING "Install binary directory" FORCE)
@@ -202,32 +233,34 @@ if(FLIXIFY_ENABLE_INSTALL)
   endif()
 endif()
 
-set(CPACK_PACKAGE_NAME "Flixify Pro")
-set(CPACK_PACKAGE_VENDOR "Flixify")
-set(CPACK_PACKAGE_INSTALL_DIRECTORY "Flixify Pro")
-set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
-if(WIN32)
-  set(CPACK_GENERATOR "NSIS")
-  set(CPACK_PACKAGE_FILE_NAME "Flixify-Pro-Setup-${PROJECT_VERSION}-x64")
-  set(CPACK_NSIS_DISPLAY_NAME "Flixify Pro")
-  set(CPACK_NSIS_PACKAGE_NAME "Flixify Pro")
-  set(CPACK_NSIS_MUI_ICON "${FLIXIFY_WINDOWS_ICON}")
-  set(CPACK_NSIS_MUI_UNIICON "${FLIXIFY_WINDOWS_ICON}")
-  set(CPACK_NSIS_INSTALLED_ICON_NAME "Flixify Pro.exe")
-  set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
-  set(CPACK_NSIS_MUI_FINISHPAGE_RUN "Flixify Pro.exe")
-  set(CPACK_PACKAGE_EXECUTABLES "Flixify Pro" "Flixify Pro")
-  set(
-    CPACK_NSIS_EXTRA_INSTALL_COMMANDS
-    "CreateShortCut \\\"$DESKTOP\\\\Flixify Pro.lnk\\\" \\\"$INSTDIR\\\\Flixify Pro.exe\\\" \\\"\\\" \\\"$INSTDIR\\\\Flixify Pro.exe\\\" 0"
-  )
-  set(
-    CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
-    "Delete \\\"$DESKTOP\\\\Flixify Pro.lnk\\\""
-  )
-elseif(APPLE)
-  set(CPACK_GENERATOR "DragNDrop")
-  set(CPACK_PACKAGE_FILE_NAME "Flixify-Pro-${PROJECT_VERSION}-macos-universal")
-endif()
+if(NOT ANDROID)
+  set(CPACK_PACKAGE_NAME "Flixify Pro")
+  set(CPACK_PACKAGE_VENDOR "Flixify")
+  set(CPACK_PACKAGE_INSTALL_DIRECTORY "Flixify Pro")
+  set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+  if(WIN32)
+    set(CPACK_GENERATOR "NSIS")
+    set(CPACK_PACKAGE_FILE_NAME "Flixify-Pro-Setup-${PROJECT_VERSION}-x64")
+    set(CPACK_NSIS_DISPLAY_NAME "Flixify Pro")
+    set(CPACK_NSIS_PACKAGE_NAME "Flixify Pro")
+    set(CPACK_NSIS_MUI_ICON "${FLIXIFY_WINDOWS_ICON}")
+    set(CPACK_NSIS_MUI_UNIICON "${FLIXIFY_WINDOWS_ICON}")
+    set(CPACK_NSIS_INSTALLED_ICON_NAME "Flixify Pro.exe")
+    set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
+    set(CPACK_NSIS_MUI_FINISHPAGE_RUN "Flixify Pro.exe")
+    set(CPACK_PACKAGE_EXECUTABLES "Flixify Pro" "Flixify Pro")
+    set(
+      CPACK_NSIS_EXTRA_INSTALL_COMMANDS
+      "CreateShortCut \\\"$DESKTOP\\\\Flixify Pro.lnk\\\" \\\"$INSTDIR\\\\Flixify Pro.exe\\\" \\\"\\\" \\\"$INSTDIR\\\\Flixify Pro.exe\\\" 0"
+    )
+    set(
+      CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
+      "Delete \\\"$DESKTOP\\\\Flixify Pro.lnk\\\""
+    )
+  elseif(APPLE)
+    set(CPACK_GENERATOR "DragNDrop")
+    set(CPACK_PACKAGE_FILE_NAME "Flixify-Pro-${PROJECT_VERSION}-macos-universal")
+  endif()
 
-include(CPack)
+  include(CPack)
+endif()

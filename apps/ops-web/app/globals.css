@@ -3191,3 +3191,114 @@ a:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+.android-tv-page {
+  display: grid;
+  gap: 28px;
+}
+
+.android-tv-hero,
+.android-tv-downloads,
+.android-tv-guide {
+  padding: 32px;
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 11, 14, 0.84);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.28);
+}
+
+.android-tv-copy {
+  max-width: 760px;
+  display: grid;
+  gap: 18px;
+}
+
+.android-tv-kicker,
+.android-tv-badge {
+  width: fit-content;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(244, 6, 18, 0.28);
+  background: rgba(244, 6, 18, 0.12);
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.android-tv-copy h1 {
+  margin: 0;
+  font-size: clamp(2.6rem, 5vw, 4.6rem);
+  line-height: 0.96;
+}
+
+.android-tv-copy p,
+.android-tv-card p,
+.android-tv-check {
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.android-tv-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.android-tv-link {
+  padding: 12px 0;
+}
+
+.android-tv-heading {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.android-tv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.android-tv-card {
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 17, 20, 0.9);
+}
+
+.android-tv-card h3 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.android-tv-download-button {
+  width: fit-content;
+  min-width: 220px;
+}
+
+.android-tv-checklist {
+  display: grid;
+  gap: 14px;
+}
+
+.android-tv-check {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(15, 17, 20, 0.72);
+}
+
+.android-tv-check-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
