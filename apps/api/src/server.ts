@@ -492,6 +492,36 @@ function extractUpstreamStatus(errorMessage: string | null | undefined) {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+function hasOptimisticDirectPlaybackMessage(errorMessage: string | null | undefined) {
+  if (typeof errorMessage !== "string") {
+    return false;
+  }
+
+  const normalized = errorMessage.trim().toLowerCase();
+  if (!normalized.length) {
+    return false;
+  }
+
+  const patterns = [
+    "ip_ban",
+    "ip ban",
+    "not authorized",
+    "not authorised",
+    "ip address is not authorized",
+    "ip address is not authorised",
+    "subscription has expired",
+    "expired",
+    "user_expired",
+    "user expired",
+    "access denied",
+    "forbidden",
+    "unauthorized",
+    "unauthorised"
+  ];
+
+  return patterns.some((pattern) => normalized.includes(pattern));
+}
+
 async function resolveLiveSourceUrl(input: {
   baseUrl: string;
   streamPath: string;
@@ -523,6 +553,7 @@ async function resolveLiveSourceUrl(input: {
   let lastStatusCode = 0;
   let sawNetworkLikeFailure = false;
   let sawPotentialFalseNegativeHttpFailure = false;
+  let sawPotentialFalseNegativeTextualFailure = false;
   const firstCandidateUrl = candidates[0]?.url ?? null;
 
   for (const candidate of candidates) {
@@ -551,11 +582,17 @@ async function resolveLiveSourceUrl(input: {
     ) {
       sawPotentialFalseNegativeHttpFailure = true;
     }
+    if (hasOptimisticDirectPlaybackMessage(probe.errorMessage)) {
+      sawPotentialFalseNegativeTextualFailure = true;
+    }
     lastError = probe.errorMessage ?? lastError;
   }
 
   const allowOptimisticSourceAttempt =
-    Boolean(firstCandidateUrl) && (sawNetworkLikeFailure || sawPotentialFalseNegativeHttpFailure);
+    Boolean(firstCandidateUrl) &&
+    (sawNetworkLikeFailure ||
+      sawPotentialFalseNegativeHttpFailure ||
+      sawPotentialFalseNegativeTextualFailure);
   if (allowOptimisticSourceAttempt) {
     return {
       ok: true,
@@ -1799,8 +1836,10 @@ export function buildServer() {
       const transport = resolved.transport;
       const errorMessage = resolved.errorMessage;
       const upstreamStatus = extractUpstreamStatus(errorMessage);
+      const optimisticDirectMessage = hasOptimisticDirectPlaybackMessage(errorMessage);
       const skipFailureCountIncrement =
-        typeof upstreamStatus === "number" && [405, 416, 429].includes(upstreamStatus);
+        optimisticDirectMessage ||
+        (typeof upstreamStatus === "number" && [405, 416, 429].includes(upstreamStatus));
       const currentFailureCount = channel.failure_count ?? 0;
       const nextFailureCount =
         resolved.ok || skipFailureCountIncrement ? currentFailureCount : currentFailureCount + 1;
@@ -1816,8 +1855,8 @@ export function buildServer() {
       const optimisticProbeFallback =
         canAttemptPlayback &&
         !resolved.ok &&
-        typeof upstreamStatus === "number" &&
-        [401, 403, 405, 416, 429].includes(upstreamStatus);
+        (optimisticDirectMessage ||
+          (typeof upstreamStatus === "number" && [401, 403, 405, 416, 429].includes(upstreamStatus)));
 
       if (userContext.canPlay) {
         await updateLiveChannelHealth(channel.id, channel.snapshot_version, {
@@ -1877,6 +1916,7 @@ export function buildServer() {
         userContext.canPlay &&
         typeof resolved.sourceUrl === "string" &&
         (optimisticProbeFallback ||
+          optimisticDirectMessage ||
           (typeof upstreamStatus === "number" &&
             upstreamStatus !== 404 &&
             canUseAppDirectPlaybackFallback(clientRuntime, resolved.sourceUrl)))
@@ -2022,14 +2062,17 @@ export function buildServer() {
       const checkedAt = new Date().toISOString();
       const errorMessage = resolved.errorMessage;
       const upstreamStatus = extractUpstreamStatus(errorMessage);
+      const optimisticDirectMessage = hasOptimisticDirectPlaybackMessage(errorMessage);
       const allowOptimisticNativeDirect =
         !resolved.ok &&
         typeof resolved.sourceUrl === "string" &&
         canUseAppDirectPlaybackFallback("native", resolved.sourceUrl) &&
         (resolved.statusCode === 0 ||
+          optimisticDirectMessage ||
           (typeof upstreamStatus === "number" && [401, 403, 405, 416, 429].includes(upstreamStatus)));
       const skipFailureCountIncrement =
-        typeof upstreamStatus === "number" && [405, 416, 429].includes(upstreamStatus);
+        optimisticDirectMessage ||
+        (typeof upstreamStatus === "number" && [405, 416, 429].includes(upstreamStatus));
       const currentFailureCount = channel.failure_count ?? 0;
       const nextFailureCount =
         resolved.ok || skipFailureCountIncrement ? currentFailureCount : currentFailureCount + 1;

@@ -20,7 +20,7 @@ namespace {
 
 constexpr qint64 kLiveSourceCacheTtlMs = 30'000;
 constexpr qint64 kLiveIssueWindowMs = 30'000;
-constexpr double kLiveInlineFillOverscanFactor = 1.06;
+constexpr double kLiveInlineFillOverscanFactor = 1.0;
 constexpr double kLiveFullscreenFillOverscanFactor = 1.0;
 
 QString extractReplyMessage(const QByteArray &body, const QString &fallback) {

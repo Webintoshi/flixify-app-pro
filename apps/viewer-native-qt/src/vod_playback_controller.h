@@ -33,6 +33,8 @@ class VodPlaybackController : public QObject {
   Q_PROPERTY(double durationSeconds READ durationSeconds NOTIFY durationSecondsChanged)
   Q_PROPERTY(QVariantList audioTracks READ audioTracks NOTIFY audioTracksChanged)
   Q_PROPERTY(QString selectedAudioTrackId READ selectedAudioTrackId NOTIFY selectedAudioTrackIdChanged)
+  Q_PROPERTY(QVariantList subtitleTracks READ subtitleTracks NOTIFY subtitleTracksChanged)
+  Q_PROPERTY(QString selectedSubtitleTrackId READ selectedSubtitleTrackId NOTIFY selectedSubtitleTrackIdChanged)
   Q_PROPERTY(QVariantMap recommendedNextEpisode READ recommendedNextEpisode NOTIFY recommendedNextEpisodeChanged)
   Q_PROPERTY(QString videoFillMode READ videoFillMode WRITE setVideoFillMode NOTIFY videoFillModeChanged)
   Q_PROPERTY(bool liveFullscreenActive READ liveFullscreenActive WRITE setLiveFullscreenActive NOTIFY liveFullscreenActiveChanged)
@@ -58,6 +60,8 @@ public:
   double durationSeconds() const;
   QVariantList audioTracks() const;
   QString selectedAudioTrackId() const;
+  QVariantList subtitleTracks() const;
+  QString selectedSubtitleTrackId() const;
   QVariantMap recommendedNextEpisode() const;
   QString videoFillMode() const;
   bool liveFullscreenActive() const;
@@ -77,6 +81,7 @@ public:
   Q_INVOKABLE void seekTo(double seconds);
   Q_INVOKABLE void seekBy(double seconds);
   Q_INVOKABLE void selectAudioTrack(const QString &trackId);
+  Q_INVOKABLE void selectSubtitleTrack(const QString &trackId);
   Q_INVOKABLE void playRecommendedNextEpisode();
   Q_INVOKABLE void setVideoSurfaceHandle(int slotIndex, qulonglong handle);
   Q_INVOKABLE void setVideoSurfaceGeometry(int slotIndex, int width, int height);
@@ -99,6 +104,8 @@ signals:
   void durationSecondsChanged();
   void audioTracksChanged();
   void selectedAudioTrackIdChanged();
+  void subtitleTracksChanged();
+  void selectedSubtitleTrackIdChanged();
   void recommendedNextEpisodeChanged();
   void videoFillModeChanged();
   void liveFullscreenActiveChanged();
@@ -164,6 +171,8 @@ private:
   void setDurationSeconds(double value);
   void setAudioTracks(const QVariantList &value);
   void setSelectedAudioTrackId(const QString &value);
+  void setSubtitleTracks(const QVariantList &value);
+  void setSelectedSubtitleTrackId(const QString &value);
   void setRecommendedNextEpisode(const QVariantMap &value);
   void setActiveVideoSlot(int value);
 
@@ -192,6 +201,8 @@ private:
   void updateTimeline();
   void resetPlaybackMetrics();
   void clearSelectionState();
+  void refreshSubtitleTracks(int slotIndex = -1);
+  void applySelectedSubtitleTrack(int slotIndex = -1);
   void refreshRecommendedNextEpisode();
   bool isActiveLive() const;
   bool isActiveVod() const;
@@ -199,6 +210,7 @@ private:
   QString normalizedPlatformName() const;
   QString choosePreferredAudioTrackId(const QJsonArray &tracks, const QString &serverDefault, const QString &serverSelected) const;
   static QVariantList mapAudioTracks(const QJsonArray &tracks);
+  static QVariantList mapSubtitleTracks(libvlc_track_description_t *tracks, int currentTrackId);
   void updateVideoCrop(int slotIndex = -1);
   QSize getVideoSize(libvlc_media_player_t *player) const;
   libvlc_media_player_t *currentPlayer() const;
@@ -261,9 +273,12 @@ private:
   double m_pendingResumeSeconds = 0.0;
   QVariantList m_audioTracks;
   QString m_selectedAudioTrackId;
+  QVariantList m_subtitleTracks;
+  QString m_selectedSubtitleTrackId = QStringLiteral("off");
   QVariantMap m_recommendedNextEpisode;
   QJsonObject m_lastResolvedSource;
   QString m_requestedAudioTrackId;
+  QString m_requestedSubtitleTrackId = QStringLiteral("off");
   QString m_requestedLiveChannelId;
   QString m_requestedLiveTitle;
   QString m_liveCacheProfile = QStringLiteral("fast");

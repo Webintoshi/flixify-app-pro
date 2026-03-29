@@ -1,9 +1,9 @@
 {
   "platforms": {
     "windows-native-qt": {
-      "latestVersion": "2.3.26",
-      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.3.26/Flixify-Pro-Setup-2.3.26-x64.exe",
-      "notes": "Paket popupi artik kapatilamaz; uygulama giris yapmis kullanicinin aboneligini arka planda periyodik sorgular ve admin paket atadiginda cikis-giris gerekmeksizin popup otomatik kalkar."
+      "latestVersion": "2.3.39",
+      "downloadUrl": "https://github.com/Webintoshi/flixify-app-pro/releases/download/v2.3.39/Flixify-Pro-Setup-2.3.39-x64.exe",
+      "notes": "Canli TV alt kategori satirindaki Tumu secimi kaldirildi ve adult aile etiketi Adults olarak duzeltildi."
     },
     "macos-native-qt": {
       "latestVersion": "2.2.58",

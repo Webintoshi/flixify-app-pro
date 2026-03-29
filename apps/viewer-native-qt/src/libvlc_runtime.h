@@ -7,6 +7,7 @@ struct libvlc_instance_t;
 struct libvlc_media_t;
 struct libvlc_media_player_t;
 struct libvlc_event_manager_t;
+struct libvlc_track_description_t;
 
 using libvlc_time_t = qint64;
 using libvlc_event_type_t = int;
@@ -79,4 +80,14 @@ void libvlc_media_player_set_xwindow(libvlc_media_player_t *player, uint32_t win
 int libvlc_video_get_size(libvlc_media_player_t *player, unsigned int num, unsigned int *px, unsigned int *py);
 char *libvlc_video_get_aspect_ratio(libvlc_media_player_t *player);
 void libvlc_video_set_crop_geometry(libvlc_media_player_t *player, const char *geometry);
+int libvlc_video_get_spu(libvlc_media_player_t *player);
+int libvlc_video_set_spu(libvlc_media_player_t *player, int spu);
+libvlc_track_description_t *libvlc_video_get_spu_description(libvlc_media_player_t *player);
+void libvlc_track_description_list_release(libvlc_track_description_t *list);
 void libvlc_free(void *ptr);
+
+struct libvlc_track_description_t {
+  int i_id;
+  char *psz_name;
+  libvlc_track_description_t *p_next;
+};

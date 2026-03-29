@@ -269,6 +269,14 @@ QString VodPlaybackController::selectedAudioTrackId() const {
   return m_selectedAudioTrackId;
 }
 
+QVariantList VodPlaybackController::subtitleTracks() const {
+  return m_subtitleTracks;
+}
+
+QString VodPlaybackController::selectedSubtitleTrackId() const {
+  return m_selectedSubtitleTrackId;
+}
+
 QVariantMap VodPlaybackController::recommendedNextEpisode() const {
   return m_recommendedNextEpisode;
 }
@@ -436,6 +444,7 @@ void VodPlaybackController::pause() {
 
   libvlc_media_player_set_pause(m_player, 1);
   setPaused(true);
+  setState(QStringLiteral("paused"));
 }
 
 void VodPlaybackController::resume() {
@@ -528,6 +537,27 @@ void VodPlaybackController::selectAudioTrack(const QString &trackId) {
   m_retryingVodResolve = false;
   setDecoderMode(QStringLiteral("hardware"));
   resolveVodSource(normalizedTrackId);
+}
+
+void VodPlaybackController::selectSubtitleTrack(const QString &trackId) {
+  if (!isActiveVod()) {
+    return;
+  }
+
+  const QString normalizedTrackId = trackId.trimmed().isEmpty() ? QStringLiteral("off") : trackId.trimmed();
+  if (normalizedTrackId == selectedSubtitleTrackId()) {
+    return;
+  }
+
+  m_requestedSubtitleTrackId = normalizedTrackId;
+  if (libvlc_media_player_t *player = currentPlayer()) {
+    bool trackIdOk = false;
+    const int subtitleTrackId = normalizedTrackId.toInt(&trackIdOk);
+    libvlc_video_set_spu(player, normalizedTrackId == QStringLiteral("off") || !trackIdOk ? -1 : subtitleTrackId);
+    refreshSubtitleTracks();
+  } else {
+    setSelectedSubtitleTrackId(normalizedTrackId);
+  }
 }
 
 void VodPlaybackController::playRecommendedNextEpisode() {
@@ -775,6 +805,22 @@ void VodPlaybackController::setSelectedAudioTrackId(const QString &value) {
   }
   m_selectedAudioTrackId = value;
   emit selectedAudioTrackIdChanged();
+}
+
+void VodPlaybackController::setSubtitleTracks(const QVariantList &value) {
+  if (value == m_subtitleTracks) {
+    return;
+  }
+  m_subtitleTracks = value;
+  emit subtitleTracksChanged();
+}
+
+void VodPlaybackController::setSelectedSubtitleTrackId(const QString &value) {
+  if (value == m_selectedSubtitleTrackId) {
+    return;
+  }
+  m_selectedSubtitleTrackId = value;
+  emit selectedSubtitleTrackIdChanged();
 }
 
 void VodPlaybackController::setRecommendedNextEpisode(const QVariantMap &value) {
@@ -1372,6 +1418,52 @@ void VodPlaybackController::resetPlaybackMetrics() {
 void VodPlaybackController::clearSelectionState() {
   setAudioTracks({});
   setSelectedAudioTrackId(QString());
+  setSubtitleTracks({});
+  setSelectedSubtitleTrackId(QStringLiteral("off"));
+  m_requestedSubtitleTrackId = QStringLiteral("off");
+}
+
+void VodPlaybackController::refreshSubtitleTracks(int slotIndex) {
+  const int effectiveSlot = slotIndex >= 0 ? slotIndex : currentPlaybackSlot();
+  libvlc_media_player_t *player = playerForSlot(effectiveSlot);
+  if (!player || !isActiveVod()) {
+    setSubtitleTracks({});
+    setSelectedSubtitleTrackId(QStringLiteral("off"));
+    return;
+  }
+
+  libvlc_track_description_t *trackDescriptions = libvlc_video_get_spu_description(player);
+  const int currentTrackId = libvlc_video_get_spu(player);
+  const QVariantList mappedTracks = mapSubtitleTracks(trackDescriptions, currentTrackId);
+  if (trackDescriptions) {
+    libvlc_track_description_list_release(trackDescriptions);
+  }
+
+  setSubtitleTracks(mappedTracks);
+  if (currentTrackId < 0) {
+    setSelectedSubtitleTrackId(QStringLiteral("off"));
+    return;
+  }
+
+  const QString currentTrackIdText = QString::number(currentTrackId);
+  const bool currentTrackExists = std::any_of(mappedTracks.cbegin(), mappedTracks.cend(), [&currentTrackIdText](const QVariant &row) {
+    return row.toMap().value(QStringLiteral("id")).toString() == currentTrackIdText;
+  });
+  setSelectedSubtitleTrackId(currentTrackExists ? currentTrackIdText : QStringLiteral("off"));
+}
+
+void VodPlaybackController::applySelectedSubtitleTrack(int slotIndex) {
+  const int effectiveSlot = slotIndex >= 0 ? slotIndex : currentPlaybackSlot();
+  libvlc_media_player_t *player = playerForSlot(effectiveSlot);
+  if (!player || !isActiveVod()) {
+    return;
+  }
+
+  const QString requestedTrackId = m_requestedSubtitleTrackId.trimmed().isEmpty() ? QStringLiteral("off")
+                                                                                  : m_requestedSubtitleTrackId.trimmed();
+  bool trackIdOk = false;
+  const int subtitleTrackId = requestedTrackId.toInt(&trackIdOk);
+  libvlc_video_set_spu(player, requestedTrackId == QStringLiteral("off") || !trackIdOk ? -1 : subtitleTrackId);
 }
 
 void VodPlaybackController::refreshRecommendedNextEpisode() {
@@ -1476,6 +1568,26 @@ QVariantList VodPlaybackController::mapAudioTracks(const QJsonArray &tracks) {
     items.push_back(row);
   }
 
+  return items;
+}
+
+QVariantList VodPlaybackController::mapSubtitleTracks(libvlc_track_description_t *tracks, int currentTrackId) {
+  QVariantList items;
+  for (libvlc_track_description_t *track = tracks; track != nullptr; track = track->p_next) {
+    if (track->i_id < 0) {
+      continue;
+    }
+
+    QVariantMap row;
+    row.insert(QStringLiteral("id"), QString::number(track->i_id));
+    row.insert(
+      QStringLiteral("title"),
+      track->psz_name && *track->psz_name ? QString::fromUtf8(track->psz_name).trimmed()
+                                          : QStringLiteral("Altyazı %1").arg(track->i_id)
+    );
+    row.insert(QStringLiteral("isSelected"), track->i_id == currentTrackId);
+    items.push_back(row);
+  }
   return items;
 }
 
@@ -1726,6 +1838,8 @@ void VodPlaybackController::handlePlaying(int slotIndex) {
     m_timelineTimer.start();
   }
 
+  applySelectedSubtitleTrack(slotIndex);
+  refreshSubtitleTracks(slotIndex);
   updateVideoCrop(slotIndex);
 
   if (m_pendingResumeSeconds > 0.0 && isActiveVod()) {

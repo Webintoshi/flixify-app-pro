@@ -25,10 +25,11 @@ Item {
     readonly property bool playbackStarted: controller && (controller.state === "playing" || controller.state === "paused" || controller.state === "buffering" || controller.state === "ended" || controller.positionSeconds > 0 || controller.durationSeconds > 0)
     readonly property bool posterVisible: posterImage.status === Image.Ready && artworkUrl.length > 0 && !playbackStarted
     readonly property bool showStatusOverlay: controller && (controller.state === "opening" || controller.state === "resolving" || controller.state === "error")
-    readonly property bool keepControlsVisible: timelineSlider.pressed || volumeSlider.pressed
+    readonly property bool keepControlsVisible: timelineSlider.pressed || volumeSlider.pressed || subtitlePopup.visible
     readonly property bool autoHideEnabled: playbackStarted && controller && !controller.paused && !showStatusOverlay && !keepControlsVisible
     readonly property bool overlayChromeVisible: controlsVisible || keepControlsVisible || !playbackStarted || (controller && controller.state === "error")
     readonly property int volumePercent: Math.round(((controller && controller.muted) ? 0 : (controller ? controller.volume : 1)) * 100)
+    readonly property bool hasSubtitleTracks: controller && controller.subtitleTracks && controller.subtitleTracks.length > 0
     readonly property bool overlayWindowActive: visible
                                               && viewport.visible
                                               && viewport.width > 1
@@ -213,6 +214,17 @@ Item {
                     ctx.moveTo(width * 0.76, height * 0.24)
                     ctx.lineTo(width * 0.24, height * 0.76)
                     ctx.stroke()
+                    return
+                }
+
+                if (iconRoot.name === "subtitle") {
+                    ctx.beginPath()
+                    ctx.rect(width * 0.15, height * 0.22, width * 0.7, height * 0.56)
+                    ctx.stroke()
+                    ctx.fillRect(width * 0.28, height * 0.38, width * 0.18, height * 0.08)
+                    ctx.fillRect(width * 0.28, height * 0.54, width * 0.18, height * 0.08)
+                    ctx.fillRect(width * 0.54, height * 0.38, width * 0.18, height * 0.08)
+                    ctx.fillRect(width * 0.54, height * 0.54, width * 0.18, height * 0.08)
                 }
             }
         }
@@ -305,6 +317,7 @@ Item {
     onWindowIsFullscreenChanged: { showControls(); if (controller && controller.refreshVideoLayout) controller.refreshVideoLayout() }
     onKeepControlsVisibleChanged: { if (keepControlsVisible) { controlsHideTimer.stop(); controlsVisible = true } else showControls() }
     onPlaybackStartedChanged: showControls()
+    onHasSubtitleTracksChanged: { if (!hasSubtitleTracks && subtitlePopup.visible) subtitlePopup.close() }
     onAutoHideEnabledChanged: {
         if (autoHideEnabled) {
             controlsHideTimer.restart()
@@ -409,11 +422,6 @@ Item {
                 onPositionChanged: root.showControls()
                 onPressed: root.showControls()
                 onDoubleClicked: { root.toggleWindowFullscreenRequested(); root.showControls() }
-                onClicked: {
-                    if (root.controller && root.playbackStarted && !root.showStatusOverlay) {
-                        root.togglePlayback()
-                    }
-                }
             }
 
             Image {
@@ -449,11 +457,6 @@ Item {
                 onPositionChanged: root.showControls()
                 onPressed: root.showControls()
                 onDoubleClicked: { root.toggleWindowFullscreenRequested(); root.showControls() }
-                onClicked: {
-                    if (root.controller && root.playbackStarted && !root.showStatusOverlay) {
-                        root.togglePlayback()
-                    }
-                }
             }
 
             Rectangle {
@@ -518,6 +521,7 @@ Item {
             }
 
             Rectangle {
+                id: controlsBar
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
@@ -680,6 +684,32 @@ Item {
                             Text { anchors.centerIn: parent; text: root.volumePercent + "%"; color: root.textPrimary; font.pixelSize: 12; font.bold: true }
                         }
 
+                        RoundButton {
+                            id: subtitleButton
+                            visible: root.hasSubtitleTracks
+                            focusPolicy: Qt.NoFocus
+                            hoverEnabled: true
+                            implicitWidth: 46
+                            implicitHeight: 46
+                            flat: true
+                            onClicked: {
+                                if (subtitlePopup.visible) subtitlePopup.close()
+                                else subtitlePopup.open()
+                                root.showControls()
+                            }
+                            background: Rectangle {
+                                radius: width / 2
+                                color: root.secondaryFill(subtitleButton, subtitlePopup.visible)
+                                border.width: 1
+                                border.color: root.secondaryBorder(subtitleButton, subtitlePopup.visible)
+                            }
+                            contentItem: PlayerIcon {
+                                name: "subtitle"
+                                strokeColor: "#ffffff"
+                                anchors.centerIn: parent
+                            }
+                        }
+
                         Item { Layout.fillWidth: true }
 
                         RoundButton {
@@ -700,6 +730,102 @@ Item {
                                 name: root.windowIsFullscreen ? "fullscreen-exit" : "fullscreen"
                                 strokeColor: "#ffffff"
                                 anchors.centerIn: parent
+                            }
+                        }
+                    }
+                }
+            }
+
+            Popup {
+                id: subtitlePopup
+                parent: overlayWindow.contentItem
+                modal: false
+                focus: true
+                closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                x: Math.max(14, controlsBar.x + subtitleButton.x + subtitleButton.width - width)
+                y: controlsBar.y - height - 10
+                width: 240
+                height: Math.min(260, subtitleScroll.implicitHeight + 20)
+                padding: 10
+                visible: root.hasSubtitleTracks && opened
+                onOpened: root.showControls()
+                onClosed: overlayGeometrySyncTimer.restart()
+                background: Rectangle {
+                    radius: 20
+                    color: "#dd101822"
+                    border.width: 1
+                    border.color: "#2effffff"
+                }
+
+                ScrollView {
+                    id: subtitleScroll
+                    anchors.fill: parent
+                    clip: true
+                    contentWidth: availableWidth
+
+                    Column {
+                        width: subtitlePopup.availableWidth
+                        spacing: 8
+
+                        Button {
+                            width: parent.width
+                            height: 42
+                            hoverEnabled: false
+                            focusPolicy: Qt.NoFocus
+                            onClicked: {
+                                if (root.controller) {
+                                    root.controller.selectSubtitleTrack("off")
+                                }
+                                subtitlePopup.close()
+                                root.showControls()
+                            }
+                            background: Rectangle {
+                                radius: 14
+                                color: root.controller && root.controller.selectedSubtitleTrackId === "off" ? "#dce50914" : "#6b131c28"
+                                border.width: 1
+                                border.color: root.controller && root.controller.selectedSubtitleTrackId === "off" ? "#8dffffff" : "#26ffffff"
+                            }
+                            contentItem: Text {
+                                text: "Altyazı Kapalı"
+                                color: root.textPrimary
+                                font.pixelSize: 13
+                                font.bold: true
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: 14
+                            }
+                        }
+
+                        Repeater {
+                            model: root.controller ? root.controller.subtitleTracks : []
+
+                            delegate: Button {
+                                required property var modelData
+                                width: parent ? parent.width : subtitlePopup.availableWidth
+                                height: 42
+                                hoverEnabled: false
+                                focusPolicy: Qt.NoFocus
+                                onClicked: {
+                                    if (root.controller) {
+                                        root.controller.selectSubtitleTrack(modelData.id)
+                                    }
+                                    subtitlePopup.close()
+                                    root.showControls()
+                                }
+                                background: Rectangle {
+                                    radius: 14
+                                    color: root.controller && root.controller.selectedSubtitleTrackId === modelData.id ? "#dce50914" : "#6b131c28"
+                                    border.width: 1
+                                    border.color: root.controller && root.controller.selectedSubtitleTrackId === modelData.id ? "#8dffffff" : "#26ffffff"
+                                }
+                                contentItem: Text {
+                                    text: modelData.title
+                                    color: root.textPrimary
+                                    font.pixelSize: 13
+                                    font.bold: root.controller && root.controller.selectedSubtitleTrackId === modelData.id
+                                    verticalAlignment: Text.AlignVCenter
+                                    leftPadding: 14
+                                    elide: Text.ElideRight
+                                }
                             }
                         }
                     }

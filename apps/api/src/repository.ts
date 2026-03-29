@@ -959,6 +959,8 @@ function buildSearchClause(search?: string) {
   return search ? `%${search.toLowerCase()}%` : null;
 }
 
+const UNCATEGORIZED_GROUP_TITLE = "Uncategorized";
+
 function buildGroupClause(group?: string) {
   return group ? group.toLowerCase() : null;
 }
@@ -969,6 +971,122 @@ function normalizeGroupFilterValue(value: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toLowerCase();
+}
+
+const PREFERRED_MOVIE_GROUP_ORDER = [
+  "uncategorized",
+  "tr | mubi",
+  "tr | animasyon & cizgi film",
+  "tr | muzikal & dans",
+  "tr | belgesel & biyografi",
+  "tr | western (kovboy)",
+  "tr | savas & tarih",
+  "tr | suc & polisiye",
+  "tr | dram & romantik",
+  "tr | korku & gerilim",
+  "tr | bilim kurgu & fantastik",
+  "tr | stand up & gosteri",
+  "tr | anime filmleri",
+  "tr | aile filmleri",
+  "tr | tv+",
+  "tr | tabii",
+  "tr | tod (bein connect)",
+  "tr | apple tv+",
+  "tr | gain",
+  "tr | blutv (hbo max)",
+  "tr | netflix",
+  "tr | komedi",
+  "tr | aksiyon & macera",
+  "tr | tv show & yarisma",
+  "tr | 2025 - 2026 filmleri",
+  "tr | 4k / uhd filmler",
+  "tr | kore & asya sinemasi",
+  "tr | hint filmleri (bollywood)",
+  "tr | yabanci film (altyazili)",
+  "tr | yabanci film (dublaj)",
+  "tr | yerli sinema (yesilcam)",
+  "tr | yerli filmler",
+  "tr | oscar odullu filmler",
+  "tr | seri filmler (boxset)",
+  "tr | imdb top 250",
+  "tr | sinema cekimi (cam)",
+  "tr:dublaj",
+  "kemal sunal filmleri",
+  "xxx:adults"
+];
+
+const PREFERRED_SERIES_GROUP_ORDER = [
+  "turk dizileri",
+  "tr | gunluk diziler",
+  "tr | yeni eklenenler",
+  "tr | yerli dizi (final yapanlar)",
+  "tr | netflix dizileri",
+  "tr | netflix cocuk",
+  "tr | netflix belgesel (dizi)",
+  "tr | anime",
+  "tr | apple tv+ dizileri",
+  "tr | tod (bein) dizileri",
+  "tr | tabii dizileri",
+  "tr | gain dizileri",
+  "tr | amazon prime dizileri",
+  "tr | amazon prime animasyon",
+  "tr | disney+ dizileri",
+  "tr | blutv dizileri (hbo)",
+  "tr | exxen dizileri",
+  "tr | tv+ dizileri",
+  "tr | youtube & internet dizileri",
+  "de | tagliche serien (daily soaps)",
+  "de | krimi & polizei (tatort)",
+  "de | deutsche serien",
+  "de | ard & zdf mediathek",
+  "de | netflix",
+  "de | amazon prime",
+  "de | disney+",
+  "de | sky / wow",
+  "de | rtl+",
+  "de | joyn",
+  "de | magentatv",
+  "de | apple tv+",
+  "de | paramount+",
+  "de | discovery+",
+  "de | internationale serien",
+  "de | reality tv & shows",
+  "de | dokumentationen",
+  "de | kinder & familie",
+  "de | anime",
+  "xxx:adults",
+  "uncategorized"
+];
+
+const VOD_GROUP_DISPLAY_ALIASES = new Map<string, string>([
+  ["TR | GAİN Dizileri", "TR | GAIN Dizileri"],
+  ["ADULTS +18", "XXX:ADULTS"]
+]);
+
+function canonicalVodGroupTitle(groupTitle: string | null | undefined) {
+  const title = groupTitle?.trim();
+  if (!title || title.length === 0) {
+    return UNCATEGORIZED_GROUP_TITLE;
+  }
+  return VOD_GROUP_DISPLAY_ALIASES.get(title) ?? title;
+}
+
+const LIVE_GROUP_DISPLAY_ALIASES = new Map<string, string>([
+  ["ADULTS +18", "Adults"],
+  ["XXX ADULTS", "Adults"],
+  ["XXX:ADULTS", "Adults"]
+]);
+
+function canonicalLiveGroupTitle(groupTitle: string | null | undefined) {
+  const title = groupTitle?.trim();
+  if (!title || title.length === 0) {
+    return "Diger";
+  }
+  return LIVE_GROUP_DISPLAY_ALIASES.get(title) ?? title;
+}
+
+function buildLiveGroupClause(group?: string) {
+  return group ? normalizeGroupFilterValue(canonicalLiveGroupTitle(group)) : null;
 }
 
 const LIVE_COUNTRY_CODE_ALIASES = new Map<string, string>([
@@ -982,6 +1100,11 @@ function normalizeLiveCountryCode(value: string) {
     return null;
   }
   return LIVE_COUNTRY_CODE_ALIASES.get(sanitized) ?? sanitized;
+}
+
+function normalizeLiveCountryFamily(value: string) {
+  const normalized = normalizeGroupFilterValue(value).replace(/\s+/g, " ").trim();
+  return normalized.length ? normalized : null;
 }
 
 export function resolveLiveCountryFilter(group?: string | null) {
@@ -1007,8 +1130,17 @@ export function resolveLiveCountryFilter(group?: string | null) {
   return null;
 }
 
+export function resolveLiveCountryFamilyFilter(group?: string | null) {
+  const normalized = normalizeGroupFilterValue(group ?? "");
+  if (!normalized || !normalized.startsWith("family:")) {
+    return null;
+  }
+
+  return normalizeLiveCountryFamily(normalized.slice("family:".length));
+}
+
 export function isCountryWideLiveGroupFilter(group?: string | null) {
-  return resolveLiveCountryFilter(group) !== null;
+  return resolveLiveCountryFilter(group) !== null || resolveLiveCountryFamilyFilter(group) !== null;
 }
 
 export function isTurkiyeLiveGroupFilter(group?: string | null) {
@@ -1196,6 +1328,20 @@ export function buildLiveCountryFilterWhereClause() {
   `;
 }
 
+export function buildLiveCountryFamilyFilterWhereClause() {
+  const groupTextExpression = "lower(coalesce(c.group_title, ''))";
+  return `
+    (
+      ${groupTextExpression} = $3
+      or ${groupTextExpression} like ($3 || ' %')
+      or (
+        $3 = 'adults'
+        and (${groupTextExpression} = 'xxx:adults' or ${groupTextExpression} = 'adults')
+      )
+    )
+  `;
+}
+
 function buildLive4kPriorityClause() {
   return `
     case
@@ -1326,16 +1472,27 @@ async function listLiveCatalogGroups(snapshotVersion: number, search?: string) {
       [snapshotVersion, searchValue]
     )
   ]);
-  const countryCodeTitles = new Set(countryGroups.map((group) => group.title.toUpperCase()));
-  const groupTitleGroups = result.rows.map<CatalogGroup>((row) => ({
-    title: row.title,
-    count: Number(row.count),
-    kind: "live"
-  }));
+  const countryCodeTitles = new Set(countryGroups.map((group) => normalizeGroupFilterValue(group.title)));
+  const buckets = new Map<string, CatalogGroup>();
+  for (const row of result.rows) {
+    const title = canonicalLiveGroupTitle(row.title);
+    const key = normalizeGroupFilterValue(title);
+    const existing = buckets.get(key);
+    if (existing) {
+      existing.count += Number(row.count);
+      continue;
+    }
+    buckets.set(key, {
+      title,
+      count: Number(row.count),
+      kind: "live"
+    });
+  }
+  const groupTitleGroups = [...buckets.values()];
 
   return [
     ...countryGroups,
-    ...groupTitleGroups.filter((group) => !countryCodeTitles.has(group.title.trim().toUpperCase()))
+    ...groupTitleGroups.filter((group) => !countryCodeTitles.has(normalizeGroupFilterValue(group.title)))
   ];
 }
 
@@ -1375,12 +1532,39 @@ function buildVodGroupsFromRows(
   const counts = new Map<string, number>();
 
   for (const row of rows) {
-    const key = row.group_title?.trim() || "Diger";
+    const key = canonicalVodGroupTitle(row.group_title);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
   return [...counts.entries()]
-    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "tr"))
+    .sort((left, right) => {
+      if (kind === "movie") {
+        const leftPreferredIndex = PREFERRED_MOVIE_GROUP_ORDER.indexOf(normalizeGroupFilterValue(left[0]));
+        const rightPreferredIndex = PREFERRED_MOVIE_GROUP_ORDER.indexOf(normalizeGroupFilterValue(right[0]));
+        const leftIsPreferred = leftPreferredIndex >= 0;
+        const rightIsPreferred = rightPreferredIndex >= 0;
+        if (leftIsPreferred && rightIsPreferred && leftPreferredIndex !== rightPreferredIndex) {
+          return leftPreferredIndex - rightPreferredIndex;
+        }
+        if (leftIsPreferred !== rightIsPreferred) {
+          return leftIsPreferred ? -1 : 1;
+        }
+      }
+      if (kind === "series") {
+        const leftPreferredIndex = PREFERRED_SERIES_GROUP_ORDER.indexOf(normalizeGroupFilterValue(left[0]));
+        const rightPreferredIndex = PREFERRED_SERIES_GROUP_ORDER.indexOf(normalizeGroupFilterValue(right[0]));
+        const leftIsPreferred = leftPreferredIndex >= 0;
+        const rightIsPreferred = rightPreferredIndex >= 0;
+        if (leftIsPreferred && rightIsPreferred && leftPreferredIndex !== rightPreferredIndex) {
+          return leftPreferredIndex - rightPreferredIndex;
+        }
+        if (leftIsPreferred !== rightIsPreferred) {
+          return leftIsPreferred ? -1 : 1;
+        }
+      }
+
+      return right[1] - left[1] || left[0].localeCompare(right[0], "tr");
+    })
     .map<CatalogGroup>(([title, count]) => ({
       title,
       count,
@@ -1400,6 +1584,7 @@ export async function listLiveCatalog(
   const offset = (page - 1) * pageSize;
   const searchValue = buildSearchClause(search);
   const countryCodeFilter = resolveLiveCountryFilter(group);
+  const countryFamilyFilter = resolveLiveCountryFamilyFilter(group);
   const [itemsResult, totalResult, groups] = countryCodeFilter
     ? await Promise.all([
         query<SharedLiveChannelRow>(
@@ -1440,6 +1625,46 @@ export async function listLiveCatalog(
         ),
         listLiveCatalogGroups(snapshotVersion, search)
       ])
+    : countryFamilyFilter
+      ? await Promise.all([
+          query<SharedLiveChannelRow>(
+            `
+              select
+                c.id,
+                c.title,
+                c.group_title,
+                c.logo_url,
+                c.stream_path,
+                c.transport,
+                c.variant_group_key,
+                c.quality_rank,
+                h.health_status,
+                h.last_checked_at,
+                h.failure_count,
+                h.last_error
+              from public.shared_live_channels c
+              left join public.shared_live_channel_health h on h.channel_id = c.id
+              where c.snapshot_version = $1
+                and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
+                and ${buildLiveCountryFamilyFilterWhereClause()}
+              order by ${buildLiveCatalogOrderByClause(false)}
+              limit $4 offset $5
+            `,
+            [snapshotVersion, searchValue, countryFamilyFilter, pageSize, offset]
+          ),
+          query<{ count: string }>(
+            `
+              select count(*)::text as count
+              from public.shared_live_channels c
+              left join public.shared_live_channel_health h on h.channel_id = c.id
+              where c.snapshot_version = $1
+                and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
+                and ${buildLiveCountryFamilyFilterWhereClause()}
+            `,
+            [snapshotVersion, searchValue, countryFamilyFilter]
+          ),
+          listLiveCatalogGroups(snapshotVersion, search)
+        ])
     : await Promise.all([
         query<SharedLiveChannelRow>(
           `
@@ -1460,11 +1685,21 @@ export async function listLiveCatalog(
             left join public.shared_live_channel_health h on h.channel_id = c.id
             where c.snapshot_version = $1
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
-              and ($3::text is null or lower(coalesce(c.group_title, 'diger')) = $3)
+              and (
+                $3::text is null
+                or lower(coalesce(c.group_title, 'diger')) = $3
+                or (
+                  $3 = 'adults'
+                  and (
+                    lower(coalesce(c.group_title, 'diger')) = 'adults +18'
+                    or lower(coalesce(c.group_title, 'diger')) = 'xxx:adults'
+                  )
+                )
+              )
             order by ${buildLiveCatalogOrderByClause(false)}
             limit $4 offset $5
           `,
-          [snapshotVersion, searchValue, buildGroupClause(group), pageSize, offset]
+          [snapshotVersion, searchValue, buildLiveGroupClause(group), pageSize, offset]
         ),
         query<{ count: string }>(
           `
@@ -1473,9 +1708,19 @@ export async function listLiveCatalog(
             left join public.shared_live_channel_health h on h.channel_id = c.id
             where c.snapshot_version = $1
               and ($2::text is null or lower(c.title) like $2 or lower(coalesce(c.group_title, '')) like $2)
-              and ($3::text is null or lower(coalesce(c.group_title, 'diger')) = $3)
+              and (
+                $3::text is null
+                or lower(coalesce(c.group_title, 'diger')) = $3
+                or (
+                  $3 = 'adults'
+                  and (
+                    lower(coalesce(c.group_title, 'diger')) = 'adults +18'
+                    or lower(coalesce(c.group_title, 'diger')) = 'xxx:adults'
+                  )
+                )
+              )
           `,
-          [snapshotVersion, searchValue, buildGroupClause(group)]
+          [snapshotVersion, searchValue, buildLiveGroupClause(group)]
         ),
         listLiveCatalogGroups(snapshotVersion, search)
       ]);
@@ -1954,7 +2199,9 @@ export async function listMoviesCatalog(
   });
   const groups = buildMovieGroupsFromRows(dedupedRows);
   const filteredRows = groupValue
-    ? dedupedRows.filter((row) => (row.group_title?.trim() || "Diger").toLowerCase() === groupValue)
+    ? dedupedRows.filter(
+        (row) => normalizeGroupFilterValue(canonicalVodGroupTitle(row.group_title)) === groupValue
+      )
     : dedupedRows;
   const pagedRows = filteredRows.slice(offset, offset + pageSize);
 
@@ -1963,7 +2210,7 @@ export async function listMoviesCatalog(
       id: row.id,
       title: row.title,
       posterUrl: row.poster_url,
-      groupTitle: row.group_title,
+      groupTitle: canonicalVodGroupTitle(row.group_title),
       streamUrl: null,
       playbackAllowed: Boolean(playback?.canPlay)
     })),
@@ -2055,7 +2302,7 @@ export async function listSeriesCatalog(
   const groups = buildSeriesGroupsFromRows(filteredCatalog.seriesRows);
   const filteredRows = groupValue
     ? filteredCatalog.seriesRows.filter(
-        (row) => (row.group_title?.trim() || "Diger").toLowerCase() === groupValue
+        (row) => normalizeGroupFilterValue(canonicalVodGroupTitle(row.group_title)) === groupValue
       )
     : filteredCatalog.seriesRows;
   const pagedRows = filteredRows.slice(offset, offset + pageSize);
@@ -2065,7 +2312,7 @@ export async function listSeriesCatalog(
       id: seriesRow.id,
       title: seriesRow.title,
       posterUrl: seriesRow.poster_url,
-      groupTitle: seriesRow.group_title,
+      groupTitle: canonicalVodGroupTitle(seriesRow.group_title),
       ...(() => {
         const seriesEpisodes = (filteredCatalog.episodesBySeriesId.get(seriesRow.id) ?? []).map((episode) => ({
           id: episode.id,

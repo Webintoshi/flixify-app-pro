@@ -120,10 +120,23 @@ ApplicationWindow {
 
     onVideoFullscreenChanged: {
         livePlaybackController.liveFullscreenActive = videoFullscreen
+        if (inlinePlaybackMode === "live" || livePlaybackController.activeContentKind === "live") {
+            livePlaybackController.videoFillMode = videoFullscreen ? "fill" : "fit"
+        }
+    }
+
+    function signedOutEntryScreen(preferRegister) {
+        if (apiClient.authenticated) {
+            return "home"
+        }
+        if (preferRegister && apiClient.consumeInitialRegisterPrompt()) {
+            return "register"
+        }
+        return "login"
     }
 
     Component.onCompleted: {
-        currentScreen = apiClient.authenticated ? "home" : "login"
+        currentScreen = signedOutEntryScreen(true)
         livePlaybackController.liveFullscreenActive = videoFullscreen
         refreshHomePreviewContent()
         apiClient.bootstrap()
@@ -530,6 +543,26 @@ ApplicationWindow {
         return output
     }
 
+    function canonicalLiveGroupTitle(value) {
+        const title = safeText(value)
+        const normalized = normalizeAsciiText(title)
+        if (normalized === "adults +18" || normalized === "xxx adults" || normalized === "xxx:adults") {
+            return "Adults"
+        }
+        return title
+    }
+
+    function parseLiveSpecialFamilyFromGroupTitle(title) {
+        const normalizedTitle = normalizeAsciiText(canonicalLiveGroupTitle(title))
+        if (!normalizedTitle.length) {
+            return null
+        }
+        if (normalizedTitle === "xxx:adults" || normalizedTitle === "adults +18") {
+            return "ADULTS"
+        }
+        return null
+    }
+
     function normalizeLiveCountryCode(value) {
         const sanitized = safeText(value).replace(/[^a-z]/gi, "").toUpperCase()
         if (sanitized.length < 2 || sanitized.length > 3) {
@@ -562,7 +595,10 @@ ApplicationWindow {
     }
 
     function parseLiveCountryCodeFromGroupPrefix(title) {
-        const normalizedTitle = normalizeAsciiText(title)
+        if (parseLiveSpecialFamilyFromGroupTitle(title)) {
+            return null
+        }
+        const normalizedTitle = normalizeAsciiText(canonicalLiveGroupTitle(title))
         const match = normalizedTitle.match(/^([a-z]{2,3})\s*[:\-]/)
         if (!match || !match[1]) {
             return null
@@ -571,11 +607,67 @@ ApplicationWindow {
     }
 
     function parseLiveCountryCodeFromExplicitGroupTitle(title) {
-        const normalizedTitle = normalizeAsciiText(title)
+        if (parseLiveSpecialFamilyFromGroupTitle(title)) {
+            return null
+        }
+        const normalizedTitle = normalizeAsciiText(canonicalLiveGroupTitle(title))
         if (!/^[a-z]{2,3}$/.test(normalizedTitle)) {
             return null
         }
         return normalizeLiveCountryCode(normalizedTitle)
+    }
+
+    function normalizeLiveCountryFamilyKey(value) {
+        const normalized = normalizeAsciiText(value).replace(/\s+/g, " ").trim().toUpperCase()
+        return normalized.length ? normalized : null
+    }
+
+    function buildLiveCountryFamilyFilter(familyKey) {
+        const normalizedFamily = normalizeLiveCountryFamilyKey(familyKey)
+        return normalizedFamily ? `family:${normalizedFamily}` : ""
+    }
+
+    function parseLiveCountryFamilyFromFilter(group) {
+        const normalized = normalizeAsciiText(group)
+        if (!normalized.length || normalized.indexOf("family:") !== 0) {
+            return null
+        }
+        return normalizeLiveCountryFamilyKey(normalized.slice("family:".length))
+    }
+
+    function parseLiveCountryFamilyFromGroupTitle(title) {
+        const specialFamily = parseLiveSpecialFamilyFromGroupTitle(title)
+        if (specialFamily) {
+            return specialFamily
+        }
+        const normalizedTitle = normalizeLiveCountryFamilyKey(canonicalLiveGroupTitle(title))
+        if (!normalizedTitle) {
+            return null
+        }
+        if (parseLiveCountryCodeFromExplicitGroupTitle(title) || parseLiveCountryCodeFromGroupPrefix(title)) {
+            return null
+        }
+
+        const multiWordRoots = ["LATIN AMERICA", "ARAB COUNTRIES", "CZECH AND SLOWAK", "EX-YU"]
+        for (let index = 0; index < multiWordRoots.length; index += 1) {
+            const root = multiWordRoots[index]
+            if (normalizedTitle === root || normalizedTitle.indexOf(root + " ") === 0) {
+                return root
+            }
+        }
+
+        const firstWord = normalizedTitle.split(" ")[0]
+        const ignoredRoots = {
+            "VIP": true,
+            "SPORT": true,
+            "ARABIC": true,
+            "KURDISH": true,
+            "7/24": true
+        }
+        if (!firstWord.length || ignoredRoots[firstWord]) {
+            return null
+        }
+        return firstWord
     }
 
     function getLiveCountryLabel(code) {
@@ -584,9 +676,14 @@ ApplicationWindow {
             return safeText(code)
         }
         if (normalizedCode === "TR") {
-            return "Turkiye"
+            return "Türkiye"
         }
         return normalizedCode
+    }
+
+    function getLiveCountryFamilyLabel(familyKey) {
+        const normalizedFamily = normalizeLiveCountryFamilyKey(familyKey)
+        return normalizedFamily ? normalizedFamily : safeText(familyKey)
     }
 
     function liveGroupsData() {
@@ -594,71 +691,81 @@ ApplicationWindow {
     }
 
     function liveCountryChips() {
-        const groups = liveGroupsData()
-        const counts = {}
-        const prefixFallbackBuckets = []
+        const groups = normalizedLiveGroupsData()
+        const buckets = {}
+        const explicitCountryCodes = {}
+
+        function pushBucket(type, key, count) {
+            const normalizedCount = Number(count || 0)
+            const bucketKey = `${type}:${key}`
+            if (!buckets[bucketKey]) {
+                buckets[bucketKey] = {
+                    type,
+                    key,
+                    count: 0,
+                    filter: type === "code" ? buildLiveCountryFilter(key) : buildLiveCountryFamilyFilter(key),
+                    label: type === "code" ? displayLiveCountryLabel(key) : displayLiveCountryFamilyLabel(key)
+                }
+            }
+            buckets[bucketKey].count += normalizedCount
+        }
 
         for (let index = 0; index < groups.length; index += 1) {
             const group = groups[index]
+            const title = safeText(group.title)
+            const groupCount = Number(group.count || 0)
             const explicitCountryCode = parseLiveCountryCodeFromExplicitGroupTitle(group.title)
             if (explicitCountryCode) {
-                counts[explicitCountryCode] = (counts[explicitCountryCode] || 0) + Number(group.count || 0)
+                explicitCountryCodes[explicitCountryCode] = true
+                pushBucket("code", explicitCountryCode, groupCount)
+                continue
             }
         }
 
         for (let index = 0; index < groups.length; index += 1) {
             const group = groups[index]
-            if (parseLiveCountryCodeFromExplicitGroupTitle(group.title)) {
-                continue
-            }
-            const countryCodeFromPrefix = parseLiveCountryCodeFromGroupPrefix(group.title)
+            const title = safeText(group.title)
+            const groupCount = Number(group.count || 0)
+            const countryCodeFromPrefix = parseLiveCountryCodeFromGroupPrefix(title)
             if (countryCodeFromPrefix) {
-                prefixFallbackBuckets.push({ code: countryCodeFromPrefix, count: Number(group.count || 0) })
-            }
-        }
-
-        for (let index = 0; index < prefixFallbackBuckets.length; index += 1) {
-            const bucket = prefixFallbackBuckets[index]
-            if (counts[bucket.code]) {
+                if (!explicitCountryCodes[countryCodeFromPrefix]) {
+                    pushBucket("code", countryCodeFromPrefix, groupCount)
+                }
                 continue
             }
-            counts[bucket.code] = (counts[bucket.code] || 0) + bucket.count
+            const familyKey = parseLiveCountryFamilyFromGroupTitle(title)
+            if (familyKey) {
+                pushBucket("family", familyKey, groupCount)
+            }
         }
 
-        const chips = []
-        const codes = Object.keys(counts)
-        for (let index = 0; index < codes.length; index += 1) {
-            const code = codes[index]
-            chips.push({
-                code,
-                count: counts[code],
-                filter: buildLiveCountryFilter(code),
-                label: getLiveCountryLabel(code)
-            })
-        }
+        const chips = Object.keys(buckets).map(function(bucketKey) { return buckets[bucketKey] })
 
         chips.sort((left, right) => {
-            if (left.code === "TR" && right.code !== "TR") return -1
-            if (right.code === "TR" && left.code !== "TR") return 1
+            if (left.type === "code" && left.key === "TR" && (right.type !== "code" || right.key !== "TR")) return -1
+            if (right.type === "code" && right.key === "TR" && (left.type !== "code" || left.key !== "TR")) return 1
             if (right.count !== left.count) return right.count - left.count
             return left.label.localeCompare(right.label, "tr-TR")
         })
 
-        const activeCountryCode = parseLiveCountryCodeFromFilter(selectedLiveGroup)
-        if (activeCountryCode) {
+        const activeCountryKey = currentSelectedLiveCountryKey()
+        const activeCountryFilter = currentSelectedLiveCountryFilter()
+        if (activeCountryKey && activeCountryFilter.length) {
             let exists = false
             for (let index = 0; index < chips.length; index += 1) {
-                if (chips[index].code === activeCountryCode) {
+                if (chips[index].key === activeCountryKey) {
                     exists = true
                     break
                 }
             }
             if (!exists) {
+                const isCode = Boolean(parseLiveCountryCodeFromFilter(activeCountryFilter)) || Boolean(parseLiveCountryCodeFromExplicitGroupTitle(selectedLiveGroup)) || Boolean(parseLiveCountryCodeFromGroupPrefix(selectedLiveGroup))
                 chips.unshift({
-                    code: activeCountryCode,
+                    type: isCode ? "code" : "family",
+                    key: activeCountryKey,
                     count: 0,
-                    filter: buildLiveCountryFilter(activeCountryCode),
-                    label: getLiveCountryLabel(activeCountryCode)
+                    filter: activeCountryFilter,
+                    label: isCode ? displayLiveCountryLabel(activeCountryKey) : displayLiveCountryFamilyLabel(activeCountryKey)
                 })
             }
         }
@@ -666,8 +773,120 @@ ApplicationWindow {
         return chips
     }
 
+    function currentSelectedLiveCountryKey() {
+        const explicitCountryCode = parseLiveCountryCodeFromFilter(selectedLiveGroup)
+        if (explicitCountryCode) {
+            return explicitCountryCode
+        }
+        const familyFilter = parseLiveCountryFamilyFromFilter(selectedLiveGroup)
+        if (familyFilter) {
+            return familyFilter
+        }
+        const directGroupCode = parseLiveCountryCodeFromExplicitGroupTitle(selectedLiveGroup)
+        if (directGroupCode) {
+            return directGroupCode
+        }
+        const prefixedGroupCode = parseLiveCountryCodeFromGroupPrefix(selectedLiveGroup)
+        if (prefixedGroupCode) {
+            return prefixedGroupCode
+        }
+        return parseLiveCountryFamilyFromGroupTitle(selectedLiveGroup)
+    }
+
+    function currentSelectedLiveCountryFilter() {
+        const explicitCountryCode = parseLiveCountryCodeFromFilter(selectedLiveGroup)
+        if (explicitCountryCode) {
+            return buildLiveCountryFilter(explicitCountryCode)
+        }
+        const familyFilter = parseLiveCountryFamilyFromFilter(selectedLiveGroup)
+        if (familyFilter) {
+            return buildLiveCountryFamilyFilter(familyFilter)
+        }
+        const familyFromGroup = parseLiveCountryFamilyFromGroupTitle(selectedLiveGroup)
+        if (familyFromGroup) {
+            return buildLiveCountryFamilyFilter(familyFromGroup)
+        }
+        const directGroupCode = parseLiveCountryCodeFromExplicitGroupTitle(selectedLiveGroup)
+        if (directGroupCode) {
+            return buildLiveCountryFilter(directGroupCode)
+        }
+        const prefixedGroupCode = parseLiveCountryCodeFromGroupPrefix(selectedLiveGroup)
+        return prefixedGroupCode ? buildLiveCountryFilter(prefixedGroupCode) : ""
+    }
+
+    function liveSubgroupChips() {
+        const selectedCountryCode =
+            parseLiveCountryCodeFromFilter(selectedLiveGroup)
+            || parseLiveCountryCodeFromExplicitGroupTitle(selectedLiveGroup)
+            || parseLiveCountryCodeFromGroupPrefix(selectedLiveGroup)
+        const selectedCountryFamily =
+            parseLiveCountryFamilyFromFilter(selectedLiveGroup)
+            || parseLiveCountryFamilyFromGroupTitle(selectedLiveGroup)
+        if (!selectedCountryCode && !selectedCountryFamily) {
+            return []
+        }
+
+        const groups = normalizedLiveGroupsData()
+        const output = []
+        const seenTitles = {}
+
+        for (let index = 0; index < groups.length; index += 1) {
+            const group = groups[index]
+            const title = canonicalLiveGroupTitle(group.title)
+            if (!title.length || parseLiveCountryCodeFromExplicitGroupTitle(title)) {
+                continue
+            }
+
+            let matchesSelectedCountry = false
+            if (selectedCountryCode) {
+                const groupCountryCode = parseLiveCountryCodeFromGroupPrefix(title)
+                if (groupCountryCode === selectedCountryCode) {
+                    matchesSelectedCountry = true
+                }
+            }
+            if (!matchesSelectedCountry && selectedCountryFamily) {
+                const groupCountryFamily = parseLiveCountryFamilyFromGroupTitle(title)
+                if (groupCountryFamily === selectedCountryFamily && normalizeLiveCountryFamilyKey(title) !== selectedCountryFamily) {
+                    matchesSelectedCountry = true
+                }
+            }
+
+            if (!matchesSelectedCountry) {
+                continue
+            }
+
+            if (seenTitles[title]) {
+                continue
+            }
+
+            seenTitles[title] = true
+            output.push({
+                title,
+                count: Number(group.count || 0),
+                kind: "live"
+            })
+        }
+
+        output.sort((left, right) => Number(right.count || 0) - Number(left.count || 0) || safeText(left.title).localeCompare(safeText(right.title), "tr-TR"))
+
+        if (safeText(selectedLiveGroup).length && !parseLiveCountryCodeFromFilter(selectedLiveGroup) && !parseLiveCountryFamilyFromFilter(selectedLiveGroup)) {
+            let exists = false
+            for (let index = 0; index < output.length; index += 1) {
+                if (output[index].title === selectedLiveGroup) {
+                    exists = true
+                    break
+                }
+            }
+            if (!exists && ((selectedCountryCode && parseLiveCountryCodeFromGroupPrefix(selectedLiveGroup) === selectedCountryCode) || (selectedCountryFamily && parseLiveCountryFamilyFromGroupTitle(selectedLiveGroup) === selectedCountryFamily))) {
+                output.unshift({ title: selectedLiveGroup, count: 0, kind: "live" })
+            }
+        }
+
+        return output
+    }
+
     function liveGroupChips() {
-        const groups = liveGroupsData()
+        const groups = normalizedLiveGroupsData()
         const output = []
         for (let index = 0; index < groups.length; index += 1) {
             const group = groups[index]
@@ -675,6 +894,9 @@ ApplicationWindow {
                 continue
             }
             if (parseLiveCountryCodeFromGroupPrefix(group.title)) {
+                continue
+            }
+            if (parseLiveCountryFamilyFromGroupTitle(group.title)) {
                 continue
             }
             output.push(group)
@@ -693,6 +915,81 @@ ApplicationWindow {
             }
         }
         return output
+    }
+
+    function displayLiveCountryLabel(code) {
+        const normalizedCode = normalizeLiveCountryCode(code)
+        if (!normalizedCode) {
+            return safeText(code)
+        }
+        if (normalizedCode === "XXX") {
+            return "Adults"
+        }
+        return getLiveCountryLabel(code)
+    }
+
+    function displayLiveCountryFamilyLabel(familyKey) {
+        const normalizedFamily = normalizeLiveCountryFamilyKey(familyKey)
+        if (normalizedFamily === "ADULTS") {
+            return "Adults"
+        }
+        return getLiveCountryFamilyLabel(familyKey)
+    }
+
+    function normalizedLiveGroupsData() {
+        const source = liveGroupsData()
+        const buckets = {}
+        const output = []
+        for (let index = 0; index < source.length; index += 1) {
+            const group = source[index]
+            const title = canonicalLiveGroupTitle(group && group.title ? group.title : "")
+            if (!title.length) {
+                continue
+            }
+            const key = normalizeAsciiText(title)
+            if (!buckets[key]) {
+                buckets[key] = {
+                    title,
+                    count: 0,
+                    kind: group && group.kind ? group.kind : "live"
+                }
+                output.push(buckets[key])
+            }
+            buckets[key].count += Number(group && group.count ? group.count : 0)
+        }
+        return output
+    }
+
+    function shouldRenderLiveSubgroupAllChip() {
+        const selectedCountryCode =
+            parseLiveCountryCodeFromFilter(selectedLiveGroup)
+            || parseLiveCountryCodeFromExplicitGroupTitle(selectedLiveGroup)
+            || parseLiveCountryCodeFromGroupPrefix(selectedLiveGroup)
+        if (selectedCountryCode) {
+            return true
+        }
+
+        const selectedCountryFamily =
+            parseLiveCountryFamilyFromFilter(selectedLiveGroup)
+            || parseLiveCountryFamilyFromGroupTitle(selectedLiveGroup)
+        if (!selectedCountryFamily) {
+            return false
+        }
+
+        const groups = normalizedLiveGroupsData()
+        for (let index = 0; index < groups.length; index += 1) {
+            const title = safeText(groups[index].title)
+            if (!title.length) {
+                continue
+            }
+            if (parseLiveCountryCodeFromExplicitGroupTitle(title) || parseLiveCountryCodeFromGroupPrefix(title)) {
+                continue
+            }
+            if (normalizeLiveCountryFamilyKey(title) === selectedCountryFamily) {
+                return true
+            }
+        }
+        return false
     }
 
     function countKeywordMatches(text, keywords) {
@@ -1741,9 +2038,7 @@ ApplicationWindow {
         }
         playerVisible = true
         inlinePlaybackMode = "live"
-        if (livePlaybackController.videoFillMode !== "fill") {
-            livePlaybackController.videoFillMode = "fill"
-        }
+        livePlaybackController.videoFillMode = videoFullscreen ? "fill" : "fit"
         const sameChannel = livePlaybackController.activeContentKind === "live" && livePlaybackController.activeChannelId === channel.id
         if (sameChannel && !forceRestart) {
             return
@@ -1913,8 +2208,8 @@ ApplicationWindow {
                 return
             }
             lastKnownHasActiveSubscription = false
-            if (!apiClient.restoringSession && currentScreen !== "register") {
-                currentScreen = "login"
+            if (!apiClient.restoringSession) {
+                currentScreen = signedOutEntryScreen(false)
             }
         }
         function onLoginSucceeded() { currentScreen = "home"; lastKnownHasActiveSubscription = false; showAuthCode = false; authCode = "" }
@@ -4508,7 +4803,7 @@ ApplicationWindow {
                                             ChipButton {
                                                 required property var modelData
                                                 text: modelData.count > 0 ? `${modelData.label} ${modelData.count}` : modelData.label
-                                                active: parseLiveCountryCodeFromFilter(selectedLiveGroup) === modelData.code
+                                                active: currentSelectedLiveCountryKey() === modelData.key
                                                 width: Math.max(96, implicitContentWidth + 28)
                                                 onClicked: applyLiveFilters(liveSearchText, modelData.filter)
                                             }
@@ -4518,9 +4813,33 @@ ApplicationWindow {
                                             model: liveGroupChips()
                                             ChipButton {
                                                 required property var modelData
-                                                text: Number(modelData.count || 0) > 0 ? `${modelData.title} ${modelData.count}` : modelData.title
+                                                text: modelData.count > 0 ? `${modelData.title} ${modelData.count}` : modelData.title
                                                 active: selectedLiveGroup === modelData.title
-                                                width: Math.max(96, implicitContentWidth + 28)
+                                                width: Math.max(104, implicitContentWidth + 28)
+                                                onClicked: applyLiveFilters(liveSearchText, modelData.title)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Flickable {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: !videoFullscreen && liveSubgroupChips().length > 0 ? 52 : 0
+                                    visible: !videoFullscreen && liveSubgroupChips().length > 0
+                                    contentWidth: liveSubgroupRow.width
+                                    clip: true
+
+                                    Row {
+                                        id: liveSubgroupRow
+                                        spacing: 10
+
+                                        Repeater {
+                                            model: liveSubgroupChips()
+                                            ChipButton {
+                                                required property var modelData
+                                                text: modelData.title
+                                                active: selectedLiveGroup === modelData.title
+                                                width: Math.max(120, implicitContentWidth + 28)
                                                 onClicked: applyLiveFilters(liveSearchText, modelData.title)
                                             }
                                         }
@@ -4533,6 +4852,8 @@ ApplicationWindow {
                                     spacing: videoFullscreen ? 0 : window.sectionSpacing
                                     GlassCard {
                                         Layout.fillWidth: true
+                                        Layout.minimumWidth: videoFullscreen ? 0 : (window.compactWindow ? 600 : 720)
+                                        Layout.preferredWidth: videoFullscreen ? 0 : (window.compactWindow ? 700 : 840)
                                         Layout.fillHeight: true
                                         color: videoFullscreen ? "#000000" : "#090c13"
                                         radius: videoFullscreen ? 0 : 8
@@ -4768,7 +5089,8 @@ ApplicationWindow {
 
                                         }
                                     GlassCard {
-                                        Layout.preferredWidth: videoFullscreen ? 0 : (window.compactWindow ? 360 : 420)
+                                        Layout.preferredWidth: videoFullscreen ? 0 : (window.compactWindow ? 500 : 600)
+                                        Layout.minimumWidth: videoFullscreen ? 0 : (window.compactWindow ? 470 : 560)
                                         Layout.fillHeight: true
                                         color: "#0a0f18"
                                         visible: !videoFullscreen

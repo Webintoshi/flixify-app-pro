@@ -121,6 +121,7 @@ public:
   Q_INVOKABLE void requestTrial(const QString &note = QString());
   Q_INVOKABLE bool copyText(const QString &value) const;
   Q_INVOKABLE QString saveTextFile(const QString &nameHint, const QString &content) const;
+  Q_INVOKABLE bool consumeInitialRegisterPrompt();
   Q_INVOKABLE QVariantMap liveChannelById(const QString &channelId) const;
   Q_INVOKABLE QVariantMap movieById(const QString &movieId) const;
   Q_INVOKABLE QVariantMap seriesById(const QString &seriesId) const;

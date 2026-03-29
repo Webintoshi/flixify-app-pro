@@ -47,7 +47,7 @@ Rectangle {
 
     color: fullscreen ? "#000000" : "#090c13"
     radius: fullscreen ? 0 : 10
-    border.width: fullscreen ? 0 : 1
+    border.width: 0
     border.color: "#14ffffff"
     clip: true
 
@@ -188,10 +188,10 @@ Rectangle {
     Rectangle {
         id: viewport
         anchors.fill: parent
-        anchors.margins: fullscreen ? 0 : 8
+        anchors.margins: fullscreen ? 0 : 0
         radius: fullscreen ? 0 : 8
         color: "#000000"
-        border.width: fullscreen ? 0 : 1
+        border.width: 0
         border.color: "#12ffffff"
         clip: true
         onXChanged: root.scheduleOverlaySync()

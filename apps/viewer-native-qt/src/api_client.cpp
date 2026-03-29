@@ -1314,6 +1314,17 @@ QString ApiClient::saveTextFile(const QString &nameHint, const QString &content)
   return path;
 }
 
+bool ApiClient::consumeInitialRegisterPrompt() {
+  QSettings settings;
+  const QString key = QStringLiteral("startup/initialRegisterShown");
+  const bool alreadyShown = settings.value(key, false).toBool();
+  if (alreadyShown) {
+    return false;
+  }
+  settings.setValue(key, true);
+  return true;
+}
+
 QVariantMap ApiClient::liveChannelById(const QString &channelId) const {
   for (const QVariant &item : m_liveChannels) {
     const QVariantMap map = item.toMap();
