@@ -306,6 +306,307 @@ ApplicationWindow {
         AndroidVideoSurface {}
     }
 
+    Component {
+        id: homePageComponent
+        HomePage {
+            movieItems: homeMoviePreviewCache
+            seriesItems: homeSeriesPreviewCache
+            liveItems: homeLivePreviewCache
+            compactWindow: compactWindow
+            panelColor: panelColor
+            surfaceColor: surfaceColor
+            textPrimary: textPrimary
+            textMuted: textMuted
+            accentColor: accentColor
+            onMovieSelected: playMovie(movie)
+            onSeriesSelected: {
+                selectedSeriesId = fieldText(series, "id")
+                activeEpisodeData = null
+                currentScreen = "series-detail"
+            }
+            onLiveSelected: playLive(live, false)
+            onOpenMoviesRequested: openScreen("movies")
+            onOpenSeriesRequested: openScreen("series")
+            onOpenLiveRequested: openScreen("live")
+        }
+    }
+
+    Component {
+        id: livePageComponent
+        Item {
+            Column {
+                anchors.fill: parent
+                anchors.margins: compactWindow ? 18 : 24
+                spacing: 16
+                visible: !videoFullscreen
+                Flickable {
+                    width: parent.width
+                    height: 48
+                    contentWidth: countryRow.width
+                    clip: true
+                    Row {
+                        id: countryRow
+                        spacing: 10
+                        Repeater {
+                            model: liveCountryChips()
+                            LiveChipButton {
+                                required property var modelData
+                                text: `${modelData.label} ${Number(modelData.count || 0)}`
+                                active: selectedLiveGroup === modelData.filter
+                                onClicked: applyLiveFilters(liveSearchText, modelData.filter)
+                            }
+                        }
+                    }
+                }
+                Flickable {
+                    width: parent.width
+                    height: liveSubgroupChips().length ? 48 : 0
+                    visible: liveSubgroupChips().length > 0
+                    contentWidth: subgroupRow.width
+                    clip: true
+                    Row {
+                        id: subgroupRow
+                        spacing: 10
+                        Repeater {
+                            model: liveSubgroupChips()
+                            LiveChipButton {
+                                required property var modelData
+                                text: modelData.title
+                                active: selectedLiveGroup === modelData.title
+                                onClicked: applyLiveFilters(liveSearchText, modelData.title)
+                            }
+                        }
+                    }
+                }
+            }
+            Row {
+                anchors {
+                    top: parent.top
+                    topMargin: videoFullscreen ? 0 : 130
+                    left: parent.left
+                    right: parent.right
+                    bottom: parent.bottom
+                    margins: compactWindow ? 18 : 24
+                }
+                spacing: 22
+                LiveTvPlayerShell {
+                    width: videoFullscreen ? parent.width : Math.max(720, parent.width - rightPanel.width - 22)
+                    height: parent.height
+                    controller: livePlaybackController
+                    videoSurfaceComponent: androidVideoSurfaceComponent
+                    textPrimary: textPrimary
+                    textMuted: textMuted
+                    compactWindow: compactWindow
+                    onToggleFullscreenRequested: toggleLiveFullscreen()
+                }
+                Rectangle {
+                    id: rightPanel
+                    width: videoFullscreen ? 0 : (compactWindow ? 440 : 500)
+                    height: parent.height
+                    visible: !videoFullscreen
+                    radius: 28
+                    color: surfaceColor
+                    border.width: 1
+                    border.color: "#1f2c3e"
+                    Column {
+                        anchors.fill: parent
+                        anchors.margins: 18
+                        spacing: 16
+                        Row {
+                            width: parent.width
+                            spacing: 12
+                            TextField {
+                                id: liveSearchField
+                                width: parent.width - 114
+                                height: 54
+                                color: textPrimary
+                                placeholderText: "Kanal ara..."
+                                placeholderTextColor: "#8f98a8"
+                                text: liveSearchText
+                                background: Rectangle {
+                                    radius: 18
+                                    color: "#0f141d"
+                                    border.width: 1
+                                    border.color: "#243141"
+                                }
+                            }
+                            AppButton {
+                                width: 102
+                                text: "Ara"
+                                onClicked: applyLiveFilters(liveSearchField.text, selectedLiveGroup)
+                            }
+                        }
+                        Text {
+                            text: "Kanallar"
+                            color: textPrimary
+                            font.pixelSize: 22
+                            font.bold: true
+                        }
+                        ListView {
+                            width: parent.width
+                            height: parent.height - 110
+                            clip: true
+                            spacing: 12
+                            model: filteredLiveItems()
+                            delegate: LiveChannelCard {
+                                channelData: modelData
+                                width: ListView.view.width
+                                active: fieldText(modelData, "id") === selectedLiveId
+                                onClicked: playLive(modelData, true)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: moviesPageComponent
+        MoviesPage {
+            movieItems: apiClient.movies || []
+            movieGroups: movieGroupOptions()
+            movieTotal: apiClient.movieTotal
+            currentMovie: selectedMovie()
+            playbackController: moviePlaybackController
+            videoSurfaceComponent: androidVideoSurfaceComponent
+            selectedMovieId: selectedMovieId
+            selectedGroup: selectedMovieGroup
+            searchText: moviesSearchText
+            playerVisible: selectedMovieId.length > 0
+            compactWindow: compactWindow
+            movieLoadingMore: apiClient.movieLoadingMore
+            movieHasMore: apiClient.movieHasMore
+            windowIsFullscreen: movieWindowFullscreen
+            panelColor: panelColor
+            surfaceColor: surfaceColor
+            textPrimary: textPrimary
+            textMuted: textMuted
+            accentColor: accentColor
+            onSearchEdited: applyMovieFilters(text, selectedMovieGroup)
+            onRefreshRequested: applyMovieFilters(moviesSearchText, selectedMovieGroup)
+            onClearFiltersRequested: applyMovieFilters("", "")
+            onGroupSelected: applyMovieFilters(moviesSearchText, group)
+            onMovieSelected: playMovie(movie)
+            onLoadMoreRequested: apiClient.loadMoreMovies()
+            onClosePlayerRequested: closeMoviePlayer()
+            onToggleWindowFullscreenRequested: movieWindowFullscreen = !movieWindowFullscreen
+        }
+    }
+
+    Component {
+        id: seriesCatalogPageComponent
+        SeriesCatalogPage {
+            seriesItems: filteredSeriesItems()
+            seriesGroups: uniqueGroups(apiClient.series || [])
+            seriesTotal: filteredSeriesItems().length
+            selectedSeriesId: selectedSeriesId
+            selectedGroup: selectedSeriesGroup
+            searchText: seriesSearchText
+            compactWindow: compactWindow
+            panelColor: panelColor
+            surfaceColor: surfaceColor
+            textPrimary: textPrimary
+            textMuted: textMuted
+            accentColor: accentColor
+            onSearchEdited: applySeriesFilters(text, selectedSeriesGroup)
+            onRefreshRequested: applySeriesFilters(seriesSearchText, selectedSeriesGroup)
+            onClearFiltersRequested: applySeriesFilters("", "")
+            onGroupSelected: applySeriesFilters(seriesSearchText, group)
+            onSeriesSelected: {
+                selectedSeriesId = fieldText(series, "id")
+                activeEpisodeData = null
+                currentScreen = "series-detail"
+            }
+        }
+    }
+
+    Component {
+        id: seriesDetailPageComponent
+        SeriesDetailPage {
+            activeSeries: selectedSeries()
+            activeEpisode: activeEpisodeData
+            playbackController: seriesPlaybackController
+            videoSurfaceComponent: androidVideoSurfaceComponent
+            playerVisible: activeEpisodeData !== null
+            windowIsFullscreen: seriesWindowFullscreen
+            compactWindow: compactWindow
+            panelColor: panelColor
+            surfaceColor: surfaceColor
+            textPrimary: textPrimary
+            textMuted: textMuted
+            accentColor: accentColor
+            onPlayEpisodeRequested: playEpisode(episode, series)
+            onClosePlayerRequested: closeSeriesPlayer()
+            onExitDetailRequested: {
+                closeSeriesPlayer()
+                currentScreen = "series"
+            }
+            onToggleWindowFullscreenRequested: seriesWindowFullscreen = !seriesWindowFullscreen
+            onRetryPlaybackRequested: seriesPlaybackController.retryCurrent()
+        }
+    }
+
+    Component {
+        id: profilePageComponent
+        AndroidProfilePage {
+            userData: userData()
+            subscriptionLabel: subscriptionLabel()
+            compactWindow: compactWindow
+            panelColor: panelColor
+            surfaceColor: surfaceColor
+            textPrimary: textPrimary
+            textMuted: textMuted
+            accentColor: accentColor
+            onPackagesRequested: openScreen("packages")
+            onPaymentsRequested: openScreen("payments")
+            onContactRequested: openScreen("contact")
+        }
+    }
+
+    Component {
+        id: packagesPageComponent
+        AndroidPackagesPage {
+            packages: apiClient.packages || []
+            compactWindow: compactWindow
+            surfaceColor: surfaceColor
+            textPrimary: textPrimary
+            textMuted: textMuted
+            accentColor: accentColor
+            onBackRequested: openScreen("profile")
+            onPackageSelected: function(packageData) {
+                pendingPackage = packageData
+                selectedPaymentMethodId = ""
+                selectedCryptoAssetId = ""
+                apiClient.fetchPaymentMethods()
+            }
+        }
+    }
+
+    Component {
+        id: paymentsPageComponent
+        AndroidPaymentsPage {
+            paymentRequests: apiClient.paymentRequests || []
+            surfaceColor: surfaceColor
+            textPrimary: textPrimary
+            textMuted: textMuted
+            onBackRequested: openScreen("profile")
+        }
+    }
+
+    Component {
+        id: contactPageComponent
+        AndroidContactPage {
+            whatsappUrl: contactData().whatsapp || ""
+            telegramUrl: contactData().telegram || ""
+            surfaceColor: surfaceColor
+            textPrimary: textPrimary
+            textMuted: textMuted
+            onBackRequested: openScreen("profile")
+            onOpenUrl: function(url) { openSupportUrl(url) }
+        }
+    }
+
     component AppButton: Button {
         id: appButton
         property bool secondary: false
@@ -1267,232 +1568,23 @@ ApplicationWindow {
                     }
                 }
 
-                HomePage {
-                    movieItems: homeMoviePreviewCache
-                    seriesItems: homeSeriesPreviewCache
-                    liveItems: homeLivePreviewCache
-                    compactWindow: compactWindow
-                    panelColor: panelColor
-                    surfaceColor: surfaceColor
-                    textPrimary: textPrimary
-                    textMuted: textMuted
-                    accentColor: accentColor
-                    onMovieSelected: playMovie(movie)
-                    onSeriesSelected: { selectedSeriesId = fieldText(series, "id"); activeEpisodeData = null; currentScreen = "series-detail" }
-                    onLiveSelected: playLive(live, false)
-                    onOpenMoviesRequested: openScreen("movies")
-                    onOpenSeriesRequested: openScreen("series")
-                    onOpenLiveRequested: openScreen("live")
-                }
+                Loader { active: currentScreen === "home"; sourceComponent: active ? homePageComponent : null }
 
-                Item {
-                    Column {
-                        anchors.fill: parent
-                        anchors.margins: compactWindow ? 18 : 24
-                        spacing: 16
-                        visible: !videoFullscreen
-                        Flickable {
-                            width: parent.width
-                            height: 48
-                            contentWidth: countryRow.width
-                            clip: true
-                            Row {
-                                id: countryRow
-                                spacing: 10
-                                Repeater {
-                                    model: liveCountryChips()
-                                    LiveChipButton { required property var modelData; text: `${modelData.label} ${Number(modelData.count || 0)}`; active: selectedLiveGroup === modelData.filter; onClicked: applyLiveFilters(liveSearchText, modelData.filter) }
-                                }
-                            }
-                        }
-                        Flickable {
-                            width: parent.width
-                            height: liveSubgroupChips().length ? 48 : 0
-                            visible: liveSubgroupChips().length > 0
-                            contentWidth: subgroupRow.width
-                            clip: true
-                            Row {
-                                id: subgroupRow
-                                spacing: 10
-                                Repeater {
-                                    model: liveSubgroupChips()
-                                    LiveChipButton { required property var modelData; text: modelData.title; active: selectedLiveGroup === modelData.title; onClicked: applyLiveFilters(liveSearchText, modelData.title) }
-                                }
-                            }
-                        }
-                    }
-                    Row {
-                        anchors { top: parent.top; topMargin: videoFullscreen ? 0 : 130; left: parent.left; right: parent.right; bottom: parent.bottom; margins: compactWindow ? 18 : 24 }
-                        spacing: 22
-                        LiveTvPlayerShell {
-                            width: videoFullscreen ? parent.width : Math.max(720, parent.width - rightPanel.width - 22)
-                            height: parent.height
-                            controller: livePlaybackController
-                            videoSurfaceComponent: androidVideoSurfaceComponent
-                            textPrimary: textPrimary
-                            textMuted: textMuted
-                            compactWindow: compactWindow
-                            onToggleFullscreenRequested: toggleLiveFullscreen()
-                        }
-                        Rectangle {
-                            id: rightPanel
-                            width: videoFullscreen ? 0 : (compactWindow ? 440 : 500)
-                            height: parent.height
-                            visible: !videoFullscreen
-                            radius: 28
-                            color: surfaceColor
-                            border.width: 1
-                            border.color: "#1f2c3e"
-                            Column {
-                                anchors.fill: parent
-                                anchors.margins: 18
-                                spacing: 16
-                                Row {
-                                    width: parent.width
-                                    spacing: 12
-                                    TextField {
-                                        id: liveSearchField
-                                        width: parent.width - 114
-                                        height: 54
-                                        color: textPrimary
-                                        placeholderText: "Kanal ara..."
-                                        placeholderTextColor: "#8f98a8"
-                                        text: liveSearchText
-                                        background: Rectangle { radius: 18; color: "#0f141d"; border.width: 1; border.color: "#243141" }
-                                    }
-                                    AppButton { width: 102; text: "Ara"; onClicked: applyLiveFilters(liveSearchField.text, selectedLiveGroup) }
-                                }
-                                Text { text: "Kanallar"; color: textPrimary; font.pixelSize: 22; font.bold: true }
-                                ListView {
-                                    width: parent.width
-                                    height: parent.height - 110
-                                    clip: true
-                                    spacing: 12
-                                    model: filteredLiveItems()
-                                    delegate: LiveChannelCard { channelData: modelData; width: ListView.view.width; active: fieldText(modelData, "id") === selectedLiveId; onClicked: playLive(modelData, true) }
-                                }
-                            }
-                        }
-                    }
-                }
+                Loader { active: currentScreen === "live"; sourceComponent: active ? livePageComponent : null }
 
-                MoviesPage {
-                    movieItems: apiClient.movies || []
-                    movieGroups: movieGroupOptions()
-                    movieTotal: apiClient.movieTotal
-                    currentMovie: selectedMovie()
-                    playbackController: moviePlaybackController
-                    videoSurfaceComponent: androidVideoSurfaceComponent
-                    selectedMovieId: selectedMovieId
-                    selectedGroup: selectedMovieGroup
-                    searchText: moviesSearchText
-                    playerVisible: selectedMovieId.length > 0
-                    compactWindow: compactWindow
-                    movieLoadingMore: apiClient.movieLoadingMore
-                    movieHasMore: apiClient.movieHasMore
-                    windowIsFullscreen: movieWindowFullscreen
-                    panelColor: panelColor
-                    surfaceColor: surfaceColor
-                    textPrimary: textPrimary
-                    textMuted: textMuted
-                    accentColor: accentColor
-                    onSearchEdited: applyMovieFilters(text, selectedMovieGroup)
-                    onRefreshRequested: applyMovieFilters(moviesSearchText, selectedMovieGroup)
-                    onClearFiltersRequested: applyMovieFilters("", "")
-                    onGroupSelected: applyMovieFilters(moviesSearchText, group)
-                    onMovieSelected: playMovie(movie)
-                    onLoadMoreRequested: apiClient.loadMoreMovies()
-                    onClosePlayerRequested: closeMoviePlayer()
-                    onToggleWindowFullscreenRequested: movieWindowFullscreen = !movieWindowFullscreen
-                }
+                Loader { active: currentScreen === "movies"; sourceComponent: active ? moviesPageComponent : null }
 
-                SeriesCatalogPage {
-                    seriesItems: filteredSeriesItems()
-                    seriesGroups: uniqueGroups(apiClient.series || [])
-                    seriesTotal: filteredSeriesItems().length
-                    selectedSeriesId: selectedSeriesId
-                    selectedGroup: selectedSeriesGroup
-                    searchText: seriesSearchText
-                    compactWindow: compactWindow
-                    panelColor: panelColor
-                    surfaceColor: surfaceColor
-                    textPrimary: textPrimary
-                    textMuted: textMuted
-                    accentColor: accentColor
-                    onSearchEdited: applySeriesFilters(text, selectedSeriesGroup)
-                    onRefreshRequested: applySeriesFilters(seriesSearchText, selectedSeriesGroup)
-                    onClearFiltersRequested: applySeriesFilters("", "")
-                    onGroupSelected: applySeriesFilters(seriesSearchText, group)
-                    onSeriesSelected: { selectedSeriesId = fieldText(series, "id"); activeEpisodeData = null; currentScreen = "series-detail" }
-                }
+                Loader { active: currentScreen === "series"; sourceComponent: active ? seriesCatalogPageComponent : null }
 
-                SeriesDetailPage {
-                    activeSeries: selectedSeries()
-                    activeEpisode: activeEpisodeData
-                    playbackController: seriesPlaybackController
-                    videoSurfaceComponent: androidVideoSurfaceComponent
-                    playerVisible: activeEpisodeData !== null
-                    windowIsFullscreen: seriesWindowFullscreen
-                    compactWindow: compactWindow
-                    panelColor: panelColor
-                    surfaceColor: surfaceColor
-                    textPrimary: textPrimary
-                    textMuted: textMuted
-                    accentColor: accentColor
-                    onPlayEpisodeRequested: playEpisode(episode, series)
-                    onClosePlayerRequested: closeSeriesPlayer()
-                    onExitDetailRequested: { closeSeriesPlayer(); currentScreen = "series" }
-                    onToggleWindowFullscreenRequested: seriesWindowFullscreen = !seriesWindowFullscreen
-                    onRetryPlaybackRequested: seriesPlaybackController.retryCurrent()
-                }
+                Loader { active: currentScreen === "series-detail"; sourceComponent: active ? seriesDetailPageComponent : null }
 
-                AndroidProfilePage {
-                    userData: userData()
-                    subscriptionLabel: subscriptionLabel()
-                    compactWindow: compactWindow
-                    panelColor: panelColor
-                    surfaceColor: surfaceColor
-                    textPrimary: textPrimary
-                    textMuted: textMuted
-                    accentColor: accentColor
-                    onPackagesRequested: openScreen("packages")
-                    onPaymentsRequested: openScreen("payments")
-                    onContactRequested: openScreen("contact")
-                }
+                Loader { active: currentScreen === "profile"; sourceComponent: active ? profilePageComponent : null }
 
-                AndroidPackagesPage {
-                    packages: apiClient.packages || []
-                    compactWindow: compactWindow
-                    surfaceColor: surfaceColor
-                    textPrimary: textPrimary
-                    textMuted: textMuted
-                    accentColor: accentColor
-                    onBackRequested: openScreen("profile")
-                    onPackageSelected: function(packageData) {
-                        pendingPackage = packageData
-                        selectedPaymentMethodId = ""
-                        selectedCryptoAssetId = ""
-                        apiClient.fetchPaymentMethods()
-                    }
-                }
+                Loader { active: currentScreen === "packages"; sourceComponent: active ? packagesPageComponent : null }
 
-                AndroidPaymentsPage {
-                    paymentRequests: apiClient.paymentRequests || []
-                    surfaceColor: surfaceColor
-                    textPrimary: textPrimary
-                    textMuted: textMuted
-                    onBackRequested: openScreen("profile")
-                }
+                Loader { active: currentScreen === "payments"; sourceComponent: active ? paymentsPageComponent : null }
 
-                AndroidContactPage {
-                    whatsappUrl: contactData().whatsapp || ""
-                    telegramUrl: contactData().telegram || ""
-                    surfaceColor: surfaceColor
-                    textPrimary: textPrimary
-                    textMuted: textMuted
-                    onBackRequested: openScreen("profile")
-                    onOpenUrl: function(url) { openSupportUrl(url) }
-                }
+                Loader { active: currentScreen === "contact"; sourceComponent: active ? contactPageComponent : null }
             }
         }
     }
