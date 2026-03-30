@@ -18,6 +18,7 @@ Item {
     property bool windowIsFullscreen: false
     property bool controlsVisible: true
     property double seekPreviewSeconds: 0
+    property bool useOverlayWindow: Qt.platform.os !== "android"
     signal closeRequested()
     signal toggleWindowFullscreenRequested()
     readonly property string contentLabel: contentKind === "episode" ? "Bölüm" : "Film"
@@ -30,6 +31,8 @@ Item {
     readonly property bool overlayChromeVisible: controlsVisible || keepControlsVisible || !playbackStarted || (controller && controller.state === "error")
     readonly property int volumePercent: Math.round(((controller && controller.muted) ? 0 : (controller ? controller.volume : 1)) * 100)
     readonly property bool hasSubtitleTracks: controller && controller.subtitleTracks && controller.subtitleTracks.length > 0
+    readonly property var overlayWindowObject: useOverlayWindow ? overlayWindowLoader.item : null
+    readonly property var overlayChromeParent: useOverlayWindow && overlayWindowObject ? overlayWindowObject.contentItem : inlineOverlayHost
     readonly property bool overlayWindowActive: visible
                                               && viewport.visible
                                               && viewport.width > 1
@@ -252,17 +255,22 @@ Item {
     }
 
     function syncOverlayWindowGeometry() {
+        if (!root.useOverlayWindow) {
+            return
+        }
         const hostWindow = root.Window.window
         if (!hostWindow || !overlayWindowActive) {
-            overlayWindow.visible = false
+            if (root.overlayWindowObject) {
+                root.overlayWindowObject.visible = false
+            }
             return
         }
         const topLeft = viewport.mapToGlobal(0, 0)
-        overlayWindow.x = Math.round(topLeft.x)
-        overlayWindow.y = Math.round(topLeft.y)
-        overlayWindow.width = Math.max(1, Math.round(viewport.width))
-        overlayWindow.height = Math.max(1, Math.round(viewport.height))
-        overlayWindow.visible = true
+        root.overlayWindowObject.x = Math.round(topLeft.x)
+        root.overlayWindowObject.y = Math.round(topLeft.y)
+        root.overlayWindowObject.width = Math.max(1, Math.round(viewport.width))
+        root.overlayWindowObject.height = Math.max(1, Math.round(viewport.height))
+        root.overlayWindowObject.visible = true
     }
 
     Keys.onPressed: function(event) {
@@ -285,8 +293,8 @@ Item {
     Component.onDestruction: {
         controlsHideTimer.stop()
         overlayGeometrySyncTimer.stop()
-        if (overlayWindow) {
-            overlayWindow.visible = false
+        if (root.overlayWindowObject) {
+            root.overlayWindowObject.visible = false
         }
     }
     onVisibleChanged: {
@@ -296,20 +304,25 @@ Item {
         } else {
             controlsHideTimer.stop()
             overlayGeometrySyncTimer.stop()
-            overlayWindow.visible = false
+            if (root.overlayWindowObject) {
+                root.overlayWindowObject.visible = false
+            }
             if (controller && controller.activeContentKind === contentKind && controller.state !== "idle") {
                 controller.stop()
             }
         }
     }
     onOverlayWindowActiveChanged: {
-        if (!overlayWindow) {
+        if (!root.useOverlayWindow) {
+            return
+        }
+        if (!root.overlayWindowObject) {
             return
         }
         if (!overlayWindowActive) {
             controlsHideTimer.stop()
             overlayGeometrySyncTimer.stop()
-            overlayWindow.visible = false
+            root.overlayWindowObject.visible = false
             return
         }
         overlayGeometrySyncTimer.restart()
@@ -371,8 +384,8 @@ Item {
             if (!root.Window.window || !root.Window.window.active) {
                 controlsHideTimer.stop()
                 overlayGeometrySyncTimer.stop()
-                if (overlayWindow) {
-                    overlayWindow.visible = false
+                if (root.overlayWindowObject) {
+                    root.overlayWindowObject.visible = false
                 }
                 return
             }
@@ -436,15 +449,47 @@ Item {
         }
     }
 
-    Window {
-        id: overlayWindow
-        transientParent: root.Window.window
-        flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.NoDropShadowWindowHint
-        modality: Qt.NonModal
-        color: "transparent"
-        visible: false
-        width: 1
-        height: 1
+    Item {
+        id: inlineOverlayHost
+        anchors.fill: parent
+        z: 10
+        visible: !root.useOverlayWindow
+
+        Loader {
+            anchors.fill: parent
+            active: !root.useOverlayWindow
+            sourceComponent: overlayChromeComponent
+        }
+    }
+
+    Loader {
+        id: overlayWindowLoader
+        active: root.useOverlayWindow
+        sourceComponent: overlayWindowComponent
+    }
+
+    Component {
+        id: overlayWindowComponent
+
+        Window {
+            transientParent: root.Window.window
+            flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.NoDropShadowWindowHint
+            modality: Qt.NonModal
+            color: "transparent"
+            visible: false
+            width: 1
+            height: 1
+
+            Loader {
+                anchors.fill: parent
+                active: true
+                sourceComponent: overlayChromeComponent
+            }
+        }
+    }
+
+    Component {
+        id: overlayChromeComponent
 
         Item {
             anchors.fill: parent
@@ -738,7 +783,7 @@ Item {
 
             Popup {
                 id: subtitlePopup
-                parent: overlayWindow.contentItem
+                parent: root.overlayChromeParent
                 modal: false
                 focus: true
                 closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent

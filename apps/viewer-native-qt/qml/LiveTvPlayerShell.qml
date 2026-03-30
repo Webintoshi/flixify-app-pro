@@ -14,6 +14,7 @@ Rectangle {
     property int filteredCount: 0
     property bool audioMenuOpen: false
     property bool controlsVisible: true
+    property bool useOverlayWindow: Qt.platform.os !== "android"
 
     signal toggleFullscreenRequested()
 
@@ -25,6 +26,7 @@ Rectangle {
     readonly property bool keepControlsVisible: audioMenuOpen || overlayVolumeSlider.pressed
     readonly property var audioTrackItems: controller && controller.audioTracks ? controller.audioTracks : []
     readonly property int volumePercent: Math.round(((controller && controller.muted) ? 0 : (controller ? controller.volume : 1)) * 100)
+    readonly property var overlayWindowObject: useOverlayWindow ? overlayWindowLoader.item : null
     readonly property bool overlayWindowActive: showVideoSurface
                                               && viewport.visible
                                               && viewport.width > 1
@@ -65,8 +67,8 @@ Rectangle {
             overlayGeometrySyncTimer.stop()
             controlsVisible = true
             audioMenuOpen = false
-            if (overlayWindow) {
-                overlayWindow.visible = false
+            if (root.overlayWindowObject) {
+                root.overlayWindowObject.visible = false
             }
             return
         }
@@ -90,20 +92,23 @@ Rectangle {
             controlsHideTimer.stop()
             overlayGeometrySyncTimer.stop()
             audioMenuOpen = false
-            if (overlayWindow) {
-                overlayWindow.visible = false
+            if (root.overlayWindowObject) {
+                root.overlayWindowObject.visible = false
             }
         }
     }
 
     onOverlayWindowActiveChanged: {
-        if (!overlayWindow) {
+        if (!root.useOverlayWindow) {
+            return
+        }
+        if (!root.overlayWindowObject) {
             return
         }
         if (!overlayWindowActive) {
             overlayGeometrySyncTimer.stop()
             audioMenuOpen = false
-            overlayWindow.visible = false
+            root.overlayWindowObject.visible = false
             return
         }
         scheduleOverlaySync()
@@ -112,8 +117,8 @@ Rectangle {
     Component.onDestruction: {
         controlsHideTimer.stop()
         overlayGeometrySyncTimer.stop()
-        if (overlayWindow) {
-            overlayWindow.visible = false
+        if (root.overlayWindowObject) {
+            root.overlayWindowObject.visible = false
         }
     }
 
@@ -154,22 +159,25 @@ Rectangle {
     }
 
     function syncOverlayWindowGeometry() {
-        if (!overlayWindow) {
+        if (!root.useOverlayWindow) {
+            return
+        }
+        if (!root.overlayWindowObject) {
             return
         }
 
         const hostWindow = root.Window.window
         if (!hostWindow || !overlayWindowActive) {
-            overlayWindow.visible = false
+            root.overlayWindowObject.visible = false
             return
         }
 
         const topLeft = viewport.mapToGlobal(0, 0)
-        overlayWindow.x = Math.round(topLeft.x)
-        overlayWindow.y = Math.round(topLeft.y)
-        overlayWindow.width = Math.max(1, Math.round(viewport.width))
-        overlayWindow.height = Math.max(1, Math.round(viewport.height))
-        overlayWindow.visible = true
+        root.overlayWindowObject.x = Math.round(topLeft.x)
+        root.overlayWindowObject.y = Math.round(topLeft.y)
+        root.overlayWindowObject.width = Math.max(1, Math.round(viewport.width))
+        root.overlayWindowObject.height = Math.max(1, Math.round(viewport.height))
+        root.overlayWindowObject.visible = true
     }
 
     function refreshSurfaceBinding() {
@@ -359,8 +367,8 @@ Rectangle {
                 root.controlsHideTimer.stop()
                 root.overlayGeometrySyncTimer.stop()
                 root.audioMenuOpen = false
-                if (overlayWindow) {
-                    overlayWindow.visible = false
+                if (root.overlayWindowObject) {
+                    root.overlayWindowObject.visible = false
                 }
                 return
             }
@@ -368,21 +376,53 @@ Rectangle {
         }
     }
 
-    Window {
-        id: overlayWindow
-        transientParent: root.Window.window
-        flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.NoDropShadowWindowHint
-        modality: Qt.NonModal
-        color: "transparent"
-        visible: false
-        width: 1
-        height: 1
+    Item {
+        id: inlineOverlayHost
+        anchors.fill: parent
+        z: 10
+        visible: !root.useOverlayWindow
 
-        onVisibleChanged: {
-            if (!visible) {
-                root.audioMenuOpen = false
+        Loader {
+            anchors.fill: parent
+            active: !root.useOverlayWindow
+            sourceComponent: overlayChromeComponent
+        }
+    }
+
+    Loader {
+        id: overlayWindowLoader
+        active: root.useOverlayWindow
+        sourceComponent: overlayWindowComponent
+    }
+
+    Component {
+        id: overlayWindowComponent
+
+        Window {
+            transientParent: root.Window.window
+            flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.NoDropShadowWindowHint
+            modality: Qt.NonModal
+            color: "transparent"
+            visible: false
+            width: 1
+            height: 1
+
+            onVisibleChanged: {
+                if (!visible) {
+                    root.audioMenuOpen = false
+                }
+            }
+
+            Loader {
+                anchors.fill: parent
+                active: true
+                sourceComponent: overlayChromeComponent
             }
         }
+    }
+
+    Component {
+        id: overlayChromeComponent
 
         Item {
             id: overlayRoot
