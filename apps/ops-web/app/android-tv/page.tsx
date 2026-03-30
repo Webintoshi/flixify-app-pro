@@ -4,7 +4,7 @@ const downloads = [
   {
     title: "Android TV Cihaz APK",
     description:
-      "Gercek Android TV cihazlar ve arm64 destekli kutular icin yuklenebilir paket.",
+      "Android 9+ gercek Android TV cihazlar ve arm64 destekli kutular icin yuklenebilir paket.",
     href: "/downloads/Flixify-Pro-TV-android-arm64-release.apk",
     badge: "ARM64",
     buttonLabel: "APK'yi Indir"
@@ -16,6 +16,14 @@ const downloads = [
     href: "/downloads/Flixify-Pro-TV-android-x86_64-release.apk",
     badge: "x86_64",
     buttonLabel: "Emulator APK'si"
+  },
+  {
+    title: "Android TV 32-bit APK",
+    description:
+      "Android 9+ 32-bit ARM televizyonlar ve eski TV kutulari icin uyumlu paket.",
+    href: "/downloads/Flixify-Pro-TV-android-armeabi-v7a-release.apk",
+    badge: "ARMv7",
+    buttonLabel: "32-bit APK"
   }
 ];
 
@@ -53,8 +61,9 @@ export default function AndroidTvPage() {
           <span className="section-kicker">Indirme Secenekleri</span>
           <h2 className="section-title">Dogru APK'yi sec.</h2>
           <p className="section-description">
-            Gercek cihaz icin ARM64, Android Studio TV emulatoru icin x86_64 paketi
-            kullan.
+            Yeni cihazlarda ARM64, eski 32-bit cihazlarda ARMv7, Android Studio TV
+            emulatorunde x86_64 paketi kullan. Tum Android TV paketleri Android 9 ve
+            uzeri cihazlari hedefler.
           </p>
         </div>
 

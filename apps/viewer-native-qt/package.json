@@ -12,6 +12,7 @@
     "bundle:macos": "node scripts/package.mjs --preset macos-universal-release",
     "bundle:android": "node scripts/package.mjs --preset android-arm64-release",
     "bundle:android-tv": "node scripts/package.mjs --preset android-tv-arm64-release",
-    "bundle:android-tv-emulator": "node scripts/package.mjs --preset android-tv-x86_64-release"
+    "bundle:android-tv-emulator": "node scripts/package.mjs --preset android-tv-x86_64-release",
+    "bundle:android-tv-32bit": "node scripts/package.mjs --preset android-tv-armv7-release"
   }
 }

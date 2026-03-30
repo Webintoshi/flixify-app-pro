@@ -239,6 +239,17 @@ function isAndroidPreset(preset) {
   return typeof preset === "string" && preset.startsWith("android");
 }
 
+function resolveAndroidAbiFromPreset(preset = "") {
+  const normalizedPreset = String(preset).toLowerCase();
+  if (normalizedPreset.includes("x86_64")) {
+    return "x86_64";
+  }
+  if (normalizedPreset.includes("armv7") || normalizedPreset.includes("armeabi-v7a")) {
+    return "armeabi-v7a";
+  }
+  return "arm64-v8a";
+}
+
 function resolveAndroidSdkRoot() {
   return existingPath([
     process.env.ANDROID_SDK_ROOT,
@@ -289,9 +300,12 @@ function resolveAndroidQtRoot(preset = "") {
     return envQtRoot;
   }
 
-  const preferredFolders = preset.includes("x86_64")
+  const normalizedPreset = String(preset).toLowerCase();
+  const preferredFolders = normalizedPreset.includes("x86_64")
     ? ["android_x86_64", "android_arm64_v8a", "android_armv7"]
-    : ["android_arm64_v8a", "android_x86_64", "android_armv7"];
+    : normalizedPreset.includes("armv7") || normalizedPreset.includes("armeabi-v7a")
+      ? ["android_armv7", "android_arm64_v8a", "android_x86_64"]
+      : ["android_arm64_v8a", "android_x86_64", "android_armv7"];
   const candidates = findQtInstallations("C:\\Qt", preferredFolders);
   return candidates[0] ?? null;
 }
@@ -427,6 +441,7 @@ export function resolveNativeQtToolchain(preset = resolvePreset()) {
   }
 
   if (androidPreset) {
+    const androidAbi = resolveAndroidAbiFromPreset(preset);
     const qtRoot = resolveAndroidQtRoot(preset);
     const qtHostRoot = resolveQtHostRoot();
     const androidSdkRoot = resolveAndroidSdkRoot();
@@ -449,12 +464,9 @@ export function resolveNativeQtToolchain(preset = resolvePreset()) {
       throw new Error("JAVA_HOME bulunamadi.");
     }
 
-    const qtCmakeBinary = existingPath([
-      path.join(qtRoot, "bin", "qt-cmake.bat"),
-      path.join(qtRoot, "bin", "qt-cmake")
-    ]);
-    if (!qtCmakeBinary) {
-      throw new Error("qt-cmake Android kitinde bulunamadi.");
+    const qtToolchainFile = path.join(qtRoot, "lib", "cmake", "Qt6", "qt.toolchain.cmake");
+    if (!fs.existsSync(qtToolchainFile)) {
+      throw new Error("Qt Android toolchain dosyasi bulunamadi.");
     }
 
     const androidDeployQtBinary = existingPath([
@@ -469,11 +481,14 @@ export function resolveNativeQtToolchain(preset = resolvePreset()) {
       ...process.env,
       QT_ROOT: qtRoot,
       QT_HOST_PATH: qtHostRoot,
+      Qt6_DIR: path.join(qtRoot, "lib", "cmake", "Qt6"),
       JAVA_HOME: javaHome,
       ANDROID_HOME: androidSdkRoot,
       ANDROID_SDK_ROOT: androidSdkRoot,
       ANDROID_NDK_ROOT: androidNdkRoot,
       ANDROID_NDK_HOME: androidNdkRoot,
+      ANDROID_ABI: androidAbi,
+      QT_ANDROID_ABIS: androidAbi,
       FLIXIFY_API_BASE_URL: process.env.FLIXIFY_API_BASE_URL || "https://api.flixify.pro"
     };
 
@@ -494,8 +509,10 @@ export function resolveNativeQtToolchain(preset = resolvePreset()) {
     return {
       appRoot,
       env: baseEnv,
-      cmakeBinary: qtCmakeBinary,
+      androidAbi,
+      cmakeBinary: rawCmakeBinary,
       buildCmakeBinary: rawCmakeBinary,
+      qtToolchainFile,
       cpackBinary,
       ninjaBinary,
       qtRoot,
@@ -556,6 +573,26 @@ export function resolveNativeQtToolchain(preset = resolvePreset()) {
     libVlcRoot,
     nsisRoot
   };
+}
+
+export function resolveAndroidConfigureArgs(toolchain, preset = resolvePreset()) {
+  if (!isAndroidPreset(preset)) {
+    return [];
+  }
+
+  const androidAbi = toolchain.androidAbi || resolveAndroidAbiFromPreset(preset);
+  const qtRoot = toolchain.qtRoot;
+  const qtHostRoot = toolchain.qtHostRoot;
+
+  return [
+    "-DCMAKE_TOOLCHAIN_FILE=" + toolchain.qtToolchainFile,
+    "-DANDROID_ABI=" + androidAbi,
+    "-DCMAKE_ANDROID_ARCH_ABI=" + androidAbi,
+    "-DQT_ANDROID_ABIS=" + androidAbi,
+    "-DQt6_DIR=" + path.join(qtRoot, "lib", "cmake", "Qt6"),
+    "-DQT_HOST_PATH=" + qtHostRoot,
+    "-DQT_HOST_PATH_CMAKE_DIR=" + path.join(qtHostRoot, "lib", "cmake")
+  ];
 }
 
 export function spawnChecked(command, args, options = {}) {

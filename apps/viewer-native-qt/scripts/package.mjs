@@ -3,19 +3,21 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { resolveNativeQtToolchain, resolvePreset, spawnChecked } from "./toolchain.mjs";
+import { resolveAndroidConfigureArgs, resolveNativeQtToolchain, resolvePreset, spawnChecked } from "./toolchain.mjs";
 
 const preset = resolvePreset("windows-x64-release", "macos-universal-release");
+const toolchain = resolveNativeQtToolchain(preset);
 const {
   appRoot,
   cmakeBinary,
   buildCmakeBinary,
   cpackBinary,
   env,
+  ninjaBinary,
   androidDeployQtBinary,
   androidSdkRoot,
   javaHome
-} = resolveNativeQtToolchain(preset);
+} = toolchain;
 const buildDir = path.join(appRoot, "build", preset);
 const packageDir = path.join(appRoot, "dist", preset);
 const buildType = preset.includes("debug") ? "Debug" : "Release";
@@ -248,25 +250,20 @@ function copyNewestFile(sourceDir, destinationPath) {
   fs.copyFileSync(files[0], destinationPath);
 }
 
-function findNewestApk(rootDirs, minimumMtimeMs = 0) {
-  const candidates = [];
+function compareVersionNames(left, right) {
+  const leftParts = left.split(".").map((item) => Number.parseInt(item, 10) || 0);
+  const rightParts = right.split(".").map((item) => Number.parseInt(item, 10) || 0);
+  const length = Math.max(leftParts.length, rightParts.length);
 
-  for (const rootDir of rootDirs) {
-    if (!rootDir || !fs.existsSync(rootDir)) {
-      continue;
-    }
-
-    const apkFiles = collectFiles(rootDir, (entryPath) => entryPath.endsWith(".apk"));
-    for (const apkPath of apkFiles) {
-      const stats = fs.statSync(apkPath);
-      if (stats.mtimeMs >= minimumMtimeMs) {
-        candidates.push({ path: apkPath, mtimeMs: stats.mtimeMs });
-      }
+  for (let index = 0; index < length; index += 1) {
+    const leftValue = leftParts[index] ?? 0;
+    const rightValue = rightParts[index] ?? 0;
+    if (leftValue !== rightValue) {
+      return rightValue - leftValue;
     }
   }
 
-  candidates.sort((left, right) => right.mtimeMs - left.mtimeMs);
-  return candidates[0]?.path ?? null;
+  return 0;
 }
 
 function ensureAndroidApplicationBinary(deploymentSettingsPath, buildDir, androidBuildDir) {
@@ -309,8 +306,135 @@ function androidAbiLabel(deploymentSettingsPath, preset) {
   if (preset.includes("x86_64")) {
     return "x86_64";
   }
+  if (preset.includes("armv7") || preset.includes("armeabi-v7a")) {
+    return "armeabi-v7a";
+  }
 
   return "arm64";
+}
+
+function resolveAndroidGradleWrapper(androidBuildDir) {
+  return path.join(androidBuildDir, process.platform === "win32" ? "gradlew.bat" : "gradlew");
+}
+
+function resolveAndroidBuildToolsDir(androidSdkRoot) {
+  const buildToolsRoot = path.join(androidSdkRoot, "build-tools");
+  if (!fs.existsSync(buildToolsRoot)) {
+    throw new Error(`Android build-tools bulunamadi: ${buildToolsRoot}`);
+  }
+
+  const versions = fs
+    .readdirSync(buildToolsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort(compareVersionNames);
+
+  if (!versions.length) {
+    throw new Error(`Android build-tools versiyonu bulunamadi: ${buildToolsRoot}`);
+  }
+
+  return path.join(buildToolsRoot, versions[0]);
+}
+
+function resolveAndroidApkSignerJar(androidSdkRoot) {
+  const buildToolsDir = resolveAndroidBuildToolsDir(androidSdkRoot);
+  const signerJar = path.join(buildToolsDir, "lib", "apksigner.jar");
+
+  if (!fs.existsSync(signerJar)) {
+    throw new Error(`apksigner.jar bulunamadi: ${signerJar}`);
+  }
+
+  return signerJar;
+}
+
+function resolveAndroidSigningConfig() {
+  const keystorePath = process.env.ANDROID_KEYSTORE_PATH || path.join(os.homedir(), ".android", "debug.keystore");
+  const keyAlias = process.env.ANDROID_KEY_ALIAS || "androiddebugkey";
+  const keystorePassword = process.env.ANDROID_KEYSTORE_PASSWORD || "android";
+  const keyPassword = process.env.ANDROID_KEY_PASSWORD || keystorePassword;
+
+  if (!fs.existsSync(keystorePath)) {
+    throw new Error(`Android keystore bulunamadi: ${keystorePath}`);
+  }
+
+  return {
+    keystorePath,
+    keyAlias,
+    keystorePassword,
+    keyPassword
+  };
+}
+
+function resolveAndroidMinSdk() {
+  return String(process.env.FLIXIFY_ANDROID_MIN_SDK || "23");
+}
+
+function patchAndroidGradleProperties(androidBuildDir, minSdkVersion) {
+  const gradlePropertiesPath = path.join(androidBuildDir, "gradle.properties");
+  if (!fs.existsSync(gradlePropertiesPath)) {
+    throw new Error(`Android gradle.properties bulunamadi: ${gradlePropertiesPath}`);
+  }
+
+  const content = fs.readFileSync(gradlePropertiesPath, "utf8");
+  const patched = content.replace(/^qtMinSdkVersion=\d+$/mu, `qtMinSdkVersion=${minSdkVersion}`);
+
+  if (patched !== content) {
+    fs.writeFileSync(gradlePropertiesPath, patched, "utf8");
+  }
+}
+
+function signAndroidApk(androidSdkRoot, apkPath) {
+  const signerJar = resolveAndroidApkSignerJar(androidSdkRoot);
+  const signingConfig = resolveAndroidSigningConfig();
+  const javaBinary = path.join(javaHome, "bin", process.platform === "win32" ? "java.exe" : "java");
+
+  runChecked(
+    javaBinary,
+    [
+      "-jar",
+      signerJar,
+      "sign",
+      "--ks",
+      signingConfig.keystorePath,
+      "--ks-key-alias",
+      signingConfig.keyAlias,
+      "--ks-pass",
+      `pass:${signingConfig.keystorePassword}`,
+      "--key-pass",
+      `pass:${signingConfig.keyPassword}`,
+      apkPath
+    ],
+    { env }
+  );
+
+  runChecked(javaBinary, ["-jar", signerJar, "verify", apkPath], { env });
+}
+
+function ensureAndroidProjectGenerated(deploymentSettingsPath, buildDir, androidBuildDir) {
+  const gradlePropertiesPath = path.join(androidBuildDir, "gradle.properties");
+  const buildGradlePath = path.join(androidBuildDir, "build.gradle");
+  if (fs.existsSync(gradlePropertiesPath) && fs.existsSync(buildGradlePath)) {
+    return;
+  }
+
+  ensureAndroidApplicationBinary(deploymentSettingsPath, buildDir, androidBuildDir);
+  const androidPlatform = process.env.FLIXIFY_ANDROID_PLATFORM || "android-35";
+
+  runChecked(
+    androidDeployQtBinary,
+    [
+      "--input", deploymentSettingsPath,
+      "--output", androidBuildDir,
+      "--release",
+      "--gradle",
+      "--android-platform", androidPlatform,
+      "--jdk", javaHome
+    ],
+    {
+      cwd: buildDir,
+      env
+    }
+  );
 }
 
 function packageAndroid() {
@@ -381,7 +505,7 @@ function packageAndroid() {
   })();
 
   if (freshestApk || apkPathFromOutput) {
-    const apkToCopy = freshestApk || apkPathFromOutput;
+    const apkToCopy = apkPathFromOutput || freshestApk;
     fs.mkdirSync(path.dirname(packagedApkPath), { recursive: true });
     fs.copyFileSync(apkToCopy, packagedApkPath);
     if (result.status !== 0) {
@@ -399,11 +523,88 @@ function packageAndroid() {
   throw new Error(`APK cikisi bulunamadi: ${apkVariantDir}`);
 }
 
-spawnChecked(cmakeBinary, ["--preset", preset], { cwd: appRoot, env });
-spawnChecked(androidPreset ? buildCmakeBinary : cmakeBinary, ["--build", "--preset", preset], { cwd: appRoot, env });
+function packageAndroidRelease() {
+  const deploymentSettingsPath = path.join(buildDir, "android-FlixifyNativeQt-deployment-settings.json");
+  if (!fs.existsSync(deploymentSettingsPath)) {
+    throw new Error(`Android deployment ayarlari bulunamadi: ${deploymentSettingsPath}`);
+  }
+
+  const androidBuildDir = path.join(buildDir, "android-build");
+  fs.mkdirSync(packageDir, { recursive: true });
+  ensureAndroidProjectGenerated(deploymentSettingsPath, buildDir, androidBuildDir);
+  patchAndroidGradleProperties(androidBuildDir, resolveAndroidMinSdk());
+
+  const gradleWrapper = resolveAndroidGradleWrapper(androidBuildDir);
+  if (!fs.existsSync(gradleWrapper)) {
+    throw new Error(`Android gradle wrapper bulunamadi: ${gradleWrapper}`);
+  }
+
+  const releaseApkPath = path.join(
+    androidBuildDir,
+    "build",
+    "outputs",
+    "apk",
+    "release",
+    "android-build-release-unsigned.apk"
+  );
+
+  const gradleResult = spawnSync(gradleWrapper, ["assembleRelease"], {
+    cwd: androidBuildDir,
+    env,
+    stdio: "inherit"
+  });
+
+  if (gradleResult.status !== 0 && !fs.existsSync(releaseApkPath)) {
+    throw new Error(`${gradleWrapper} failed with status ${gradleResult.status ?? 1}.`);
+  }
+
+  const abiLabel = androidAbiLabel(deploymentSettingsPath, preset);
+  const packagedApkPath = path.join(
+    packageDir,
+    `Flixify-Pro-TV-android-${abiLabel}-${buildType.toLowerCase()}.apk`
+  );
+
+  if (!fs.existsSync(releaseApkPath)) {
+    throw new Error(`Release APK cikisi bulunamadi: ${releaseApkPath}`);
+  }
+
+  fs.mkdirSync(path.dirname(packagedApkPath), { recursive: true });
+  fs.copyFileSync(releaseApkPath, packagedApkPath);
+  signAndroidApk(androidSdkRoot, packagedApkPath);
+}
 
 if (androidPreset) {
-  packageAndroid();
+  try {
+    fs.rmSync(buildDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch {
+  }
+  if (fs.existsSync(buildDir) && process.platform === "win32") {
+    spawnSync("cmd.exe", ["/d", "/s", "/c", `if exist "${buildDir}" rmdir /s /q "${buildDir}"`], {
+      stdio: "ignore"
+    });
+  }
+  const configureArgs = [
+    "-S", appRoot,
+    "-B", buildDir,
+    "-G", "Ninja",
+    "-DCMAKE_BUILD_TYPE=" + buildType,
+    "-DCMAKE_MAKE_PROGRAM=" + ninjaBinary,
+    ...resolveAndroidConfigureArgs(toolchain, preset)
+  ];
+
+  if (preset.includes("android-tv")) {
+    configureArgs.push("-DFLIXIFY_ANDROID_TV=ON");
+  }
+
+  spawnChecked(cmakeBinary, configureArgs, { cwd: appRoot, env });
+  spawnChecked(buildCmakeBinary, ["--build", buildDir, "--parallel"], { cwd: appRoot, env });
+} else {
+  spawnChecked(cmakeBinary, ["--preset", preset], { cwd: appRoot, env });
+  spawnChecked(cmakeBinary, ["--build", "--preset", preset], { cwd: appRoot, env });
+}
+
+if (androidPreset) {
+  packageAndroidRelease();
 } else if (process.platform === "darwin") {
   packageMacOS();
 } else {
