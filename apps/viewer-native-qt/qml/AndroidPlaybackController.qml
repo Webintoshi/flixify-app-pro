@@ -1,8 +1,11 @@
 import QtQuick
 import QtMultimedia
 
-QtObject {
+Item {
     id: root
+    visible: false
+    width: 0
+    height: 0
 
     property string activeContentKind: ""
     property string activeContentId: ""
