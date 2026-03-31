@@ -1,12 +1,13 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 
 Item {
     id: root
 
     property var packages: []
     property bool compactWindow: false
+    property color panelColor: "#090c13"
     property color surfaceColor: "#131923"
     property color textPrimary: "#f7f8fb"
     property color textMuted: "#b1bac9"
@@ -65,12 +66,14 @@ Item {
         focusPolicy: Qt.StrongFocus
         implicitWidth: 52
         implicitHeight: 52
+
         background: Rectangle {
             radius: 26
-            color: "#131923"
+            color: root.surfaceColor
             border.width: 1
             border.color: parent.activeFocus ? "#44ff2432" : "#2a3140"
         }
+
         contentItem: Canvas {
             anchors.fill: parent
             onPaint: {
@@ -87,13 +90,16 @@ Item {
                 ctx.stroke()
             }
         }
+
         onClicked: root.backRequested()
     }
 
     component SelectButton: Button {
+        id: selectButton
         hoverEnabled: false
         focusPolicy: Qt.StrongFocus
         implicitHeight: 54
+
         background: Rectangle {
             radius: 18
             border.width: 1
@@ -103,8 +109,9 @@ Item {
                 GradientStop { position: 1.0; color: parent.down ? "#a40f19" : "#000000" }
             }
         }
+
         contentItem: Text {
-            text: parent.text
+            text: selectButton.text
             color: "#ffffff"
             font.pixelSize: 16
             font.bold: true
@@ -135,6 +142,7 @@ Item {
                     color: root.textPrimary
                     font.pixelSize: 42
                     font.bold: true
+                    font.family: "Space Grotesk"
                 }
             }
 
@@ -144,13 +152,13 @@ Item {
                 spacing: 18
 
                 Repeater {
-                    model: orderedPackages()
+                    model: root.orderedPackages()
 
                     Rectangle {
                         width: root.compactWindow ? Math.floor((root.width - 66) / 2) : Math.floor((root.width - 102) / 4)
                         height: 392
                         radius: 26
-                        color: "#090c13"
+                        color: root.panelColor
                         border.width: 1
                         border.color: "#1f2c3e"
 
@@ -178,6 +186,7 @@ Item {
                                 color: root.textPrimary
                                 font.pixelSize: 34
                                 font.bold: true
+                                font.family: "Space Grotesk"
                                 wrapMode: Text.WordWrap
                             }
 
@@ -189,6 +198,7 @@ Item {
                                     color: root.textPrimary
                                     font.pixelSize: 32
                                     font.bold: true
+                                    font.family: "Space Grotesk"
                                 }
 
                                 Text {
@@ -207,6 +217,7 @@ Item {
                                     model: root.packageFeatureList(modelData)
 
                                     Row {
+                                        id: featureRow
                                         width: parent.width
                                         spacing: 10
 
@@ -227,11 +238,12 @@ Item {
                                         }
 
                                         Text {
-                                            width: parent.width - 24
+                                            width: featureRow.width - 24
                                             wrapMode: Text.WordWrap
                                             text: modelData
                                             color: root.textPrimary
                                             font.pixelSize: 14
+                                            lineHeight: 1.2
                                         }
                                     }
                                 }

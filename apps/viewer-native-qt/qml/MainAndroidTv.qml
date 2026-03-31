@@ -566,6 +566,7 @@ ApplicationWindow {
         AndroidPackagesPage {
             packages: apiClient.packages || []
             compactWindow: compactWindow
+            panelColor: panelColor
             surfaceColor: surfaceColor
             textPrimary: textPrimary
             textMuted: textMuted
@@ -584,9 +585,11 @@ ApplicationWindow {
         id: paymentsPageComponent
         AndroidPaymentsPage {
             paymentRequests: apiClient.paymentRequests || []
+            panelColor: panelColor
             surfaceColor: surfaceColor
             textPrimary: textPrimary
             textMuted: textMuted
+            accentColor: accentColor
             onBackRequested: openScreen("profile")
         }
     }
@@ -596,9 +599,12 @@ ApplicationWindow {
         AndroidContactPage {
             whatsappUrl: contactData().whatsapp || ""
             telegramUrl: contactData().telegram || ""
+            compactWindow: compactWindow
+            panelColor: panelColor
             surfaceColor: surfaceColor
             textPrimary: textPrimary
             textMuted: textMuted
+            accentColor: accentColor
             onBackRequested: openScreen("profile")
             onOpenUrl: function(url) { openSupportUrl(url) }
         }

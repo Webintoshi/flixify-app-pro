@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -23,33 +24,52 @@ Item {
         return text.length ? text : (fallbackText || "")
     }
 
-    component StatCard: Rectangle {
-        property string label: ""
-        property string value: ""
-        radius: 24
-        color: root.surfaceColor
+    component CardFrame: Rectangle {
+        radius: 26
+        color: root.panelColor
         border.width: 1
         border.color: "#1f2c3e"
 
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 4
+            radius: 2
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "#00ffffff" }
+                GradientStop { position: 0.35; color: "#40ff2432" }
+                GradientStop { position: 1.0; color: "#00ffffff" }
+            }
+        }
+    }
+
+    component StatCard: CardFrame {
+        id: statCard
+        property string label: ""
+        property string value: ""
+
         Column {
             anchors.fill: parent
-            anchors.margins: 20
-            spacing: 10
+            anchors.margins: 22
+            spacing: 12
 
             Text {
-                text: parent.parent.label
+                text: statCard.label
                 color: root.textMuted
                 font.pixelSize: 13
                 font.bold: true
+                font.family: "Space Grotesk"
             }
 
             Text {
-                text: parent.parent.value
+                text: statCard.value
                 width: parent.width
                 wrapMode: Text.WordWrap
                 color: root.textPrimary
                 font.pixelSize: 22
                 font.bold: true
+                font.family: "Space Grotesk"
             }
         }
     }
@@ -60,25 +80,23 @@ Item {
         property string copy: ""
         hoverEnabled: false
         focusPolicy: Qt.StrongFocus
-        implicitHeight: 168
+        implicitHeight: 184
 
-        background: Rectangle {
-            radius: 24
-            color: root.surfaceColor
-            border.width: 1
+        background: CardFrame {
             border.color: actionCard.activeFocus ? "#44ff2432" : "#1f2c3e"
         }
 
         contentItem: Column {
             anchors.fill: parent
-            anchors.margins: 20
+            anchors.margins: 22
             spacing: 14
 
             Text {
                 text: actionCard.title
                 color: root.textPrimary
-                font.pixelSize: 24
+                font.pixelSize: 26
                 font.bold: true
+                font.family: "Space Grotesk"
             }
 
             Text {
@@ -87,45 +105,55 @@ Item {
                 wrapMode: Text.WordWrap
                 color: root.textMuted
                 font.pixelSize: 14
+                lineHeight: 1.2
             }
 
-            Item { width: 1; height: 4 }
+            Item {
+                width: 1
+                Layout.fillHeight: true
+                height: Math.max(8, parent.height - 118)
+            }
 
-            Row {
-                spacing: 10
+            Rectangle {
+                width: 176
+                height: 46
+                radius: 16
+                color: "#10141c"
+                border.width: 1
+                border.color: actionCard.activeFocus ? root.accentColor : "#2a3140"
 
-                Rectangle {
-                    width: 38
-                    height: 38
-                    radius: 19
-                    color: "#1d2430"
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 10
 
                     Canvas {
-                        anchors.centerIn: parent
-                        width: 16
-                        height: 16
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 18
+                        height: 18
                         onPaint: {
                             const ctx = getContext("2d")
                             ctx.reset()
                             ctx.strokeStyle = "#ffffff"
-                            ctx.lineWidth = 2.2
+                            ctx.lineWidth = 2
                             ctx.lineCap = "round"
                             ctx.lineJoin = "round"
                             ctx.beginPath()
-                            ctx.moveTo(3, height * 0.25)
-                            ctx.lineTo(width - 3, height * 0.5)
-                            ctx.lineTo(3, height * 0.75)
+                            ctx.moveTo(width * 0.18, height * 0.5)
+                            ctx.lineTo(width * 0.82, height * 0.5)
+                            ctx.moveTo(width * 0.55, height * 0.24)
+                            ctx.lineTo(width * 0.82, height * 0.5)
+                            ctx.lineTo(width * 0.55, height * 0.76)
                             ctx.stroke()
                         }
                     }
-                }
 
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Sayfayı Aç"
-                    color: root.textPrimary
-                    font.pixelSize: 14
-                    font.bold: true
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Sayfayı Ziyaret Et"
+                        color: root.textPrimary
+                        font.pixelSize: 14
+                        font.bold: true
+                    }
                 }
             }
         }
@@ -137,7 +165,7 @@ Item {
 
         Column {
             width: root.width
-            spacing: 20
+            spacing: 22
             topPadding: 24
             bottomPadding: 32
 
@@ -147,6 +175,7 @@ Item {
                 color: root.textPrimary
                 font.pixelSize: 42
                 font.bold: true
+                font.family: "Space Grotesk"
             }
 
             Flow {
@@ -176,7 +205,7 @@ Item {
 
                     StatCard {
                         width: root.compactWindow ? Math.floor((root.width - 66) / 2) : Math.floor((root.width - 84) / 2)
-                        height: 128
+                        height: 134
                         label: modelData.label
                         value: modelData.value
                     }

@@ -1,14 +1,16 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 
 Item {
     id: root
 
     property var paymentRequests: []
+    property color panelColor: "#090c13"
     property color surfaceColor: "#131923"
     property color textPrimary: "#f7f8fb"
     property color textMuted: "#b1bac9"
+    property color accentColor: "#ff2432"
 
     signal backRequested()
 
@@ -17,12 +19,14 @@ Item {
         focusPolicy: Qt.StrongFocus
         implicitWidth: 52
         implicitHeight: 52
+
         background: Rectangle {
             radius: 26
-            color: "#131923"
+            color: root.surfaceColor
             border.width: 1
             border.color: parent.activeFocus ? "#44ff2432" : "#2a3140"
         }
+
         contentItem: Canvas {
             anchors.fill: parent
             onPaint: {
@@ -39,6 +43,7 @@ Item {
                 ctx.stroke()
             }
         }
+
         onClicked: root.backRequested()
     }
 
@@ -64,6 +69,37 @@ Item {
                     color: root.textPrimary
                     font.pixelSize: 42
                     font.bold: true
+                    font.family: "Space Grotesk"
+                }
+            }
+
+            Rectangle {
+                x: 24
+                width: root.width - 48
+                height: 168
+                visible: root.paymentRequests.length === 0
+                radius: 26
+                color: root.panelColor
+                border.width: 1
+                border.color: "#1f2c3e"
+
+                Column {
+                    anchors.centerIn: parent
+                    spacing: 8
+
+                    Text {
+                        text: "Henüz ödeme bildirimi yok"
+                        color: root.textPrimary
+                        font.pixelSize: 28
+                        font.bold: true
+                        font.family: "Space Grotesk"
+                    }
+
+                    Text {
+                        text: "Gönderilen ödeme talepleri burada listelenecek."
+                        color: root.textMuted
+                        font.pixelSize: 14
+                    }
                 }
             }
 
@@ -73,34 +109,68 @@ Item {
                 Rectangle {
                     x: 24
                     width: root.width - 48
-                    height: 108
+                    height: 126
                     radius: 24
-                    color: root.surfaceColor
+                    color: root.panelColor
                     border.width: 1
                     border.color: "#1f2c3e"
 
-                    Column {
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        height: 4
+                        radius: 2
+                        gradient: Gradient {
+                            GradientStop { position: 0.0; color: "#00ffffff" }
+                            GradientStop { position: 0.35; color: "#40ff2432" }
+                            GradientStop { position: 1.0; color: "#00ffffff" }
+                        }
+                    }
+
+                    Row {
                         anchors.fill: parent
-                        anchors.margins: 18
-                        spacing: 6
+                        anchors.margins: 20
+                        spacing: 18
 
-                        Text {
-                            text: modelData.packageTitle || "Ödeme Talebi"
-                            color: root.textPrimary
-                            font.pixelSize: 22
-                            font.bold: true
+                        Column {
+                            width: parent.width - 188
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 8
+
+                            Text {
+                                text: modelData.packageTitle || "Ödeme Talebi"
+                                width: parent.width
+                                elide: Text.ElideRight
+                                color: root.textPrimary
+                                font.pixelSize: 24
+                                font.bold: true
+                                font.family: "Space Grotesk"
+                            }
+
+                            Text {
+                                text: modelData.createdAt || ""
+                                color: "#8e98aa"
+                                font.pixelSize: 13
+                            }
                         }
 
-                        Text {
-                            text: modelData.status || "-"
-                            color: root.textMuted
-                            font.pixelSize: 14
-                        }
+                        Rectangle {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 150
+                            height: 40
+                            radius: 20
+                            color: "#131923"
+                            border.width: 1
+                            border.color: "#2a3140"
 
-                        Text {
-                            text: modelData.createdAt || ""
-                            color: "#8e98aa"
-                            font.pixelSize: 13
+                            Text {
+                                anchors.centerIn: parent
+                                text: modelData.status || "-"
+                                color: root.textPrimary
+                                font.pixelSize: 13
+                                font.bold: true
+                            }
                         }
                     }
                 }
