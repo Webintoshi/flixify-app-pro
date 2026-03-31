@@ -268,7 +268,7 @@ Item {
                             }
 
                             contentItem: Text {
-                                text: parent.text
+                                text: modelData.length ? modelData : "Tüm Diziler"
                                 color: root.selectedGroup === modelData ? root.textPrimary : root.textMuted
                                 font.pixelSize: 13
                                 font.bold: true

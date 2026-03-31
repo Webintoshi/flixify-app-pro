@@ -394,9 +394,6 @@ ApplicationWindow {
                     height: parent.height
                     controller: livePlaybackController
                     videoSurfaceComponent: androidVideoSurfaceComponent
-                    textPrimary: textPrimary
-                    textMuted: textMuted
-                    compactWindow: compactWindow
                     onToggleFullscreenRequested: toggleLiveFullscreen()
                 }
                 Rectangle {
@@ -1279,7 +1276,7 @@ ApplicationWindow {
             color: "#ffffff"
             font.pixelSize: 28
             font.bold: true
-            letterSpacing: 2
+            font.letterSpacing: 2
         }
     }
 
