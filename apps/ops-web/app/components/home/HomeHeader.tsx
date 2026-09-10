@@ -89,16 +89,7 @@ export default function HomeHeader({ userCode, onLogout, activeRoute = "/" }: Ho
                 Çıkış Yap
               </button>
             </>
-          ) : (
-            <>
-              <Link href="/giris-yap" className={styles.loginLink}>
-                Giriş Yap
-              </Link>
-              <Link href="/kayit-ol" className={styles.registerButton}>
-                Hesap Oluştur
-              </Link>
-            </>
-          )}
+          ) : null}
         </div>
 
         <button
@@ -187,26 +178,7 @@ export default function HomeHeader({ userCode, onLogout, activeRoute = "/" }: Ho
                 Çıkış Yap
               </button>
             </>
-          ) : (
-            <>
-              <Link
-                href="/kayit-ol"
-                className={styles.registerButton}
-                onClick={() => setDrawerOpen(false)}
-                style={{ textAlign: "center" }}
-              >
-                Hesap Oluştur
-              </Link>
-              <Link
-                href="/giris-yap"
-                className={styles.secondaryHeroBtn}
-                onClick={() => setDrawerOpen(false)}
-                style={{ justifyContent: "center" }}
-              >
-                Giriş Yap
-              </Link>
-            </>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

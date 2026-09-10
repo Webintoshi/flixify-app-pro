@@ -92,16 +92,7 @@ function PublicHeader({ pathname }: { pathname: string }) {
               Çıkış Yap
             </button>
           </>
-        ) : (
-          <>
-            <Link href="/giris-yap" className="ghost-link">
-              Giris Yap
-            </Link>
-            <Link href="/kayit-ol" className="button button-hero">
-              Hesap Olustur
-            </Link>
-          </>
-        )}
+        ) : null}
       </div>
     </header>
   );
