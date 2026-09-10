@@ -152,7 +152,56 @@ function sanitizeArtworkUrl(
   return null;
 }
 
+export function isValidM3UContent(content: string): boolean {
+  const sanitized = content.replace(/^\uFEFF/, "").trim();
+  if (!sanitized) {
+    return false;
+  }
+
+  // Reject HTML / XML doctypes, opening tags, or embedded document structures
+  if (
+    /<!doctype\s+html/i.test(sanitized) ||
+    /<html[\s>]/i.test(sanitized) ||
+    /<head[\s>]/i.test(sanitized) ||
+    /<body[\s>]/i.test(sanitized) ||
+    /<\?xml[\s>]/i.test(sanitized)
+  ) {
+    return false;
+  }
+
+  const lines = sanitized.split(/\r?\n/);
+  let firstNonEmptyLine: string | null = null;
+  for (const line of lines) {
+    const t = line.trim();
+    if (t.length > 0) {
+      firstNonEmptyLine = t;
+      break;
+    }
+  }
+
+  if (!firstNonEmptyLine) {
+    return false;
+  }
+
+  // Must not start with HTML/XML comments or tags
+  if (firstNonEmptyLine.startsWith("<")) {
+    return false;
+  }
+
+  // Must start with valid M3U directive
+  if (!firstNonEmptyLine.startsWith("#EXTM3U") && !firstNonEmptyLine.startsWith("#EXTINF")) {
+    return false;
+  }
+
+  // Must contain valid M3U directive
+  return sanitized.includes("#EXTM3U") || sanitized.includes("#EXTINF");
+}
+
 export function parseM3U(content: string, options: ParseM3UOptions = {}): ParsedCatalog {
+  if (!isValidM3UContent(content)) {
+    throw new Error("Gecerli M3U formati bulunamadi (HTML veya hatali yanit).");
+  }
+
   const lines = content.split(/\r?\n/);
   const rawCatalog: ParsedCatalog = {
     live: [],

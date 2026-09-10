@@ -22,6 +22,8 @@ type UserSettings = {
 type MeResponse = {
   user: {
     kryptoniteCode: string;
+    hasAssignedLink?: boolean;
+    hasActiveSubscription?: boolean;
     activePackage?: {
       title: string;
       endsAt: string;
@@ -56,8 +58,8 @@ export default function UserSettingsPage() {
           packageExpiry: response.user.activePackage?.endsAt 
             ? new Date(response.user.activePackage.endsAt).toLocaleDateString("tr-TR")
             : "-",
-          linkStatus: response.user.activePackage ? "connected" : "disconnected",
-          linkStatusText: response.user.activePackage ? "Bağlı" : "Bağlı Değil",
+          linkStatus: response.user.hasAssignedLink ? "connected" : "disconnected",
+          linkStatusText: response.user.hasAssignedLink ? "Bağlı" : "Bağlı Değil",
           remainingDays: response.user.activePackage?.remainingDays || 0
         });
       })

@@ -1,0 +1,1155 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&subset=latin,latin-ext&display=swap');
+
+/* ==========================================================================
+   FLIXIFY CINEMATIC HOMEPAGE - DESIGN SYSTEM TOKENS (FLY-HOME-01)
+   ========================================================================== */
+
+.flixifyHome {
+  --fx-bg: #060708;
+  --fx-bg-soft: #0a0c0f;
+
+  --fx-surface: #101214;
+  --fx-surface-hover: #171a1e;
+
+  --fx-text: #f7f7f8;
+  --fx-muted: #b5b7bf;
+  --fx-subtle: #9397a1;
+
+  --fx-red: #e50920;
+  --fx-red-hover: #cf081d;
+  --fx-red-bright: #ff1834;
+  --fx-red-soft: rgba(229, 9, 32, 0.11);
+
+  --fx-border: rgba(255, 255, 255, 0.09);
+  --fx-border-hover: rgba(255, 255, 255, 0.17);
+
+  --fx-radius-button: 14px;
+  --fx-radius-card: 18px;
+  --fx-radius-panel: 24px;
+
+  background-color: var(--fx-bg);
+  color: var(--fx-text);
+  font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Base Container */
+.container {
+  width: 100%;
+  max-width: 1360px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 32px;
+  padding-right: 32px;
+}
+
+@media (min-width: 1440px) {
+  .container {
+    max-width: 1640px;
+    padding-left: 48px;
+    padding-right: 48px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .container {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+}
+
+@media (max-width: 640px) {
+  .container {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+/* ==========================================================================
+   1. HEADER (NATURAL HEADER)
+   ========================================================================== */
+.headerWrapper {
+  position: sticky;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  width: 100%;
+  padding: 0;
+  background: linear-gradient(180deg, rgba(6, 7, 8, 0.95) 0%, rgba(6, 7, 8, 0.72) 45%, rgba(6, 7, 8, 0) 100%);
+  border-bottom: 1px solid transparent;
+  transition: background-color 240ms ease, backdrop-filter 240ms ease, border-color 240ms ease;
+}
+
+.headerWrapperScrolled {
+  background: rgba(6, 7, 8, 0.88);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  height: 74px;
+  padding: 0 32px;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: none;
+  box-shadow: none;
+  max-width: 1360px;
+  margin: 0 auto;
+}
+
+@media (min-width: 1440px) {
+  .header {
+    max-width: 1640px;
+    padding: 0 48px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .header {
+    padding: 0 24px;
+  }
+}
+
+@media (max-width: 768px) {
+  .headerWrapper {
+    top: 0;
+    padding: 0;
+  }
+  .header {
+    height: 60px;
+    padding: 0 16px;
+    border-radius: 0;
+    border: none;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
+  }
+  .brandLogoImage {
+    height: 30px;
+  }
+}
+
+.brandLockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.brandLogoImage {
+  display: block;
+  height: 38px;
+  width: auto;
+  object-fit: contain;
+  transition: transform 180ms ease, filter 180ms ease;
+}
+
+.brandLockup:hover .brandLogoImage {
+  transform: scale(1.03);
+  filter: drop-shadow(0 0 12px rgba(229, 9, 32, 0.4));
+}
+
+.brandMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #f40612, #8c0208);
+}
+
+.brandWord {
+  font-size: 1.6rem;
+  font-weight: 900;
+  color: #ffffff;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+.brandBadge {
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--fx-red);
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+.navLink {
+  color: var(--fx-muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: none;
+  position: relative;
+  padding: 6px 0;
+  transition: color 180ms ease;
+}
+
+.navLink:hover {
+  color: #ffffff;
+}
+
+.navLinkActive {
+  color: #ffffff;
+}
+
+.navLinkActive::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--fx-red);
+  border-radius: 2px;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.loginLink {
+  color: var(--fx-muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: none;
+  padding: 10px 14px;
+  transition: color 180ms ease;
+}
+
+.loginLink:hover {
+  color: #ffffff;
+}
+
+.registerButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 46px;
+  padding: 0 22px;
+  border-radius: var(--fx-radius-button);
+  background: var(--fx-red);
+  color: #ffffff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(229, 9, 32, 0.32);
+  transition: all 180ms ease;
+}
+
+.registerButton:hover {
+  background: var(--fx-red-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px rgba(229, 9, 32, 0.44);
+}
+
+.menuButton {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--fx-border);
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  cursor: pointer;
+}
+
+/* Mobile Drawer */
+.mobileDrawer {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 7, 8, 0.96);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  z-index: 100;
+  flex-direction: column;
+  padding: 32px 24px;
+  overflow-y: auto;
+}
+
+.mobileDrawerOpen {
+  display: flex;
+}
+
+.mobileDrawerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 36px;
+}
+
+.mobileDrawerNav {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.mobileNavLink {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--fx-text);
+  text-decoration: none;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.mobileNavLink:hover {
+  color: var(--fx-red-bright);
+}
+
+.mobileDrawerActions {
+  margin-top: 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@media (max-width: 960px) {
+  .nav,
+  .headerActions {
+    display: none;
+  }
+  .menuButton {
+    display: inline-flex;
+  }
+}
+
+/* ==========================================================================
+   2. CINEMATIC HERO
+   ========================================================================== */
+.heroSection {
+  position: relative;
+  padding-top: 48px;
+  padding-bottom: 64px;
+  overflow: hidden;
+}
+
+.heroGrid {
+  display: grid;
+  grid-template-columns: 47% 53%;
+  align-items: center;
+  gap: 32px;
+  min-height: 560px;
+}
+
+.heroContent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  z-index: 2;
+}
+
+.kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--fx-red-soft);
+  border: 1px solid rgba(229, 9, 32, 0.24);
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 24px;
+}
+
+.heroTitle {
+  margin: 0 0 20px;
+  font-size: clamp(2.4rem, 4.8vw, 4.6rem);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+  color: var(--fx-text);
+}
+
+.heroDescription {
+  margin: 0 0 36px;
+  font-size: clamp(1rem, 1.2vw, 1.15rem);
+  font-weight: 400;
+  line-height: 1.68;
+  color: var(--fx-muted);
+  max-width: 540px;
+}
+
+.heroActions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.primaryHeroBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 52px;
+  padding: 0 28px;
+  border-radius: var(--fx-radius-button);
+  background: var(--fx-red);
+  color: #ffffff;
+  font-size: 1rem;
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: 0 10px 30px rgba(229, 9, 32, 0.35);
+  transition: all 180ms ease;
+  border: none;
+  cursor: pointer;
+}
+
+.primaryHeroBtn:hover {
+  background: var(--fx-red-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 14px 38px rgba(229, 9, 32, 0.48);
+}
+
+.secondaryHeroBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 24px;
+  border-radius: var(--fx-radius-button);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--fx-border);
+  color: var(--fx-text);
+  font-size: 1rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 180ms ease;
+  cursor: pointer;
+}
+
+.secondaryHeroBtn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--fx-border-hover);
+  transform: translateY(-2px);
+}
+
+.playCircle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.heroVisualWrapper {
+  position: relative;
+  width: 100%;
+  border-radius: var(--fx-radius-panel);
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.heroImage {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: cover;
+  transition: transform 600ms ease;
+}
+
+/* Left & bottom atmospheric blend mask */
+.heroVisualWrapper::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(6, 7, 8, 0.65) 0%, transparent 35%),
+              linear-gradient(0deg, rgba(6, 7, 8, 0.7) 0%, transparent 30%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.decorativeHeroBadge {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 2;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(6, 7, 8, 0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--fx-muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 960px) {
+  .heroGrid {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+  .heroContent {
+    max-width: 100%;
+  }
+  .decorativeHeroBadge {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+   3. VALUE STRIP (4 CARDS)
+   ========================================================================== */
+.valueStripSection {
+  padding: 16px 0 64px;
+}
+
+.valueStripGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px;
+}
+
+.valueCard {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 22px 24px;
+  border-radius: var(--fx-radius-card);
+  background: var(--fx-surface);
+  border: 1px solid var(--fx-border);
+  transition: all 180ms ease;
+  min-height: 116px;
+}
+
+.valueCard:hover {
+  background: var(--fx-surface-hover);
+  border-color: var(--fx-border-hover);
+  transform: translateY(-2px);
+}
+
+.valueCardIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: var(--fx-red-soft);
+  color: var(--fx-red);
+  flex-shrink: 0;
+}
+
+.valueCardContent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.valueCardTitle {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--fx-text);
+}
+
+.valueCardText {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--fx-muted);
+  line-height: 1.45;
+}
+
+@media (max-width: 1100px) {
+  .valueStripGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 580px) {
+  .valueStripGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ==========================================================================
+   4. ABOUT (FLIXIFY NEDİR? - 3 CARDS)
+   ========================================================================== */
+.aboutSection {
+  padding: 48px 0 64px;
+  scroll-margin-top: 100px;
+}
+
+.sectionHeader {
+  text-align: left;
+  max-width: 760px;
+  margin: 0 0 36px 0;
+}
+
+.sectionKicker {
+  display: inline-block;
+  color: var(--fx-red);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  text-align: left;
+}
+
+.sectionTitle {
+  margin: 0 0 16px;
+  font-size: clamp(2rem, 3.2vw, 2.75rem);
+  font-weight: 800;
+  line-height: 1.18;
+  letter-spacing: -0.02em;
+  color: var(--fx-text);
+  text-align: left;
+}
+
+.sectionDescription {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--fx-muted);
+  line-height: 1.65;
+  text-align: left;
+}
+
+.experienceGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.experienceCard {
+  position: relative;
+  border-radius: var(--fx-radius-panel);
+  overflow: hidden;
+  height: 380px;
+  border: 1px solid var(--fx-border);
+  background: var(--fx-surface);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 32px 28px;
+  text-decoration: none;
+  transition: all 220ms ease;
+}
+
+.experienceCard:hover {
+  transform: translateY(-4px);
+  border-color: rgba(229, 9, 32, 0.4);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+}
+
+.experienceCardImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 400ms ease;
+  z-index: 0;
+}
+
+.experienceCard:hover .experienceCardImage {
+  transform: scale(1.04);
+}
+
+.experienceCardOverlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(6, 7, 8, 0.15) 0%,
+    rgba(6, 7, 8, 0.75) 55%,
+    rgba(6, 7, 8, 0.98) 100%
+  );
+  z-index: 1;
+}
+
+.experienceCardContent {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.experienceCardTag {
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fx-red-bright);
+}
+
+.experienceCardTitle {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.experienceCardText {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--fx-muted);
+  line-height: 1.5;
+}
+
+.experienceCardLink {
+  margin-top: 6px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: gap 180ms ease, color 180ms ease;
+}
+
+.experienceCard:hover .experienceCardLink {
+  gap: 10px;
+  color: var(--fx-red-bright);
+}
+
+@media (max-width: 960px) {
+  .experienceGrid {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .experienceCard {
+    height: 320px;
+  }
+}
+
+/* ==========================================================================
+   5. BENEFITS (NEDEN FLIXIFY? - 4 CARDS)
+   ========================================================================== */
+.benefitsSection {
+  padding: 64px 0;
+  scroll-margin-top: 100px;
+}
+
+.benefitsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+}
+
+.benefitCard {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 28px 24px;
+  border-radius: var(--fx-radius-card);
+  background: var(--fx-surface);
+  border: 1px solid var(--fx-border);
+  min-height: 200px;
+  transition: all 180ms ease;
+}
+
+.benefitCard:hover {
+  background: var(--fx-surface-hover);
+  border-color: var(--fx-border-hover);
+  transform: translateY(-2px);
+}
+
+.benefitCardIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  background: var(--fx-red-soft);
+  color: var(--fx-red);
+}
+
+.benefitCardTitle {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--fx-text);
+}
+
+.benefitCardText {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--fx-muted);
+  line-height: 1.55;
+}
+
+@media (max-width: 1024px) {
+  .benefitsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 540px) {
+  .benefitsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ==========================================================================
+   6. DEVICE SHOWCASE (GENİŞ CİHAZ DENEYİMİ)
+   ========================================================================== */
+.showcaseSection {
+  padding: 64px 0;
+}
+
+.showcaseCard {
+  border-radius: var(--fx-radius-panel);
+  border: 1px solid var(--fx-border);
+  background: linear-gradient(145deg, #101215 0%, #0c0e10 100%);
+  overflow: hidden;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+}
+
+.showcaseInner {
+  display: grid;
+  grid-template-columns: 48% 52%;
+  align-items: center;
+}
+
+.showcaseContent {
+  padding: 56px 48px;
+  display: flex;
+  flex-direction: column;
+}
+
+.showcaseKicker {
+  display: inline-block;
+  color: var(--fx-red);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+.showcaseTitle {
+  margin: 0 0 18px;
+  font-size: clamp(1.8rem, 2.8vw, 2.4rem);
+  font-weight: 800;
+  line-height: 1.2;
+  color: #ffffff;
+}
+
+.showcaseText {
+  margin: 0 0 32px;
+  font-size: 1rem;
+  color: var(--fx-muted);
+  line-height: 1.65;
+}
+
+/* Static Target Platforms Line */
+.platformsBlock {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 24px;
+}
+
+.platformsLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fx-subtle);
+  margin-bottom: 12px;
+  display: block;
+}
+
+.platformsList {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.platformItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fx-text);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.platformItem svg {
+  color: var(--fx-muted);
+}
+
+.showcaseVisual {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 380px;
+}
+
+.showcaseImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+@media (max-width: 960px) {
+  .showcaseInner {
+    grid-template-columns: 1fr;
+  }
+  .showcaseContent {
+    padding: 36px 28px;
+  }
+  .showcaseVisual {
+    min-height: 260px;
+  }
+}
+
+/* ==========================================================================
+   7. GETTING STARTED (NASIL BAŞLARSIN? - 4 STEPS)
+   ========================================================================== */
+.stepsSection {
+  padding: 64px 0 80px;
+  scroll-margin-top: 100px;
+}
+
+.stepsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+}
+
+.stepCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 32px 24px 28px;
+  border-radius: var(--fx-radius-card);
+  background: var(--fx-surface);
+  border: 1px solid var(--fx-border);
+  transition: all 180ms ease;
+}
+
+.stepCard:hover {
+  background: var(--fx-surface-hover);
+  border-color: var(--fx-border-hover);
+  transform: translateY(-2px);
+}
+
+.stepNumber {
+  position: absolute;
+  top: -14px;
+  left: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--fx-red);
+  color: #ffffff;
+  font-size: 0.9rem;
+  font-weight: 800;
+  box-shadow: 0 4px 14px rgba(229, 9, 32, 0.4);
+}
+
+.stepIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--fx-text);
+  margin-top: 4px;
+  margin-bottom: 16px;
+}
+
+.stepTitle {
+  margin: 0 0 8px;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--fx-text);
+}
+
+.stepText {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--fx-muted);
+  line-height: 1.5;
+}
+
+@media (max-width: 1024px) {
+  .stepsGrid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 28px 20px;
+  }
+}
+
+@media (max-width: 540px) {
+  .stepsGrid {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+}
+
+/* ==========================================================================
+   8. FOOTER
+   ========================================================================== */
+.footer {
+  border-top: 1px solid var(--fx-border);
+  background: #040506;
+  padding: 56px 0 36px;
+  margin-top: auto;
+}
+
+.footerGrid {
+  display: grid;
+  grid-template-columns: 1.4fr 2fr;
+  gap: 40px;
+  margin-bottom: 44px;
+}
+
+.footerBrand {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.footerSlogan {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--fx-muted);
+  font-weight: 500;
+}
+
+.footerNav {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.footerLink {
+  color: var(--fx-muted);
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: color 180ms ease;
+}
+
+.footerLink:hover {
+  color: #ffffff;
+}
+
+.footerBottom {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--fx-subtle);
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+@media (max-width: 768px) {
+  .footerGrid {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+  .footerNav {
+    justify-content: flex-start;
+    gap: 18px;
+  }
+}
+
+/* ==========================================================================
+   COMPACT & MOBILE APP RULES (1024px / 768px)
+   ========================================================================== */
+@media (max-width: 1024px) {
+  .heroSection {
+    padding-top: 24px;
+    padding-bottom: 36px;
+  }
+  .valueStripSection {
+    padding: 12px 0 36px;
+  }
+  .aboutSection,
+  .benefitsSection,
+  .showcaseSection,
+  .stepsSection {
+    padding: 36px 0;
+  }
+  .sectionHeader {
+    margin-bottom: 28px;
+  }
+}
+
+@media (max-width: 768px) {
+  .heroSection {
+    padding-top: 18px;
+    padding-bottom: 28px;
+  }
+  .heroActions {
+    width: 100%;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .primaryHeroBtn,
+  .secondaryHeroBtn {
+    width: 100%;
+    justify-content: center;
+  }
+  .valueStripSection {
+    padding: 8px 0 28px;
+  }
+  .aboutSection,
+  .benefitsSection,
+  .showcaseSection,
+  .stepsSection {
+    padding: 28px 0;
+  }
+  .showcaseContent {
+    padding: 24px 18px;
+  }
+  .footer {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 12px));
+  }
+}

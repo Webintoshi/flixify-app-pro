@@ -127,28 +127,6 @@ function ShieldIcon() {
   );
 }
 
-function SparklesIcon() {
-  return (
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3" />
-      <path d="M5 3v4" />
-      <path d="M19 17v4" />
-      <path d="M3 5h4" />
-      <path d="M17 19h4" />
-    </svg>
-  );
-}
-
-function KeyIcon() {
-  return (
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="7.5" cy="15.5" r="5.5" />
-      <path d="m21 2-9.6 9.6" />
-      <path d="m15.5 7.5 3 3L22 7l-3-3" />
-    </svg>
-  );
-}
-
 export default function RegisterPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -276,11 +254,14 @@ export default function RegisterPage() {
       <main className="login-container">
         {/* Logo */}
         <div className="login-logo">
-          <div className="login-logo-icon">
-            <Image src="/logo/flixify-icon-only.svg" alt="" width={40} height={40} className="login-logo-glyph" />
-          </div>
-          <span className="login-logo-text">FLIXIFY</span>
-          <span className="login-logo-badge">PRO</span>
+          <Image
+            src="/logo/flixify-logo.png"
+            alt="Flixify Pro"
+            width={184}
+            height={48}
+            priority
+            style={{ height: "48px", width: "auto", objectFit: "contain" }}
+          />
         </div>
 
         {/* Subtitle */}
@@ -425,31 +406,6 @@ export default function RegisterPage() {
             <ArrowLeftIcon />
             Ana Sayfaya Dön
           </Link>
-        </div>
-
-        {/* Feature Cards - Different from login page */}
-        <div className="login-features">
-          <div className="login-feature-card">
-            <div className="login-feature-icon highlight">
-              <KeyIcon />
-            </div>
-            <strong>Anonim</strong>
-            <span>Kayıt gerekmez</span>
-          </div>
-          <div className="login-feature-card">
-            <div className="login-feature-icon highlight">
-              <SparklesIcon />
-            </div>
-            <strong>Anında</strong>
-            <span>Hemen kullanıma hazır</span>
-          </div>
-          <div className="login-feature-card">
-            <div className="login-feature-icon highlight">
-              <ShieldIcon />
-            </div>
-            <strong>Güvenli</strong>
-            <span>Şifreli erişim</span>
-          </div>
         </div>
 
         {/* Footer */}

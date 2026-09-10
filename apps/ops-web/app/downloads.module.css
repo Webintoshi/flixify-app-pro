@@ -1,0 +1,864 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&subset=latin,latin-ext&display=swap');
+
+/* ==========================================================================
+   FLIXIFY DOWNLOADS PAGE - DESIGN SYSTEM TOKENS (FLY-DOWNLOADS-01)
+   ========================================================================== */
+
+.flixifyDownloads {
+  --fx-bg: #060708;
+  --fx-surface: #101214;
+  --fx-surface-hover: #171a1e;
+
+  --fx-text: #f7f7f8;
+  --fx-muted: #b5b7bf;
+  --fx-subtle: #9397a1;
+
+  --fx-red: #e50920;
+  --fx-red-hover: #cf081d;
+  --fx-red-soft: rgba(229, 9, 32, 0.11);
+  --fx-red-bright: #ff1834;
+
+  --fx-border: rgba(255, 255, 255, 0.09);
+  --fx-border-hover: rgba(255, 255, 255, 0.17);
+
+  --fx-radius-button: 14px;
+  --fx-radius-card: 20px;
+  --fx-radius-band: 24px;
+
+  background-color: var(--fx-bg);
+  color: var(--fx-text);
+  font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Base Container */
+.container {
+  width: 100%;
+  max-width: 1360px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 32px;
+  padding-right: 32px;
+}
+
+@media (min-width: 1440px) {
+  .container {
+    max-width: 1640px;
+    padding-left: 48px;
+    padding-right: 48px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .container {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+}
+
+@media (max-width: 640px) {
+  .container {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+/* Common Section Headers */
+.sectionHeader {
+  text-align: left;
+  max-width: 720px;
+  margin: 0 0 36px 0;
+}
+
+.sectionKicker {
+  display: inline-block;
+  color: var(--fx-red);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  text-align: left;
+}
+
+.sectionTitle {
+  margin: 0 0 14px;
+  font-size: clamp(1.75rem, 3vw, 2.35rem);
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--fx-text);
+  text-align: left;
+}
+
+.sectionDescription {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--fx-muted);
+  line-height: 1.6;
+  text-align: left;
+}
+
+/* ==========================================================================
+   1. HERO SECTION (HER EKRANDA, AYNI EĞLENCE.)
+   ========================================================================== */
+.heroSection {
+  position: relative;
+  padding-top: 36px;
+  padding-bottom: 48px;
+  overflow: hidden;
+}
+
+.heroGrid {
+  display: grid;
+  grid-template-columns: 42% 58%;
+  align-items: center;
+  gap: 36px;
+  min-height: 480px;
+}
+
+.heroContent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  z-index: 2;
+}
+
+.kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--fx-red-soft);
+  border: 1px solid rgba(229, 9, 32, 0.22);
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
+
+.heroTitle {
+  margin: 0 0 18px;
+  font-size: clamp(2.3rem, 4.4vw, 4.2rem);
+  font-weight: 800;
+  line-height: 1.06;
+  letter-spacing: -0.03em;
+  color: var(--fx-text);
+}
+
+.heroDescription {
+  margin: 0 0 28px;
+  font-size: clamp(0.95rem, 1.15vw, 1.08rem);
+  font-weight: 400;
+  line-height: 1.65;
+  color: var(--fx-muted);
+  max-width: 520px;
+}
+
+/* 4 Static Pill Info Labels (Not buttons) */
+.heroPillsRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.heroPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 13px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--fx-border);
+  color: var(--fx-subtle);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.heroPillIcon {
+  color: var(--fx-red);
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Hero Visual Wrapper */
+.heroVisualWrapper {
+  position: relative;
+  width: 100%;
+  border-radius: var(--fx-radius-band);
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.heroImage {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: cover;
+  transition: transform 600ms ease;
+}
+
+/* Subtle left and bottom fade to black blend mask */
+.heroVisualWrapper::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(6, 7, 8, 0.6) 0%, transparent 32%),
+              linear-gradient(0deg, rgba(6, 7, 8, 0.65) 0%, transparent 28%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.decorativeHeroBadge {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 2;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(6, 7, 8, 0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--fx-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 960px) {
+  .heroGrid {
+    grid-template-columns: 1fr;
+    gap: 36px;
+  }
+  .heroContent {
+    max-width: 100%;
+  }
+  .decorativeHeroBadge {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+   2. FIVE PLATFORM CARDS SECTION
+   ========================================================================== */
+.platformsSection {
+  padding: 16px 0 56px;
+}
+
+.platformsGrid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 18px;
+}
+
+.platformCard {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 260px;
+  padding: 24px 22px;
+  border-radius: var(--fx-radius-card);
+  background: var(--fx-surface);
+  border: 1px solid var(--fx-border);
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+  position: relative;
+}
+
+.platformCard:hover {
+  background: var(--fx-surface-hover);
+  border-color: var(--fx-border-hover);
+  transform: translateY(-2px);
+}
+
+.platformCardActiveBorder {
+  border-color: rgba(229, 9, 32, 0.35);
+  box-shadow: 0 10px 30px rgba(229, 9, 32, 0.08);
+}
+
+.platformCardActiveBorder:hover {
+  border-color: var(--fx-red);
+}
+
+.platformHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.platformIconBox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Subtle icon tinting per section 4 */
+.iconWindows {
+  color: #00adef;
+  background: rgba(0, 173, 239, 0.1);
+}
+
+.iconAndroid {
+  color: #3ddc84;
+  background: rgba(61, 220, 132, 0.1);
+}
+
+.iconIos {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.iconMacos {
+  color: #a259ff;
+  background: rgba(162, 89, 255, 0.1);
+}
+
+.iconAndroidTv {
+  color: var(--fx-red);
+  background: var(--fx-red-soft);
+}
+
+.platformMeta {
+  display: flex;
+  flex-direction: column;
+}
+
+.platformName {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--fx-text);
+  line-height: 1.2;
+}
+
+.platformSubtitle {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--fx-subtle);
+  margin-top: 2px;
+}
+
+.platformDescription {
+  margin: 0 0 20px;
+  font-size: 0.88rem;
+  color: var(--fx-muted);
+  line-height: 1.5;
+}
+
+/* Card Action Area */
+.platformActionArea {
+  margin-top: auto;
+  height: 46px;
+  display: flex;
+  align-items: center;
+}
+
+/* Status: "Yakında" Disabled / Info Button */
+.statusSoonBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 44px;
+  border-radius: var(--fx-radius-button);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--fx-border);
+  color: var(--fx-subtle);
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: default;
+  user-select: none;
+}
+
+.statusSoonBtn svg {
+  color: var(--fx-subtle);
+  opacity: 0.75;
+}
+
+/* Action: Active Detail Button (e.g. Android TV) */
+.actionDetailBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 44px;
+  border-radius: var(--fx-radius-button);
+  background: var(--fx-red);
+  color: #ffffff;
+  font-size: 0.88rem;
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: 0 6px 20px rgba(229, 9, 32, 0.32);
+  transition: background 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+}
+
+.actionDetailBtn:hover {
+  background: var(--fx-red-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(229, 9, 32, 0.44);
+}
+
+.testBadge {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: var(--fx-red-bright);
+  background: var(--fx-red-soft);
+  border: 1px solid rgba(229, 9, 32, 0.25);
+  padding: 3px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 1200px) {
+  .platformsGrid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .platformsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .platformsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ==========================================================================
+   3. DEVICE & ACCOUNT INFO BAND (HESABIN VE CİHAZLARIN)
+   ========================================================================== */
+.deviceBandSection {
+  padding: 16px 0 56px;
+}
+
+.deviceBandCard {
+  border-radius: var(--fx-radius-band);
+  border: 1px solid var(--fx-border);
+  background: linear-gradient(145deg, #111316 0%, #0d0f11 100%);
+  padding: 36px 40px;
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.4);
+}
+
+.deviceBandInner {
+  display: grid;
+  grid-template-columns: 48% 52%;
+  align-items: center;
+  gap: 36px;
+}
+
+.deviceBandContent {
+  display: flex;
+  flex-direction: column;
+}
+
+.deviceBandKicker {
+  color: var(--fx-red);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.deviceBandTitle {
+  margin: 0 0 12px;
+  font-size: clamp(1.45rem, 2.2vw, 1.85rem);
+  font-weight: 800;
+  line-height: 1.25;
+  color: #ffffff;
+}
+
+.deviceBandText {
+  margin: 0 0 14px;
+  font-size: 0.94rem;
+  color: var(--fx-muted);
+  line-height: 1.6;
+}
+
+.deviceBandNote {
+  font-size: 0.78rem;
+  color: var(--fx-subtle);
+}
+
+/* Right Connected Device Icons */
+.deviceIconsChain {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  padding: 16px 8px;
+}
+
+.deviceChainItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  z-index: 2;
+}
+
+.deviceIconCircle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: #17191d;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--fx-text);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  transition: transform 180ms ease, border-color 180ms ease;
+}
+
+.deviceChainItem:hover .deviceIconCircle {
+  transform: translateY(-2px);
+  border-color: var(--fx-red);
+  color: #ffffff;
+}
+
+.deviceChainLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--fx-subtle);
+  white-space: nowrap;
+}
+
+/* Fine red connecting lines between devices */
+.deviceChainConnector {
+  flex: 1;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(229, 9, 32, 0.25), rgba(229, 9, 32, 0.6), rgba(229, 9, 32, 0.25));
+  margin: 0 -2px 24px;
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 960px) {
+  .deviceBandInner {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+  .deviceBandCard {
+    padding: 30px 24px;
+  }
+}
+
+@media (max-width: 600px) {
+  .deviceIconsChain {
+    flex-wrap: wrap;
+    gap: 16px;
+    justify-content: center;
+  }
+  .deviceChainConnector {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+   4. THREE-STEP INSTALLATION SECTION (ID: #kurulum)
+   ========================================================================== */
+.installSection {
+  padding: 16px 0 64px;
+  scroll-margin-top: 100px;
+}
+
+.installGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 22px;
+}
+
+.installCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 32px 26px 28px;
+  border-radius: var(--fx-radius-card);
+  background: var(--fx-surface);
+  border: 1px solid var(--fx-border);
+  transition: all 180ms ease;
+}
+
+.installCard:hover {
+  background: var(--fx-surface-hover);
+  border-color: var(--fx-border-hover);
+  transform: translateY(-2px);
+}
+
+.stepNumberCircle {
+  position: absolute;
+  top: -14px;
+  left: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--fx-red);
+  color: #ffffff;
+  font-size: 0.92rem;
+  font-weight: 800;
+  box-shadow: 0 4px 14px rgba(229, 9, 32, 0.4);
+}
+
+.installIconBox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--fx-text);
+  margin-top: 4px;
+  margin-bottom: 16px;
+}
+
+.installStepTitle {
+  margin: 0 0 8px;
+  font-size: 1.22rem;
+  font-weight: 700;
+  color: var(--fx-text);
+}
+
+.installStepText {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--fx-muted);
+  line-height: 1.55;
+}
+
+@media (max-width: 900px) {
+  .installGrid {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+}
+
+/* ==========================================================================
+   5. CINEMATIC CALL TO ACTION BANNER (EĞLENCE HER YERDE)
+   ========================================================================== */
+.ctaBannerSection {
+  padding: 16px 0 72px;
+}
+
+.ctaBannerCard {
+  position: relative;
+  border-radius: var(--fx-radius-band);
+  border: 1px solid var(--fx-border);
+  overflow: hidden;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+}
+
+.ctaBannerImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+}
+
+/* Dark atmospheric gradient overlay so text remains razor sharp */
+.ctaBannerOverlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(6, 7, 8, 0.95) 0%,
+    rgba(6, 7, 8, 0.82) 48%,
+    rgba(6, 7, 8, 0.65) 100%
+  );
+  z-index: 1;
+}
+
+.ctaBannerInner {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  padding: 44px 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 36px;
+}
+
+.ctaBannerContent {
+  max-width: 620px;
+}
+
+.ctaBannerKicker {
+  color: var(--fx-red);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  display: block;
+}
+
+.ctaBannerTitle {
+  margin: 0 0 10px;
+  font-size: clamp(1.6rem, 2.6vw, 2.2rem);
+  font-weight: 800;
+  line-height: 1.2;
+  color: #ffffff;
+}
+
+.ctaBannerText {
+  margin: 0;
+  font-size: 0.96rem;
+  color: var(--fx-muted);
+  line-height: 1.55;
+}
+
+.ctaBannerActions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.ctaBannerBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 50px;
+  padding: 0 32px;
+  border-radius: var(--fx-radius-button);
+  background: var(--fx-red);
+  color: #ffffff;
+  font-size: 0.98rem;
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: 0 8px 26px rgba(229, 9, 32, 0.38);
+  transition: all 180ms ease;
+  white-space: nowrap;
+}
+
+.ctaBannerBtn:hover {
+  background: var(--fx-red-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgba(229, 9, 32, 0.5);
+}
+
+.ctaBannerSubtext {
+  font-size: 0.82rem;
+  color: var(--fx-subtle);
+  display: inline-flex;
+  gap: 5px;
+}
+
+.ctaBannerSublink {
+  color: #ffffff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-weight: 600;
+  transition: color 180ms ease;
+}
+
+.ctaBannerSublink:hover {
+  color: var(--fx-red-bright);
+}
+
+@media (max-width: 900px) {
+  .ctaBannerInner {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 36px 28px;
+    gap: 24px;
+  }
+  .ctaBannerActions {
+    align-items: flex-start;
+    width: 100%;
+  }
+  .ctaBannerBtn {
+    width: 100%;
+  }
+}
+
+/* Compact medium & mobile app view */
+@media (max-width: 1024px) {
+  .heroSection {
+    padding-top: 20px;
+    padding-bottom: 32px;
+  }
+  .platformsSection,
+  .deviceBandSection,
+  .installSection {
+    padding-bottom: 36px;
+  }
+}
+
+@media (max-width: 768px) {
+  .heroSection {
+    padding-top: 14px;
+    padding-bottom: 24px;
+  }
+  .heroPillsRow {
+    gap: 6px;
+  }
+  .heroPill {
+    font-size: 0.7rem;
+    padding: 5px 10px;
+  }
+  .platformsSection,
+  .deviceBandSection,
+  .installSection,
+  .ctaBannerSection {
+    padding-bottom: 28px;
+  }
+}
+
+/* ==========================================================================
+   6. ACCESSIBILITY & REDUCED MOTION
+   ========================================================================== */
+.flixifyDownloads :focus-visible {
+  outline: 2px solid var(--fx-red);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flixifyDownloads,
+  .flixifyDownloads *,
+  .flixifyDownloads *::before,
+  .flixifyDownloads *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

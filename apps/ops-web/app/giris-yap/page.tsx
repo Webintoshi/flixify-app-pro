@@ -110,35 +110,6 @@ function EyeIcon({ visible }: { visible: boolean }) {
   );
 }
 
-// Lock icon
-function LockIcon() {
-  return (
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
-      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-    </svg>
-  );
-}
-
-// Zap icon
-function ZapIcon() {
-  return (
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-    </svg>
-  );
-}
-
-// Smartphone icon
-function SmartphoneIcon() {
-  return (
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
-      <path d="M12 18h.01" />
-    </svg>
-  );
-}
-
 // Arrow left icon
 function ArrowLeftIcon() {
   return (
@@ -183,19 +154,30 @@ export default function LoginPage() {
       return;
     }
 
+    try {
+      const existingRaw = window.localStorage.getItem(storageKey);
+      if (existingRaw) {
+        const parsed = JSON.parse(existingRaw) as LoginResponse;
+        if (parsed?.user?.hasActiveSubscription) {
+          router.replace("/ayarlar");
+          return;
+        }
+      }
+    } catch {}
+
     const prefill = normalizeCode(window.sessionStorage.getItem(authPrefillCodeKey) ?? "");
     window.sessionStorage.removeItem(authPrefillCodeKey);
     if (prefill) {
       setCode(prefill);
     }
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     if (!session?.user.hasActiveSubscription) {
       return;
     }
 
-    router.replace("/");
+    router.replace("/ayarlar");
   }, [router, session]);
 
   async function handleLogin() {
@@ -262,11 +244,14 @@ export default function LoginPage() {
       <main className="login-container">
         {/* Logo */}
         <div className="login-logo">
-          <div className="login-logo-icon">
-            <Image src="/logo/flixify-icon-only.svg" alt="" width={40} height={40} className="login-logo-glyph" />
-          </div>
-          <span className="login-logo-text">FLIXIFY</span>
-          <span className="login-logo-badge">PRO</span>
+          <Image
+            src="/logo/flixify-logo.png"
+            alt="Flixify Pro"
+            width={184}
+            height={48}
+            priority
+            style={{ height: "48px", width: "auto", objectFit: "contain" }}
+          />
         </div>
 
         {/* Subtitle */}
@@ -337,32 +322,6 @@ export default function LoginPage() {
             Ana Sayfaya Dön
           </Link>
         </div>
-
-        {/* Feature cards */}
-        <div className="login-features">
-          <div className="login-feature-card">
-            <div className="login-feature-icon">
-              <LockIcon />
-            </div>
-            <strong>Güvenli</strong>
-            <span>Şifreli erişim</span>
-          </div>
-          <div className="login-feature-card">
-            <div className="login-feature-icon">
-              <ZapIcon />
-            </div>
-            <strong>Hızlı</strong>
-            <span>Anında yayın</span>
-          </div>
-          <div className="login-feature-card">
-            <div className="login-feature-icon">
-              <SmartphoneIcon />
-            </div>
-            <strong>Her Yerde</strong>
-            <span>Tüm cihazlar</span>
-          </div>
-        </div>
-
         {/* Footer */}
         <footer className="login-footer">
           <p>© 2026 Flixify Pro. Tüm hakları saklıdır.</p>

@@ -153,4 +153,38 @@ https://stream/user/pass/4179.ts`);
     expect(catalog.movies).toHaveLength(0);
     expect(catalog.series).toHaveLength(0);
   });
+
+  // Criterion 11: HTTP 200 dönen HTML hata sayfası geçerli M3U sayılmıyor
+  it("Criterion 11: rejects HTML error pages returned with HTTP 200", () => {
+    const htmlResponse = `<!DOCTYPE html>
+<html>
+<head><title>401 Authorization Required</title></head>
+<body>
+<center><h1>401 Authorization Required</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>`;
+
+    expect(() => parseM3U(htmlResponse)).toThrow(
+      "Gecerli M3U formati bulunamadi (HTML veya hatali yanit)."
+    );
+  });
+
+  // Bug 2: M3U validator rejects HTML responses with comments at the start even if they contain #EXTM3U
+  it("Bug 2: rejects HTML responses with comments at the start even if they contain #EXTM3U", () => {
+    const htmlWithComment = `<!-- cached error response -->
+<!DOCTYPE html>
+<html>
+<body>
+#EXTM3U
+#EXTINF:-1,Fake
+http://stream/1.ts
+</body>
+</html>`;
+
+    expect(() => parseM3U(htmlWithComment)).toThrow(
+      "Gecerli M3U formati bulunamadi (HTML veya hatali yanit)."
+    );
+  });
 });
+

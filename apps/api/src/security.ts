@@ -72,9 +72,35 @@ export async function verifyAccessToken(token: string) {
   return payload as JWTPayload & { sub: string; sid: string };
 }
 
+export async function signAdminToken(payload: { email: string; adminId?: string }) {
+  return new SignJWT({
+    sub: payload.adminId ?? "admin",
+    email: payload.email.toLowerCase(),
+    role: "admin",
+    typ: "access"
+  })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("30d")
+    .sign(jwtKey);
+}
+
 let remoteJwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
 export async function verifyAdminToken(token: string) {
+  try {
+    const { payload } = await jwtVerify(token, jwtKey);
+    const email = payload.email ? String(payload.email).toLowerCase() : null;
+    if (payload.role === "admin" && email && env.adminEmails.includes(email)) {
+      return {
+        adminId: String(payload.sub ?? "admin"),
+        email
+      };
+    }
+  } catch {
+    // Fall back to Supabase verification
+  }
+
   if (!env.SUPABASE_JWKS_URL || !env.SUPABASE_URL) {
     throw new Error("Supabase admin auth is not configured.");
   }

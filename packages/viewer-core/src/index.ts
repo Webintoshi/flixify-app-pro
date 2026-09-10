@@ -3,9 +3,11 @@ import {
   livePlaybackEventInputSchema,
   vodPlaybackEventInputSchema,
   type CatalogGroup,
+  type CryptoAssetId,
   type DeviceSessionRecord,
   type LiveChannel,
   type MovieRecord,
+  type PaymentMethodId,
   type PaymentMethodOption,
   type PackageRecord,
   type SeriesRecord,
@@ -66,6 +68,8 @@ export type ViewerCoreOptions = {
   platform: string;
   defaultDeviceName: string;
   sessionStorageKey?: string;
+  installationId?: string;
+  getInstallationId?: () => string | Promise<string>;
 };
 
 export type CatalogState = {
@@ -844,14 +848,24 @@ export function useViewerCore(options: ViewerCoreOptions) {
     void bootstrap();
   }, []);
 
-  async function registerAnon(deviceName = options.defaultDeviceName) {
+  async function resolveInstallationId(explicit?: string) {
+    if (explicit?.trim()) return explicit.trim();
+    if (options.installationId?.trim()) return options.installationId.trim();
+    const dynamicId = await options.getInstallationId?.();
+    if (dynamicId?.trim()) return dynamicId.trim();
+    return `viewer-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
+  }
+
+  async function registerAnon(deviceName = options.defaultDeviceName, explicitInstallationId?: string) {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
+      const installationId = await resolveInstallationId(explicitInstallationId);
       const response = await clientRef.current.registerAnon({
         deviceName,
-        platform: options.platform
+        platform: options.platform,
+        installationId
       });
       const nextSession = {
         accessToken: response.accessToken,
@@ -868,14 +882,16 @@ export function useViewerCore(options: ViewerCoreOptions) {
     }
   }
 
-  async function issueAnonCode(deviceName = options.defaultDeviceName) {
+  async function issueAnonCode(deviceName = options.defaultDeviceName, explicitInstallationId?: string) {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
+      const installationId = await resolveInstallationId(explicitInstallationId);
       const response = await clientRef.current.registerAnon({
         deviceName,
-        platform: options.platform
+        platform: options.platform,
+        installationId
       });
       setLastIssuedCode(response.kryptoniteCode);
       return response.kryptoniteCode;
@@ -887,15 +903,17 @@ export function useViewerCore(options: ViewerCoreOptions) {
     }
   }
 
-  async function loginByCode(code: string, deviceName = options.defaultDeviceName) {
+  async function loginByCode(code: string, deviceName = options.defaultDeviceName, explicitInstallationId?: string) {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
+      const installationId = await resolveInstallationId(explicitInstallationId);
       const response = await clientRef.current.loginByCode({
         code: code.toUpperCase(),
         deviceName,
-        platform: options.platform
+        platform: options.platform,
+        installationId
       });
       const nextSession = {
         accessToken: response.accessToken,
@@ -938,11 +956,21 @@ export function useViewerCore(options: ViewerCoreOptions) {
     }
   }
 
-  async function requestPayment(packageSlug: string) {
+  async function requestPayment(
+    packageSlug: string,
+    paymentMethodId: PaymentMethodId = "bank-transfer-eft",
+    cryptoAssetId?: CryptoAssetId | null
+  ) {
     setBusy(true);
     setError(null);
     try {
-      await runAuthenticatedRequest(() => clientRef.current.paymentRequest({ packageSlug }));
+      await runAuthenticatedRequest(() =>
+        clientRef.current.paymentRequest({
+          packageSlug,
+          paymentMethodId,
+          cryptoAssetId: cryptoAssetId ?? undefined
+        })
+      );
       setNotice("Odeme talebi olusturuldu. Lutfen WhatsApp veya Telegram ile ekibe ulasin.");
       await loadPaymentRequests();
     } catch (nextError) {

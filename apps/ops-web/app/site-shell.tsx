@@ -5,41 +5,63 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { clearAdminToken } from "../lib/api";
+import MobileTabBar from "./components/navigation/MobileTabBar";
 
 const publicNavigation = [
   { href: "/", label: "Ana Sayfa" },
   { href: "/filmler", label: "Filmler" },
   { href: "/diziler", label: "Diziler" },
   { href: "/canli-tv", label: "Canli TV" },
-  { href: "/android-tv", label: "Android TV" }
+  { href: "/indir", label: "İndir" }
 ];
 
 const adminNavigation = [
-  { href: "/admin/dashboard", label: "Dashboard" },
-  { href: "/admin/kullanicilar", label: "Kullanıcılar" },
-  { href: "/admin/paketler", label: "Paketler" },
-  { href: "/admin/odeme-yontemleri", label: "Odeme Yontemleri" },
-  { href: "/admin/ayarlar", label: "Ayarlar" }
+  { href: "/admin/dashboard", label: "Dashboard", icon: "dashboard" },
+  { href: "/admin/kullanicilar", label: "Kullanıcılar", icon: "users-total" },
+  { href: "/admin/paketler", label: "Paketler", icon: "package" },
+  { href: "/admin/odeme-yontemleri", label: "Ödeme Yöntemleri", icon: "filter" },
+  { href: "/admin/ayarlar", label: "Ayarlar", icon: "settings" }
 ];
 
 function BrandLockup() {
   return (
-    <Link href="/" className="brand-lockup">
-      <span className="brand-mark" aria-hidden="true">
-        <Image src="/logo/flixify-icon-only.svg" alt="" width={42} height={42} className="brand-mark-image" />
-      </span>
-      <span className="brand-word">FLIXIFY</span>
-      <span className="brand-badge">PRO</span>
+    <Link href="/" className="brand-lockup" aria-label="Flixify Pro">
+      <Image
+        src="/logo/flixify-logo.png"
+        alt="Flixify Pro"
+        width={142}
+        height={37}
+        priority
+        style={{ height: "36px", width: "auto", objectFit: "contain" }}
+      />
     </Link>
   );
 }
 
 function PublicHeader({ pathname }: { pathname: string }) {
+  const [userCode, setUserCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("flixify-public-session");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.kryptoniteCode) {
+          setUserCode(parsed.kryptoniteCode);
+        }
+      }
+    } catch {}
+  }, [pathname]);
+
+  const navItems = userCode
+    ? [...publicNavigation, { href: "/ayarlar", label: "Hesabım" }]
+    : publicNavigation;
+
   return (
     <header className="site-header public-header">
       <BrandLockup />
       <nav className="public-nav" aria-label="Public navigation">
-        {publicNavigation.map((item) => (
+        {navItems.map((item) => (
           <Link
             key={item.href}
             href={item.href}
@@ -50,12 +72,36 @@ function PublicHeader({ pathname }: { pathname: string }) {
         ))}
       </nav>
       <div className="header-actions">
-        <Link href="/giris-yap" className="ghost-link">
-          Giris Yap
-        </Link>
-        <Link href="/kayit-ol" className="button button-hero">
-          Hesap Olustur
-        </Link>
+        {userCode ? (
+          <>
+            <Link href="/ayarlar" className="ghost-link" title="Hesap ve Paket Durumu">
+              Hesabım ({userCode.slice(-4)})
+            </Link>
+            <button
+              type="button"
+              className="button button-hero"
+              style={{ padding: "8px 14px", fontSize: "13px", cursor: "pointer" }}
+              onClick={() => {
+                try {
+                  window.localStorage.removeItem("flixify-public-session");
+                } catch {}
+                setUserCode(null);
+                window.location.href = "/giris-yap";
+              }}
+            >
+              Çıkış Yap
+            </button>
+          </>
+        ) : (
+          <>
+            <Link href="/giris-yap" className="ghost-link">
+              Giris Yap
+            </Link>
+            <Link href="/kayit-ol" className="button button-hero">
+              Hesap Olustur
+            </Link>
+          </>
+        )}
       </div>
     </header>
   );
@@ -79,18 +125,17 @@ function AdminShell({ pathname, children }: { pathname: string; children: ReactN
     <div className="admin-shell">
       <aside className="admin-sidebar">
         <div className="admin-brand">
-          <span className="admin-brand-icon" aria-hidden="true">
+          <Link href="/admin/dashboard" style={{ display: "flex", flexDirection: "column", gap: "6px", textDecoration: "none" }}>
             <Image
-              src="/logo/flixify-icon-only.svg"
-              alt=""
-              width={48}
-              height={48}
-              className="admin-brand-icon-image"
+              src="/logo/flixify-logo.png"
+              alt="Flixify Pro"
+              width={160}
+              height={42}
+              priority
+              style={{ height: "38px", width: "auto", objectFit: "contain", alignSelf: "flex-start" }}
             />
-          </span>
-          <div>
-            <strong>Admin Panel</strong>
-          </div>
+            <small style={{ color: "rgba(255, 255, 255, 0.45)", fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700, paddingLeft: "2px" }}>Admin Panel</small>
+          </Link>
         </div>
 
         <nav className="admin-sidebar-nav" aria-label="Admin navigation">
@@ -102,7 +147,10 @@ function AdminShell({ pathname, children }: { pathname: string; children: ReactN
                 href={item.href}
                 className={`admin-sidebar-link${isActive ? " is-active" : ""}`}
               >
-                {item.label}
+                <svg className="admin-nav-icon" width="20" height="20" aria-hidden="true" style={{ marginRight: 12, flexShrink: 0 }}>
+                  <use href={`/icons/admin-icons.svg#${item.icon}`} />
+                </svg>
+                <span>{item.label}</span>
               </Link>
             );
           })}
@@ -111,22 +159,31 @@ function AdminShell({ pathname, children }: { pathname: string; children: ReactN
 
       <div className="admin-main">
         <header className="admin-topbar">
-          <Link href="/" className="admin-topbar-link">
-            Siteyi Görüntüle
-          </Link>
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            <Link href="/" target="_blank" rel="noopener noreferrer" className="admin-topbar-link" style={{ display: "inline-flex", alignItems: "center", gap: "8px", fontSize: "0.95rem" }}>
+              <svg width="18" height="18" aria-hidden="true" style={{ stroke: "currentColor" }}><use href="/icons/admin-icons.svg#tv" /></svg>
+              <span>Siteyi Görüntüle ↗</span>
+            </Link>
+          </div>
           <div className="admin-topbar-actions">
-            <span className="admin-date" suppressHydrationWarning>
+            <span className="admin-date" suppressHydrationWarning style={{ fontSize: "0.9rem" }}>
               {todayLabel}
             </span>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", padding: "6px 12px", background: "rgba(255,255,255,0.06)", borderRadius: "999px", fontSize: "0.85rem" }}>
+              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#00c781" }} />
+              <span style={{ fontWeight: 600 }}>admin@flixify.vip</span>
+            </div>
             <button
               className="button secondary admin-logout"
               type="button"
+              style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "8px" }}
               onClick={() => {
                 clearAdminToken();
                 router.push("/admin");
               }}
             >
-              Çıkış
+              <svg width="16" height="16" aria-hidden="true" style={{ stroke: "currentColor" }}><use href="/icons/admin-icons.svg#logout" /></svg>
+              <span>Çıkış</span>
             </button>
           </div>
         </header>
@@ -173,6 +230,22 @@ export default function SiteShell({ children }: { children: ReactNode }) {
           </div>
         )}
         {children}
+      </div>
+    );
+  }
+
+  const isCinematicShell =
+    pathname === "/" ||
+    pathname === "/indir" ||
+    pathname === "/filmler" ||
+    pathname === "/diziler" ||
+    pathname === "/canli-tv";
+
+  if (isCinematicShell) {
+    return (
+      <div className="homepage-shell">
+        {children}
+        <MobileTabBar />
       </div>
     );
   }

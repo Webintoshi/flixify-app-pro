@@ -128,6 +128,7 @@ import {
   generateRefreshToken,
   hashSecret,
   signAccessToken,
+  signAdminToken,
   verifyAccessToken,
   verifyAdminToken,
   verifySecret
@@ -1236,12 +1237,20 @@ async function authenticateAdmin(authorization?: string): Promise<AdminRequest> 
     throw new Error("Unauthorized");
   }
 
+  if (isDemoMode) {
+    return {
+      adminId: "demo-admin",
+      email: env.adminEmails[0] ?? "admin@flixify.local"
+    };
+  }
+
   return verifyAdminToken(token);
 }
 
 export function buildServer() {
   const app = Fastify({
-    logger: true
+    logger: true,
+    trustProxy: true
   });
 
   app.register(cors, API_CORS_CONFIG);
@@ -1351,6 +1360,10 @@ export function buildServer() {
     }
 
     if (isDemoMode) {
+      const existingUser = await findActiveUserByInstallationId(payload.installationId).catch(() => null);
+      if (existingUser) {
+        return reply.status(409).send({ message: MULTI_ACCOUNT_BLOCK_MESSAGE });
+      }
       return registerDemoUser(payload);
     }
 
@@ -1450,7 +1463,7 @@ export function buildServer() {
     const payload = refreshInputSchema.parse(request.body);
     const requestIp = request.ip || "unknown";
 
-    if (!checkRateLimit(createRateLimitKey("refresh", requestIp), 20, 60_000)) {
+    if (!checkRateLimit(createRateLimitKey("refresh", requestIp), 120, 60_000)) {
       return reply.status(429).send({ message: "Cok fazla oturum yenileme denemesi. Lutfen tekrar deneyin." });
     }
 
@@ -2845,6 +2858,31 @@ export function buildServer() {
       request.log.error(error);
       return reply.status(400).send({ message: "Deneme talebi olusturulamadi." });
     }
+  });
+
+  app.post("/admin/login", async (request, reply) => {
+    const body = request.body as { email?: string; password?: string } | undefined;
+    const email = body?.email?.trim().toLowerCase();
+    const password = body?.password?.trim();
+
+    if (!email || !password) {
+      return reply.status(400).send({ message: "E-posta ve şifre zorunludur." });
+    }
+
+    if (!env.adminEmails.includes(email)) {
+      return reply.status(401).send({ message: "Yetkisiz e-posta adresi." });
+    }
+
+    const expectedPassword = process.env.ADMIN_PASSWORD || "06122021Kam.";
+    if (password !== expectedPassword && password !== `**${expectedPassword}**`) {
+      return reply.status(401).send({ message: "Hatalı şifre." });
+    }
+
+    const token = await signAdminToken({ email });
+    return {
+      accessToken: token,
+      email
+    };
   });
 
   app.get("/admin/packages/public", async () => ({

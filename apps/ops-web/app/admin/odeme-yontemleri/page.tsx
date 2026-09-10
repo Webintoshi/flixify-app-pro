@@ -81,8 +81,11 @@ export default function AdminPaymentMethodsPage() {
       .catch(() => setMessage("Odeme yontemleri yuklenemedi. Once admin girisi yap."));
   }, []);
 
+  const [saving, setSaving] = useState(false);
+
   async function handleSave() {
     setMessage(null);
+    setSaving(true);
 
     try {
       await apiRequest("/admin/payment-methods", {
@@ -105,163 +108,254 @@ export default function AdminPaymentMethodsPage() {
         },
         useAdminToken: true
       });
-      setMessage("Odeme yontemleri kaydedildi.");
+      setMessage("Ödeme yöntemleri başarıyla kaydedildi.");
     } catch (nextError) {
-      setMessage(nextError instanceof Error ? nextError.message : "Odeme yontemleri kaydedilemedi.");
+      setMessage(nextError instanceof Error ? nextError.message : "Ödeme yöntemleri kaydedilemedi.");
+    } finally {
+      setSaving(false);
     }
   }
 
+  const inputStyle = {
+    width: "100%",
+    padding: "12px 16px",
+    borderRadius: "12px",
+    border: "1px solid rgba(255, 255, 255, 0.12)",
+    background: "rgba(255, 255, 255, 0.04)",
+    color: "white",
+    fontSize: "0.95rem"
+  };
+
+  const labelSpanStyle = {
+    fontSize: "0.85rem",
+    color: "rgba(255, 255, 255, 0.72)",
+    fontWeight: 600
+  };
+
   return (
-    <main className="page-grid">
-      <section className="panel stack">
-        <h1 style={{ margin: 0 }}>/admin/odeme-yontemleri</h1>
-        <p className="muted">
-          Kullanici tarafindaki satin alim popup'inda gosterilecek odeme yontemleri ve aciklamalari buradan yonetin.
-        </p>
-      </section>
-
-      <section className="panel stack">
-        <label className="field">
-          <span>
-            <input
-              type="checkbox"
-              checked={settings.bankTransferEftEnabled}
-              onChange={(event) =>
-                setSettings({ ...settings, bankTransferEftEnabled: event.target.checked })
-              }
-              style={{ marginRight: 8 }}
-            />
-            Banka Havale / EFT aktif
-          </span>
-          <textarea
-            rows={3}
-            value={settings.bankTransferEftDetails}
-            onChange={(event) => setSettings({ ...settings, bankTransferEftDetails: event.target.value })}
-            placeholder="IBAN, alici adi, banka adi gibi bilgileri yazin."
-          />
-        </label>
-
-        <label className="field">
-          <span>Alici Adi</span>
-          <input
-            type="text"
-            value={settings.bankTransferRecipientName}
-            onChange={(event) => setSettings({ ...settings, bankTransferRecipientName: event.target.value })}
-            placeholder="Hesap sahibi / alici unvani"
-          />
-        </label>
-
-        <label className="field">
-          <span>IBAN</span>
-          <input
-            type="text"
-            value={settings.bankTransferIban}
-            onChange={(event) => setSettings({ ...settings, bankTransferIban: event.target.value })}
-            placeholder="TR..."
-          />
-        </label>
-
-        <label className="field">
-          <span>Banka Adi</span>
-          <input
-            type="text"
-            value={settings.bankTransferBankName}
-            onChange={(event) => setSettings({ ...settings, bankTransferBankName: event.target.value })}
-            placeholder="Banka adi (opsiyonel)"
-          />
-        </label>
-
-        <label className="field">
-          <span>
-            <input
-              type="checkbox"
-              checked={settings.cryptoEnabled}
-              onChange={(event) => setSettings({ ...settings, cryptoEnabled: event.target.checked })}
-              style={{ marginRight: 8 }}
-            />
-            Kripto aktif
-          </span>
-          <textarea
-            rows={3}
-            value={settings.cryptoDetails}
-            onChange={(event) => setSettings({ ...settings, cryptoDetails: event.target.value })}
-            placeholder="Ag tipi, coin ve cuzdan adresini yazin."
-          />
-        </label>
-
-        <label className="field">
-          <span>USDT (TRC20) Cuzdan</span>
-          <input
-            type="text"
-            value={settings.cryptoWalletUsdtTrc20}
-            onChange={(event) => setSettings({ ...settings, cryptoWalletUsdtTrc20: event.target.value })}
-            placeholder="USDT TRC20 adresi"
-          />
-        </label>
-
-        <label className="field">
-          <span>TRON (TRX) Cuzdan</span>
-          <input
-            type="text"
-            value={settings.cryptoWalletTron}
-            onChange={(event) => setSettings({ ...settings, cryptoWalletTron: event.target.value })}
-            placeholder="TRON adresi"
-          />
-        </label>
-
-        <label className="field">
-          <span>SOL Cuzdan</span>
-          <input
-            type="text"
-            value={settings.cryptoWalletSol}
-            onChange={(event) => setSettings({ ...settings, cryptoWalletSol: event.target.value })}
-            placeholder="SOL adresi"
-          />
-        </label>
-
-        <label className="field">
-          <span>BTC Cuzdan</span>
-          <input
-            type="text"
-            value={settings.cryptoWalletBtc}
-            onChange={(event) => setSettings({ ...settings, cryptoWalletBtc: event.target.value })}
-            placeholder="BTC adresi"
-          />
-        </label>
-
-        <label className="field">
-          <span>USDC Cuzdan</span>
-          <input
-            type="text"
-            value={settings.cryptoWalletUsdc}
-            onChange={(event) => setSettings({ ...settings, cryptoWalletUsdc: event.target.value })}
-            placeholder="USDC adresi"
-          />
-        </label>
-
-        <label className="field">
-          <span>
-            <input
-              type="checkbox"
-              checked={settings.bankCardEnabled}
-              onChange={(event) => setSettings({ ...settings, bankCardEnabled: event.target.checked })}
-              style={{ marginRight: 8 }}
-            />
-            Banka Karti aktif
-          </span>
-          <textarea
-            rows={3}
-            value={settings.bankCardDetails}
-            onChange={(event) => setSettings({ ...settings, bankCardDetails: event.target.value })}
-            placeholder="Sanal POS linki veya kart odeme yonergelerini yazin."
-          />
-        </label>
-
-        {message ? <div className="muted">{message}</div> : null}
-        <button className="button" onClick={() => void handleSave()}>
-          Kaydet
+    <main className="admin-page-grid">
+      <section className="admin-page-heading">
+        <div>
+          <h1>Ödeme Yöntemleri</h1>
+          <p>
+            Kullanıcı tarafındaki satın alım ve paket yenileme pencerelerinde gösterilecek ödeme kanallarını yönetin.
+          </p>
+        </div>
+        <button
+          className="button button-hero"
+          style={{ minHeight: "46px", paddingInline: "24px", borderRadius: "12px", cursor: "pointer" }}
+          onClick={() => void handleSave()}
+          disabled={saving}
+        >
+          {saving ? "Kaydediliyor..." : "Tümünü Kaydet"}
         </button>
       </section>
+
+      {message ? (
+        <div style={{
+          padding: "14px 20px",
+          borderRadius: "14px",
+          background: message.includes("başarıyla") ? "rgba(0, 199, 129, 0.12)" : "rgba(244, 6, 18, 0.12)",
+          border: `1px solid ${message.includes("başarıyla") ? "rgba(0, 199, 129, 0.28)" : "rgba(244, 6, 18, 0.28)"}`,
+          color: message.includes("başarıyla") ? "#19d690" : "#ff6d76",
+          fontWeight: 600
+        }}>
+          {message.includes("başarıyla") ? "✓" : "✕"} {message}
+        </div>
+      ) : null}
+
+      <div style={{ display: "grid", gap: "24px" }}>
+        {/* Havale / EFT */}
+        <article className="admin-section-card" style={{ display: "grid", gap: "20px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: "16px", borderBottom: "1px solid rgba(255, 255, 255, 0.06)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ fontSize: "1.3rem" }}>🏦</span>
+              <div>
+                <strong style={{ fontSize: "1.2rem", display: "block" }}>Banka Havale & EFT</strong>
+                <span style={{ fontSize: "0.8rem", color: "rgba(255, 255, 255, 0.45)" }}>Doğrudan banka hesabına ödeme seçeneği</span>
+              </div>
+            </div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: "8px", cursor: "pointer", fontWeight: 600, fontSize: "0.9rem" }}>
+              <input
+                type="checkbox"
+                checked={settings.bankTransferEftEnabled}
+                onChange={(e) => setSettings({ ...settings, bankTransferEftEnabled: e.target.checked })}
+                style={{ width: "18px", height: "18px", accentColor: "#f40612" }}
+              />
+              <span>{settings.bankTransferEftEnabled ? "Aktif" : "Pasif"}</span>
+            </label>
+          </div>
+
+          <div style={{ display: "grid", gap: "16px", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+            <label style={{ display: "grid", gap: "8px" }}>
+              <span style={labelSpanStyle}>Banka Adı</span>
+              <input
+                type="text"
+                style={inputStyle}
+                value={settings.bankTransferBankName}
+                onChange={(e) => setSettings({ ...settings, bankTransferBankName: e.target.value })}
+                placeholder="Örn: Garanti BBVA, Ziraat"
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: "8px" }}>
+              <span style={labelSpanStyle}>Alıcı Adı / Hesap Sahibi</span>
+              <input
+                type="text"
+                style={inputStyle}
+                value={settings.bankTransferRecipientName}
+                onChange={(e) => setSettings({ ...settings, bankTransferRecipientName: e.target.value })}
+                placeholder="Hesap sahibi unvanı"
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: "8px", gridColumn: "1 / -1" }}>
+              <span style={labelSpanStyle}>IBAN Numarası</span>
+              <input
+                type="text"
+                style={inputStyle}
+                value={settings.bankTransferIban}
+                onChange={(e) => setSettings({ ...settings, bankTransferIban: e.target.value })}
+                placeholder="TR00 0000 0000 0000 0000 0000 00"
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: "8px", gridColumn: "1 / -1" }}>
+              <span style={labelSpanStyle}>Açıklama / Havale Talimatları</span>
+              <textarea
+                rows={3}
+                style={{ ...inputStyle, resize: "vertical" }}
+                value={settings.bankTransferEftDetails}
+                onChange={(e) => setSettings({ ...settings, bankTransferEftDetails: e.target.value })}
+                placeholder="Ödeme açıklamasına müşteri kodunu yazınız gibi yönergeler..."
+              />
+            </label>
+          </div>
+        </article>
+
+        {/* Kripto */}
+        <article className="admin-section-card" style={{ display: "grid", gap: "20px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: "16px", borderBottom: "1px solid rgba(255, 255, 255, 0.06)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ fontSize: "1.3rem" }}>🪙</span>
+              <div>
+                <strong style={{ fontSize: "1.2rem", display: "block" }}>Kripto Para Cüzdanları</strong>
+                <span style={{ fontSize: "0.8rem", color: "rgba(255, 255, 255, 0.45)" }}>USDT, BTC, SOL ve diğer kripto cüzdanları</span>
+              </div>
+            </div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: "8px", cursor: "pointer", fontWeight: 600, fontSize: "0.9rem" }}>
+              <input
+                type="checkbox"
+                checked={settings.cryptoEnabled}
+                onChange={(e) => setSettings({ ...settings, cryptoEnabled: e.target.checked })}
+                style={{ width: "18px", height: "18px", accentColor: "#f40612" }}
+              />
+              <span>{settings.cryptoEnabled ? "Aktif" : "Pasif"}</span>
+            </label>
+          </div>
+
+          <div style={{ display: "grid", gap: "16px", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+            <label style={{ display: "grid", gap: "8px" }}>
+              <span style={labelSpanStyle}>USDT (TRC20) Adresi</span>
+              <input
+                type="text"
+                style={inputStyle}
+                value={settings.cryptoWalletUsdtTrc20}
+                onChange={(e) => setSettings({ ...settings, cryptoWalletUsdtTrc20: e.target.value })}
+                placeholder="T..."
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: "8px" }}>
+              <span style={labelSpanStyle}>TRON (TRX) Adresi</span>
+              <input
+                type="text"
+                style={inputStyle}
+                value={settings.cryptoWalletTron}
+                onChange={(e) => setSettings({ ...settings, cryptoWalletTron: e.target.value })}
+                placeholder="T..."
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: "8px" }}>
+              <span style={labelSpanStyle}>Solana (SOL) Adresi</span>
+              <input
+                type="text"
+                style={inputStyle}
+                value={settings.cryptoWalletSol}
+                onChange={(e) => setSettings({ ...settings, cryptoWalletSol: e.target.value })}
+                placeholder="Solana cüzdan adresi"
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: "8px" }}>
+              <span style={labelSpanStyle}>Bitcoin (BTC) Adresi</span>
+              <input
+                type="text"
+                style={inputStyle}
+                value={settings.cryptoWalletBtc}
+                onChange={(e) => setSettings({ ...settings, cryptoWalletBtc: e.target.value })}
+                placeholder="1... veya bc1..."
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: "8px", gridColumn: "1 / -1" }}>
+              <span style={labelSpanStyle}>USD Coin (USDC) Adresi</span>
+              <input
+                type="text"
+                style={inputStyle}
+                value={settings.cryptoWalletUsdc}
+                onChange={(e) => setSettings({ ...settings, cryptoWalletUsdc: e.target.value })}
+                placeholder="USDC cüzdan adresi"
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: "8px", gridColumn: "1 / -1" }}>
+              <span style={labelSpanStyle}>Kripto Ödeme Yönergeleri</span>
+              <textarea
+                rows={3}
+                style={{ ...inputStyle, resize: "vertical" }}
+                value={settings.cryptoDetails}
+                onChange={(e) => setSettings({ ...settings, cryptoDetails: e.target.value })}
+                placeholder="TxID dekontu iletip onay alma gibi açıklamalar..."
+              />
+            </label>
+          </div>
+        </article>
+
+        {/* Banka Kartı */}
+        <article className="admin-section-card" style={{ display: "grid", gap: "20px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: "16px", borderBottom: "1px solid rgba(255, 255, 255, 0.06)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ fontSize: "1.3rem" }}>💳</span>
+              <div>
+                <strong style={{ fontSize: "1.2rem", display: "block" }}>Banka & Kredi Kartı</strong>
+                <span style={{ fontSize: "0.8rem", color: "rgba(255, 255, 255, 0.45)" }}>Online kart ödeme veya sanal pos yönlendirmeleri</span>
+              </div>
+            </div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: "8px", cursor: "pointer", fontWeight: 600, fontSize: "0.9rem" }}>
+              <input
+                type="checkbox"
+                checked={settings.bankCardEnabled}
+                onChange={(e) => setSettings({ ...settings, bankCardEnabled: e.target.checked })}
+                style={{ width: "18px", height: "18px", accentColor: "#f40612" }}
+              />
+              <span>{settings.bankCardEnabled ? "Aktif" : "Pasif"}</span>
+            </label>
+          </div>
+
+          <label style={{ display: "grid", gap: "8px" }}>
+            <span style={labelSpanStyle}>Kart Ödeme Yönergeleri / Sanal POS Linki</span>
+            <textarea
+              rows={3}
+              style={{ ...inputStyle, resize: "vertical" }}
+              value={settings.bankCardDetails}
+              onChange={(e) => setSettings({ ...settings, bankCardDetails: e.target.value })}
+              placeholder="Online ödeme bağlantısı veya kart ödeme açıklaması..."
+            />
+          </label>
+        </article>
+      </div>
     </main>
   );
 }

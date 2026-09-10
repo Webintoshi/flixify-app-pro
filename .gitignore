@@ -9,6 +9,8 @@ coverage
 .env
 .env.local
 .env.*.local
+.env.production
+apps/*/.env*
 apps/*/dist
 apps/*/build
 apps/*/.next
@@ -21,7 +23,9 @@ apps/*/webos-service
 !apps/viewer-native/android/**
 apps/viewer-windows/dist-electron
 apps/viewer-windows/web-dist
-apps/viewer-webos/tsconfig.tsbuildinfo
+*.tsbuildinfo
+.video_agent/
+*.tar.gz
 tmp
 output
 supabase/.temp

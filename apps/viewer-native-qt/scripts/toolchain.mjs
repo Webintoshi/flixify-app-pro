@@ -489,7 +489,7 @@ export function resolveNativeQtToolchain(preset = resolvePreset()) {
       ANDROID_NDK_HOME: androidNdkRoot,
       ANDROID_ABI: androidAbi,
       QT_ANDROID_ABIS: androidAbi,
-      FLIXIFY_API_BASE_URL: process.env.FLIXIFY_API_BASE_URL || "https://api.flixify.pro"
+      FLIXIFY_API_BASE_URL: process.env.FLIXIFY_API_BASE_URL || "https://api.flixify.vip"
     };
 
     baseEnv.PATH = [
@@ -547,7 +547,7 @@ export function resolveNativeQtToolchain(preset = resolvePreset()) {
     ...process.env,
     QT_ROOT: qtRoot,
     LIBVLC_ROOT: libVlcRoot,
-    FLIXIFY_API_BASE_URL: process.env.FLIXIFY_API_BASE_URL || "https://api.flixify.pro"
+    FLIXIFY_API_BASE_URL: process.env.FLIXIFY_API_BASE_URL || "https://api.flixify.vip"
   };
   const env = resolveMsvcEnvironment(baseEnv);
 

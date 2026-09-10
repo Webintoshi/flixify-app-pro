@@ -235,7 +235,32 @@ void ApiClient::setApiBaseUrl(const QString &value) {
   }
 
   m_apiBaseUrl = trimmed;
+  QSettings settings;
+  settings.setValue(QStringLiteral("api/baseUrl"), m_apiBaseUrl);
   emit apiBaseUrlChanged();
+}
+
+bool ApiClient::updateApiBaseUrl(const QString &value) {
+  QString normalized = value.trimmed();
+  if (normalized.isEmpty()) {
+    return false;
+  }
+  if (!normalized.startsWith(QStringLiteral("http://")) && !normalized.startsWith(QStringLiteral("https://"))) {
+    normalized.prepend(QStringLiteral("http://"));
+  }
+  while (normalized.endsWith(QLatin1Char('/'))) {
+    normalized.chop(1);
+  }
+  setApiBaseUrl(normalized);
+
+  const QString iniPath = QCoreApplication::applicationDirPath() + QStringLiteral("/flixify.ini");
+  QSettings iniSettings(iniPath, QSettings::IniFormat);
+  iniSettings.setValue(QStringLiteral("api/baseUrl"), normalized);
+  iniSettings.sync();
+
+  setLastError(QString());
+  bootstrap();
+  return true;
 }
 
 QString ApiClient::accessToken() const {

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(FlixifyNativeQt VERSION 2.3.40 LANGUAGES CXX)
+project(FlixifyNativeQt VERSION 2.3.43 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,7 +24,7 @@ set(FLIXIFY_MACOS_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Info.plist.in")
 set(FLIXIFY_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android")
 
 if(FLIXIFY_API_BASE_URL STREQUAL "")
-  set(FLIXIFY_API_BASE_URL "https://api.flixify.pro")
+  set(FLIXIFY_API_BASE_URL "https://api.flixify.vip")
 endif()
 
 if(LIBVLC_ROOT STREQUAL "" AND WIN32)
@@ -186,11 +186,14 @@ if(FLIXIFY_ENABLE_INSTALL AND NOT ANDROID)
     install(CODE [[
       file(GLOB flixify_runtime_files
         "${CMAKE_INSTALL_PREFIX}/bin/*.dll"
-        "${CMAKE_INSTALL_PREFIX}/bin/qt.conf"
       )
       foreach(runtime_file IN LISTS flixify_runtime_files)
         file(COPY "${runtime_file}" DESTINATION "${CMAKE_INSTALL_PREFIX}")
       endforeach()
+      file(WRITE "${CMAKE_INSTALL_PREFIX}/qt.conf" "[Paths]\nPrefix = .\nPlugins = plugins\nImports = qml\nQml2Imports = qml\n")
+      if(EXISTS "${CMAKE_INSTALL_PREFIX}/plugins/platforms")
+        file(COPY "${CMAKE_INSTALL_PREFIX}/plugins/platforms" DESTINATION "${CMAKE_INSTALL_PREFIX}")
+      endif()
     ]])
   endif()
 
@@ -251,11 +254,11 @@ if(NOT ANDROID)
     set(CPACK_PACKAGE_EXECUTABLES "Flixify Pro" "Flixify Pro")
     set(
       CPACK_NSIS_EXTRA_INSTALL_COMMANDS
-      "CreateShortCut \\\"$DESKTOP\\\\Flixify Pro.lnk\\\" \\\"$INSTDIR\\\\Flixify Pro.exe\\\" \\\"\\\" \\\"$INSTDIR\\\\Flixify Pro.exe\\\" 0"
+      "CreateShortCut \\\"$DESKTOP\\\\Flixify Pro.lnk\\\" \\\"$INSTDIR\\\\Flixify Pro.exe\\\" \\\"\\\" \\\"$INSTDIR\\\\Flixify Pro.exe\\\" 0\\n  System::Call 'shell32.dll::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'"
     )
     set(
       CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
-      "Delete \\\"$DESKTOP\\\\Flixify Pro.lnk\\\""
+      "Delete \\\"$DESKTOP\\\\Flixify Pro.lnk\\\"\\n  System::Call 'shell32.dll::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'"
     )
   elseif(APPLE)
     set(CPACK_GENERATOR "DragNDrop")

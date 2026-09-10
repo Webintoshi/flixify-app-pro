@@ -8,6 +8,8 @@
     <file alias="qml/SeriesCatalogPage.qml">../qml/SeriesCatalogPage.qml</file>
     <file alias="qml/SeriesDetailPage.qml">../qml/SeriesDetailPage.qml</file>
     <file alias="branding/icon.png">../resources/icon.png</file>
+    <file alias="branding/logo.png">../resources/flixify-logo.png</file>
+    <file alias="branding/flixify-logo.png">../resources/flixify-logo.png</file>
     <file alias="icons/whatsapp.svg">../Whatsapp logo (1).svg</file>
     <file alias="icons/telegram.svg">../Telegramlogo.svg</file>
     <file alias="crypto/btc-logo.png">../kripto-logolar/btc-logo.png</file>

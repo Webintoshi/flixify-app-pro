@@ -71,7 +71,11 @@ describe("live logo helpers", () => {
     });
 
     const tamperedUrl = new URL(signedUrl ?? "");
-    tamperedUrl.searchParams.set("sig", `${tamperedUrl.searchParams.get("sig")?.slice(0, -1) ?? ""}0`);
+    const originalSig = tamperedUrl.searchParams.get("sig") ?? "";
+    tamperedUrl.searchParams.set(
+      "sig",
+      originalSig.endsWith("0") ? `${originalSig.slice(0, -1)}1` : `${originalSig.slice(0, -1)}0`
+    );
     expect(verifySignedLiveLogoQuery(Object.fromEntries(tamperedUrl.searchParams.entries()), nowMs)).toMatchObject({
       ok: false,
       error: {

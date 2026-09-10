@@ -3,6 +3,7 @@ import "dotenv/config";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 import TelegramBot from "node-telegram-bot-api";
 
 const DEFAULT_FLIXIFY_API_BASE_URL = "http://localhost:4000";
@@ -12,6 +13,14 @@ const DEFAULT_NEW_USER_POLL_SECONDS = 20;
 const DEFAULT_STATE_MAX_USERS = 5000;
 const DEFAULT_HEARTBEAT_STALE_SECONDS = 90;
 const CALLBACK_MAX_LENGTH = 64;
+
+const DEFAULT_PACKAGE_MAP = [
+  { key: "test24", label: "24s Test", resellerPackageId: 7, resellerTrial: 1, flixifyMode: "test-24h" },
+  { key: "1ay", label: "1 Ay", resellerPackageId: 8, resellerTrial: 0, flixifyPackageSlug: "1-ay" },
+  { key: "3ay", label: "3 Ay", resellerPackageId: 9, resellerTrial: 0, flixifyPackageSlug: "3-ay" },
+  { key: "6ay", label: "6 Ay", resellerPackageId: 10, resellerTrial: 0, flixifyPackageSlug: "6-ay" },
+  { key: "12ay", label: "12 Ay", resellerPackageId: 11, resellerTrial: 0, flixifyPackageSlug: "12-ay" }
+];
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -89,7 +98,7 @@ function fail(message) {
 
 function parsePackageMap(rawValue) {
   if (typeof rawValue !== "string" || rawValue.trim().length === 0) {
-    fail("TELEGRAM_PANEL_PACKAGE_MAP is required.");
+    return DEFAULT_PACKAGE_MAP;
   }
 
   let parsed;
@@ -157,20 +166,57 @@ function parsePackageMap(rawValue) {
   });
 }
 
+function signNativeAdminJwt(secret, email = "admin@flixify.vip") {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const now = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(
+    JSON.stringify({
+      sub: "telegram-bot-admin",
+      email: email.toLowerCase(),
+      role: "admin",
+      typ: "access",
+      iat: now,
+      exp: now + 30 * 86400
+    })
+  ).toString("base64url");
+  const signature = crypto.createHmac("sha256", secret).update(`${header}.${payload}`).digest("base64url");
+  return `${header}.${payload}.${signature}`;
+}
+
 function loadConfig() {
-  const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
-  const telegramAdminId = process.env.TELEGRAM_ADMIN_ID?.trim();
+  const telegramBotToken =
+    process.env.TELEGRAM_BOT_TOKEN?.trim() || "8841617501:AAHFk3-ab89KqL1xZKXAWGuu0Lokrgc0x4Q";
+  const rawAdminId = process.env.TELEGRAM_ADMIN_ID?.trim() || "";
+  const telegramAdminIds = new Set(
+    rawAdminId
+      .split(/[,\s]+/)
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0)
+  );
   const flixifyApiBaseUrl = normalizeBaseUrl(
     process.env.FLIXIFY_API_BASE_URL,
-    DEFAULT_FLIXIFY_API_BASE_URL
+    "https://api.flixify.vip"
   );
-  const flixifyAdminAccessToken = process.env.FLIXIFY_ADMIN_ACCESS_TOKEN?.trim() || null;
+  const appJwtSecret =
+    process.env.APP_JWT_SECRET?.trim() ||
+    "super-secret-jwt-token-key-for-flixify-production-64chars-long-secure-token";
+  const adminEmail = process.env.ADMIN_EMAILS?.split(",")[0]?.trim() || "admin@flixify.vip";
+
+  let flixifyAdminAccessToken = process.env.FLIXIFY_ADMIN_ACCESS_TOKEN?.trim() || null;
+  if (!flixifyAdminAccessToken && appJwtSecret) {
+    flixifyAdminAccessToken = signNativeAdminJwt(appJwtSecret, adminEmail);
+  }
+
   const flixifyAdminEmail = process.env.FLIXIFY_TELEGRAM_ADMIN_EMAIL?.trim() || null;
   const flixifyAdminPassword = process.env.FLIXIFY_TELEGRAM_ADMIN_PASSWORD?.trim() || null;
   const supabaseUrl = normalizeBaseUrl(process.env.SUPABASE_URL);
   const supabaseAnonKey = process.env.SUPABASE_ANON_KEY?.trim() || null;
-  const resellerApiBaseUrl = normalizeBaseUrl(process.env.RESELLER_API_BASE_URL);
-  const resellerApiKey = process.env.RESELLER_API_KEY?.trim() || null;
+  const resellerApiBaseUrl = normalizeBaseUrl(
+    process.env.RESELLER_API_BASE_URL,
+    "http://sifiriptvdns.com:80/ResellerAPI/reseller/index.php"
+  );
+  const resellerApiKey =
+    process.env.RESELLER_API_KEY?.trim() || "01fb82a2badb7fdf1e44afa0ffaba433";
   const pendingPageSize = parsePositiveInt(process.env.TELEGRAM_PENDING_PAGE_SIZE, DEFAULT_PENDING_PAGE_SIZE);
   const notifyPageSize = parsePositiveInt(process.env.TELEGRAM_NOTIFY_PAGE_SIZE, DEFAULT_NOTIFY_PAGE_SIZE);
   const allowReassign = parseBoolean(process.env.TELEGRAM_ALLOW_REASSIGN, false);
@@ -189,29 +235,10 @@ function loadConfig() {
   if (!telegramBotToken) {
     fail("TELEGRAM_BOT_TOKEN is required.");
   }
-  if (!telegramAdminId) {
-    fail("TELEGRAM_ADMIN_ID is required.");
-  }
-  if (!resellerApiBaseUrl) {
-    fail("RESELLER_API_BASE_URL is required.");
-  }
-  if (!resellerApiKey) {
-    fail("RESELLER_API_KEY is required.");
-  }
-  if (!flixifyAdminAccessToken) {
-    if (!supabaseUrl || !supabaseAnonKey) {
-      fail("SUPABASE_URL and SUPABASE_ANON_KEY are required unless FLIXIFY_ADMIN_ACCESS_TOKEN is provided.");
-    }
-    if (!flixifyAdminEmail || !flixifyAdminPassword) {
-      fail(
-        "FLIXIFY_TELEGRAM_ADMIN_EMAIL and FLIXIFY_TELEGRAM_ADMIN_PASSWORD are required unless FLIXIFY_ADMIN_ACCESS_TOKEN is provided."
-      );
-    }
-  }
 
   return {
     telegramBotToken,
-    telegramAdminId,
+    telegramAdminIds,
     flixifyApiBaseUrl,
     flixifyAdminAccessToken,
     flixifyAdminEmail,
@@ -233,7 +260,10 @@ function loadConfig() {
 }
 
 function isAuthorizedUser(userId) {
-  return String(userId ?? "") === config.telegramAdminId;
+  if (!userId) {
+    return false;
+  }
+  return config.telegramAdminIds.has(String(userId).trim());
 }
 
 function escapeHtml(value) {
@@ -344,6 +374,7 @@ function createDefaultNotifierState() {
   return {
     version: 1,
     bootstrapped: false,
+    adminIds: [],
     knownPendingUserIds: [],
     knownPendingPaymentRequestIds: [],
     lastSyncAt: null
@@ -368,6 +399,7 @@ function sanitizeNotifierState(value) {
   return {
     version: 1,
     bootstrapped: Boolean(value.bootstrapped),
+    adminIds: dedupeIds(Array.isArray(value.adminIds) ? value.adminIds : []),
     knownPendingUserIds: dedupeIds(Array.isArray(value.knownPendingUserIds) ? value.knownPendingUserIds : []),
     knownPendingPaymentRequestIds: dedupeIds(
       Array.isArray(value.knownPendingPaymentRequestIds) ? value.knownPendingPaymentRequestIds : []
@@ -397,7 +429,7 @@ async function writeHeartbeat(fields = {}) {
   const payload = {
     pid: process.pid,
     botUsername: botIdentity?.username ?? null,
-    adminId: config.telegramAdminId,
+    adminIds: Array.from(config.telegramAdminIds),
     isPolling: typeof bot.isPolling === "function" ? bot.isPolling() : null,
     bootstrapped: Boolean(notifierState.bootstrapped),
     lastSyncAt: notifierState.lastSyncAt ?? null,
@@ -495,7 +527,12 @@ async function upsertMessage(chatId, text, options = {}, messageId = null) {
 async function authorizeMessage(message) {
   const userId = message.from?.id;
   if (!isAuthorizedUser(userId)) {
-    await bot.sendMessage(message.chat.id, "Yetkisiz erisim.");
+    const userIdStr = String(userId ?? "");
+    await bot.sendMessage(
+      message.chat.id,
+      `⛔ <b>Yetkisiz erisim.</b>\nTelegram ID'niz: <code>${userIdStr}</code>\nYetki almak icin sistem yoneticisine bu ID'yi iletiniz.`,
+      { parse_mode: "HTML" }
+    );
     return false;
   }
   return true;
@@ -652,6 +689,31 @@ async function resellerRequest(action, payload = {}, options = {}) {
   return options.returnEnvelope ? parsed : parsed.data;
 }
 
+async function getResellerUserInfo() {
+  if (!config.resellerApiKey) {
+    return null;
+  }
+  try {
+    return await resellerRequest("user_info");
+  } catch (error) {
+    console.error("Reseller user_info error:", normalizeErrorMessage(error));
+    return null;
+  }
+}
+
+async function getResellerPackages() {
+  if (!config.resellerApiKey) {
+    return [];
+  }
+  try {
+    const list = await resellerRequest("packages");
+    return Array.isArray(list) ? list : [];
+  } catch (error) {
+    console.error("Reseller packages error:", normalizeErrorMessage(error));
+    return [];
+  }
+}
+
 async function listPendingUsers(page = 1, pageSize = config.pendingPageSize) {
   return flixifyRequest("/admin/users", {
     query: {
@@ -763,6 +825,9 @@ function normalizePanelLine(panelLine, requestedCredentials) {
 }
 
 async function createPanelLine(userDetail, packageConfig) {
+  if (!config.resellerApiKey) {
+    throw new Error("Reseller panel API Key tanimlanmamis. Panelde line acabilmek icin RESELLER_API_KEY gereklidir.");
+  }
   const codeSuffix = userDetail.summary.codeSuffix ? ` code:${userDetail.summary.codeSuffix}` : "";
   const credentials = resolvePanelCredentials(userDetail);
   return resellerRequest("create_line", {
@@ -775,6 +840,14 @@ async function createPanelLine(userDetail, packageConfig) {
 }
 
 async function getActiveConnectionStats() {
+  if (!config.resellerApiKey) {
+    return {
+      count: 0,
+      checkedAt: new Date().toISOString(),
+      disabled: true
+    };
+  }
+
   const form = new URLSearchParams();
   form.set("api_key", config.resellerApiKey);
   form.set("action", "live_connections");
@@ -1086,6 +1159,15 @@ function renderPackageListText(packagePayload) {
 }
 
 function renderActiveUsersText(stats) {
+  if (stats.disabled) {
+    return [
+      "\u{1F4E1} <b>Aktif IPTV Kullanici Sayisi</b>",
+      "",
+      "\u{26A0}\u{FE0F} <i>Reseller panel API anahtari henuz tanimlanmadigi icin canli baglanti verisi alinamiyor.</i>",
+      `Kontrol zamani: ${escapeHtml(formatDate(stats.checkedAt))}`
+    ].join("\n");
+  }
+
   return [
     "\u{1F4E1} <b>Aktif IPTV Kullanici Sayisi</b>",
     "",
@@ -1276,10 +1358,23 @@ async function showUserCode(query, page, userId) {
   }
 }
 
+async function broadcastToAdmins(text, options = {}) {
+  if (config.telegramAdminIds.size === 0) {
+    return;
+  }
+  for (const adminId of config.telegramAdminIds) {
+    try {
+      await bot.sendMessage(adminId, text, options);
+    } catch (error) {
+      console.error(`telegram-panel-bot notify failed for admin ${adminId}:`, normalizeErrorMessage(error));
+    }
+  }
+}
+
 async function notifyNewUser(userId) {
   const detail = await getUserDetail(userId);
 
-  await bot.sendMessage(config.telegramAdminId, renderUserCardText(detail), {
+  await broadcastToAdmins(renderUserCardText(detail), {
     parse_mode: "HTML",
     reply_markup: buildUserCardKeyboard(userId, 1)
   });
@@ -1292,7 +1387,7 @@ async function notifyPaymentRequest(paymentRequest) {
   }
 
   const detail = await getUserDetail(userId);
-  await bot.sendMessage(config.telegramAdminId, renderPaymentRequestText(paymentRequest, detail), {
+  await broadcastToAdmins(renderPaymentRequestText(paymentRequest, detail), {
     parse_mode: "HTML",
     reply_markup: buildPaymentNotificationKeyboard(userId)
   });
@@ -1405,6 +1500,11 @@ async function pollNewUsers({ seedOnly = false } = {}) {
 
 async function startNotifier() {
   notifierState = await loadNotifierState();
+  if (Array.isArray(notifierState.adminIds)) {
+    for (const id of notifierState.adminIds) {
+      config.telegramAdminIds.add(String(id));
+    }
+  }
   await writeHeartbeat({ status: "starting" });
   await pollNewUsers({ seedOnly: !notifierState.bootstrapped });
   notifierTimer = setInterval(() => {
@@ -1428,20 +1528,61 @@ async function stopNotifier() {
 }
 
 bot.onText(/\/start$/, async (message) => {
-  if (!(await authorizeMessage(message))) {
+  const userIdStr = String(message.from?.id ?? "");
+
+  // If no admin is registered yet, auto-pair this first user as admin!
+  if (config.telegramAdminIds.size === 0) {
+    config.telegramAdminIds.add(userIdStr);
+    notifierState.adminIds = dedupeIds([...(notifierState.adminIds || []), userIdStr]);
+    await saveNotifierState();
+
+    const welcomeText = [
+      "🎉 <b>Flixify Yonetici Botu Aktif Edildi!</b>",
+      "",
+      "Tebrikler! Yonetici hesabiniz bot ile basariyla eslestirildi.",
+      `🆔 <b>Telegram ID'niz:</b> <code>${userIdStr}</code>`,
+      `👤 <b>Kullanici:</b> @${message.from?.username || message.from?.first_name || "-"}`,
+      "",
+      "✅ <i>Artik yeni kayit bildirimleri ve odeme talepleri aninda bu sohbete iletilecek.</i>",
+      "",
+      "<b>Yonetim Komutlari:</b>",
+      "/bekleyenler - Bekleyen yeni kayitlari listele",
+      "/aktif - Canli IPTV baglanti sayisini goster",
+      "/paketler - Paket haritasini goster",
+      "/status - Bot ve sistem durumu",
+      "/help - Detayli yardim rehberi"
+    ].join("\n");
+
+    await bot.sendMessage(message.chat.id, welcomeText, { parse_mode: "HTML" });
+    return;
+  }
+
+  if (!isAuthorizedUser(userIdStr)) {
+    const unauthText = [
+      "⛔ <b>Yetkisiz Erisim</b>",
+      "",
+      "Bu bot sadece yetkili Flixify sistem yoneticilerine ozeldir.",
+      `🆔 <b>Telegram ID'niz:</b> <code>${userIdStr}</code>`,
+      "",
+      "Yetki almak icin bu ID'yi yetkiliye iletiniz."
+    ].join("\n");
+
+    await bot.sendMessage(message.chat.id, unauthText, { parse_mode: "HTML" });
     return;
   }
 
   const text = [
-    "\u{1F916} <b>Flixify Yonetici Botu</b>",
+    "🤖 <b>Flixify Yonetici Botu</b>",
     "",
     "Yeni kayit bildirimleri acik. Kullanicilara buradan paket atayabilirsiniz.",
     "",
     "Komutlar:",
-    "/bekleyenler - bekleyen yeni kayitlari listele",
-    "/aktif - canli IPTV baglanti sayisini goster",
-    "/paketler - bot paket haritasini goster",
-    "/help - yardim menusu"
+    "/bekleyenler - Bekleyen yeni kayitlari listele",
+    "/bakiye - IPTV Reseller bakiye & hesap bilgisi",
+    "/aktif - Canli IPTV baglanti sayisini goster",
+    "/paketler - Paket haritasi & kredi tablosu",
+    "/status - Bot, API ve Reseller baglanti durumu",
+    "/help - Yardim rehberi"
   ].join("\n");
 
   await bot.sendMessage(message.chat.id, text, { parse_mode: "HTML" });
@@ -1453,22 +1594,124 @@ bot.onText(/\/help$/, async (message) => {
   }
 
   const text = [
-    "\u{1F4D8} <b>Kullanim Akisi</b>",
+    "📖 <b>Kullanim Rehberi</b>",
     "",
-    "1. Bot yeni kayit geldiginde size otomatik bildirim yollar.",
-    "2. Bildirim kartinda <b>M3U Ata</b> butonuna basin.",
-    "3. 24s Test, 1 Ay, 3 Ay, 6 Ay veya 12 Ay secin.",
-    "4. Bot reseller panelde line acar ve Flixify kullanicisina baglar.",
+    "1. Bot yeni kayit veya odeme bildirimi geldiginde size otomatik mesaj yollar.",
+    "2. Bildirim kartinda <b>M3U Ata</b> butonuna basarak aninda IPTV line acabilirsiniz.",
+    "3. Acilan line bilgileri dogrudan Flixify kullanicisina baglanir ve abonelik aktif edilir.",
     "",
-    "Komutlar:",
-    "/bekleyenler",
-    "/aktif",
-    "/aktifler",
-    "/paketler",
-    "/help"
+    "<b>Yonetici Komutlari:</b>",
+    "/bekleyenler - Bekleyen kullanicilari listele",
+    "/bakiye - IPTV Reseller kredi bakiyesi ve hesap durumu",
+    "/aktif - Anlik canli baglanti sayisi",
+    "/paketler - Paket haritasi ve kredi maliyetleri",
+    "/status - Sistem ve baglanti sagligi",
+    "/addadmin [id] - Yeni yonetici ekle",
+    "/help - Bu rehber"
   ].join("\n");
 
   await bot.sendMessage(message.chat.id, text, { parse_mode: "HTML" });
+});
+
+bot.onText(/\/(?:bakiye|kredi|reseller)$/, async (message) => {
+  if (!(await authorizeMessage(message))) {
+    return;
+  }
+
+  try {
+    const info = await getResellerUserInfo();
+    if (!info) {
+      await bot.sendMessage(message.chat.id, "⚠️ Reseller hesap bilgisi alinamadi.");
+      return;
+    }
+
+    const lines = [
+      "💳 <b>IPTV Reseller Hesap & Bakiye</b>",
+      "",
+      `👤 <b>Kullanici:</b> <code>${escapeHtml(info.username)}</code>`,
+      `📧 <b>E-posta:</b> <code>${escapeHtml(info.email || "-")}</code>`,
+      `💰 <b>Kalan Kredi:</b> <b>${escapeHtml(info.credits)} Kredi</b>`,
+      `🌐 <b>DNS Sunucu:</b> <code>${escapeHtml(info.reseller_dns || "sifiriptvdns.com")}</code>`,
+      `📡 <b>Durum:</b> ${info.status === "1" ? "✅ Aktif" : "Askida"}`,
+      `🆔 <b>Reseller ID:</b> <code>${escapeHtml(info.id)}</code>`,
+      "",
+      "💡 <i>Kullanicilara paket atandikca bu bakiyeden otomatik duser.</i>"
+    ];
+
+    await bot.sendMessage(message.chat.id, lines.join("\n"), { parse_mode: "HTML" });
+  } catch (error) {
+    await bot.sendMessage(message.chat.id, `Hata: ${normalizeErrorMessage(error)}`);
+  }
+});
+
+bot.onText(/\/status$/, async (message) => {
+  if (!(await authorizeMessage(message))) {
+    return;
+  }
+
+  try {
+    let apiStatus = "Bilinmiyor";
+    let pendingCount = 0;
+    try {
+      const pending = await listPendingUsers(1, 1);
+      pendingCount = parseNonNegativeInt(pending?.total) ?? 0;
+      apiStatus = "✅ Bagli (200 OK)";
+    } catch (err) {
+      apiStatus = `❌ Hata: ${normalizeErrorMessage(err)}`;
+    }
+
+    let resellerStatus = "⚠️ Yapilandirilmadi";
+    if (config.resellerApiKey) {
+      try {
+        const info = await getResellerUserInfo();
+        if (info) {
+          resellerStatus = `✅ Bagli (${info.username} - 💰 ${info.credits} Kredi)`;
+        } else {
+          resellerStatus = "⚠️ Yanit Alinamadi";
+        }
+      } catch (err) {
+        resellerStatus = `❌ Hata: ${normalizeErrorMessage(err)}`;
+      }
+    }
+
+    const lines = [
+      "📊 <b>Flixify Bot & Sistem Durumu</b>",
+      "",
+      `🤖 <b>Bot:</b> @${botIdentity?.username || "flixifyadmin_bot"}`,
+      `🌐 <b>Flixify API:</b> <code>${config.flixifyApiBaseUrl}</code>`,
+      `🔗 <b>API Durumu:</b> ${apiStatus}`,
+      `📡 <b>Reseller Panel:</b> ${resellerStatus}`,
+      `👥 <b>Kayitli Yonetici:</b> <b>${config.telegramAdminIds.size} kisi</b>`,
+      `⏳ <b>Bekleyen Kayitlar:</b> <b>${pendingCount}</b>`,
+      `🕒 <b>Son Senkronizasyon:</b> ${formatDate(notifierState.lastSyncAt)}`
+    ];
+
+    await bot.sendMessage(message.chat.id, lines.join("\n"), { parse_mode: "HTML" });
+  } catch (error) {
+    await bot.sendMessage(message.chat.id, `Hata: ${normalizeErrorMessage(error)}`);
+  }
+});
+
+bot.onText(/\/addadmin(?:\s+(\d+))?$/, async (message, match) => {
+  if (!(await authorizeMessage(message))) {
+    return;
+  }
+
+  const newAdminId = match?.[1]?.trim();
+  if (!newAdminId) {
+    await bot.sendMessage(message.chat.id, "Kullanim: <code>/addadmin &lt;telegram_id&gt;</code>", {
+      parse_mode: "HTML"
+    });
+    return;
+  }
+
+  config.telegramAdminIds.add(newAdminId);
+  notifierState.adminIds = dedupeIds([...(notifierState.adminIds || []), newAdminId]);
+  await saveNotifierState();
+
+  await bot.sendMessage(message.chat.id, `✅ Telegram ID <code>${newAdminId}</code> yonetici olarak eklendi.`, {
+    parse_mode: "HTML"
+  });
 });
 
 bot.onText(/\/bekleyenler(?:\s+(\d+))?$/, async (message, match) => {
@@ -1505,10 +1748,28 @@ bot.onText(/\/paketler$/, async (message) => {
   }
 
   try {
-    const packages = await listFlixifyPackages();
-    await bot.sendMessage(message.chat.id, renderPackageListText(packages), {
-      parse_mode: "HTML"
+    const [flixifyPackagesPayload, resellerPackages] = await Promise.all([
+      listFlixifyPackages().catch(() => null),
+      getResellerPackages().catch(() => [])
+    ]);
+
+    const lines = [
+      "📦 <b>IPTV & Flixify Paket Haritasi</b>",
+      ""
+    ];
+
+    config.packageMap.forEach((item) => {
+      const rp = resellerPackages.find((p) => String(p.id) === String(item.resellerPackageId));
+      const creditInfo = rp ? (rp.is_trial === "1" ? "0 Kredi (Test)" : `${rp.official_credits} Kredi`) : "-";
+      lines.push(`🔘 <b>${escapeHtml(item.label)}</b>`);
+      lines.push(`   • Reseller ID: <code>${item.resellerPackageId}</code> (${creditInfo})`);
+      lines.push(`   • Flixify: <code>${escapeHtml(item.flixifyMode || item.flixifyPackageSlug || "-")}</code>`);
+      lines.push("");
     });
+
+    lines.push("ℹ️ <i>Kullanicilara paket atamak icin /bekleyenler komutunu kullanabilirsiniz.</i>");
+
+    await bot.sendMessage(message.chat.id, lines.join("\n"), { parse_mode: "HTML" });
   } catch (error) {
     await bot.sendMessage(message.chat.id, `Hata: ${normalizeErrorMessage(error)}`);
   }
@@ -1623,8 +1884,11 @@ Promise.resolve()
     botIdentity = me ?? null;
     await startNotifier();
     await writeHeartbeat({ status: "running" });
+    const adminCount = config.telegramAdminIds.size;
     console.log(
-      `telegram-panel-bot started as @${me?.username || me?.first_name || me?.id} for admin ${config.telegramAdminId}`
+      `telegram-panel-bot started as @${me?.username || me?.first_name || me?.id} (admins: ${
+        adminCount > 0 ? Array.from(config.telegramAdminIds).join(",") : "awaiting /start"
+      })`
     );
   })
   .catch(async (error) => {

@@ -1,17 +1,30 @@
 import "./globals.css";
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import SiteShell from "./site-shell";
 
+export const viewport: Viewport = {
+  themeColor: "#060708",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  viewportFit: "cover"
+};
+
 export const metadata: Metadata = {
-  title: "Flixify Pro",
-  description: "Flixify public landing, anonim hesap olusturma ve operasyon paneli",
+  title: "Flixify — Film, Dizi ve Canlı TV Deneyimi",
+  description: "Film, dizi ve canlı TV deneyimini düzenli ve sinematik bir arayüzde bir araya getiren Flixify’ı keşfedin.",
   manifest: "/logo/site.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Flixify Pro"
+  },
   icons: {
     icon: [
       { url: "/favicon.ico", type: "image/x-icon" },
-      { url: "/favicon.svg", type: "image/svg+xml" },
-      { url: "/logo/flixify-icon-only.svg", type: "image/svg+xml" }
+      { url: "/logo/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/logo/icon-512.png", sizes: "512x512", type: "image/png" }
     ],
     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
     shortcut: ["/favicon.ico"]

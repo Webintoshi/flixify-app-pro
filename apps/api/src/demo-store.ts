@@ -199,25 +199,25 @@ const paymentMethodSettings: DemoPaymentMethodSettings = {
 const demoCatalog = {
   live: [
     {
-      id: randomUUID(),
-      title: "TR Spor HD",
-      groupTitle: "Spor",
-      logoUrl: "https://images.unsplash.com/photo-1517649763962-0c623066013b?auto=format&fit=crop&w=400&q=80",
-      streamUrl: "https://example.com/live/tr-spor.m3u8"
+      id: "demo-live-ch-trt1",
+      title: "TR • Trt 1 HD",
+      groupTitle: "TR:ULUSAL",
+      logoUrl: "http://sifiriptvdns.com:80/images/channels_image//EjZzh5toiJaueM0QRydEvzjEMLdagvcYfyXe50Mb2GFZxp9H2a4pagus_xW8iP9KOeE94rSKPKRlPCqjiUjYKA.png",
+      streamUrl: "http://sifiriptvdns.com:80/live/Y7hHr9BSzS/nfJ5WWMQu8/85.ts"
     },
     {
-      id: randomUUID(),
-      title: "World News 24",
-      groupTitle: "Haber",
-      logoUrl: "https://images.unsplash.com/photo-1495020689067-958852a7765e?auto=format&fit=crop&w=400&q=80",
-      streamUrl: "https://example.com/live/world-news.m3u8"
+      id: "demo-live-ch-atv",
+      title: "TR • Atv HD",
+      groupTitle: "TR:ULUSAL",
+      logoUrl: "http://sifiriptvdns.com:80/images/channels_image//EjZzh5toiJaueM0QRydEvzjEMLdagvcYfyXe50Mb2GHKBIdwvAMTogkZ8ep0-5W0hF2lIYiZPoccxU81tgpLLQ.png",
+      streamUrl: "http://sifiriptvdns.com:80/live/Y7hHr9BSzS/nfJ5WWMQu8/90.ts"
     },
     {
-      id: randomUUID(),
-      title: "Cinema Family",
-      groupTitle: "Aile",
-      logoUrl: "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=400&q=80",
-      streamUrl: "https://example.com/live/cinema-family.m3u8"
+      id: "demo-live-ch-trt4k",
+      title: "TR • TRT 4K",
+      groupTitle: "TR:ULUSAL",
+      logoUrl: "http://sifiriptvdns.com:80/images/channels_image//EjZzh5toiJaueM0QRydEvzjEMLdagvcYfyXe50Mb2GGKleVsktg9mNPcOG_dIdVIkVRUGnRRdyT2VQn7I0q_1Q.png",
+      streamUrl: "http://sifiriptvdns.com:80/live/Y7hHr9BSzS/nfJ5WWMQu8/81.ts"
     }
   ] satisfies Array<Omit<LiveChannel, "playbackAllowed">>,
   movies: [
@@ -743,6 +743,53 @@ function seedDemoUsers() {
     startsAt: now(),
     endsAt: plusDays(84),
     packageTitle: linkedPackage.title
+  });
+
+  const testCode = "FHK4NKY593YES73F";
+  const testUser: DemoUser = {
+    summary: makeSummary({
+      id: "87731928-75dc-4ff1-b8be-ef08cca5c10b",
+      status: "active",
+      hasAssignedLink: true,
+      hasActiveSubscription: true,
+      kryptoniteCode: testCode,
+      codeSuffix: testCode.slice(-4),
+      activePackage: {
+        id: linkedPackage.id,
+        title: "24 Saat Test",
+        duration: "24h",
+        endsAt: plusHours(24),
+        remainingDays: 1
+      }
+    }),
+    kryptoniteCode: testCode,
+    currentSourceStatus: "ready",
+    currentSourceUrl: "http://sifiriptvdns.com:80/access/?token=a6601906e517943370a6eba03b0f105c",
+    snapshotVersion: 1,
+    notes: "İşte kişisel giriş bilgileriniz. Bunları kimseyle paylaşmayın, maksimum bağlantı sayınızın aşılmadığından emin olun.",
+    deletedAt: null
+  };
+
+  users.set(testUser.summary.id, testUser);
+
+  const testSourceId = randomUUID();
+  sources.set(testUser.summary.id, {
+    id: testSourceId,
+    userId: testUser.summary.id,
+    sourceUrl: testUser.currentSourceUrl ?? "http://sifiriptvdns.com:80/access/?token=a6601906e517943370a6eba03b0f105c",
+    status: "ready",
+    currentSnapshotVersion: testUser.snapshotVersion,
+    lastSuccessfulSyncAt: now(),
+    lastError: null
+  });
+
+  subscriptions.unshift({
+    id: randomUUID(),
+    userId: testUser.summary.id,
+    status: "active",
+    startsAt: now(),
+    endsAt: plusHours(24),
+    packageTitle: "24 Saat Test"
   });
 }
 

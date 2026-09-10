@@ -858,6 +858,7 @@ export async function getUserContext(userId: string): Promise<UserContext> {
     hasSnapshot &&
     (row.source_status === "ready" ||
       row.source_status === "syncing" ||
+      row.source_status === "pending" ||
       row.source_status === "error");
   const playbackBaseUrl = row.source_base_url ?? null;
 
@@ -3849,9 +3850,13 @@ export async function updateAppSettings(
           shared_source_reference_password = excluded.shared_source_reference_password,
           shared_source_status = case
             when excluded.shared_source_base_url is null then public.app_settings.shared_source_status
+            when excluded.shared_source_base_url is not distinct from public.app_settings.shared_source_base_url then public.app_settings.shared_source_status
             else 'pending'
           end,
-          shared_source_last_error = null
+          shared_source_last_error = case
+            when excluded.shared_source_base_url is not distinct from public.app_settings.shared_source_base_url then public.app_settings.shared_source_last_error
+            else null
+          end
       `,
       [
         input.supportWhatsappUrl,

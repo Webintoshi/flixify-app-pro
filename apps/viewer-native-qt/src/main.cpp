@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QScreen>
+#include <QSettings>
 #include <QTextStream>
 #include <QQuickWindow>
 #include <QQmlApplicationEngine>
@@ -134,7 +135,29 @@ int main(int argc, char *argv[]) {
 #endif
 
   ApiClient apiClient;
-  apiClient.setApiBaseUrl(QStringLiteral(FLIXIFY_API_BASE_URL));
+
+  QString apiBaseUrl;
+  const QString envApiUrl = qEnvironmentVariable("FLIXIFY_API_BASE_URL").trimmed();
+  const QString iniPath = QCoreApplication::applicationDirPath() + QStringLiteral("/flixify.ini");
+
+  if (!envApiUrl.isEmpty()) {
+    apiBaseUrl = envApiUrl;
+  } else if (QFile::exists(iniPath)) {
+    QSettings iniSettings(iniPath, QSettings::IniFormat);
+    apiBaseUrl = iniSettings.value(QStringLiteral("api/baseUrl")).toString().trimmed();
+  }
+
+  if (apiBaseUrl.isEmpty()) {
+    QSettings userSettings;
+    apiBaseUrl = userSettings.value(QStringLiteral("api/baseUrl")).toString().trimmed();
+  }
+
+  if (apiBaseUrl.isEmpty()) {
+    const QString macroUrl = QStringLiteral(FLIXIFY_API_BASE_URL).trimmed();
+    apiBaseUrl = !macroUrl.isEmpty() ? macroUrl : QStringLiteral("https://api.flixify.vip");
+  }
+
+  apiClient.setApiBaseUrl(apiBaseUrl);
 
 #if !defined(Q_OS_ANDROID)
   qmlRegisterType<NativeVideoSurface>("Flixify.Native", 1, 0, "NativeVideoSurface");

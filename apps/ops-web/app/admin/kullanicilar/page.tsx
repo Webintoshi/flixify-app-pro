@@ -45,10 +45,10 @@ const packageOptions: Array<{
   accentClass: string;
   badge: string | null;
 }> = [
-  { slug: "1-ay", title: "30 Gun", subtitle: "1 Aylik kullanim", days: 30, accentClass: "is-blue", badge: null },
-  { slug: "3-ay", title: "90 Gun", subtitle: "3 Aylik kullanim", days: 90, accentClass: "is-purple", badge: "Populer" },
-  { slug: "6-ay", title: "180 Gun", subtitle: "6 Aylik kullanim", days: 180, accentClass: "is-amber", badge: null },
-  { slug: "12-ay", title: "365 Gun", subtitle: "1 Yillik kullanim", days: 365, accentClass: "is-green", badge: "En Iyi" }
+  { slug: "1-ay", title: "30 Gün", subtitle: "1 Aylık kullanım", days: 30, accentClass: "is-blue", badge: null },
+  { slug: "3-ay", title: "90 Gün", subtitle: "3 Aylık kullanım", days: 90, accentClass: "is-purple", badge: "Popüler" },
+  { slug: "6-ay", title: "180 Gün", subtitle: "6 Aylık kullanım", days: 180, accentClass: "is-amber", badge: null },
+  { slug: "12-ay", title: "365 Gün", subtitle: "1 Yıllık kullanım", days: 365, accentClass: "is-green", badge: "En İyi" }
 ];
 
 function getCodeLabel(user: Pick<AdminUserRow, "kryptoniteCode" | "codeSuffix" | "id">) {
@@ -57,7 +57,7 @@ function getCodeLabel(user: Pick<AdminUserRow, "kryptoniteCode" | "codeSuffix" |
   }
 
   if (user.codeSuffix) {
-    return `Kod kaydi eksik (${user.codeSuffix})`;
+    return `Kod kaydı eksik (${user.codeSuffix})`;
   }
 
   return user.id.slice(0, 8).toUpperCase();
@@ -79,12 +79,12 @@ function getM3UFilterParams(m3uFilter: M3UFilter) {
 
 function getPackageLabel(user: AdminUserRow) {
   if (user.deletedAt) {
-    return "Silinmis";
+    return "Silinmiş";
   }
   if (user.activePackage) {
     return "Aktif";
   }
-  return "Suresi Dolmus";
+  return "Süresi Dolmuş";
 }
 
 function getPackageSlug(user: AdminUserRow): PackageSlug {
@@ -148,7 +148,7 @@ export default function AdminUsersPage() {
       .then(() => {
         setError(null);
       })
-      .catch(() => setError("Kullanicilar yuklenemedi."));
+      .catch(() => setError("Kullanıcılar yüklenemedi."));
   }, [search, statusFilter, m3uFilter]);
 
   async function openAssignModal(user: AdminUserRow) {
@@ -194,10 +194,10 @@ export default function AdminUsersPage() {
       setAssigningUser(null);
       setIptvUsername("");
       setIptvPassword("");
-      setMessage("Kullaniciya IPTV credential ve paket tanimlandi.");
+      setMessage("Kullanıcıya IPTV bilgileri ve paket başarıyla tanımlandı.");
       await loadUsers();
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Kayit tamamlanamadi.");
+      setError(nextError instanceof Error ? nextError.message : "Kayıt tamamlanamadı.");
     } finally {
       setSubmitting(false);
     }
@@ -229,10 +229,10 @@ export default function AdminUsersPage() {
       setAssigningUser(null);
       setIptvUsername("");
       setIptvPassword("");
-      setMessage("Kullaniciya 24 saat test yayini tanimlandi.");
+      setMessage("Kullanıcıya 24 saatlik test yayını başarıyla tanımlandı.");
       await loadUsers();
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "24 saat test tanimlanamadi.");
+      setError(nextError instanceof Error ? nextError.message : "24 saat test tanımlanamadı.");
     } finally {
       setSubmitting(false);
     }
@@ -257,17 +257,17 @@ export default function AdminUsersPage() {
       });
 
       setEditingUser(null);
-      setMessage("Kullanici guncellendi.");
+      setMessage("Kullanıcı bilgileri güncellendi.");
       await loadUsers();
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Kullanici guncellenemedi.");
+      setError(nextError instanceof Error ? nextError.message : "Kullanıcı güncellenemedi.");
     } finally {
       setSubmitting(false);
     }
   }
 
   async function handleDelete(user: AdminUserRow) {
-    const confirmed = window.confirm("Bu kullanici soft-delete olarak kaldirilacak. Devam edilsin mi?");
+    const confirmed = window.confirm("Bu kullanıcı sistemden kaldırılacak. Devam etmek istiyor musunuz?");
     if (!confirmed) {
       return;
     }
@@ -278,10 +278,10 @@ export default function AdminUsersPage() {
         method: "DELETE",
         useAdminToken: true
       });
-      setMessage("Kullanici silinmis olarak isaretlendi.");
+      setMessage("Kullanıcı başarıyla silindi.");
       await loadUsers();
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Kullanici silinemedi.");
+      setError(nextError instanceof Error ? nextError.message : "Kullanıcı silinemedi.");
     }
   }
 
@@ -289,8 +289,8 @@ export default function AdminUsersPage() {
     <main className="admin-page-grid">
       <section className="admin-page-heading">
         <div>
-          <h1>Kullanicilar</h1>
-          <p>Kullanicilari, IPTV kullanici bilgilerini ve sure yenilemelerini tek ekrandan yonet.</p>
+          <h1>Kullanıcılar</h1>
+          <p>Kullanıcıları, IPTV bağlantılarını ve abonelik sürelerini tek ekrandan yönetin.</p>
         </div>
       </section>
 
@@ -298,7 +298,7 @@ export default function AdminUsersPage() {
         <article className="admin-stat-card">
           <span className="admin-stat-kicker">
             <svg className="stat-icon stat-icon-total" aria-hidden="true"><use href="/icons/admin-icons.svg#users-total"/></svg>
-            Toplam Kullanici
+            Toplam Kullanıcı
           </span>
           <strong>{counters.total}</strong>
           <div className="admin-stat-progress">
@@ -315,7 +315,7 @@ export default function AdminUsersPage() {
           <div className="admin-stat-progress">
             <div className="admin-stat-progress-fill" style={{ width: `${counters.total > 0 ? (counters.active / counters.total) * 100 : 0}%` }} />
           </div>
-          <span className="admin-stat-note">Paket suresi aktif</span>
+          <span className="admin-stat-note">Paket süresi aktif</span>
         </article>
         <article className="admin-stat-card">
           <span className="admin-stat-kicker">
@@ -326,12 +326,12 @@ export default function AdminUsersPage() {
           <div className="admin-stat-progress">
             <div className="admin-stat-progress-fill" style={{ width: `${counters.total > 0 ? (counters.waitingM3u / counters.total) * 100 : 0}%` }} />
           </div>
-          <span className="admin-stat-note">Link tanimlanmamis</span>
+          <span className="admin-stat-note">Link tanımlanmamış</span>
         </article>
         <article className="admin-stat-card">
           <span className="admin-stat-kicker">
             <svg className="stat-icon stat-icon-expired" aria-hidden="true"><use href="/icons/admin-icons.svg#users-expired"/></svg>
-            Suresi Dolmus
+            Süresi Dolmuş
           </span>
           <strong>{counters.expired}</strong>
           <div className="admin-stat-progress">
@@ -355,20 +355,20 @@ export default function AdminUsersPage() {
           <label className="field admin-filter-field">
             <span>Durum</span>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
-              <option value="all">Tumu</option>
+              <option value="all">Tümü</option>
               <option value="active">Aktif</option>
               <option value="new">Bekleyen</option>
               <option value="blocked">Bloklu</option>
-              <option value="deleted">Silinmis</option>
+              <option value="deleted">Silinmiş</option>
             </select>
           </label>
 
           <label className="field admin-filter-field">
             <span>M3U</span>
             <select value={m3uFilter} onChange={(event) => setM3UFilter(event.target.value as M3UFilter)}>
-              <option value="all">Tumu</option>
-              <option value="assigned">Tanimli</option>
-              <option value="unassigned">Tanimsiz</option>
+              <option value="all">Tümü</option>
+              <option value="assigned">Tanımlı</option>
+              <option value="unassigned">Tanımsız</option>
             </select>
           </label>
         </div>
@@ -379,7 +379,7 @@ export default function AdminUsersPage() {
         <div className="admin-users-table">
           <div className="admin-users-head">
             <span>Kod</span>
-            <span>Bitis</span>
+            <span>Bitiş</span>
             <span>Kalan</span>
             <span>Paket</span>
             <span>M3U</span>
@@ -397,11 +397,11 @@ export default function AdminUsersPage() {
               gap: '16px'
             }}>
               <div style={{ fontSize: '3rem', opacity: 0.5 }}>📭</div>
-              <div style={{ fontSize: '1.2rem', fontWeight: 600 }}>Kullanici bulunamadi</div>
-              <div style={{ fontSize: '0.95rem' }}>Arama kriterlerinizi degistirin veya filtreleri temizleyin</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 600 }}>Kullanıcı bulunamadı</div>
+              <div style={{ fontSize: '0.95rem' }}>Arama kriterlerinizi değiştirin veya filtreleri temizleyin</div>
             </div>
           ) : users.map((user) => {
-            const primaryLabel = user.m3uAssigned || user.hasActiveSubscription ? "Yenile" : "Tanimla";
+            const primaryLabel = user.m3uAssigned || user.hasActiveSubscription ? "Yenile" : "Tanımla";
             return (
               <article className="admin-user-row" key={user.id}>
                 <div className="admin-user-cell admin-user-code" title={user.notes ?? "Anonymous User"}>{getCodeLabel(user)}</div>
@@ -413,7 +413,7 @@ export default function AdminUsersPage() {
                          user.remainingDays !== null && user.remainingDays < 7 ? '#ffc94d' : 
                          user.remainingDays !== null ? '#2ee59e' : 'inherit'
                 }}>
-                  {user.remainingDays !== null ? `${user.remainingDays} gun` : "-"}
+                  {user.remainingDays !== null ? `${user.remainingDays} gün` : "-"}
                 </div>
                 <div className="admin-user-cell">
                   <span className={`admin-badge ${user.packageStatus === "active" ? "is-success" : "is-danger"}`}>
@@ -422,7 +422,7 @@ export default function AdminUsersPage() {
                 </div>
                 <div className="admin-user-cell">
                   {user.m3uAssigned ? (
-                    <span className="admin-badge is-success">Tanimli</span>
+                    <span className="admin-badge is-success">Tanımlı</span>
                   ) : (
                     <span className="admin-badge is-muted">-</span>
                   )}
@@ -450,7 +450,7 @@ export default function AdminUsersPage() {
           <section className="admin-modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="admin-modal-heading">
               <div>
-                <h2>IPTV Atama</h2>
+                <h2>IPTV Atama & Paket Tanımlama</h2>
                 <strong>{getCodeLabel(assigningUser.summary)}</strong>
               </div>
               <button className="admin-modal-close" onClick={() => setAssigningUser(null)} aria-label="Kapat">
@@ -460,7 +460,7 @@ export default function AdminUsersPage() {
 
             <div className="admin-inline-message admin-info-box">
               <svg className="icon-inline icon-lg" aria-hidden="true"><use href="/icons/admin-icons.svg#info"/></svg>
-              <span>Ortak playlist kaynagi tum kullanicilar icin tektir. Burada sadece kullaniciya ait IPTV kullanici adi ve sifre tanimlanir.</span>
+              <span>Ortak playlist kaynağı tüm kullanıcılar için tektir. Burada sadece kullanıcıya ait IPTV kullanıcı adı ve şifre tanımlanır.</span>
             </div>
 
             <div className="admin-package-grid">
@@ -480,42 +480,42 @@ export default function AdminUsersPage() {
 
             <div className="admin-expiry-preview">
               <div>
-                <span>Yeni Bitis Tarihi:</span>
-                <small>Bugunden itibaren yeni sure uygulanacak</small>
+                <span>Yeni Bitiş Tarihi:</span>
+                <small>Bugünden itibaren yeni süre uygulanacak</small>
               </div>
               <strong>{calculatePreviewDate(selectedPackageSlug)}</strong>
             </div>
 
             <label className="field">
-              <span>IPTV Kullanici Adi</span>
+              <span>IPTV Kullanıcı Adı</span>
               <input
                 value={iptvUsername}
                 onChange={(event) => setIptvUsername(event.target.value)}
-                placeholder="H6mwDgP9em"
+                placeholder="Örn: H6mwDgP9em"
               />
             </label>
 
             <label className="field">
-              <span>IPTV Sifre</span>
+              <span>IPTV Şifre</span>
               <input
                 value={iptvPassword}
                 onChange={(event) => setIptvPassword(event.target.value)}
-                placeholder="rEFqxGUvJR"
+                placeholder="Örn: rEFqxGUvJR"
               />
             </label>
 
             {assigningUser.currentSourceUrl ? (
-              <div className="muted">Playlist onizleme: {assigningUser.currentSourceUrl}</div>
+              <div className="muted">Playlist önizleme: {assigningUser.currentSourceUrl}</div>
             ) : (
-              <div className="muted">Ortak playlist kaynagini once `/admin/ayarlar` ekranindan tanimla.</div>
+              <div className="muted">Ortak playlist kaynağını önce /admin/ayarlar ekranından tanımlayın.</div>
             )}
 
             <div className="admin-modal-actions">
               <button className="button secondary" type="button" onClick={() => setAssigningUser(null)}>
-                Iptal
+                İptal
               </button>
               <button className="button secondary" type="button" disabled={submitting} onClick={() => void handleAssign24HourTest()}>
-                {submitting ? "Test Tanimlaniyor..." : "24 Saat Test Ver"}
+                {submitting ? "Tanımlanıyor..." : "24 Saat Test Ver"}
               </button>
               <button className="button" type="button" disabled={submitting} onClick={() => void handleAssignmentSave()}>
                 {submitting ? "Kaydediliyor..." : "Kaydet"}
@@ -530,7 +530,7 @@ export default function AdminUsersPage() {
           <section className="admin-modal-card admin-edit-card" onClick={(event) => event.stopPropagation()}>
             <div className="admin-modal-heading">
               <div>
-                <h2>Kullaniciyi Duzenle</h2>
+                <h2>Kullanıcıyı Düzenle</h2>
                 <strong>{getCodeLabel(editingUser)}</strong>
               </div>
               <button className="admin-modal-close" onClick={() => setEditingUser(null)} aria-label="Kapat">
@@ -539,19 +539,19 @@ export default function AdminUsersPage() {
             </div>
 
             <label className="field">
-              <span>Not</span>
+              <span>Yönetici Notu</span>
               <textarea
                 rows={4}
                 value={editNotes}
                 onChange={(event) => setEditNotes(event.target.value)}
-                placeholder="Kullaniciyi tanimlayan not"
+                placeholder="Kullanıcıyı tanımlayan veya müşteri ile ilgili not..."
               />
             </label>
 
             <label className="field">
-              <span>Durum</span>
+              <span>Hesap Durumu</span>
               <select value={editStatus} onChange={(event) => setEditStatus(event.target.value as "new" | "active" | "blocked")}>
-                <option value="new">Yeni</option>
+                <option value="new">Yeni (Bekleyen)</option>
                 <option value="active">Aktif</option>
                 <option value="blocked">Bloklu</option>
               </select>
@@ -559,7 +559,7 @@ export default function AdminUsersPage() {
 
             <div className="admin-modal-actions">
               <button className="button secondary" type="button" onClick={() => setEditingUser(null)}>
-                Iptal
+                İptal
               </button>
               <button className="button" type="button" disabled={submitting} onClick={() => void handleEditSave()}>
                 {submitting ? "Kaydediliyor..." : "Kaydet"}

@@ -116,6 +116,20 @@ export function clearAdminToken() {
   clearCookie(ADMIN_COOKIE_NAME);
 }
 
+export function getUserToken() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem("flixify-public-session");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return parsed.accessToken ?? null;
+    }
+  } catch {}
+  return null;
+}
+
 export async function apiRequest<T>(
   path: string,
   options: {
@@ -125,7 +139,7 @@ export async function apiRequest<T>(
     accessToken?: string;
   } = {}
 ) {
-  const token = options.accessToken ?? (options.useAdminToken ? getAdminToken() : null);
+  const token = options.accessToken ?? (options.useAdminToken ? getAdminToken() : getUserToken());
   const hasBody = options.body !== undefined;
   const headers: Record<string, string> = {
     ...(token ? { authorization: `Bearer ${token}` } : {})

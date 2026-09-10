@@ -69,7 +69,8 @@ async function runApiFlow(baseUrl) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       deviceName: "smoke-p0",
-      platform: "web"
+      platform: "web",
+      installationId: `smoke-${Date.now()}-12345678`
     })
   });
   if (!register.ok) {

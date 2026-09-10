@@ -46,7 +46,8 @@ public:
   explicit ApiClient(QObject *parent = nullptr);
 
   QString apiBaseUrl() const;
-  void setApiBaseUrl(const QString &value);
+  Q_INVOKABLE void setApiBaseUrl(const QString &value);
+  Q_INVOKABLE bool updateApiBaseUrl(const QString &value);
 
   QString accessToken() const;
   void setAccessToken(const QString &value);

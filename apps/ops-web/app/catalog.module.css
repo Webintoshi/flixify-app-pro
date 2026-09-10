@@ -1,0 +1,885 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&subset=latin,latin-ext&display=swap');
+
+/* ==========================================================================
+   FLIXIFY CATALOG / CONTENT PAGES DESIGN SYSTEM (FILMLER, DIZILER, CANLI TV)
+   ========================================================================== */
+
+.flixifyCatalog {
+  --fx-bg: #060708;
+  --fx-bg-soft: #0a0c0f;
+
+  --fx-surface: #101214;
+  --fx-surface-hover: #171a1e;
+
+  --fx-text: #f7f7f8;
+  --fx-muted: #b5b7bf;
+  --fx-subtle: #9397a1;
+
+  --fx-red: #e50920;
+  --fx-red-hover: #cf081d;
+  --fx-red-soft: rgba(229, 9, 32, 0.11);
+  --fx-red-bright: #ff1834;
+
+  --fx-gold: #f5c518;
+  --fx-live-green: #00e676;
+
+  --fx-border: rgba(255, 255, 255, 0.09);
+  --fx-border-hover: rgba(255, 255, 255, 0.18);
+
+  --fx-radius-button: 14px;
+  --fx-radius-card: 18px;
+  --fx-radius-panel: 24px;
+
+  background-color: var(--fx-bg);
+  color: var(--fx-text);
+  font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Base Container */
+.container {
+  width: 100%;
+  max-width: 1360px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 32px;
+  padding-right: 32px;
+}
+
+@media (min-width: 1440px) {
+  .container {
+    max-width: 1640px;
+    padding-left: 48px;
+    padding-right: 48px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .container {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+}
+
+@media (max-width: 640px) {
+  .container {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+/* ==========================================================================
+   1. HERO SECTION
+   ========================================================================== */
+.heroSection {
+  position: relative;
+  padding-top: 40px;
+  padding-bottom: 48px;
+  overflow: hidden;
+}
+
+.heroGrid {
+  display: grid;
+  grid-template-columns: 55% 45%;
+  align-items: center;
+  gap: 36px;
+  min-height: 420px;
+}
+
+.heroContent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  z-index: 2;
+}
+
+.kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--fx-red-soft);
+  border: 1px solid rgba(229, 9, 32, 0.24);
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
+
+.heroTitle {
+  margin: 0 0 16px;
+  font-size: clamp(2.3rem, 4.2vw, 3.8rem);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  color: var(--fx-text);
+}
+
+.heroDescription {
+  margin: 0 0 28px;
+  font-size: clamp(0.95rem, 1.1vw, 1.08rem);
+  font-weight: 400;
+  line-height: 1.65;
+  color: var(--fx-muted);
+  max-width: 560px;
+}
+
+.heroPillsRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.heroPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 13px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--fx-border);
+  color: var(--fx-subtle);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.heroPillIcon {
+  color: var(--fx-red);
+  display: inline-flex;
+  align-items: center;
+}
+
+.heroVisualWrapper {
+  position: relative;
+  width: 100%;
+  height: 380px;
+  border-radius: var(--fx-radius-panel);
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.heroImage {
+  object-fit: cover;
+  transition: transform 600ms ease;
+}
+
+.heroVisualWrapper::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(6, 7, 8, 0.65) 0%, transparent 35%),
+              linear-gradient(0deg, rgba(6, 7, 8, 0.75) 0%, transparent 30%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+@media (max-width: 960px) {
+  .heroGrid {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+  .heroVisualWrapper {
+    height: 260px;
+  }
+}
+
+/* ==========================================================================
+   2. INTERACTIVE TOOLBAR (SEARCH + TABS)
+   ========================================================================== */
+.toolbarSection {
+  padding: 8px 0 32px;
+  position: sticky;
+  top: 96px;
+  z-index: 30;
+  background: rgba(6, 7, 8, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.toolbarInner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.tabsScroll {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 0;
+  scrollbar-width: none;
+}
+
+.tabsScroll::-webkit-scrollbar {
+  display: none;
+}
+
+.tabBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--fx-border);
+  color: var(--fx-muted);
+  font-size: 0.84rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 180ms ease;
+}
+
+.tabBtn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  border-color: var(--fx-border-hover);
+}
+
+.tabBtnActive {
+  background: var(--fx-red);
+  color: #ffffff;
+  border-color: var(--fx-red);
+  box-shadow: 0 4px 14px rgba(229, 9, 32, 0.35);
+}
+
+.tabBtnActive:hover {
+  background: var(--fx-red-hover);
+  color: #ffffff;
+}
+
+.searchBox {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 260px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 14px;
+  color: var(--fx-subtle);
+  pointer-events: none;
+  display: inline-flex;
+}
+
+.searchInput {
+  width: 100%;
+  height: 42px;
+  padding: 0 16px 0 42px;
+  border-radius: var(--fx-radius-button);
+  background: var(--fx-surface);
+  border: 1px solid var(--fx-border);
+  color: var(--fx-text);
+  font-size: 0.88rem;
+  transition: all 180ms ease;
+}
+
+.searchInput::placeholder {
+  color: var(--fx-subtle);
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: var(--fx-red);
+  box-shadow: 0 0 0 3px rgba(229, 9, 32, 0.15);
+}
+
+@media (max-width: 768px) {
+  .toolbarSection {
+    top: 56px;
+    padding: 6px 0 14px;
+  }
+  .toolbarInner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .tabsScroll {
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+  .searchBox {
+    min-width: 100%;
+  }
+}
+
+/* ==========================================================================
+   3. CATALOG GRID & CARDS (POSTERS: MOVIES & SERIES)
+   ========================================================================== */
+.catalogSection {
+  padding: 32px 0 64px;
+}
+
+.sectionHeadingRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.sectionHeadingTitle {
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.sectionCount {
+  font-size: 0.85rem;
+  color: var(--fx-subtle);
+  font-weight: 600;
+}
+
+/* Responsive Poster Grid for Movies & Series */
+.posterGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px 20px;
+}
+
+@media (min-width: 1600px) {
+  .posterGrid {
+    grid-template-columns: repeat(6, 1fr);
+    gap: 24px 20px;
+  }
+}
+
+@media (min-width: 1360px) and (max-width: 1599px) {
+  .posterGrid {
+    grid-template-columns: repeat(5, 1fr);
+    gap: 20px 18px;
+  }
+}
+
+@media (min-width: 1025px) and (max-width: 1359px) {
+  .posterGrid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 1024px) {
+  .posterGrid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px 14px;
+  }
+}
+
+@media (max-width: 640px) {
+  .posterGrid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px 10px;
+  }
+}
+
+.posterCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--fx-radius-card);
+  background: var(--fx-surface);
+  border: 1px solid var(--fx-border);
+  overflow: hidden;
+  transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+  text-decoration: none;
+}
+
+.posterCard:hover {
+  transform: translateY(-4px);
+  border-color: rgba(229, 9, 32, 0.45);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+
+.posterImageWrapper {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  background: #0d0f12;
+}
+
+.posterImage {
+  object-fit: cover;
+  transition: transform 380ms ease;
+}
+
+.posterCard:hover .posterImage {
+  transform: scale(1.05);
+}
+
+/* Gradient overlay at bottom of poster */
+.posterOverlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.1) 0%,
+    rgba(16, 18, 20, 0.4) 60%,
+    rgba(16, 18, 20, 0.98) 100%
+  );
+  z-index: 1;
+}
+
+/* Badges positioned over poster */
+.badgeRow {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.qualityBadge {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.ratingBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(245, 197, 24, 0.35);
+  color: var(--fx-gold);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.posterContent {
+  padding: 18px 16px 20px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.posterTag {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fx-red-bright);
+  margin-bottom: 6px;
+}
+
+.posterTitle {
+  margin: 0 0 6px;
+  font-size: 1.12rem;
+  font-weight: 800;
+  color: #ffffff;
+  line-height: 1.3;
+}
+
+.posterMeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--fx-subtle);
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.posterDesc {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--fx-muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (max-width: 640px) {
+  .posterContent {
+    padding: 10px 8px 12px;
+  }
+  .posterTitle {
+    font-size: 0.9rem;
+    margin-bottom: 3px;
+  }
+  .posterMeta {
+    font-size: 0.72rem;
+    gap: 6px;
+    margin-bottom: 2px;
+  }
+  .posterTag {
+    font-size: 0.65rem;
+    margin-bottom: 3px;
+  }
+  .posterDesc {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+   4. CANLI TV CHANNELS GRID
+   ========================================================================== */
+.liveChannelsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+@media (min-width: 1440px) {
+  .liveChannelsGrid {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 24px 20px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .liveChannelsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .liveChannelsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.channelCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 22px 20px;
+  border-radius: var(--fx-radius-card);
+  background: var(--fx-surface);
+  border: 1px solid var(--fx-border);
+  transition: all 200ms ease;
+}
+
+.channelCard:hover {
+  background: var(--fx-surface-hover);
+  border-color: rgba(229, 9, 32, 0.4);
+  transform: translateY(-2px);
+}
+
+.channelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.channelLogoBox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: #17191d;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  font-weight: 900;
+  font-size: 0.88rem;
+  letter-spacing: 0.02em;
+}
+
+.channelBadges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Pulsing Red CANLI Badge */
+.liveBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(229, 9, 32, 0.16);
+  border: 1px solid rgba(229, 9, 32, 0.35);
+  color: var(--fx-red-bright);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.liveDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fx-red-bright);
+  animation: pulseDot 1.5s infinite;
+}
+
+@keyframes pulseDot {
+  0% { transform: scale(0.9); opacity: 0.8; }
+  50% { transform: scale(1.3); opacity: 1; box-shadow: 0 0 10px var(--fx-red); }
+  100% { transform: scale(0.9); opacity: 0.8; }
+}
+
+.channelName {
+  margin: 0 0 4px;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.channelCategory {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--fx-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 14px;
+}
+
+/* EPG Box */
+.channelEpgBox {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.epgLabel {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--fx-red);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.epgProgram {
+  font-size: 0.88rem;
+  color: var(--fx-text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.epgProgressBar {
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.epgProgressFill {
+  height: 100%;
+  background: var(--fx-red);
+  border-radius: 2px;
+}
+
+/* ==========================================================================
+   5. FEATURES / ADVANTAGES BAND (3 CARDS)
+   ========================================================================== */
+.featuresSection {
+  padding: 40px 0 64px;
+}
+
+.featuresGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.featureCard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 28px 24px;
+  border-radius: var(--fx-radius-card);
+  background: var(--fx-surface);
+  border: 1px solid var(--fx-border);
+  transition: all 180ms ease;
+}
+
+.featureCard:hover {
+  background: var(--fx-surface-hover);
+  border-color: var(--fx-border-hover);
+  transform: translateY(-2px);
+}
+
+.featureIconBox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  background: var(--fx-red-soft);
+  color: var(--fx-red);
+}
+
+.featureTitle {
+  margin: 0;
+  font-size: 1.18rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.featureText {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--fx-muted);
+  line-height: 1.55;
+}
+
+@media (max-width: 860px) {
+  .featuresGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ==========================================================================
+   6. CTA BANNER SECTION
+   ========================================================================== */
+.ctaSection {
+  padding: 16px 0 72px;
+}
+
+.ctaCard {
+  border-radius: var(--fx-radius-panel);
+  border: 1px solid var(--fx-border);
+  background: linear-gradient(145deg, #111316 0%, #0d0f11 100%);
+  padding: 44px 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 36px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+.ctaContent {
+  max-width: 640px;
+}
+
+.ctaKicker {
+  color: var(--fx-red);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  display: block;
+}
+
+.ctaTitle {
+  margin: 0 0 10px;
+  font-size: clamp(1.6rem, 2.6vw, 2.2rem);
+  font-weight: 800;
+  line-height: 1.2;
+  color: #ffffff;
+}
+
+.ctaText {
+  margin: 0;
+  font-size: 0.96rem;
+  color: var(--fx-muted);
+  line-height: 1.55;
+}
+
+.ctaActions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.ctaPrimaryBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 50px;
+  padding: 0 32px;
+  border-radius: var(--fx-radius-button);
+  background: var(--fx-red);
+  color: #ffffff;
+  font-size: 0.98rem;
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: 0 8px 26px rgba(229, 9, 32, 0.38);
+  transition: all 180ms ease;
+  white-space: nowrap;
+}
+
+.ctaPrimaryBtn:hover {
+  background: var(--fx-red-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgba(229, 9, 32, 0.5);
+}
+
+.ctaSubtext {
+  font-size: 0.82rem;
+  color: var(--fx-subtle);
+  display: inline-flex;
+  gap: 5px;
+}
+
+.ctaSublink {
+  color: #ffffff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-weight: 600;
+  transition: color 180ms ease;
+}
+
+.ctaSublink:hover {
+  color: var(--fx-red-bright);
+}
+
+@media (max-width: 900px) {
+  .ctaCard {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 36px 28px;
+    gap: 24px;
+  }
+  .ctaActions {
+    align-items: flex-start;
+    width: 100%;
+  }
+  .ctaPrimaryBtn {
+    width: 100%;
+  }
+}
+
+/* Empty State when search returns no matches */
+.emptyState {
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--fx-muted);
+  font-size: 1rem;
+}

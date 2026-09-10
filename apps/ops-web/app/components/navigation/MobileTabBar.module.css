@@ -1,0 +1,89 @@
+.tabBarWrapper {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: rgba(10, 12, 15, 0.95);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  padding: 6px 12px calc(6px + env(safe-area-inset-bottom, 8px));
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.65);
+}
+
+@media (max-width: 768px) {
+  .tabBarWrapper {
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+  }
+}
+
+.tabItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  flex: 1;
+  text-decoration: none;
+  color: #8f939e;
+  padding: 4px 0;
+  transition: color 180ms ease, transform 150ms ease;
+  position: relative;
+  touch-action: manipulation;
+}
+
+.tabItem:active {
+  transform: scale(0.92);
+}
+
+.tabIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  position: relative;
+}
+
+.tabLabel {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+/* Active tab state */
+.tabItemActive {
+  color: #ff1834;
+}
+
+.tabItemActive .tabLabel {
+  font-weight: 800;
+}
+
+.tabItemActive::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  width: 20px;
+  height: 2px;
+  border-radius: 2px;
+  background: #e50920;
+  box-shadow: 0 0 8px #ff1834;
+}
+
+/* Live TV Pulse Dot */
+.livePulse {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #e50920;
+  box-shadow: 0 0 6px #ff1834;
+}
