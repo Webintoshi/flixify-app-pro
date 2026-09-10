@@ -19,6 +19,7 @@
     "telegram:panel": "node scripts/telegram-panel-bot.mjs",
     "telegram:vscode": "node scripts/telegram-vscode.mjs",
     "quality:p0": "npm run test && npm run build && npm run smoke:p0",
+    "deploy:coolify": "node scripts/deploy-coolify.mjs",
     "supabase:run-sql": "node scripts/run-supabase-sql.mjs",
     "test": "npm run test -w @flixify/contracts && npm run test -w @flixify/api && npm run test -w @flixify/worker"
   },
