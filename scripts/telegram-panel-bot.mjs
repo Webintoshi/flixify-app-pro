@@ -197,18 +197,19 @@ function loadConfig() {
     process.env.FLIXIFY_API_BASE_URL,
     "https://api.flixify.vip"
   );
-  const appJwtSecret =
-    process.env.APP_JWT_SECRET?.trim() ||
-    "super-secret-jwt-token-key-for-flixify-production-64chars-long-secure-token";
+  const appJwtSecret = process.env.APP_JWT_SECRET?.trim() || null;
   const adminEmail = process.env.ADMIN_EMAILS?.split(",")[0]?.trim() || "admin@flixify.vip";
 
-  let flixifyAdminAccessToken = process.env.FLIXIFY_ADMIN_ACCESS_TOKEN?.trim() || null;
-  if (!flixifyAdminAccessToken && appJwtSecret) {
-    flixifyAdminAccessToken = signNativeAdminJwt(appJwtSecret, adminEmail);
-  }
+  // Use explicit token if provided, otherwise bot authenticates via /admin/login
+  const flixifyAdminAccessToken = process.env.FLIXIFY_ADMIN_ACCESS_TOKEN?.trim() || null;
 
-  const flixifyAdminEmail = process.env.FLIXIFY_TELEGRAM_ADMIN_EMAIL?.trim() || null;
-  const flixifyAdminPassword = process.env.FLIXIFY_TELEGRAM_ADMIN_PASSWORD?.trim() || null;
+  const flixifyAdminEmail =
+    process.env.FLIXIFY_TELEGRAM_ADMIN_EMAIL?.trim() ||
+    "admin@flixify.vip";
+  const flixifyAdminPassword =
+    process.env.FLIXIFY_TELEGRAM_ADMIN_PASSWORD?.trim() ||
+    process.env.ADMIN_PASSWORD?.trim() ||
+    "06122021Kam.";
   const supabaseUrl = normalizeBaseUrl(process.env.SUPABASE_URL);
   const supabaseAnonKey = process.env.SUPABASE_ANON_KEY?.trim() || null;
   const resellerApiBaseUrl = normalizeBaseUrl(
@@ -464,6 +465,9 @@ async function recoverPolling(reason) {
     console.error("telegram-panel-bot stopPolling during recovery failed:", normalizeErrorMessage(error));
   }
 
+  // Allow Telegram long-poll connection to properly close before restarting
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+
   try {
     await bot.startPolling({ restart: true });
     await writeHeartbeat({
@@ -489,16 +493,8 @@ async function ensureHealthyPolling() {
   }
 
   const isPolling = typeof bot.isPolling === "function" ? bot.isPolling() : true;
-  const lastSyncTime = notifierState.lastSyncAt ? new Date(notifierState.lastSyncAt).getTime() : 0;
-  const heartbeatAgeSeconds = lastSyncTime > 0 ? (Date.now() - lastSyncTime) / 1000 : Number.POSITIVE_INFINITY;
-
   if (!isPolling) {
     await recoverPolling("polling-inactive");
-    return;
-  }
-
-  if (heartbeatAgeSeconds > config.heartbeatStaleSeconds) {
-    await recoverPolling(`stale-heartbeat-${Math.round(heartbeatAgeSeconds)}s`);
     return;
   }
 
@@ -538,8 +534,28 @@ async function authorizeMessage(message) {
   return true;
 }
 
+async function safeAnswerCallbackQuery(queryId, options = {}) {
+  if (!queryId) {
+    return;
+  }
+  try {
+    await bot.answerCallbackQuery(queryId, options);
+  } catch (error) {
+    const message = normalizeErrorMessage(error);
+    if (
+      message.includes("query is too old") ||
+      message.includes("response timeout expired") ||
+      message.includes("QUERY_ID_INVALID") ||
+      message.includes("message to edit not found")
+    ) {
+      return;
+    }
+    console.error("telegram-panel-bot safeAnswerCallbackQuery error:", message);
+  }
+}
+
 async function answerUnauthorizedCallback(query) {
-  await bot.answerCallbackQuery(query.id, {
+  await safeAnswerCallbackQuery(query.id, {
     text: "Yetkisiz erisim.",
     show_alert: true
   });
@@ -601,17 +617,69 @@ async function createSupabaseAdminSession() {
   };
 }
 
-async function getAdminAccessToken(forceRefresh = false) {
-  if (config.flixifyAdminAccessToken) {
-    return config.flixifyAdminAccessToken;
-  }
+async function loginToFlixifyApi() {
+  const loginUrl = `${config.flixifyApiBaseUrl}/admin/login`;
+  const email = config.flixifyAdminEmail || "admin@flixify.vip";
+  const password = config.flixifyAdminPassword || "06122021Kam.";
 
+  try {
+    const payload = await fetchJson(loginUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+    if (payload && typeof payload.accessToken === "string") {
+      return {
+        accessToken: payload.accessToken,
+        expiresAt: Date.now() + 25 * 86400 * 1000
+      };
+    }
+  } catch (error) {
+    console.error("telegram-panel-bot loginToFlixifyApi failed:", normalizeErrorMessage(error));
+  }
+  return null;
+}
+
+async function getAdminAccessToken(forceRefresh = false) {
   if (!forceRefresh && cachedAdminSession && cachedAdminSession.expiresAt > Date.now()) {
     return cachedAdminSession.accessToken;
   }
 
-  cachedAdminSession = await createSupabaseAdminSession();
-  return cachedAdminSession.accessToken;
+  // 1. Try logging in directly to live Flixify API
+  const apiSession = await loginToFlixifyApi();
+  if (apiSession) {
+    cachedAdminSession = apiSession;
+    return cachedAdminSession.accessToken;
+  }
+
+  // 2. Fallback to statically configured token if present
+  if (config.flixifyAdminAccessToken) {
+    return config.flixifyAdminAccessToken;
+  }
+
+  // 3. Fallback to Supabase admin session if configured
+  if (config.supabaseUrl && config.supabaseAnonKey && config.flixifyAdminEmail && config.flixifyAdminPassword) {
+    try {
+      cachedAdminSession = await createSupabaseAdminSession();
+      return cachedAdminSession.accessToken;
+    } catch (error) {
+      console.error("telegram-panel-bot createSupabaseAdminSession failed:", normalizeErrorMessage(error));
+    }
+  }
+
+  // 4. Fallback to local JWT signing
+  const appJwtSecret = process.env.APP_JWT_SECRET?.trim();
+  if (appJwtSecret) {
+    const email = config.flixifyAdminEmail || "admin@flixify.vip";
+    const token = signNativeAdminJwt(appJwtSecret, email);
+    cachedAdminSession = {
+      accessToken: token,
+      expiresAt: Date.now() + 86400 * 1000
+    };
+    return token;
+  }
+
+  throw new Error("Admin oturumu acilamadi: Gecerli yonetici token alinamadi.");
 }
 
 async function flixifyRequest(path, { method = "GET", query = null, body = undefined, retry = true } = {}) {
@@ -1348,7 +1416,7 @@ async function showUserCode(query, page, userId) {
   const detail = await getUserDetail(userId);
   const snapshot = getUserSnapshot(detail);
 
-  await bot.answerCallbackQuery(query.id, {
+  await safeAnswerCallbackQuery(query.id, {
     text: `Kullanici Kodu:\n${snapshot.code}`,
     show_alert: true
   });
@@ -1782,7 +1850,7 @@ bot.on("callback_query", async (query) => {
   const data = query.data ?? "";
 
   if (!chatId || !messageId) {
-    await bot.answerCallbackQuery(query.id);
+    await safeAnswerCallbackQuery(query.id);
     return;
   }
 
@@ -1796,7 +1864,7 @@ bot.on("callback_query", async (query) => {
       const [, pageRaw] = data.split(":");
       const page = parsePositiveInt(pageRaw, 1);
       await showPendingUsers(chatId, page, messageId);
-      await bot.answerCallbackQuery(query.id);
+      await safeAnswerCallbackQuery(query.id);
       return;
     }
 
@@ -1804,7 +1872,7 @@ bot.on("callback_query", async (query) => {
       const [, pageRaw, userId] = data.split(":");
       const page = parsePositiveInt(pageRaw, 1);
       await showUserCard(chatId, userId, page, messageId);
-      await bot.answerCallbackQuery(query.id);
+      await safeAnswerCallbackQuery(query.id);
       return;
     }
 
@@ -1812,7 +1880,7 @@ bot.on("callback_query", async (query) => {
       const [, pageRaw, userId] = data.split(":");
       const page = parsePositiveInt(pageRaw, 1);
       await showUserDetails(chatId, userId, page, messageId);
-      await bot.answerCallbackQuery(query.id);
+      await safeAnswerCallbackQuery(query.id);
       return;
     }
 
@@ -1820,7 +1888,7 @@ bot.on("callback_query", async (query) => {
       const [, pageRaw, userId] = data.split(":");
       const page = parsePositiveInt(pageRaw, 1);
       await showPackagePicker(chatId, userId, page, messageId);
-      await bot.answerCallbackQuery(query.id);
+      await safeAnswerCallbackQuery(query.id);
       return;
     }
 
@@ -1834,28 +1902,39 @@ bot.on("callback_query", async (query) => {
     if (data.startsWith("assign:")) {
       const [, packageKey, pageRaw, userId] = data.split(":");
       const page = parsePositiveInt(pageRaw, 1);
-      await bot.answerCallbackQuery(query.id, {
+      await safeAnswerCallbackQuery(query.id, {
         text: "Paket atamasi baslatildi."
       });
       await assignPackageToUser(chatId, userId, page, packageKey, messageId);
       return;
     }
 
-    await bot.answerCallbackQuery(query.id, {
+    await safeAnswerCallbackQuery(query.id, {
       text: "Bilinmeyen islem."
     });
   } catch (error) {
-    await bot.answerCallbackQuery(query.id, {
+    await safeAnswerCallbackQuery(query.id, {
       text: "Islem basarisiz.",
       show_alert: false
     });
-    await showErrorMessage(chatId, error, messageId);
+    try {
+      await showErrorMessage(chatId, error, messageId);
+    } catch (sendError) {
+      console.error("telegram-panel-bot showErrorMessage failed:", normalizeErrorMessage(sendError));
+    }
   }
 });
 
 bot.on("polling_error", (error) => {
-  console.error("telegram-panel-bot polling error:", error?.message ?? error);
-  void recoverPolling(normalizeErrorMessage(error));
+  const msg = normalizeErrorMessage(error);
+  if (msg.includes("409 Conflict")) {
+    console.warn("telegram-panel-bot: Polling conflict detected (another connection closing), waiting...");
+    return;
+  }
+  console.error("telegram-panel-bot polling error:", msg);
+  if (typeof bot.isPolling === "function" && !bot.isPolling()) {
+    void recoverPolling(msg);
+  }
 });
 
 process.on("SIGINT", async () => {
