@@ -378,6 +378,7 @@ function createDefaultNotifierState() {
     adminIds: [],
     knownPendingUserIds: [],
     knownPendingPaymentRequestIds: [],
+    knownPendingTrialRequestIds: [],
     lastSyncAt: null
   };
 }
@@ -404,6 +405,9 @@ function sanitizeNotifierState(value) {
     knownPendingUserIds: dedupeIds(Array.isArray(value.knownPendingUserIds) ? value.knownPendingUserIds : []),
     knownPendingPaymentRequestIds: dedupeIds(
       Array.isArray(value.knownPendingPaymentRequestIds) ? value.knownPendingPaymentRequestIds : []
+    ),
+    knownPendingTrialRequestIds: dedupeIds(
+      Array.isArray(value.knownPendingTrialRequestIds) ? value.knownPendingTrialRequestIds : []
     ),
     lastSyncAt: typeof value.lastSyncAt === "string" ? value.lastSyncAt : null
   };
@@ -814,6 +818,12 @@ async function listPendingPaymentRequests() {
   const payload = await flixifyRequest("/admin/payment-requests");
   const items = Array.isArray(payload?.items) ? payload.items : [];
   return items.filter((item) => String(item?.status ?? "").trim() === "pending-review");
+}
+
+async function listPendingTrialRequests() {
+  const payload = await flixifyRequest("/admin/trial-requests");
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  return items.filter((item) => String(item?.status ?? "").trim() === "pending");
 }
 
 async function listFlixifyPackages() {
@@ -1461,6 +1471,51 @@ async function notifyPaymentRequest(paymentRequest) {
   });
 }
 
+function renderTrialRequestText(trialRequest, detail) {
+  const snapshot = getUserSnapshot(detail);
+  const code = (snapshot.code && snapshot.code !== "Yok") ? snapshot.code : (trialRequest.userCode || "Bilinmiyor");
+
+  return [
+    "\u{26A1} <b>YENİ DENEME (TEST) TALEBİ!</b>",
+    "",
+    `\u{1F464} <b>Kullanıcı Kodu:</b> <code>${escapeHtml(code)}</code>`,
+    `\u{1F194} <b>User ID:</b> <code>${escapeHtml(snapshot.id || trialRequest.userId)}</code>`,
+    `\u{1F3F7}\u{FE0F} <b>Durum:</b> <b>${escapeHtml(formatUserStatus(snapshot.status))}</b>`,
+    `\u{1F4DD} <b>Talep Notu:</b> <i>${escapeHtml(trialRequest.note || "Belirtilmedi")}</i>`,
+    `\u{1F552} <b>Talep Tarihi:</b> ${escapeHtml(formatDate(trialRequest.createdAt))}`
+  ].join("\n");
+}
+
+function buildTrialNotificationKeyboard(userId) {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: "\u{26A1} 24s Test Paketi Aç",
+          callback_data: buildCallbackData("assign", "test24", "1", userId)
+        },
+        {
+          text: "\u{1F464} Kullanıcı Kartı",
+          callback_data: buildCallbackData("view", "1", userId)
+        }
+      ]
+    ]
+  };
+}
+
+async function notifyTrialRequest(trialRequest) {
+  const userId = String(trialRequest?.userId ?? "").trim();
+  if (!userId) {
+    return;
+  }
+
+  const detail = await getUserDetail(userId);
+  await broadcastToAdmins(renderTrialRequestText(trialRequest, detail), {
+    parse_mode: "HTML",
+    reply_markup: buildTrialNotificationKeyboard(userId)
+  });
+}
+
 async function pollNewUsers({ seedOnly = false } = {}) {
   if (notifierTickInFlight) {
     return;
@@ -1469,14 +1524,20 @@ async function pollNewUsers({ seedOnly = false } = {}) {
   notifierTickInFlight = true;
 
   try {
-    const [items, paymentRequests] = await Promise.all([
+    const [items, paymentRequests, trialRequests] = await Promise.all([
       listAllPendingUsers(),
-      listPendingPaymentRequests()
+      listPendingPaymentRequests(),
+      listPendingTrialRequests().catch((err) => {
+        console.error("telegram-panel-bot listPendingTrialRequests error:", normalizeErrorMessage(err));
+        return [];
+      })
     ]);
     const knownIds = new Set(notifierState.knownPendingUserIds);
     const knownPaymentRequestIds = new Set(notifierState.knownPendingPaymentRequestIds);
+    const knownTrialRequestIds = new Set(notifierState.knownPendingTrialRequestIds || []);
     const currentIds = dedupeIds(items.map((item) => item?.id));
     const currentPaymentRequestIds = dedupeIds(paymentRequests.map((item) => item?.id));
+    const currentTrialRequestIds = dedupeIds(trialRequests.map((item) => item?.id));
 
     if (seedOnly || !notifierState.bootstrapped) {
       notifierState = {
@@ -1486,6 +1547,10 @@ async function pollNewUsers({ seedOnly = false } = {}) {
         knownPendingPaymentRequestIds: dedupeIds([
           ...notifierState.knownPendingPaymentRequestIds,
           ...currentPaymentRequestIds
+        ]),
+        knownPendingTrialRequestIds: dedupeIds([
+          ...(notifierState.knownPendingTrialRequestIds || []),
+          ...currentTrialRequestIds
         ]),
         lastSyncAt: new Date().toISOString()
       };
@@ -1499,15 +1564,27 @@ async function pollNewUsers({ seedOnly = false } = {}) {
         const pendingUserId = String(item?.id ?? "").trim();
         return pendingUserId.length > 0 && !knownIds.has(pendingUserId);
       })
-        .sort((left, right) => {
-          const leftTime = new Date(left?.createdAt ?? 0).getTime();
-          const rightTime = new Date(right?.createdAt ?? 0).getTime();
-          return leftTime - rightTime;
-        });
+      .sort((left, right) => {
+        const leftTime = new Date(left?.createdAt ?? 0).getTime();
+        const rightTime = new Date(right?.createdAt ?? 0).getTime();
+        return leftTime - rightTime;
+      });
+
     const freshPaymentRequests = paymentRequests
       .filter((item) => {
         const paymentRequestId = String(item?.id ?? "").trim();
         return paymentRequestId.length > 0 && !knownPaymentRequestIds.has(paymentRequestId);
+      })
+      .sort((left, right) => {
+        const leftTime = new Date(left?.createdAt ?? 0).getTime();
+        const rightTime = new Date(right?.createdAt ?? 0).getTime();
+        return leftTime - rightTime;
+      });
+
+    const freshTrialRequests = trialRequests
+      .filter((item) => {
+        const trialId = String(item?.id ?? "").trim();
+        return trialId.length > 0 && !knownTrialRequestIds.has(trialId);
       })
       .sort((left, right) => {
         const leftTime = new Date(left?.createdAt ?? 0).getTime();
@@ -1546,11 +1623,29 @@ async function pollNewUsers({ seedOnly = false } = {}) {
       }
     }
 
+    for (const item of freshTrialRequests) {
+      const trialId = String(item?.id ?? "").trim();
+      if (!trialId) {
+        continue;
+      }
+
+      try {
+        await notifyTrialRequest(item);
+        knownTrialRequestIds.add(trialId);
+      } catch (error) {
+        console.error(
+          `telegram-panel-bot notifier failed for trial request ${trialId}:`,
+          normalizeErrorMessage(error)
+        );
+      }
+    }
+
     notifierState = {
       ...notifierState,
       bootstrapped: true,
       knownPendingUserIds: dedupeIds([...knownIds, ...currentIds]),
       knownPendingPaymentRequestIds: dedupeIds([...knownPaymentRequestIds, ...currentPaymentRequestIds]),
+      knownPendingTrialRequestIds: dedupeIds([...knownTrialRequestIds, ...currentTrialRequestIds]),
       lastSyncAt: new Date().toISOString()
     };
     await saveNotifierState();
@@ -1646,6 +1741,7 @@ bot.onText(/\/start$/, async (message) => {
     "",
     "Komutlar:",
     "/bekleyenler - Bekleyen yeni kayitlari listele",
+    "/denemeler - Bekleyen test/deneme taleplerini listele",
     "/bakiye - IPTV Reseller bakiye & hesap bilgisi",
     "/aktif - Canli IPTV baglanti sayisini goster",
     "/paketler - Paket haritasi & kredi tablosu",
@@ -1664,12 +1760,13 @@ bot.onText(/\/help$/, async (message) => {
   const text = [
     "📖 <b>Kullanim Rehberi</b>",
     "",
-    "1. Bot yeni kayit veya odeme bildirimi geldiginde size otomatik mesaj yollar.",
-    "2. Bildirim kartinda <b>M3U Ata</b> butonuna basarak aninda IPTV line acabilirsiniz.",
+    "1. Bot yeni kayit, odeme veya deneme talebi geldiginde size otomatik mesaj yollar.",
+    "2. Bildirim kartinda <b>24s Test Ac</b> butonuna basarak tek tikla aninda test hesabi olusturabilirsiniz.",
     "3. Acilan line bilgileri dogrudan Flixify kullanicisina baglanir ve abonelik aktif edilir.",
     "",
     "<b>Yonetici Komutlari:</b>",
     "/bekleyenler - Bekleyen kullanicilari listele",
+    "/denemeler - Bekleyen test/deneme taleplerini listele",
     "/bakiye - IPTV Reseller kredi bakiyesi ve hesap durumu",
     "/aktif - Anlik canli baglanti sayisi",
     "/paketler - Paket haritasi ve kredi maliyetleri",
@@ -1790,6 +1887,47 @@ bot.onText(/\/bekleyenler(?:\s+(\d+))?$/, async (message, match) => {
   const page = parsePositiveInt(match?.[1], 1);
   try {
     await showPendingUsers(message.chat.id, page);
+  } catch (error) {
+    await bot.sendMessage(message.chat.id, `Hata: ${normalizeErrorMessage(error)}`);
+  }
+});
+
+bot.onText(/\/deneme(?:ler)?$/, async (message) => {
+  if (!(await authorizeMessage(message))) {
+    return;
+  }
+
+  try {
+    const trials = await listPendingTrialRequests();
+    if (trials.length === 0) {
+      return bot.sendMessage(
+        message.chat.id,
+        "✅ <b>Bekleyen deneme (test) talebi bulunmuyor.</b>",
+        { parse_mode: "HTML" }
+      );
+    }
+
+    await bot.sendMessage(
+      message.chat.id,
+      `⚡ <b>Bekleyen Deneme Talepleri (${trials.length})</b>`,
+      { parse_mode: "HTML" }
+    );
+
+    for (const trial of trials.slice(0, 10)) {
+      try {
+        const detail = await getUserDetail(trial.userId);
+        await bot.sendMessage(
+          message.chat.id,
+          renderTrialRequestText(trial, detail),
+          {
+            parse_mode: "HTML",
+            reply_markup: buildTrialNotificationKeyboard(trial.userId)
+          }
+        );
+      } catch (err) {
+        console.error("Failed to render trial detail for /denemeler:", err);
+      }
+    }
   } catch (error) {
     await bot.sendMessage(message.chat.id, `Hata: ${normalizeErrorMessage(error)}`);
   }

@@ -2465,10 +2465,23 @@ export async function createPaymentRequest(
 }
 
 export async function createTrialRequest(userId: string, note?: string) {
-  await query(
-    "insert into public.trial_requests (user_id, note) values ($1, $2)",
+  const insertResult = await query<{ id: string; created_at: string }>(
+    "insert into public.trial_requests (user_id, note) values ($1, $2) returning id, created_at",
     [userId, note ?? null]
   );
+  const userRow = await query<{ kryptonite_code: string | null; code_suffix: string | null }>(
+    "select kryptonite_code, code_suffix from public.users where id = $1",
+    [userId]
+  );
+  const userCode = userRow.rows[0]?.kryptonite_code || userRow.rows[0]?.code_suffix || null;
+
+  return {
+    id: insertResult.rows[0]?.id,
+    createdAt: insertResult.rows[0]?.created_at,
+    userId,
+    userCode,
+    note: note ?? null
+  };
 }
 
 export async function listAdminUsers(
@@ -3296,12 +3309,15 @@ export async function listTrialRequests(userId?: string) {
     created_at: string;
     user_id: string;
     note: string | null;
+    user_code: string | null;
   }>(
     `
-      select id, status, created_at, user_id, note
-      from public.trial_requests
-      where ($1::uuid is null or user_id = $1)
-      order by created_at desc
+      select tr.id, tr.status, tr.created_at, tr.user_id, tr.note,
+             coalesce(u.kryptonite_code, u.code_suffix, '') as user_code
+      from public.trial_requests tr
+      left join public.users u on u.id = tr.user_id
+      where ($1::uuid is null or tr.user_id = $1)
+      order by tr.created_at desc
     `,
     [userId ?? null]
   );
@@ -3311,7 +3327,8 @@ export async function listTrialRequests(userId?: string) {
     status: row.status,
     createdAt: row.created_at,
     userId: row.user_id,
-    note: row.note
+    note: row.note,
+    userCode: row.user_code || null
   }));
 }
 

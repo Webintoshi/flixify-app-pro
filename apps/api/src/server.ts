@@ -121,6 +121,7 @@ import {
   updateDemoUser,
   updateDemoUserStatus
 } from "./demo-store.js";
+import { sendTelegramTrialRequestNotification } from "./telegram-notifier.js";
 import { env } from "./env.js";
 import {
   createCodeLookup,
@@ -2844,12 +2845,24 @@ export function buildServer() {
       const auth = await authenticateUser(request.headers.authorization);
       const payload = trialRequestInputSchema.parse(request.body);
 
+      let trialInfo: { id?: string; createdAt?: string; userId?: string; userCode?: string | null; note?: string | null } | undefined;
+
       if (isDemoMode) {
-        createDemoTrialRequest(auth.userId, payload.note);
-        return { ok: true };
+        trialInfo = createDemoTrialRequest(auth.userId, payload.note);
+      } else {
+        trialInfo = await createTrialRequest(auth.userId, payload.note);
       }
 
-      await createTrialRequest(auth.userId, payload.note);
+      // Dispatch Telegram alert with user code immediately in the background
+      sendTelegramTrialRequestNotification({
+        userId: auth.userId,
+        userCode: trialInfo?.userCode || null,
+        note: payload.note,
+        createdAt: trialInfo?.createdAt || null
+      }).catch((notifyError) => {
+        request.log.error(notifyError, "Failed to send Telegram trial notification");
+      });
+
       return { ok: true };
     } catch (error) {
       if (isUserRouteAuthError(error)) {

@@ -1105,13 +1105,20 @@ export function listDemoMyPaymentRequests(userId: string) {
 }
 
 export function createDemoTrialRequest(userId: string, note?: string) {
-  trialRequests.unshift({
+  const user = users.get(userId);
+  const userCode = user?.kryptoniteCode || user?.codeSuffix || null;
+  const item = {
     id: randomUUID(),
-    status: "pending",
+    status: "pending" as const,
     createdAt: now(),
     userId,
     note: note ?? null
-  });
+  };
+  trialRequests.unshift(item);
+  return {
+    ...item,
+    userCode
+  };
 }
 
 export function listDemoAdminUsers(
@@ -1411,7 +1418,13 @@ export function listDemoPaymentRequests() {
 }
 
 export function listDemoTrialRequests() {
-  return clone(trialRequests);
+  return trialRequests.map((item) => {
+    const user = users.get(item.userId);
+    return {
+      ...clone(item),
+      userCode: user?.kryptoniteCode || user?.codeSuffix || null
+    };
+  });
 }
 
 export function listDemoM3USources() {
