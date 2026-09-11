@@ -14,6 +14,12 @@ type LoginResponse = {
     status: "new" | "active" | "blocked";
     hasAssignedLink: boolean;
     hasActiveSubscription: boolean;
+    hasUsedTrial?: boolean;
+    hasExpiredSubscription?: boolean;
+    popup?: {
+      required: boolean;
+      actions: string[];
+    } | null;
     activePackage: {
       title: string;
       remainingDays: number;
@@ -202,6 +208,17 @@ export default function LoginPage() {
       if (typeof window !== "undefined") {
         window.localStorage.setItem(storageKey, JSON.stringify(response));
       }
+
+      const hasUsedTrial = Boolean(
+        response.user.hasUsedTrial ||
+        response.user.hasAssignedLink ||
+        (response.user.popup && response.user.popup.actions && response.user.popup.actions.indexOf("free-trial") === -1)
+      );
+
+      if (!response.user.hasActiveSubscription && hasUsedTrial) {
+        router.push("/paketler");
+        return;
+      }
     } catch (nextError) {
       setError(getErrorMessage(nextError));
     } finally {
@@ -234,6 +251,11 @@ export default function LoginPage() {
   }
 
   const normalizedCode = normalizeCode(code);
+  const hasUsedTrial = Boolean(
+    session?.user.hasUsedTrial ||
+    session?.user.hasAssignedLink ||
+    (session?.user.popup && session?.user.popup.actions && session?.user.popup.actions.indexOf("free-trial") === -1)
+  );
   const shouldShowPremiumModal = Boolean(session && !session.user.hasActiveSubscription && !premiumDismissed);
 
   // Calculate progress segments (4 segments for 16 characters)
@@ -339,18 +361,24 @@ export default function LoginPage() {
           >
             ×
           </button>
-          <h2>Premium Erişim</h2>
-          <p>Tüm içeriklere erişmek için aktif bir paket satın alın.</p>
+          <h2>{hasUsedTrial ? "Test Süreniz Doldu" : "Premium Erişim"}</h2>
+          <p>
+            {hasUsedTrial
+              ? "24 saatlik test süreniz tamamlandı. Tüm içeriklere erişmek için bir paket satın alabilirsiniz."
+              : "Tüm içeriklere erişmek için aktif bir paket satın alın."}
+          </p>
           <div className="auth-premium-actions">
-            <button className="button" type="button" onClick={() => void handleTrialRequest()} disabled={trialLoading}>
-              {trialLoading ? "Test Talebi Gönderiliyor" : "Test Yapmak İstiyorum"}
+            {!hasUsedTrial ? (
+              <button className="button" type="button" onClick={() => void handleTrialRequest()} disabled={trialLoading}>
+                {trialLoading ? "Test Talebi Gönderiliyor" : "Test Yapmak İstiyorum"}
+              </button>
+            ) : null}
+            <button className="button" type="button" onClick={() => router.push("/paketler")}>
+              Paket Satın Al
             </button>
             <a className="button secondary" href={whatsappUrl} target="_blank" rel="noreferrer">
               WhatsApp ile İletişime Geç
             </a>
-            <button className="button secondary" type="button" onClick={() => router.push("/paketler")}>
-              Paket Satın Al
-            </button>
           </div>
           {trialMessage ? <div className="auth-premium-note">{trialMessage}</div> : null}
           <button type="button" className="auth-premium-later" onClick={() => setPremiumDismissed(true)}>

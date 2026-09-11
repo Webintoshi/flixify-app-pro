@@ -48,6 +48,8 @@ type UserContextRow = QueryResultRow & {
   package_title: string | null;
   package_duration: PackageDuration | null;
   ends_at: string | null;
+  has_used_trial?: boolean | null;
+  has_expired_subscription?: boolean | null;
 };
 
 type DeviceSessionRow = QueryResultRow & {
@@ -560,6 +562,8 @@ function getCurrentSourceUrl(row: Pick<UserContextRow, "iptv_username" | "iptv_p
 function mapUserSummary(row: UserContextRow): UserSummary {
   const hasAssignedLink = hasAssignedSource(row);
   const hasActiveSubscription = row.status !== "blocked" && Boolean(row.package_id && row.ends_at);
+  const hasUsedTrial = Boolean(row.has_used_trial || (hasAssignedLink && !hasActiveSubscription));
+  const hasExpiredSubscription = Boolean(row.has_expired_subscription);
 
   return {
     id: row.id,
@@ -570,6 +574,8 @@ function mapUserSummary(row: UserContextRow): UserSummary {
     codeSuffix: row.code_suffix,
     hasAssignedLink,
     hasActiveSubscription,
+    hasUsedTrial,
+    hasExpiredSubscription,
     activePackage:
       row.package_id && row.package_title && row.package_duration && row.ends_at
         ? {
@@ -584,7 +590,7 @@ function mapUserSummary(row: UserContextRow): UserSummary {
       !hasAssignedLink && row.status !== "blocked"
         ? {
             required: true,
-            actions: ["free-trial", "contact", "buy-package"]
+            actions: hasUsedTrial ? ["buy-package", "contact"] : ["free-trial", "contact", "buy-package"]
           }
         : null
   };
@@ -814,7 +820,26 @@ async function getUserContextRow(userId: string, includeDeleted = false): Promis
         sub.package_id,
         sub.package_title,
         sub.package_duration,
-        sub.ends_at
+        sub.ends_at,
+        coalesce(
+          exists(
+            select 1 from public.subscriptions s_tr
+            where s_tr.user_id = u.id
+              and (s_tr.end_reason = 'trial-24h' or s_tr.end_reason like '%trial%')
+          ) or exists(
+            select 1 from public.trial_requests tr
+            where tr.user_id = u.id
+          ),
+          false
+        ) as has_used_trial,
+        coalesce(
+          exists(
+            select 1 from public.subscriptions s_exp
+            where s_exp.user_id = u.id
+              and s_exp.ends_at <= timezone('utc', now())
+          ),
+          false
+        ) as has_expired_subscription
       from public.users u
       left join public.app_settings settings on settings.id = true
       left join public.user_iptv_credentials cred on cred.user_id = u.id
@@ -2535,7 +2560,26 @@ export async function listAdminUsers(
           sub.package_id,
           sub.package_title,
           sub.package_duration,
-          sub.ends_at
+          sub.ends_at,
+          coalesce(
+            exists(
+              select 1 from public.subscriptions s_tr
+              where s_tr.user_id = u.id
+                and (s_tr.end_reason = 'trial-24h' or s_tr.end_reason like '%trial%')
+            ) or exists(
+              select 1 from public.trial_requests tr
+              where tr.user_id = u.id
+            ),
+            false
+          ) as has_used_trial,
+          coalesce(
+            exists(
+              select 1 from public.subscriptions s_exp
+              where s_exp.user_id = u.id
+                and s_exp.ends_at <= timezone('utc', now())
+            ),
+            false
+          ) as has_expired_subscription
         from public.users u
         left join public.app_settings settings on settings.id = true
         left join public.user_iptv_credentials cred on cred.user_id = u.id

@@ -104,10 +104,13 @@ function makeSummary(input: {
   status?: UserSummary["status"];
   hasAssignedLink?: boolean;
   hasActiveSubscription?: boolean;
+  hasUsedTrial?: boolean;
+  hasExpiredSubscription?: boolean;
   activePackage?: UserSummary["activePackage"];
   kryptoniteCode?: string | null;
   codeSuffix?: string | null;
 } = {}): UserSummary {
+  const hasUsedTrial = input.hasUsedTrial ?? Boolean(input.hasAssignedLink && !input.hasActiveSubscription);
   return {
     id: input.id ?? randomUUID(),
     status: input.status ?? "new",
@@ -117,13 +120,15 @@ function makeSummary(input: {
     codeSuffix: input.codeSuffix ?? null,
     hasAssignedLink: input.hasAssignedLink ?? false,
     hasActiveSubscription: input.hasActiveSubscription ?? false,
+    hasUsedTrial,
+    hasExpiredSubscription: input.hasExpiredSubscription ?? false,
     activePackage: input.activePackage ?? null,
     popup:
       input.hasAssignedLink === true
         ? null
         : {
             required: true,
-            actions: ["free-trial", "contact", "buy-package"]
+            actions: hasUsedTrial ? ["buy-package", "contact"] : ["free-trial", "contact", "buy-package"]
           }
   };
 }

@@ -24,9 +24,9 @@ const platforms: PlatformItem[] = [
     description: "Flixify deneyimini Windows bilgisayarına taşı.",
     iconClass: styles.iconWindows,
     isAvailable: true,
-    statusText: "v2.3.43 Yayında",
+    statusText: "v2.3.54 Yayında",
     badge: "Yeni Sürüm",
-    actionUrl: "/downloads/Flixify-Pro-Setup-2.3.43-x64.exe",
+    actionUrl: "/downloads/Flixify-Pro-Setup-2.3.54-x64.exe",
     actionLabel: "İndir (x64 Setup)",
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(FlixifyNativeQt VERSION 2.3.43 LANGUAGES CXX)
+project(FlixifyNativeQt VERSION 2.3.54 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -252,6 +252,10 @@ if(NOT ANDROID)
     set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
     set(CPACK_NSIS_MUI_FINISHPAGE_RUN "Flixify Pro.exe")
     set(CPACK_PACKAGE_EXECUTABLES "Flixify Pro" "Flixify Pro")
+    set(
+      CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS
+      "nsExec::Exec 'taskkill /F /IM \\\"Flixify Pro.exe\\\"'"
+    )
     set(
       CPACK_NSIS_EXTRA_INSTALL_COMMANDS
       "CreateShortCut \\\"$DESKTOP\\\\Flixify Pro.lnk\\\" \\\"$INSTDIR\\\\Flixify Pro.exe\\\" \\\"\\\" \\\"$INSTDIR\\\\Flixify Pro.exe\\\" 0\\n  System::Call 'shell32.dll::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'"

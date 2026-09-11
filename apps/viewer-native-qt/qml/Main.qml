@@ -462,6 +462,17 @@ ApplicationWindow {
         return Boolean(user && user.id)
     }
 
+    function userHasUsedTrial() {
+        const user = userData()
+        if (!user || !user.id) return false
+        return Boolean(
+            user.hasUsedTrial ||
+            user.hasAssignedLink ||
+            user.hasExpiredSubscription ||
+            (user.popup && user.popup.actions && user.popup.actions.indexOf("free-trial") === -1)
+        )
+    }
+
     function subscriptionLabel() {
         const user = userData()
         if (user.hasActiveSubscription && user.activePackage) {
@@ -1226,9 +1237,9 @@ ApplicationWindow {
     }
 
     function refreshHomePreviewContent() {
-        homeMoviePreviewCache = buildRandomMoviePreview(12)
-        homeSeriesPreviewCache = buildRandomSeriesPreview(12)
-        homeLivePreviewCache = buildRandomLivePreview(12)
+        homeMoviePreviewCache = buildRandomMoviePreview(24)
+        homeSeriesPreviewCache = buildRandomSeriesPreview(24)
+        homeLivePreviewCache = buildRandomLivePreview(16)
     }
 
     function homeMovieSections(maxSections, itemsPerSection) {
@@ -1311,7 +1322,22 @@ ApplicationWindow {
         return true
     }
 
-    function filteredMovies() { return filterItems(apiClient.movies || [], moviesSearchText, selectedMovieGroup) }
+    function filteredMovies() {
+        const list = filterItems(apiClient.movies || [], moviesSearchText, selectedMovieGroup)
+        const withPoster = []
+        const withoutPoster = []
+        for (let i = 0; i < list.length; i++) {
+            const item = list[i]
+            const poster = fieldText(item, "posterUrl") || fieldText(item, "artworkUrl") || fieldText(item, "streamImageUrl") || fieldText(item, "stream_icon")
+            const trimmed = poster ? poster.trim().toLowerCase() : ""
+            if (trimmed.length > 4 && !trimmed.includes("no-poster") && !trimmed.includes("placeholder") && !trimmed.includes("afis-yok")) {
+                withPoster.push(item)
+            } else {
+                withoutPoster.push(item)
+            }
+        }
+        return withPoster.concat(withoutPoster)
+    }
     function filteredSeries() { return filterItems(apiClient.series || [], seriesSearchText, selectedSeriesGroup) }
     function filteredLiveItems() { return apiClient.liveChannels || [] }
 
@@ -1419,6 +1445,21 @@ ApplicationWindow {
             }
         }
         return items.length ? items[0] : null
+    }
+
+    function activePlayingLiveItem() {
+        const activeId = livePlaybackController ? livePlaybackController.activeChannelId : ""
+        if (activeId && activeId.length) {
+            const all = apiClient.live || []
+            for (let i = 0; i < all.length; i += 1) {
+                if (all[i].id === activeId) return all[i]
+            }
+            const filtered = filteredLiveItems()
+            for (let i = 0; i < filtered.length; i += 1) {
+                if (filtered[i].id === activeId) return filtered[i]
+            }
+        }
+        return selectedLiveItem()
     }
     
     function featuredSeriesEpisodes() {
@@ -1602,9 +1643,9 @@ ApplicationWindow {
         case "btc":
             return "#25180f"
         case "usdc":
-            return "#101a2d"
+            return "#18181e"
         default:
-            return "#131923"
+            return "#18181e"
         }
     }
 
@@ -2052,6 +2093,9 @@ ApplicationWindow {
         if (currentScreen !== "live") {
             return
         }
+        if (livePlaybackController && livePlaybackController.activeContentKind === "live" && livePlaybackController.activeChannelId && !forceRestart) {
+            return
+        }
         const channel = selectedLiveItem()
         if (!channel || !channel.id) {
             return
@@ -2212,7 +2256,17 @@ ApplicationWindow {
                 currentScreen = signedOutEntryScreen(false)
             }
         }
-        function onLoginSucceeded() { currentScreen = "home"; lastKnownHasActiveSubscription = false; showAuthCode = false; authCode = "" }
+        function onLoginSucceeded() {
+            showAuthCode = false
+            authCode = ""
+            lastKnownHasActiveSubscription = false
+            const user = userData()
+            if (user && user.id && !user.hasActiveSubscription && userHasUsedTrial()) {
+                currentScreen = "packages"
+            } else {
+                currentScreen = "home"
+            }
+        }
         function onMeChanged() {
             const user = userData()
             const hasActiveSubscription = Boolean(user && user.hasActiveSubscription)
@@ -2225,6 +2279,12 @@ ApplicationWindow {
                 }
             }
             lastKnownHasActiveSubscription = hasActiveSubscription
+
+            if (apiClient.authenticated && hasLoadedUser() && !hasActiveSubscription && userHasUsedTrial()) {
+                if (currentScreen === "home" || currentScreen === "login" || currentScreen === "register") {
+                    openScreen("packages")
+                }
+            }
         }
         function onMoviesChanged() {
             refreshHomePreviewContent()
@@ -2252,7 +2312,9 @@ ApplicationWindow {
         id: control
         property bool secondary: false
         property bool glow: false
-        hoverEnabled: false
+        readonly property bool hoverState: control.hovered && control.enabled
+        readonly property bool pressedState: control.down && control.enabled
+        hoverEnabled: true
         focusPolicy: Qt.NoFocus
         implicitHeight: 56
         leftPadding: 28
@@ -2271,7 +2333,7 @@ ApplicationWindow {
             visible: !control.secondary && control.glow
             anchors.fill: parent
             anchors.margins: -4
-            radius: parent.radius + 4
+            radius: 12
             color: "transparent"
             border.width: 2
             border.color: "#ff3b48"
@@ -2281,27 +2343,25 @@ ApplicationWindow {
         
         background: Rectangle {
             id: btnBg
-            readonly property bool hoverState: false
-            readonly property bool pressedState: control.down && control.enabled
             radius: 8
             border.width: 1
             border.color: control.secondary
-                ? (pressedState ? "#3f3f46" : hoverState ? "#52525b" : "#27272a")
-                : (pressedState ? "#ff1a25" : hoverState ? "#ff5a65" : "#e50914")
+                ? (control.pressedState ? "#3f3f46" : control.hoverState ? "#52525b" : "#27272a")
+                : (control.pressedState ? "#ff1a25" : control.hoverState ? "#ff5a65" : "#e50914")
             
             // Gradient - BEYAZ OVERLAY YOK!
             gradient: Gradient {
                 GradientStop {
                     position: 0.0
                     color: control.secondary
-                        ? (pressedState ? "#27272a" : hoverState ? "#202024" : "#18181b")
-                        : (pressedState ? "#b91c1c" : hoverState ? "#ef4444" : "#dc2626")
+                        ? (control.pressedState ? "#27272a" : control.hoverState ? "#202024" : "#18181b")
+                        : (control.pressedState ? "#b91c1c" : control.hoverState ? "#ef4444" : "#dc2626")
                 }
                 GradientStop {
                     position: 1.0
                     color: control.secondary
-                        ? (pressedState ? "#18181b" : hoverState ? "#18181b" : "#111114")
-                        : (pressedState ? "#991b1b" : hoverState ? "#dc2626" : "#b91c1c")
+                        ? (control.pressedState ? "#18181b" : control.hoverState ? "#18181b" : "#111114")
+                        : (control.pressedState ? "#991b1b" : control.hoverState ? "#dc2626" : "#b91c1c")
                 }
             }
             
@@ -2317,7 +2377,7 @@ ApplicationWindow {
                     GradientStop { position: 0.0; color: control.secondary ? "#30ffffff" : "#40ff7f8a" }
                     GradientStop { position: 1.0; color: "#00ffffff" }
                 }
-                visible: hoverState
+                visible: control.hoverState
             }
             
         }
@@ -2483,7 +2543,7 @@ ApplicationWindow {
             id: supportSurface
             anchors.fill: parent
             radius: 20
-            color: supportMouse.containsMouse && supportLink.interactive ? "#1a2332" : "#131923"
+            color: supportMouse.containsMouse && supportLink.interactive ? "#202028" : "#18181e"
             border.width: 1
             border.color: supportMouse.containsMouse && supportLink.interactive ? supportLink.accentColor : "#ffffff10"
             
@@ -2585,13 +2645,13 @@ ApplicationWindow {
                     position: 0.0
                     color: chip.active
                         ? (pressedState ? "#b91c1c" : hoverState ? "#dc2626" : "#991b1b")
-                        : (pressedState ? "#2d3a4f" : hoverState ? "#3d4d63" : "#252f3f")
+                        : (pressedState ? "#262630" : hoverState ? "#2c2c36" : "#202028")
                 }
                 GradientStop {
                     position: 1.0
                     color: chip.active
                         ? (pressedState ? "#991b1b" : hoverState ? "#b91c1c" : "#7f1d1d")
-                        : (pressedState ? "#252f3f" : hoverState ? "#2d3a4f" : "#1a2230")
+                        : (pressedState ? "#1e1e24" : hoverState ? "#24242c" : "#16161b")
                 }
             }
             
@@ -2846,7 +2906,7 @@ ApplicationWindow {
         Rectangle {
             anchors.fill: parent
             radius: 28
-            color: "#0a0e16"
+            color: "#121216"
             border.width: 1
             border.color: "#14ffffff"
         }
@@ -2956,7 +3016,7 @@ ApplicationWindow {
             anchors.top: parent.top
             height: posterCard.visualHeight
             radius: 24
-            color: "#0a0e16"
+            color: "#121216"
             border.width: 1
             border.color: posterMouse.containsMouse ? "#36ffffff" : "#18ffffff"
             layer.enabled: true
@@ -3120,7 +3180,7 @@ ApplicationWindow {
     Component {
         id: inlineVodPlayerComponent
         GlassCard {
-            color: "#090c13"
+            color: "#0c0c0e"
             implicitHeight: window.compactWindow ? 760 : 820
 
             ColumnLayout {
@@ -3529,7 +3589,7 @@ ApplicationWindow {
                     GlassCard {
                         Layout.preferredWidth: window.compactWindow ? 260 : 320
                         Layout.fillHeight: true
-                        color: "#090c13"
+                        color: "#0c0c0e"
 
                         Column {
                             anchors.fill: parent
@@ -4774,98 +4834,66 @@ ApplicationWindow {
                             ColumnLayout {
                                 anchors.fill: parent
                                 anchors.margins: videoFullscreen ? 0 : 24
-                                spacing: videoFullscreen ? 0 : 18
-                                Text {
-                                    text: "Canlı TV"
-                                    color: window.textPrimary
-                                    font.pixelSize: 42
-                                    font.family: "Space Grotesk"
-                                    font.bold: true
-                                    visible: !videoFullscreen
-                                }
+                                spacing: videoFullscreen ? 0 : 14
 
-                                Flickable {
+                                // Top Header & Controls Row
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: videoFullscreen ? 0 : 52
+                                    spacing: 16
                                     visible: !videoFullscreen
-                                    contentWidth: liveChipRow.width
-                                    clip: true
 
-                                    Row {
-                                        id: liveChipRow
-                                        spacing: 10
+                                    Text {
+                                        text: "Canlı TV"
+                                        color: window.textPrimary
+                                        font.pixelSize: 32
+                                        font.family: "Space Grotesk"
+                                        font.bold: true
+                                        Layout.alignment: Qt.AlignVCenter
+                                    }
 
-                                        ChipButton {
-                                            text: "Tüm Kanallar"
-                                            active: selectedLiveGroup === ""
-                                            width: Math.max(112, implicitContentWidth + 28)
-                                            onClicked: applyLiveFilters(liveSearchText, "__all__")
+                                    CountrySelector {
+                                        id: liveCountrySelector
+                                        Layout.alignment: Qt.AlignVCenter
+                                        countriesModel: liveCountryChips()
+                                        selectedCountryKey: currentSelectedLiveCountryKey()
+                                        selectedCountryFilter: currentSelectedLiveCountryFilter()
+                                        allChannelsCount: apiClient.liveTotal || 0
+                                        onCountrySelected: function(filter, label, key) {
+                                            applyLiveFilters(liveSearchText, filter)
                                         }
+                                    }
 
-                                        Repeater {
-                                            model: liveCountryChips()
-                                            ChipButton {
-                                                required property var modelData
-                                                text: modelData.count > 0 ? `${modelData.label} ${modelData.count}` : modelData.label
-                                                active: currentSelectedLiveCountryKey() === modelData.key
-                                                width: Math.max(96, implicitContentWidth + 28)
-                                                onClicked: applyLiveFilters(liveSearchText, modelData.filter)
-                                            }
-                                        }
-
-                                        Repeater {
-                                            model: liveGroupChips()
-                                            ChipButton {
-                                                required property var modelData
-                                                text: modelData.count > 0 ? `${modelData.title} ${modelData.count}` : modelData.title
-                                                active: selectedLiveGroup === modelData.title
-                                                width: Math.max(104, implicitContentWidth + 28)
-                                                onClicked: applyLiveFilters(liveSearchText, modelData.title)
-                                            }
+                                    LiveCategoryBar {
+                                        id: liveCategoryBar
+                                        Layout.fillWidth: true
+                                        Layout.alignment: Qt.AlignVCenter
+                                        model: liveSubgroupChips()
+                                        selectedGroup: selectedLiveGroup
+                                        currentCountryKey: currentSelectedLiveCountryKey()
+                                        currentCountryFilter: currentSelectedLiveCountryFilter()
+                                        onCategorySelected: function(categoryTitle) {
+                                            applyLiveFilters(liveSearchText, categoryTitle)
                                         }
                                     }
                                 }
 
-                                Flickable {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: !videoFullscreen && liveSubgroupChips().length > 0 ? 52 : 0
-                                    visible: !videoFullscreen && liveSubgroupChips().length > 0
-                                    contentWidth: liveSubgroupRow.width
-                                    clip: true
-
-                                    Row {
-                                        id: liveSubgroupRow
-                                        spacing: 10
-
-                                        Repeater {
-                                            model: liveSubgroupChips()
-                                            ChipButton {
-                                                required property var modelData
-                                                text: modelData.title
-                                                active: selectedLiveGroup === modelData.title
-                                                width: Math.max(120, implicitContentWidth + 28)
-                                                onClicked: applyLiveFilters(liveSearchText, modelData.title)
-                                            }
-                                        }
-                                    }
-                                }
-
+                                // Main Content Row: Player on Left, Channels on Right
                                 RowLayout {
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
-                                    spacing: videoFullscreen ? 0 : window.sectionSpacing
+                                    spacing: videoFullscreen ? 0 : 16
+
                                     GlassCard {
                                         Layout.fillWidth: true
-                                        Layout.minimumWidth: videoFullscreen ? 0 : (window.compactWindow ? 600 : 720)
-                                        Layout.preferredWidth: videoFullscreen ? 0 : (window.compactWindow ? 700 : 840)
+                                        Layout.minimumWidth: videoFullscreen ? 0 : (window.compactWindow ? 540 : 640)
                                         Layout.fillHeight: true
-                                        color: videoFullscreen ? "#000000" : "#090c13"
-                                        radius: videoFullscreen ? 0 : 8
+                                        color: videoFullscreen ? "#000000" : "#0c0c0e"
+                                        radius: videoFullscreen ? 0 : 12
 
                                         LiveTvPlayerShell {
                                             id: livePlayerShell
                                             anchors.fill: parent
-                                            channelData: selectedLiveItem()
+                                            channelData: activePlayingLiveItem()
                                             controller: livePlaybackController
                                             videoSurfaceComponent: liveVideoSurfaceComponent
                                             fullscreen: videoFullscreen
@@ -4873,421 +4901,29 @@ ApplicationWindow {
                                             filteredCount: filteredLiveItems().length
                                             onToggleFullscreenRequested: toggleVideoFullscreen()
                                         }
+                                    }
 
-                                        Rectangle {
-                                                visible: false
-                                                Layout.fillWidth: true
-                                                Layout.fillHeight: true
-                                                radius: videoFullscreen ? 0 : 8
-                                                color: "#000000"
-                                                border.width: videoFullscreen ? 0 : 1
-                                                border.color: "#14ffffff"
-                                                clip: true
-                                                
-                                                Item {
-                                                    id: liveVideoContainer
-                                                    anchors.fill: parent
-                                                    visible: inlineLivePlayerVisible()
-                                                    
-                                                    // 1. Video Surface
-                                                    Loader {
-                                                        anchors.left: parent.left
-                                                        anchors.right: parent.right
-                                                        anchors.top: parent.top
-                                                        anchors.bottom: parent.bottom
-                                                        active: false
-                                                        sourceComponent: liveVideoSurfaceComponent
-
-                                                        onLoaded: {
-                                                            if (item) {
-                                                                item.controller = livePlaybackController
-                                                                item.slotIndex = 0
-                                                                if (item.syncSurfaceBinding) {
-                                                                    item.syncSurfaceBinding()
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                    
-                                                    // 2. Player Controls Overlay
-                                                    Item {
-                                                        anchors.fill: parent
-                                                        visible: inlineLivePlayerVisible()
-                                                        z: 100
-                                                        
-                                                        // Modern Buffer/Loading State Indicator
-                                                        Rectangle {
-                                                            anchors.top: parent.top
-                                                            anchors.right: parent.right
-                                                            anchors.margins: 24
-                                                            width: liveNativeStateText2.implicitWidth + 48
-                                                            height: 44
-                                                            radius: 22
-                                                            color: "#cc0d121c"
-                                                            border.width: 1
-                                                            border.color: "#30ffffff"
-                                                            visible: livePlaybackController.state !== "playing"
-                                                            
-                                                            Row {
-                                                                anchors.centerIn: parent
-                                                                spacing: 10
-                                                                
-                                                                // Animated spinner
-                                                                Rectangle {
-                                                                    width: 18
-                                                                    height: 18
-                                                                    radius: 9
-                                                                    color: "transparent"
-                                                                    border.width: 2
-                                                                    border.color: "#e50914"
-                                                                    anchors.verticalCenter: parent.verticalCenter
-                                                                    
-                                                                    Rectangle {
-                                                                        width: 6
-                                                                        height: 6
-                                                                        radius: 3
-                                                                        color: "#e50914"
-                                                                        anchors.centerIn: parent
-                                                                    }
-                                                                    
-                                                                    RotationAnimation on rotation {
-                                                                        loops: Animation.Infinite
-                                                                        from: 0
-                                                                        to: 360
-                                                                        duration: 1000
-                                                                    }
-                                                                }
-                                                                
-                                                                Text {
-                                                                    id: liveNativeStateText2
-                                                                    anchors.verticalCenter: parent.verticalCenter
-                                                                    text: livePlaybackController.state === "buffering" ? "Buffer dolduruluyor" :
-                                                                          livePlaybackController.state === "resolving" || livePlaybackController.state === "opening" ? "Kaynak hazırlanıyor" :
-                                                                          livePlaybackController.state === "error" ? "Yayın açılamadı" : "Bağlanıyor"
-                                                                    color: window.textPrimary
-                                                                    font.pixelSize: 14
-                                                                    font.bold: true
-                                                                }
-                                                            }
-                                                        }
-                                                        
-                                                    }
-
-                                                }
-                                                
-                                                Rectangle {
-                                                    anchors.horizontalCenter: parent.horizontalCenter
-                                                    anchors.bottom: parent.bottom
-                                                    anchors.bottomMargin: 140
-                                                    width: Math.min(parent.width - 72, liveNativeWarningLabel.implicitWidth + 32)
-                                                    height: liveNativeWarningLabel.implicitHeight + 16
-                                                    radius: 16
-                                                    color: "#cc151a22"
-                                                    border.width: 1
-                                                    border.color: "#307cb6ff"
-                                                    visible: livePlaybackController.lastError.length > 0 &&
-                                                             livePlaybackController.state !== "error" &&
-                                                             livePlaybackController.activeContentKind === "live" &&
-                                                             inlineLivePlayerVisible()
-                                                    z: 10
-
-                                                    Text {
-                                                        id: liveNativeWarningLabel
-                                                        anchors.centerIn: parent
-                                                        width: parent.width - 22
-                                                        wrapMode: Text.WordWrap
-                                                        horizontalAlignment: Text.AlignHCenter
-                                                        text: livePlaybackController.lastError
-                                                        color: "#d5e6ff"
-                                                        font.pixelSize: 12
-                                                    }
-                                                }
-
-                                                // Error Display (terminal)
-                                                Rectangle {
-                                                    anchors.horizontalCenter: parent.horizontalCenter
-                                                    anchors.bottom: parent.bottom
-                                                    anchors.bottomMargin: 140
-                                                    width: Math.min(parent.width - 36, liveNativeErrorLabel.implicitWidth + 36)
-                                                    height: liveNativeErrorLabel.implicitHeight + 22
-                                                    radius: 20
-                                                    color: "#cc20070b"
-                                                    border.width: 1
-                                                    border.color: "#28ff7d86"
-                                                    visible: livePlaybackController.lastError.length > 0 &&
-                                                             livePlaybackController.state === "error" &&
-                                                             livePlaybackController.activeContentKind === "live" &&
-                                                             inlineLivePlayerVisible()
-                                                    z: 10
-
-                                                    Text {
-                                                        id: liveNativeErrorLabel
-                                                        anchors.centerIn: parent
-                                                        width: parent.width - 26
-                                                        wrapMode: Text.WordWrap
-                                                        horizontalAlignment: Text.AlignHCenter
-                                                        text: livePlaybackController.lastError
-                                                        color: "#ffd5da"
-                                                        font.pixelSize: 13
-                                                    }
-                                                }
-
-                                                Column {
-                                                    anchors.centerIn: parent
-                                                    width: Math.min(parent.width * 0.6, 420)
-                                                    spacing: 12
-                                                    visible: !inlineLivePlayerVisible() && filteredLiveItems().length === 0
-
-                                                    Text {
-                                                        width: parent.width
-                                                        horizontalAlignment: Text.AlignHCenter
-                                                text: "Filtreye uyan kanal bulunamadı"
-                                                        color: window.textPrimary
-                                                        font.pixelSize: 28
-                                                        font.family: "Space Grotesk"
-                                                        font.bold: true
-                                                        wrapMode: Text.WordWrap
-                                                    }
-
-                                                    Text {
-                                                        width: parent.width
-                                                        horizontalAlignment: Text.AlignHCenter
-                                                    text: "Aramayı temizleyin veya başka bir kategori seçin."
-                                                        color: window.textMuted
-                                                        font.pixelSize: 14
-                                                        wrapMode: Text.WordWrap
-                                                    }
-                                                }
-
-                                                Item {
-                                                    anchors.fill: parent
-                                                    visible: !inlineLivePlayerVisible() && filteredLiveItems().length > 0 && selectedLiveItem() !== null && selectedLiveItem().playbackAllowed === false
-
-                                                    Column {
-                                                        anchors.centerIn: parent
-                                                        width: Math.min(parent.width * 0.62, 460)
-                                                        spacing: 12
-
-                                                        Text {
-                                                            width: parent.width
-                                                            horizontalAlignment: Text.AlignHCenter
-                                                            text: "Bu kanalı açmak için aktif paket gerekiyor"
-                                                            color: window.textPrimary
-                                                            font.pixelSize: 30
-                                                            font.family: "Space Grotesk"
-                                                            font.bold: true
-                                                            wrapMode: Text.WordWrap
-                                                        }
-
-                                                        Text {
-                                                            width: parent.width
-                                                            horizontalAlignment: Text.AlignHCenter
-                                                            text: "Sağ listeden başka kanal seçin ya da paket durumunuzu güncelleyin."
-                                                            color: window.textMuted
-                                                            font.pixelSize: 14
-                                                            wrapMode: Text.WordWrap
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                        }
-                                    GlassCard {
-                                        Layout.preferredWidth: videoFullscreen ? 0 : (window.compactWindow ? 500 : 600)
-                                        Layout.minimumWidth: videoFullscreen ? 0 : (window.compactWindow ? 470 : 560)
+                                    LiveChannelListPanel {
+                                        id: liveChannelListPanel
+                                        Layout.preferredWidth: videoFullscreen ? 0 : (window.compactWindow ? 380 : 420)
+                                        Layout.minimumWidth: videoFullscreen ? 0 : 360
                                         Layout.fillHeight: true
-                                        color: "#0a0f18"
                                         visible: !videoFullscreen
-
-                                        ColumnLayout {
-                                            anchors.fill: parent
-                                            anchors.margins: 18
-                                            spacing: 14
-
-                                            RowLayout {
-                                                Layout.fillWidth: true
-                                                spacing: 10
-
-                                                AppField {
-                                                    Layout.fillWidth: true
-                                                    placeholderText: "Kanal ara..."
-                                                    text: liveSearchText
-                                                    onTextChanged: {
-                                                        liveSearchText = text
-                                                        liveFilterDebounceTimer.restart()
-                                                    }
-                                                    onAccepted: {
-                                                        liveFilterDebounceTimer.stop()
-                                                        applyLiveFilters(text, selectedLiveGroup)
-                                                    }
-                                                }
-
-                                                AppButton {
-                                                    text: "Ara"
-                                                    secondary: true
-                                                    implicitWidth: 86
-                                                    onClicked: {
-                                                        liveFilterDebounceTimer.stop()
-                                                        applyLiveFilters(liveSearchText, selectedLiveGroup)
-                                                    }
-                                                }
-
-                                                AppButton {
-                                                    visible: liveSearchText.length > 0
-                                                    enabled: visible
-                                                    text: "Temizle"
-                                                    secondary: true
-                                                    implicitWidth: 108
-                                                    onClicked: {
-                                                        liveFilterDebounceTimer.stop()
-                                                        applyLiveFilters("", selectedLiveGroup)
-                                                    }
-                                                }
-                                            }
-
-                                            RowLayout {
-                                                Layout.fillWidth: true
-
-                                                Text {
-                                                    text: "Kanallar"
-                                                    color: window.textPrimary
-                                                    font.pixelSize: 22
-                                                    font.family: "Space Grotesk"
-                                                    font.bold: true
-                                                }
-
-                                                Item { Layout.fillWidth: true }
-
-                                                Text {
-                                                    text: apiClient.liveLoadingMore
-                                                        ? "Daha fazla yükleniyor"
-                                                        : (filteredLiveItems().length ? `${filteredLiveItems().length} kanal` : "Bos")
-                                                    color: window.textMuted
-                                                    font.pixelSize: 13
-                                                }
-                                            }
-
-                                            ListView {
-                                                id: liveChannelListView
-                                                Layout.fillWidth: true
-                                                Layout.fillHeight: true
-                                                clip: true
-                                                spacing: 12
-                                                cacheBuffer: 960
-                                                boundsBehavior: Flickable.StopAtBounds
-                                                model: filteredLiveItems()
-
-                                                function requestMoreIfNeeded() {
-                                                    if (!apiClient.liveHasMore || apiClient.liveLoadingMore) {
-                                                        return
-                                                    }
-                                                    if (contentHeight <= height + 8 || contentY + height >= contentHeight - 320) {
-                                                        apiClient.loadMoreLive()
-                                                    }
-                                                }
-
-                                                onContentYChanged: requestMoreIfNeeded()
-                                                onContentHeightChanged: requestMoreIfNeeded()
-                                                onHeightChanged: requestMoreIfNeeded()
-                                                Component.onCompleted: requestMoreIfNeeded()
-
-                                                delegate: Rectangle {
-                                                    required property var modelData
-                                                    width: ListView.view.width
-                                                    height: 88
-                                                    radius: 22
-                                                    color: selectedLiveId === modelData.id ? "#e50914" : "#131923"
-                                                    border.width: 1
-                                                    border.color: selectedLiveId === modelData.id ? "#ff5d74" : "#2a3140"
-
-                                                    Row {
-                                                        anchors.fill: parent
-                                                        anchors.margins: 14
-                                                        spacing: 14
-
-                                                        Text {
-                                                            anchors.verticalCenter: parent.verticalCenter
-                                                            text: index + 1
-                                                            color: selectedLiveId === modelData.id ? "#ffffff" : "#9eabba"
-                                                            font.pixelSize: 15
-                                                            font.bold: true
-                                                        }
-
-                                                        Rectangle {
-                                                            width: 54
-                                                            height: 54
-                                                            radius: 18
-                                                            color: "#14ffffff"
-                                                            anchors.verticalCenter: parent.verticalCenter
-
-                                                            ArtworkPanel {
-                                                                anchors.fill: parent
-                                                                title: modelData.title || ""
-                                                                subtitle: modelData.groupTitle || "Canlı TV"
-                                                                sourceUrl: modelData.logoUrl || ""
-                                                                kind: "live"
-                                                                mode: "logo"
-                                                                compact: true
-                                                                cornerRadius: 18
-                                                            }
-                                                        }
-
-                                                        Column {
-                                                            anchors.verticalCenter: parent.verticalCenter
-                                                            width: parent.width - 120
-                                                            spacing: 4
-
-                                                            Text {
-                                                                text: modelData.title
-                                                                width: parent.width
-                                                                elide: Text.ElideRight
-                                                                color: "#ffffff"
-                                                                font.pixelSize: 18
-                                                                font.bold: true
-                                                            }
-
-                                                            Text {
-                                                                text: modelData.groupTitle || "Canlı TV"
-                                                                width: parent.width
-                                                                elide: Text.ElideRight
-                                                                color: selectedLiveId === modelData.id ? "#ffe8eb" : window.textMuted
-                                                                font.pixelSize: 13
-                                                            }
-                                                        }
-                                                    }
-
-                                                    MouseArea {
-                                                        anchors.fill: parent
-                                                        onClicked: playLive(modelData)
-                                                    }
-                                                }
-
-                                                footer: Item {
-                                                    width: liveChannelListView.width
-                                                    height: apiClient.liveHasMore || apiClient.liveLoadingMore ? 58 : 12
-
-                                                    Rectangle {
-                                                        anchors.horizontalCenter: parent.horizontalCenter
-                                                        anchors.verticalCenter: parent.verticalCenter
-                                                        width: liveLoadingLabel.implicitWidth + 24
-                                                        height: 34
-                                                        radius: 17
-                                                        color: "#10ffffff"
-                                                        border.width: 1
-                                                        border.color: "#18ffffff"
-                                                        visible: apiClient.liveHasMore || apiClient.liveLoadingMore
-
-                                                        Text {
-                                                            id: liveLoadingLabel
-                                                            anchors.centerIn: parent
-                                                            text: apiClient.liveLoadingMore ? "Kanallar yükleniyor" : "Daha fazla kanal için kaydırın"
-                                                            color: window.textMuted
-                                                            font.pixelSize: 12
-                                                            font.bold: true
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                        model: filteredLiveItems()
+                                        activeChannelId: livePlaybackController ? livePlaybackController.activeChannelId : ""
+                                        selectedChannelId: selectedLiveId
+                                        isLoadingMore: apiClient.liveLoadingMore
+                                        hasMore: apiClient.liveHasMore
+                                        initialSearchText: liveSearchText
+                                        onChannelSelected: function(channel) {
+                                            playLive(channel)
+                                        }
+                                        onSearchChanged: function(search) {
+                                            liveSearchText = search
+                                            liveFilterDebounceTimer.restart()
+                                        }
+                                        onLoadMoreRequested: function() {
+                                            apiClient.loadMoreLive()
                                         }
                                     }
                                 }
@@ -5296,6 +4932,7 @@ ApplicationWindow {
 
                         MoviesPage {
                             id: moviesPage
+                            artworkSourceFn: window.artworkSource
                             movieItems: filteredMovies()
                             movieGroups: movieGroupOptions()
                             movieTotal: apiClient.movieTotal
@@ -5357,7 +4994,7 @@ ApplicationWindow {
                                     width: parent.width
                                     height: window.compactWindow ? 430 : 360
                                     radius: 32
-                                    color: "#090c13"
+                                    color: "#0c0c0e"
                                     clip: true
                                     visible: spotlightSeries !== null
 
@@ -5529,7 +5166,7 @@ ApplicationWindow {
                                     width: parent.width
                                     height: 76
                                     radius: 24
-                                    color: "#090c13"
+                                    color: "#0c0c0e"
 
                                     Flow {
                                         anchors.fill: parent
@@ -5622,7 +5259,7 @@ ApplicationWindow {
                                     width: parent.width
                                     height: 180
                                     visible: filteredSeries().length === 0
-                                    color: "#090c13"
+                                    color: "#0c0c0e"
 
                                     Column {
                                         anchors.centerIn: parent
@@ -5649,6 +5286,7 @@ ApplicationWindow {
                             SeriesCatalogPage {
                                 anchors.fill: parent
                                 z: 100
+                                artworkSourceFn: window.artworkSource
                                 seriesItems: filteredSeries()
                                 seriesGroups: [""].concat(uniqueGroups(apiClient.series || []))
                                 seriesTotal: (apiClient.series || []).length
@@ -5656,8 +5294,8 @@ ApplicationWindow {
                                 selectedGroup: selectedSeriesGroup
                                 searchText: seriesSearchText
                                 compactWindow: window.compactWindow
-                                panelColor: "#090c13"
-                                surfaceColor: "#131923"
+                                panelColor: window.panelStrong
+                                surfaceColor: window.panelSoft
                                 textPrimary: window.textPrimary
                                 textMuted: window.textMuted
                                 accentColor: window.accent
@@ -5724,7 +5362,7 @@ ApplicationWindow {
                                     width: parent.width
                                     height: window.compactWindow ? 430 : 340
                                     radius: 32
-                                    color: "#090c13"
+                                    color: "#0c0c0e"
                                     clip: true
                                     visible: activeSeries !== null
 
@@ -5846,7 +5484,7 @@ ApplicationWindow {
                                     width: parent.width
                                     height: 82
                                     radius: 24
-                                    color: "#090c13"
+                                    color: "#0c0c0e"
                                     visible: playbackController.lastError.length > 0 && currentScreen === "series-detail"
 
                                     Row {
@@ -5897,9 +5535,9 @@ ApplicationWindow {
                                 Flow {
                                     visible: false
                                     width: parent.width; spacing: window.cardGap
-                                    GlassCard { width: window.compactWindow ? parent.width : 320; height: window.compactWindow ? 380 : 460; color: "#090c13"; ArtworkPanel { anchors.fill: parent; title: selectedSeries() ? selectedSeries().title : "Dizi"; subtitle: selectedSeries() ? (selectedSeries().groupTitle || "Premium Dizi") : "Premium Dizi"; sourceUrl: selectedSeries() ? (selectedSeries().posterUrl || "") : ""; kind: "episode"; mode: "poster"; cornerRadius: 28 } }
+                                    GlassCard { width: window.compactWindow ? parent.width : 320; height: window.compactWindow ? 380 : 460; color: "#0c0c0e"; ArtworkPanel { anchors.fill: parent; title: selectedSeries() ? selectedSeries().title : "Dizi"; subtitle: selectedSeries() ? (selectedSeries().groupTitle || "Premium Dizi") : "Premium Dizi"; sourceUrl: selectedSeries() ? (selectedSeries().posterUrl || "") : ""; kind: "episode"; mode: "poster"; cornerRadius: 28 } }
                                     GlassCard {
-                                        width: window.compactWindow ? parent.width : parent.width - (320 + window.cardGap); height: window.compactWindow ? 320 : 460; color: "#090c13"
+                                        width: window.compactWindow ? parent.width : parent.width - (320 + window.cardGap); height: window.compactWindow ? 320 : 460; color: "#0c0c0e"
                                         Column {
                                             anchors.fill: parent; anchors.margins: window.compactWindow ? 22 : 28; spacing: 14
                                             Text { text: selectedSeries() ? selectedSeries().title : "Dizi seçin"; color: window.textPrimary; font.pixelSize: window.compactWindow ? 34 : 46; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap }
@@ -5912,7 +5550,7 @@ ApplicationWindow {
                                 Repeater {
                                     model: activeSeries && activeSeries.seasons ? activeSeries.seasons : []
                                     GlassCard {
-                                        width: parent.width; height: seasonContent.implicitHeight + 34; color: "#090c13"
+                                        width: parent.width; height: seasonContent.implicitHeight + 34; color: "#0c0c0e"
                                         Column {
                                             id: seasonContent
                                             anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 18; spacing: 14
@@ -5920,7 +5558,7 @@ ApplicationWindow {
                                             Repeater {
                                                 model: modelData.episodes || []
                                                 Rectangle {
-                                                    width: seasonContent.width; height: 80; radius: 20; color: "#131923"; border.width: 1; border.color: "#2a3140"
+                                                    width: seasonContent.width; height: 80; radius: 20; color: window.panelSoft; border.width: 1; border.color: window.borderSoft
                                                     Row {
                                                         anchors.fill: parent; anchors.margins: 16; spacing: 18
                                                         Text { anchors.verticalCenter: parent.verticalCenter; text: `B${modelData.episodeNumber}`; color: "#a6ffffff"; font.pixelSize: 14; font.bold: true }
@@ -5982,7 +5620,7 @@ ApplicationWindow {
                                             { title: "İletişim", copy: "Destek ekibine WhatsApp veya Telegram üzerinden ulaşın.", action: "İletişime Geç", screen: "contact" }
                                         ]
                                         GlassCard {
-                                            width: window.compactWindow ? parent.width : window.gridCardWidth(parent.width, 280, 2); height: 210; color: "#090c13"
+                                            width: window.compactWindow ? parent.width : window.gridCardWidth(parent.width, 280, 2); height: 210; color: "#0c0c0e"
                                             Column { anchors.fill: parent; anchors.margins: 22; spacing: 12; Text { text: modelData.title; color: window.textPrimary; font.pixelSize: 26; font.family: "Space Grotesk"; font.bold: true; width: parent.width; wrapMode: Text.WordWrap } Text { text: modelData.copy; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 14 } AppButton { text: modelData.action; secondary: modelData.screen !== "packages"; implicitWidth: 160; onClicked: openScreen(modelData.screen) } }
                                         }
                                     }
@@ -6020,6 +5658,73 @@ ApplicationWindow {
                                     }
                                 }
 
+                                GlassCard {
+                                    visible: hasLoadedUser() && !userData().hasActiveSubscription && userHasUsedTrial()
+                                    width: parent.width
+                                    height: expiredNoticeContent.implicitHeight + 28
+                                    color: "#1a1215"
+                                    border.color: "#55e50914"
+
+                                    Row {
+                                        id: expiredNoticeContent
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.margins: 16
+                                        spacing: 16
+
+                                        Rectangle {
+                                            width: 42; height: 42; radius: 21
+                                            color: "#33e50914"
+                                            border.color: "#55e50914"
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: "!"
+                                                color: "#ffd7da"
+                                                font.pixelSize: 20
+                                                font.bold: true
+                                                font.family: "Space Grotesk"
+                                            }
+                                        }
+
+                                        Column {
+                                            width: parent.width - 42 - 16 - 220 - 32
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            spacing: 4
+
+                                            Text {
+                                                text: "Test Süreniz Sona Erdi"
+                                                color: "#ffffff"
+                                                font.pixelSize: 17
+                                                font.bold: true
+                                                font.family: "Space Grotesk"
+                                            }
+                                            Text {
+                                                width: parent.width
+                                                text: "Yayınlara ve tüm içeriklere kesintisiz devam etmek için aşağıdaki paketlerden dilediğinizi seçebilir veya WhatsApp destek hattımızdan anında yardım alabilirsiniz."
+                                                color: window.textSecondary
+                                                font.pixelSize: 13
+                                                wrapMode: Text.WordWrap
+                                            }
+                                        }
+
+                                        AppButton {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: "WhatsApp ile İletişime Geç"
+                                            implicitWidth: 220
+                                            implicitHeight: 44
+                                            onClicked: {
+                                                if (contactData().whatsapp) {
+                                                    Qt.openUrlExternally(contactData().whatsapp)
+                                                } else {
+                                                    openScreen("contact")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 Flow {
                                     width: parent.width
                                     spacing: 18
@@ -6032,7 +5737,7 @@ ApplicationWindow {
                                                    ? window.gridCardWidth(parent.width, 280, 2)
                                                    : Math.floor((parent.width - 54) / 4)
                                             height: 392
-                                            color: packageRecommended(modelData) ? "#0b1019" : "#090c13"
+                                            color: packageRecommended(modelData) ? "#121216" : "#0c0c0e"
                                             border.color: packageRecommended(modelData) ? "#44ff4b56" : "#18ffffff"
 
                                             Rectangle {
@@ -6163,7 +5868,7 @@ ApplicationWindow {
                                 Row { spacing: 12; BackIconButton { onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "Ödeme Bildirimi"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
                                 Repeater {
                                     model: apiClient.paymentRequests
-                                    GlassCard { width: parent.width; height: 104; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 6; Text { text: modelData.packageTitle; color: window.textPrimary; font.pixelSize: 22; font.family: "Space Grotesk"; font.bold: true } Text { text: modelData.status; color: window.textMuted; font.pixelSize: 14 } Text { text: modelData.createdAt; color: "#8e98aa"; font.pixelSize: 13 } } }
+                                    GlassCard { width: parent.width; height: 104; color: "#0c0c0e"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 6; Text { text: modelData.packageTitle; color: window.textPrimary; font.pixelSize: 22; font.family: "Space Grotesk"; font.bold: true } Text { text: modelData.status; color: window.textMuted; font.pixelSize: 14 } Text { text: modelData.createdAt; color: "#8e98aa"; font.pixelSize: 13 } } }
                                 }
                             }
                         }
@@ -6186,7 +5891,7 @@ ApplicationWindow {
                                             { label: "Link Durumu", value: userData().hasAssignedLink ? "Bagli" : "Admin atamasi bekleniyor" },
                                             { label: "Abonelik", value: subscriptionLabel() }
                                         ]
-                                        GlassCard { width: window.compactWindow ? parent.width : window.gridCardWidth(parent.width, 280, 2); height: 126; color: "#090c13"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 8; Text { text: modelData.label; color: window.textMuted; font.pixelSize: 13 } Text { text: modelData.value; width: parent.width; wrapMode: Text.WordWrap; color: window.textPrimary; font.pixelSize: 22; font.family: "Space Grotesk"; font.bold: true } } }
+                                        GlassCard { width: window.compactWindow ? parent.width : window.gridCardWidth(parent.width, 280, 2); height: 126; color: "#0c0c0e"; Column { anchors.fill: parent; anchors.margins: 18; spacing: 8; Text { text: modelData.label; color: window.textMuted; font.pixelSize: 13 } Text { text: modelData.value; width: parent.width; wrapMode: Text.WordWrap; color: window.textPrimary; font.pixelSize: 22; font.family: "Space Grotesk"; font.bold: true } } }
                                     }
                                 }
                                 Row { spacing: 12; AppButton { text: "Paketler"; implicitWidth: 128; onClicked: openScreen("packages") } AppButton { text: "Ödemeler"; secondary: true; implicitWidth: 128; onClicked: openScreen("payments") } AppButton { text: "İletişim"; secondary: true; implicitWidth: 128; onClicked: openScreen("contact") } }
@@ -6203,7 +5908,7 @@ ApplicationWindow {
                                 spacing: window.sectionSpacing
                                 Row { spacing: 12; BackIconButton { onClicked: openScreen("profile") } Text { anchors.verticalCenter: parent.verticalCenter; text: "İletişim"; color: window.textPrimary; font.pixelSize: 42; font.family: "Space Grotesk"; font.bold: true } }
                                 GlassCard {
-                                    width: parent.width; height: 200; color: "#090c13"
+                                    width: parent.width; height: 200; color: "#0c0c0e"
                                     Column {
                                         anchors.fill: parent; anchors.margins: 24; spacing: 12
                                         Text { text: "Destek ekibine hızlı ulaşın"; color: window.textPrimary; font.pixelSize: 32; font.family: "Space Grotesk"; font.bold: true }
@@ -6259,8 +5964,8 @@ ApplicationWindow {
                             radius: 23
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            color: "#131923"
-                            border.color: "#2a3140"
+                            color: window.panelSoft
+                            border.color: window.borderSoft
                             Canvas {
                                 anchors.centerIn: parent
                                 width: 18
@@ -6303,8 +6008,8 @@ ApplicationWindow {
                             GlassCard {
                                 width: window.gridCardWidth(parent.width, 300, 2)
                                 height: 108
-                                color: selectedPaymentMethodId === modelData.id ? "#1be50914" : "#131923"
-                                border.color: selectedPaymentMethodId === modelData.id ? "#b91c1c" : "#2a3140"
+                                color: selectedPaymentMethodId === modelData.id ? "#1be50914" : window.panelSoft
+                                border.color: selectedPaymentMethodId === modelData.id ? window.accent : window.borderSoft
                                 Column {
                                     anchors.fill: parent
                                     anchors.margins: 18
@@ -6524,23 +6229,70 @@ ApplicationWindow {
                 Column {
                     id: premiumContent
                     anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 22; spacing: 16
-                    Row { width: parent.width; Rectangle { width: 112; height: 34; radius: 17; color: "#33e50914"; Text { anchors.centerIn: parent; text: "Premium Erişim"; color: "#ffd7da"; font.pixelSize: 12; font.bold: true } } }
-                    Text { text: "Tüm içeriklere erişmek için aktif bir paket satın alın"; color: window.textPrimary; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 34; font.family: "Space Grotesk"; font.bold: true }
-                    Text { text: "Giriş başarılı. Paketiniz aktif olunca katalogların tamamı açılacak."; width: parent.width; wrapMode: Text.WordWrap; color: window.textMuted; font.pixelSize: 15 }
+                    Row {
+                        width: parent.width
+                        Rectangle {
+                            width: userHasUsedTrial() ? 136 : 112
+                            height: 34
+                            radius: 17
+                            color: "#33e50914"
+                            Text {
+                                anchors.centerIn: parent
+                                text: userHasUsedTrial() ? "Test Süreniz Doldu" : "Premium Erişim"
+                                color: "#ffd7da"
+                                font.pixelSize: 12
+                                font.bold: true
+                            }
+                        }
+                    }
+                    Text {
+                        text: userHasUsedTrial()
+                            ? "İzlemeye devam etmek için bir paket satın alın"
+                            : "Tüm içeriklere erişmek için aktif bir paket satın alın"
+                        color: window.textPrimary
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 34
+                        font.family: "Space Grotesk"
+                        font.bold: true
+                    }
+                    Text {
+                        text: userHasUsedTrial()
+                            ? "24 saatlik test süreniz tamamlandı. Tüm canlı yayınlara, filmlere ve dizilere kesintisiz erişmek için paket satın alabilir veya WhatsApp üzerinden hemen destek alabilirsiniz."
+                            : "Giriş başarılı. Paketiniz aktif olunca katalogların tamamı açılacak."
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        color: window.textMuted
+                        font.pixelSize: 15
+                    }
                     Row {
                         spacing: 12
                         AppButton {
+                            visible: !userHasUsedTrial()
                             text: "Test Yapmak İstiyorum"
                             implicitWidth: 190
                             onClicked: apiClient.requestTrial(platformTrialRequestNote())
                         }
                         AppButton {
+                            visible: userHasUsedTrial()
+                            text: "Paket Satın Al"
+                            implicitWidth: 190
+                            onClicked: openScreen("packages")
+                        }
+                        AppButton {
                             text: "WhatsApp ile İletişime Geç"
                             secondary: true
                             implicitWidth: 220
-                            onClicked: openScreen("contact")
+                            onClicked: {
+                                if (contactData().whatsapp) {
+                                    Qt.openUrlExternally(contactData().whatsapp)
+                                } else {
+                                    openScreen("contact")
+                                }
+                            }
                         }
                         AppButton {
+                            visible: !userHasUsedTrial()
                             text: "Paket Satın Al"
                             secondary: true
                             implicitWidth: 170

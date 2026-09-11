@@ -1,9 +1,9 @@
 {
   "platforms": {
     "windows-native-qt": {
-      "latestVersion": "2.3.43",
-      "downloadUrl": "https://flixify.vip/downloads/Flixify-Pro-Setup-2.3.43-x64.exe",
-      "notes": "Yeni sinematik koyu tema, gelişmiş sunucu yapılandırması ve performans iyileştirmeleri."
+      "latestVersion": "2.3.54",
+      "downloadUrl": "https://flixify.vip/downloads/Flixify-Pro-Setup-2.3.54-x64.exe",
+      "notes": "Test suresi dolan kullanicilar icin otomatik paketlere ve WhatsApp iletisimine yonlendirme akisi eklendi."
     },
     "macos-native-qt": {
       "latestVersion": "2.2.58",
