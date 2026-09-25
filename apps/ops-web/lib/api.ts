@@ -29,7 +29,43 @@ if (process.env.NODE_ENV === "production" && !resolvedApiBaseUrl) {
 export const API_BASE_URL = resolvedApiBaseUrl as string;
 
 export const isDemoMode = (process.env.NEXT_PUBLIC_APP_DEMO_MODE ?? "false") === "true";
+let refreshInFlight: Promise<string | null> | null = null;
+async function refreshPublicSession(): Promise<string | null> {
+  if (typeof window === "undefined") return null;
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    const raw = localStorage.getItem("flixify-public-session");
+    const session = raw ? JSON.parse(raw) : null;
+    if (!session?.refreshToken) return null;
+    const response = await fetch(`${API_BASE_URL}/auth/refresh`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ refreshToken: session.refreshToken }), signal: AbortSignal.timeout(15000) });
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem("flixify-public-session");
+        window.dispatchEvent(new Event("flixify-session"));
+      }
+      return null;
+    }
+    const next = { ...session, ...await response.json() };
+    if (localStorage.getItem("flixify-public-session") !== raw) return null;
+    localStorage.setItem("flixify-public-session", JSON.stringify(next));
+    window.dispatchEvent(new Event("flixify-session"));
+    return next.accessToken as string;
+  })().catch(() => null).finally(() => { refreshInFlight = null; });
+  return refreshInFlight;
+}
 const ADMIN_COOKIE_NAME = "flixify-admin-token";
+
+async function waitForRefresh(signal?: AbortSignal) {
+  if (!signal) return refreshPublicSession();
+  signal.throwIfAborted();
+  let abort: () => void = () => {};
+  const cancelled = new Promise<never>((_, reject) => {
+    abort = () => reject(signal.reason ?? new Error("Request aborted"));
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try { return await Promise.race([refreshPublicSession(), cancelled]); }
+  finally { signal.removeEventListener("abort", abort); }
+}
 
 function readCookie(name: string) {
   if (typeof document === "undefined") {
@@ -137,11 +173,15 @@ export async function apiRequest<T>(
     body?: unknown;
     useAdminToken?: boolean;
     accessToken?: string;
+    refreshed?: boolean;
+    skipAuthRefresh?: boolean;
+    signal?: AbortSignal;
   } = {}
 ) {
   const token = options.accessToken ?? (options.useAdminToken ? getAdminToken() : getUserToken());
   const hasBody = options.body !== undefined;
   const headers: Record<string, string> = {
+    "x-flixify-client-runtime": "browser",
     ...(token ? { authorization: `Bearer ${token}` } : {})
   };
 
@@ -153,10 +193,16 @@ export async function apiRequest<T>(
     method: options.method ?? "GET",
     headers,
     body: hasBody ? JSON.stringify(options.body) : undefined,
-    cache: "no-store"
+    cache: "no-store",
+    signal: options.signal
   });
 
   const responseText = await response.text();
+
+  if (response.status === 401 && token && !options.useAdminToken && !options.refreshed && !options.skipAuthRefresh && !path.startsWith("/auth/")) {
+    const refreshedToken = await waitForRefresh(options.signal);
+    if (refreshedToken) return apiRequest<T>(path, { ...options, accessToken: refreshedToken, refreshed: true });
+  }
 
   if (!response.ok) {
     if (options.useAdminToken && response.status === 401) {

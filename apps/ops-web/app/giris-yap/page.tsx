@@ -3,8 +3,9 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../../lib/api";
+import type { AccountUser } from "../../lib/account-model";
 
 type LoginResponse = {
   accessToken: string;
@@ -14,12 +15,7 @@ type LoginResponse = {
     status: "new" | "active" | "blocked";
     hasAssignedLink: boolean;
     hasActiveSubscription: boolean;
-    hasUsedTrial?: boolean;
-    hasExpiredSubscription?: boolean;
-    popup?: {
-      required: boolean;
-      actions: string[];
-    } | null;
+    accessHistory?: AccountUser["accessHistory"];
     activePackage: {
       title: string;
       remainingDays: number;
@@ -34,6 +30,12 @@ type PublicSettingsResponse = {
 const storageKey = "flixify-public-session";
 const authPrefillCodeKey = "flixify-auth-prefill-code";
 const installationIdStorageKey = "flixify-installation-id";
+function storedSession(): LoginResponse | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(storageKey) ?? "null");
+    return typeof value?.accessToken === "string" && value?.user ? value : null;
+  } catch { return null; }
+}
 const fallbackWhatsappUrl =
   process.env.NEXT_PUBLIC_SUPPORT_WHATSAPP ??
   process.env.PUBLIC_SUPPORT_WHATSAPP ??
@@ -135,6 +137,9 @@ export default function LoginPage() {
   const [session, setSession] = useState<LoginResponse | null>(null);
   const [premiumDismissed, setPremiumDismissed] = useState(false);
   const [trialLoading, setTrialLoading] = useState(false);
+  const [canRequestTrial, setCanRequestTrial] = useState(false);
+  const [statusVerified, setStatusVerified] = useState(false);
+  const sessionEpoch = useRef(0);
   const [trialMessage, setTrialMessage] = useState<string | null>(null);
   const [whatsappUrl, setWhatsappUrl] = useState(fallbackWhatsappUrl);
 
@@ -160,37 +165,66 @@ export default function LoginPage() {
       return;
     }
 
-    try {
-      const existingRaw = window.localStorage.getItem(storageKey);
-      if (existingRaw) {
-        const parsed = JSON.parse(existingRaw) as LoginResponse;
-        if (parsed?.user?.hasActiveSubscription) {
-          router.replace("/ayarlar");
-          return;
-        }
-      }
-    } catch {}
+    let lastStored: string | null | undefined;
+    const sync = () => {
+      let raw: string | null = null;
+      try { raw = localStorage.getItem(storageKey); } catch { /* Remain signed out. */ }
+      if (lastStored === raw) return;
+      lastStored = raw;
+      sessionEpoch.current++;
+      setCanRequestTrial(false); setStatusVerified(false); setTrialLoading(false); setTrialMessage(null);
+      setSession(storedSession());
+    };
+    sync();
+    const onStorage = (event: StorageEvent) => { if (event.key === storageKey || event.key === null) sync(); };
+    const onVisible = () => { if (document.visibilityState === "visible") sync(); };
+    window.addEventListener("storage", onStorage); window.addEventListener("flixify-session", sync);
+    window.addEventListener("pageshow", sync); window.addEventListener("focus", sync); document.addEventListener("visibilitychange", onVisible);
 
     const prefill = normalizeCode(window.sessionStorage.getItem(authPrefillCodeKey) ?? "");
     window.sessionStorage.removeItem(authPrefillCodeKey);
     if (prefill) {
       setCode(prefill);
     }
+    return () => {
+      sessionEpoch.current++;
+      window.removeEventListener("storage", onStorage); window.removeEventListener("flixify-session", sync);
+      window.removeEventListener("pageshow", sync); window.removeEventListener("focus", sync); document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [router]);
 
   useEffect(() => {
-    if (!session?.user.hasActiveSubscription) {
+    if (!statusVerified || !session?.user.hasActiveSubscription) {
       return;
     }
 
     router.replace("/ayarlar");
-  }, [router, session]);
+  }, [router, session, statusVerified]);
+
+  useEffect(() => {
+    setCanRequestTrial(false);
+    setStatusVerified(false);
+    if (!session?.accessToken) return;
+    let current = true;
+    const epoch = sessionEpoch.current;
+    const token = session.accessToken;
+    const controller = new AbortController();
+    apiRequest<{user: LoginResponse["user"]}>("/me", { accessToken: session.accessToken, signal: controller.signal }).then(data => {
+      if (!current || epoch !== sessionEpoch.current || storedSession()?.accessToken !== token || typeof data?.user?.hasActiveSubscription !== "boolean") return;
+      setSession(value => value ? {...value, user:data.user} : value);
+      setStatusVerified(true);
+      setCanRequestTrial(data.user.status !== "blocked" && !data.user.hasActiveSubscription && data.user.accessHistory?.canRequestTrial === true);
+    }).catch(() => { /* Unknown eligibility stays hidden. */ });
+    return () => { current = false; controller.abort(); };
+  }, [session?.accessToken]);
 
   async function handleLogin() {
     setLoading(true);
     setError(null);
     setTrialMessage(null);
     setPremiumDismissed(false);
+    setCanRequestTrial(false);
+    setStatusVerified(false);
 
     try {
       const response = await apiRequest<LoginResponse>("/auth/login-by-code", {
@@ -207,17 +241,8 @@ export default function LoginPage() {
 
       if (typeof window !== "undefined") {
         window.localStorage.setItem(storageKey, JSON.stringify(response));
-      }
-
-      const hasUsedTrial = Boolean(
-        response.user.hasUsedTrial ||
-        response.user.hasAssignedLink ||
-        (response.user.popup && response.user.popup.actions && response.user.popup.actions.indexOf("free-trial") === -1)
-      );
-
-      if (!response.user.hasActiveSubscription && hasUsedTrial) {
-        router.push("/paketler");
-        return;
+        window.dispatchEvent(new Event("flixify-session"));
+        router.push("/");
       }
     } catch (nextError) {
       setError(getErrorMessage(nextError));
@@ -227,35 +252,44 @@ export default function LoginPage() {
   }
 
   async function handleTrialRequest() {
-    if (!session) {
+    if (!session || !canRequestTrial || trialLoading) {
       return;
     }
+    const epoch = sessionEpoch.current;
+    const stillCurrent = () => epoch === sessionEpoch.current && storedSession()?.accessToken === session.accessToken;
+    if (!stillCurrent()) { setCanRequestTrial(false); return; }
 
     setTrialLoading(true);
+    setCanRequestTrial(false);
     setTrialMessage(null);
 
     try {
       await apiRequest<{ ok: true }>("/me/trial-request", {
         method: "POST",
         accessToken: session.accessToken,
+        // Never replay an account-bound mutation using a subsequently stored account.
+        skipAuthRefresh: true,
         body: {
           note: "ops-web login sonrası test talebi"
         }
       });
+      if (!stillCurrent()) return;
       setTrialMessage("Test talebiniz alındı. Destek ekibi sizinle iletişime geçecek.");
     } catch (nextError) {
+      if (!stillCurrent()) return;
       setTrialMessage(getErrorMessage(nextError));
+      // Conflicts and uncertain responses require trusted eligibility, never a local retry guess.
+      try {
+        const fresh = await apiRequest<{user: LoginResponse["user"]}>("/me", {accessToken:session.accessToken});
+        if (!stillCurrent()) return;
+        setCanRequestTrial(fresh.user.status !== "blocked" && !fresh.user.hasActiveSubscription && fresh.user.accessHistory?.canRequestTrial === true);
+      } catch { /* Fail closed. */ }
     } finally {
-      setTrialLoading(false);
+      if (stillCurrent()) setTrialLoading(false);
     }
   }
 
   const normalizedCode = normalizeCode(code);
-  const hasUsedTrial = Boolean(
-    session?.user.hasUsedTrial ||
-    session?.user.hasAssignedLink ||
-    (session?.user.popup && session?.user.popup.actions && session?.user.popup.actions.indexOf("free-trial") === -1)
-  );
   const shouldShowPremiumModal = Boolean(session && !session.user.hasActiveSubscription && !premiumDismissed);
 
   // Calculate progress segments (4 segments for 16 characters)
@@ -361,24 +395,18 @@ export default function LoginPage() {
           >
             ×
           </button>
-          <h2>{hasUsedTrial ? "Test Süreniz Doldu" : "Premium Erişim"}</h2>
-          <p>
-            {hasUsedTrial
-              ? "24 saatlik test süreniz tamamlandı. Tüm içeriklere erişmek için bir paket satın alabilirsiniz."
-              : "Tüm içeriklere erişmek için aktif bir paket satın alın."}
-          </p>
+          <h2>Premium Erişim</h2>
+          <p>Tüm içeriklere erişmek için aktif bir paket satın alın.</p>
           <div className="auth-premium-actions">
-            {!hasUsedTrial ? (
-              <button className="button" type="button" onClick={() => void handleTrialRequest()} disabled={trialLoading}>
-                {trialLoading ? "Test Talebi Gönderiliyor" : "Test Yapmak İstiyorum"}
-              </button>
-            ) : null}
-            <button className="button" type="button" onClick={() => router.push("/paketler")}>
-              Paket Satın Al
-            </button>
+            {canRequestTrial && <button className="button" type="button" onClick={() => void handleTrialRequest()} disabled={trialLoading}>
+              {trialLoading ? "Test Talebi Gönderiliyor" : "Test Yapmak İstiyorum"}
+            </button>}
             <a className="button secondary" href={whatsappUrl} target="_blank" rel="noreferrer">
               WhatsApp ile İletişime Geç
             </a>
+            <button className="button secondary" type="button" onClick={() => router.push("/paketler")}>
+              Paket Satın Al
+            </button>
           </div>
           {trialMessage ? <div className="auth-premium-note">{trialMessage}</div> : null}
           <button type="button" className="auth-premium-later" onClick={() => setPremiumDismissed(true)}>

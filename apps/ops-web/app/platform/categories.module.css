@@ -1,0 +1,10 @@
+.sidebar{position:sticky;top:calc(24px + var(--platform-header-height,0px));align-self:start;min-width:0;border-left:1px solid #ffffff14;padding:8px 0 0 23px;max-height:calc(100dvh - 48px - var(--platform-header-height,0px));display:flex;flex-direction:column}
+.sidebar h2,.drawer h2{margin:0 0 22px;color:#f4f5f7;font-size:20px;font-weight:650;letter-spacing:-.02em}
+.list{display:flex;flex-direction:column;gap:3px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#343a43 transparent;padding:3px 7px 12px 3px;min-height:0}
+.list button{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:46px;padding:12px 11px;text-align:left;background:transparent;color:#a2a9b5;border:0;border-left:2px solid transparent;border-radius:0 5px 5px 0;font-size:12px!important;line-height:1.5;cursor:pointer}
+.list button span{overflow-wrap:anywhere}.list button small{flex-shrink:0;font-size:10px;color:#707987;font-variant-numeric:tabular-nums}
+.list button:hover{background:#ffffff05;color:#fff}.list button[aria-pressed=true]{color:#ff626c;border-left-color:#ff3b43;background:#ff3b430a}.list button[aria-pressed=true] small{color:#da7b83}
+.drawer{position:fixed;inset:0 0 0 auto;margin:0;width:min(340px,90vw);max-width:90vw;height:100dvh;max-height:100dvh;border:0;border-left:1px solid #303641;padding:25px 17px max(24px,env(safe-area-inset-bottom));background:#0d1118;color:white;box-sizing:border-box;overflow:hidden}
+.drawer[open]{display:flex;flex-direction:column}.drawer::backdrop{background:#000a;backdrop-filter:blur(4px)}.drawerHeader{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:20px}.drawerHeader h2{margin:0}.drawerHeader>button{width:40px;height:40px;display:grid;place-items:center;background:#171e28;border:1px solid #343c49;border-radius:50%;color:#fff;cursor:pointer}.drawerHeader svg{width:19px;height:19px}.drawer :focus-visible{outline:2px solid #ff3b43;outline-offset:2px}.drawer .list button{font-size:13px!important;min-height:49px}
+@media(max-width:850px){.sidebar{display:none}}
+.sidebar{transform:translateZ(0)}

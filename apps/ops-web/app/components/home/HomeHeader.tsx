@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import styles from "../../home.module.css";
@@ -13,6 +13,7 @@ type HomeHeaderProps = {
 
 export default function HomeHeader({ userCode, onLogout, activeRoute = "/" }: HomeHeaderProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -69,9 +70,7 @@ export default function HomeHeader({ userCode, onLogout, activeRoute = "/" }: Ho
           <Link href="/canli-tv" className={`${styles.navLink} ${activeRoute === "/canli-tv" ? styles.navLinkActive : ""}`}>
             Canlı TV
           </Link>
-          <Link href="/indir" className={`${styles.navLink} ${activeRoute === "/indir" ? styles.navLinkActive : ""}`}>
-            İndir
-          </Link>
+          {!userCode && <Link href="/kayit-ol" className={styles.navLink}>Kayıt Ol</Link>}
         </nav>
 
         <div className={styles.headerActions}>
@@ -89,7 +88,12 @@ export default function HomeHeader({ userCode, onLogout, activeRoute = "/" }: Ho
                 Çıkış Yap
               </button>
             </>
-          ) : null}
+          ) : (
+            <>
+              <Link href="/giris-yap" className={styles.loginLink}>Giriş Yap</Link>
+              <Link href="/kayit-ol" className={styles.registerButton}>Kayıt Ol</Link>
+            </>
+          )}
         </div>
 
         <button
@@ -97,6 +101,7 @@ export default function HomeHeader({ userCode, onLogout, activeRoute = "/" }: Ho
           className={styles.menuButton}
           onClick={() => setDrawerOpen(true)}
           aria-label="Menüyü Aç"
+          ref={menuButtonRef}
           aria-expanded={drawerOpen}
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -137,7 +142,7 @@ export default function HomeHeader({ userCode, onLogout, activeRoute = "/" }: Ho
           </button>
         </div>
 
-        <nav className={styles.mobileDrawerNav}>
+        <nav className={styles.mobileDrawerNav} aria-label="Mobil ana menü">
           <Link href="/" className={styles.mobileNavLink} onClick={() => setDrawerOpen(false)}>
             Ana Sayfa
           </Link>
@@ -150,9 +155,7 @@ export default function HomeHeader({ userCode, onLogout, activeRoute = "/" }: Ho
           <Link href="/canli-tv" className={styles.mobileNavLink} onClick={() => setDrawerOpen(false)}>
             Canlı TV
           </Link>
-          <Link href="/indir" className={styles.mobileNavLink} onClick={() => setDrawerOpen(false)}>
-            İndir
-          </Link>
+          {!userCode && <Link href="/kayit-ol" className={styles.mobileNavLink} onClick={() => setDrawerOpen(false)}>Kayıt Ol</Link>}
         </nav>
 
         <div className={styles.mobileDrawerActions}>
@@ -178,7 +181,12 @@ export default function HomeHeader({ userCode, onLogout, activeRoute = "/" }: Ho
                 Çıkış Yap
               </button>
             </>
-          ) : null}
+          ) : (
+            <>
+              <Link href="/kayit-ol" className={styles.registerButton} onClick={() => setDrawerOpen(false)}>Kayıt Ol</Link>
+              <Link href="/giris-yap" className={styles.loginLink} onClick={() => setDrawerOpen(false)}>Giriş Yap</Link>
+            </>
+          )}
         </div>
       </div>
     </div>

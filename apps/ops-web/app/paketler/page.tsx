@@ -1,66 +1,57 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useState } from "react";
-import type { PackageRecord } from "@flixify/contracts";
-import { apiRequest } from "../../lib/api";
+import { useState } from 'react';
+import Link from 'next/link';
+import type { PackageRecord } from '@flixify/contracts';
+import { apiRequest } from '../../lib/api';
+import { packagePaymentHref } from '../../lib/account-model';
+import { AccountPage, Loading, LoadError, useAccountResource } from '../account/components';
+import { packageCopy, checkoutErrorLabel } from './stripe-package-copy';
+import s from '../account/account.module.css';
+
+type BillingStatus = { status: string; checkoutEnabled: boolean };
 
 export default function PackagesPage() {
-  const [packages, setPackages] = useState<PackageRecord[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const { data, loading, error, reload } = useAccountResource<{ items: PackageRecord[] }>('/admin/packages/public');
+  const billing = useAccountResource<BillingStatus>('/me/billing/status');
+  const [submitting, setSubmitting] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const packages = (data?.items ?? []).filter(pkg => pkg.isActive).sort((a, b) => a.durationMonths - b.durationMonths);
+  const cardCheckoutEnabled = billing.data?.checkoutEnabled === true;
 
-  useEffect(() => {
-    apiRequest<{ items: PackageRecord[] }>("/admin/packages/public")
-      .then((response) => setPackages(response.items))
-      .catch((nextError) => setError(nextError instanceof Error ? nextError.message : "Paketler yuklenemedi"));
-  }, []);
+  async function startCheckout(slug: string) {
+    setSubmitting(slug);
+    setCheckoutError(null);
+    try {
+      const result = await apiRequest<{ url: string }>('/me/billing/checkout-session', { method: 'POST', body: { packageSlug: slug } });
+      const target = new URL(result.url);
+      if (target.protocol !== 'https:' || target.hostname !== 'checkout.stripe.com') throw new Error('checkout_url_invalid');
+      window.location.assign(result.url);
+    } catch (error) {
+      setCheckoutError(checkoutErrorLabel(error));
+      setSubmitting(null);
+    }
+  }
 
-  return (
-    <main className="page-grid">
-      <section className="preview-hero">
-        <span className="section-kicker">Paketler</span>
-        <h1 className="section-title">Aylik planlar admin onayi ile aktif edilir.</h1>
-        <p className="section-description">
-          V1 akista satin alim otomatik checkout ile degil, destek ekibi uzerinden manuel
-          dogrulama ile tamamlanir. Kullanici once paketini secer, sonra ekip onay verir.
-        </p>
-        <div className="hero-actions">
-          <Link href="/kayit-ol" className="button button-hero">
-            Hesap Olustur
-          </Link>
-          <Link href="/iletisim" className="icon-button">
-            +
-          </Link>
-        </div>
-      </section>
-
-      {error ? <section className="panel">{error}</section> : null}
-
-      <section className="pricing-grid">
-        {packages.map((item) => (
-          <article key={item.id} className="pricing-card">
-            <span className="teaser-label">{item.durationMonths} ay</span>
-            <h2>{item.title}</h2>
-            <p>
-              {item.priceLabel && item.priceLabel.trim().length > 0
-                ? `Fiyat: ${item.priceLabel}`
-                : "Fiyat bilgisi destek ekibi tarafindan iletilir."}
-            </p>
-            <p>
-              Paket seciminden sonra kullanici uygulama icinde odeme talebi olusturur, ekip manuel
-              onay verir.
-            </p>
-            <div className="pricing-actions">
-              <Link href="/kayit-ol" className="button button-hero">
-                Hesap Ac
-              </Link>
-              <Link href="/iletisim" className="ghost-link">
-                Destek
-              </Link>
-            </div>
-          </article>
-        ))}
-      </section>
-    </main>
-  );
+  return <AccountPage title="Paketler" subtitle="Paketinizi seçin.">
+    {loading ? <Loading /> : error ? <LoadError onRetry={reload} /> : packages.length ? <section aria-label="Abonelik paketleri">
+      {checkoutError && <p className={s.errorText} role="alert">{checkoutError}</p>}
+      <div className={s.packages}>{packages.map(pkg => {
+        const copy = packageCopy(pkg.slug);
+        return <article className={s.package} key={pkg.id}>
+          <h3>{pkg.title}</h3>
+          <div className={s.price}>{copy?.price ?? pkg.priceLabel ?? 'Fiyat için destek'}</div>
+          {cardCheckoutEnabled && copy ? <>
+            <button className={s.primary} type="button" disabled={submitting !== null} onClick={() => startCheckout(pkg.slug)}>
+              {submitting === pkg.slug ? 'Ödeme açılıyor…' : 'Şimdi Abone Ol'}
+            </button>
+            <Link className={s.textLink} href={packagePaymentHref(pkg.slug)}>Diğer Ödeme Yöntemlerini Gör</Link>
+          </> : <>
+            <Link className={s.primary} aria-label={pkg.title + ' ödeme yöntemlerini gör'} href={packagePaymentHref(pkg.slug)}>Ödeme Yöntemlerini Gör</Link>
+          </>}
+        </article>;
+      })}</div>
+      {cardCheckoutEnabled && <p className={s.billingNote}>Kartlı abonelik seçtiğiniz süre sonunda otomatik yenilenir. Dilediğiniz zaman iptal edebilirsiniz.</p>}
+    </section> : <div className={s.notice}><h2>Şu anda paket bulunmuyor</h2><p>Güncel seçenekler için destek ekibimize ulaşabilirsiniz.</p><Link className={s.secondary} href="/iletisim">Destek al</Link></div>}
+  </AccountPage>;
 }

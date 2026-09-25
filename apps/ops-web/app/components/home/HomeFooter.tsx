@@ -35,9 +35,6 @@ export default function HomeFooter() {
             <Link href="/canli-tv" className={styles.footerLink}>
               Canlı TV
             </Link>
-            <Link href="/indir" className={styles.footerLink}>
-              İndir
-            </Link>
           </nav>
         </div>
 

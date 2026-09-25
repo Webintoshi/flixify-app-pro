@@ -6,13 +6,15 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { clearAdminToken } from "../lib/api";
 import MobileTabBar from "./components/navigation/MobileTabBar";
+import { AppShell } from "./platform/shell";
+import { usePlatform } from "./platform/session";
+import registrationStyles from "./kayit-ol/registration.module.css";
 
 const publicNavigation = [
   { href: "/", label: "Ana Sayfa" },
   { href: "/filmler", label: "Filmler" },
   { href: "/diziler", label: "Diziler" },
-  { href: "/canli-tv", label: "Canli TV" },
-  { href: "/indir", label: "İndir" }
+  { href: "/canli-tv", label: "Canli TV" }
 ];
 
 const adminNavigation = [
@@ -55,7 +57,7 @@ function PublicHeader({ pathname }: { pathname: string }) {
 
   const navItems = userCode
     ? [...publicNavigation, { href: "/ayarlar", label: "Hesabım" }]
-    : publicNavigation;
+    : [...publicNavigation, { href: "/kayit-ol", label: "Kayıt Ol" }];
 
   return (
     <header className="site-header public-header">
@@ -92,7 +94,12 @@ function PublicHeader({ pathname }: { pathname: string }) {
               Çıkış Yap
             </button>
           </>
-        ) : null}
+        ) : (
+          <>
+            <Link href="/giris-yap" className="ghost-link">Giriş Yap</Link>
+            <Link href="/kayit-ol" className="button button-hero">Kayıt Ol</Link>
+          </>
+        )}
       </div>
     </header>
   );
@@ -187,6 +194,14 @@ function AdminShell({ pathname, children }: { pathname: string; children: ReactN
 
 export default function SiteShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? "/";
+  const { session } = usePlatform();
+  if (["/ayarlar", "/paketler", "/davet", "/odeme-bildirimi", "/iletisim"].includes(pathname)) {
+    return <AppShell publicAccess={pathname === "/paketler" || pathname === "/iletisim"}><div key={session?.kryptoniteCode ?? session?.user?.kryptoniteCode ?? session?.accessToken ?? "public"}>{children}</div></AppShell>;
+  }
+  if (["/", "/filmler", "/diziler", "/favoriler", "/listem", "/canli-tv", "/ayarlar"].includes(pathname)) {
+    if (pathname === "/" && !session) return <>{children}</>;
+    return <AppShell>{children}</AppShell>;
+  }
   const isAdminRoute = pathname.startsWith("/admin");
   const isAdminLoginRoute = pathname === "/admin";
   const isAuthRoute =
@@ -213,8 +228,9 @@ export default function SiteShell({ children }: { children: ReactNode }) {
 
   if (isAuthRoute) {
     const isModernAuthPage = pathname === "/giris-yap" || pathname === "/kayit-ol";
+    const registrationShellClass = pathname === "/kayit-ol" ? ` ${registrationStyles.registrationShell}` : "";
     return (
-      <div className={`page-shell auth-shell${isModernAuthPage ? " login-page-shell" : " marketing-shell"}`}>
+      <div className={`page-shell auth-shell${isModernAuthPage ? " login-page-shell" : " marketing-shell"}${registrationShellClass}`}>
         {!isModernAuthPage && (
           <div className="auth-brand">
             <BrandLockup />

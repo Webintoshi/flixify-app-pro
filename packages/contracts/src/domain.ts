@@ -32,7 +32,7 @@ export type LiveTransport = z.infer<typeof liveTransportSchema>;
 export const nativePlaybackTransportSchema = z.enum(["ts", "hls", "mp4", "mkv", "avi", "unknown"]);
 export type NativePlaybackTransport = z.infer<typeof nativePlaybackTransportSchema>;
 
-export const liveDeliveryModeSchema = z.enum(["hls_proxy", "hls_transmuxed", "hls_transcoded", "file_proxy"]);
+export const liveDeliveryModeSchema = z.enum(["hls_proxy", "hls_transmuxed", "hls_transcoded", "file_proxy", "direct_provider"]);
 export type LiveDeliveryMode = z.infer<typeof liveDeliveryModeSchema>;
 
 export const vodPlaybackKindSchema = z.enum(["movie", "episode"]);
@@ -41,7 +41,7 @@ export type VodPlaybackKind = z.infer<typeof vodPlaybackKindSchema>;
 export const vodTransportSchema = z.enum(["hls", "mp4", "mkv", "avi", "unknown"]);
 export type VodTransport = z.infer<typeof vodTransportSchema>;
 
-export const vodDeliveryModeSchema = z.enum(["hls_proxy", "file_proxy", "hls_transcoded"]);
+export const vodDeliveryModeSchema = z.enum(["hls_proxy", "file_proxy", "hls_transcoded", "direct_provider"]);
 export type VodDeliveryMode = z.infer<typeof vodDeliveryModeSchema>;
 
 export const nativeVodDeliveryModeSchema = z.enum(["direct", "hls_proxy", "file_proxy", "hls_transcoded"]);
@@ -84,8 +84,6 @@ export const userSummarySchema = z.object({
   codeSuffix: z.string().length(4).nullable(),
   hasAssignedLink: z.boolean(),
   hasActiveSubscription: z.boolean(),
-  hasUsedTrial: z.boolean().default(false),
-  hasExpiredSubscription: z.boolean().default(false),
   activePackage: z
     .object({
       id: z.string().uuid(),

@@ -28,7 +28,8 @@ const installationIdSchema = z.string().trim().min(16).max(120);
 export const registerAnonInputSchema = z.object({
   deviceName: z.string().max(120).optional(),
   platform: z.string().max(60).optional(),
-  installationId: installationIdSchema
+  installationId: installationIdSchema,
+  referralCode: z.string().regex(/^[A-HJ-NP-Z2-9]{12}$/).optional()
 });
 
 export const loginByCodeInputSchema = z.object({
@@ -97,7 +98,7 @@ export const livePlaybackEventInputSchema = z.object({
   event: z.enum(["playing", "stalled", "recovered", "failed"]),
   clientRuntime: clientRuntimeSchema.nullable().optional(),
   diagnosticsSessionId: z.string().uuid().nullable().optional(),
-  deliveryMode: z.enum(["hls_proxy", "hls_transmuxed", "hls_transcoded", "file_proxy"]).nullable().optional(),
+  deliveryMode: z.enum(["hls_proxy", "hls_transmuxed", "hls_transcoded", "file_proxy", "direct_provider"]).nullable().optional(),
   sourceTransport: z.enum(["ts", "hls", "mp4", "mkv", "unknown"]).nullable().optional(),
   playerEngine: playerEngineSchema.nullable().optional(),
   decoderMode: decoderModeSchema.nullable().optional(),

@@ -1,5 +1,6 @@
 import Image from "next/image";
 import styles from "../../downloads.module.css";
+import { InstallAction } from "../install/InstallProvider";
 
 const pills = [
   {
@@ -59,11 +60,11 @@ export default function DownloadsHero() {
             </h1>
 
             <p className={styles.heroDescription}>
-              Flixify deneyimi için cihazına uygun uygulamayı keşfet.
-              Windows, Android, iOS, macOS ve Android TV için sürüm durumlarını
-              ve kullanılabilir indirme seçeneklerini bu sayfadan takip et.
+              Flixify’ı Android, iPhone veya iPad’inin ana ekranına ekle.
+              Mağazadan indirmeden, kendi simgesinden açılan mobil web uygulamasını kullan.
             </p>
 
+            <InstallAction className={styles.actionDetailBtn} fallbackHref="#platformlar" fallbackLabel="Mobil kurulum seçenekleri"/>
             <div className={styles.heroPillsRow} aria-label="Temel Bilgiler">
               {pills.map((pill) => (
                 <span key={pill.label} className={styles.heroPill}>

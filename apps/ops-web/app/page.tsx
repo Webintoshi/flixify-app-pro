@@ -1,62 +1,16 @@
 "use client";
-
-import { useEffect, useState } from "react";
-import HomeHeader from "./components/home/HomeHeader";
-import HomeHero from "./components/home/HomeHero";
-import HomeAbout from "./components/home/HomeAbout";
-import HomeBenefits from "./components/home/HomeBenefits";
-import HomeDeviceShowcase from "./components/home/HomeDeviceShowcase";
-import HomeGettingStarted from "./components/home/HomeGettingStarted";
-import HomeFooter from "./components/home/HomeFooter";
-import styles from "./home.module.css";
-
+import React, { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import CatalogPage from "./platform/catalog";
+import { Landing } from "./platform/landing";
+import { usePlatform } from "./platform/session";
 export default function HomePage() {
-  const [userCode, setUserCode] = useState<string | null>(null);
-
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem("flixify-public-session");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed?.kryptoniteCode) {
-          setUserCode(parsed.kryptoniteCode);
-        }
-      }
-    } catch {}
-  }, []);
-
-  function handleLogout() {
-    try {
-      window.localStorage.removeItem("flixify-public-session");
-    } catch {}
-    setUserCode(null);
-    window.location.href = "/giris-yap";
-  }
-
-  return (
-    <div className={styles.flixifyHome}>
-      {/* 1. Header */}
-      <HomeHeader userCode={userCode} onLogout={handleLogout} />
-
-      <main>
-        {/* 2. Sinematik Hero */}
-        <HomeHero />
-
-        {/* 3. Flixify Nedir? & Üç Kategori Kartı */}
-        <HomeAbout />
-
-        {/* 5. Neden Flixify? & Dört Özellik Kartı (#ozellikler) */}
-        <HomeBenefits />
-
-        {/* 6. Geniş Cihaz Deneyimi & Hedef Platformlar */}
-        <HomeDeviceShowcase />
-
-        {/* 7. Nasıl Başlarsın? & Dört Adım (#nasil-baslanir) */}
-        <HomeGettingStarted />
-      </main>
-
-      {/* 8. Footer */}
-      <HomeFooter />
-    </div>
-  );
+  const { session, ready } = usePlatform();
+  const router = useRouter();
+  useEffect(() => { if (!session) return; const intent = sessionStorage.getItem("flixify-search-intent"); if (intent) { sessionStorage.removeItem("flixify-search-intent"); router.replace(`/?q=${encodeURIComponent(intent)}`); } }, [session, router]);
+  if (!ready) return <main aria-busy="true" style={{ minHeight: "100vh", display: "grid", placeContent: "center", justifyItems: "center", gap: 20, background: "#07090c", color: "#b3b7c0" }}>
+    <img src="/logo/flixify-logo.png" alt="Flixify Pro" width="170" height="45" />
+    <p>Flixify hazırlanıyor…</p>
+  </main>;
+  return session ? <CatalogPage kind="movie" overview/> : <Landing/>;
 }

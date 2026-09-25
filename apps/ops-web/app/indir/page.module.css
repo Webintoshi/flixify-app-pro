@@ -1,0 +1,7 @@
+.page { min-height: 100dvh; background: #08090c; color: #f6f7fb; }
+.content { width: min(100% - 40px, 720px); margin: 0 auto; padding: 100px 0 180px; }
+.content h1 { margin: 0 0 24px; font-size: clamp(30px, 6vw, 52px); line-height: 1.15; letter-spacing: -.04em; }
+.content p { color: #afb3be; font-size: 17px; line-height: 1.7; max-width: 480px; }
+.content a { display: inline-flex; align-items: center; gap: 16px; margin-top: 24px; padding: 14px 0; color: #fff; font-weight: 700; text-decoration: none; }
+.content a:hover { color: #ff4054; }
+.content a:focus-visible { outline: 2px solid #ff4054; outline-offset: 6px; }

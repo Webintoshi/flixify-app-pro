@@ -1,0 +1,66 @@
+.chrome {
+  position: absolute;
+  z-index: 2;
+  right: clamp(8px, 2.2vw, 22px);
+  bottom: clamp(8px, 2.2vw, 22px);
+  left: clamp(8px, 2.2vw, 22px);
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, .17);
+  border-radius: 13px;
+  background: rgba(24, 27, 33, .69);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .35), inset 0 1px rgba(255, 255, 255, .07);
+  color: #f7f8fa;
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+  backdrop-filter: blur(20px) saturate(130%);
+}
+
+.controls { display: flex; min-height: 36px; align-items: center; gap: 7px; }
+.iconButton { display: grid; flex: 0 0 38px; width: 38px; height: 38px; place-items: center; padding: 0; border: 0; border-radius: 9px; background: transparent; color: #f7f8fa; cursor: pointer; }
+.iconButton:hover { background: rgba(255, 255, 255, .12); }
+.iconButton:focus-visible, .seek:focus-visible, .volume:focus-visible { outline: 2px solid #ff525e; outline-offset: 2px; }
+.iconButton:active { background: rgba(255, 255, 255, .18); }
+.spacer { flex: 1; }
+.liveBadge { display: inline-flex; align-items: center; gap: 7px; margin-left: 5px; color: #f7f8fa; font-size: 11px; font-weight: 750; letter-spacing: .06em; white-space: nowrap; }
+.liveBadge i { width: 7px; height: 7px; border-radius: 50%; background: #ff4654; box-shadow: 0 0 9px rgba(255, 70, 84, .65); }
+.timeLabel { margin-left: 3px; color: #f7f8fa; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.timeLabel span { color: #aeb4c0; }
+.seek { display: block; width: 100%; height: 14px; margin: 0 0 4px; appearance: none; -webkit-appearance: none; background: transparent; cursor: pointer; }
+.seek:disabled { cursor: default; opacity: .45; }
+.seek::-webkit-slider-runnable-track { height: 4px; border-radius: 99px; background: linear-gradient(90deg, #ff4856 var(--player-progress), rgba(255,255,255,.27) var(--player-progress)); }
+.seek::-moz-range-track { height: 4px; border-radius: 99px; background: rgba(255,255,255,.27); }
+.seek::-moz-range-progress { height: 4px; border-radius: 99px; background: #ff4856; }
+.seek::-webkit-slider-thumb { width: 12px; height: 12px; margin-top: -4px; appearance: none; -webkit-appearance: none; border: 2px solid #fff; border-radius: 50%; background: #ff4856; box-shadow: 0 0 0 3px rgba(255,72,86,.25); }
+.seek::-moz-range-thumb { width: 9px; height: 9px; border: 2px solid #fff; border-radius: 50%; background: #ff4856; }
+.volume { width: 76px; height: 18px; margin: 0 4px 0 0; accent-color: #ff4856; cursor: pointer; }
+
+.chrome[data-kind="live"] {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 38px 20px 14px;
+  border: 0;
+  border-radius: 0;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .78));
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transition: opacity .18s ease;
+}
+.chrome[data-kind="live"][data-visible="false"] { opacity: 0; pointer-events: none; }
+.chrome[data-kind="live"] .controls { border-top: 3px solid #ff3b43; padding-top: 10px; }
+.chrome[data-kind="live"] .iconButton { border-radius: 5px; }
+.chrome[data-kind="live"] .liveBadge { color: #ff535f; }
+
+@media (max-width: 600px) {
+  .chrome { right: 7px; bottom: 7px; left: 7px; padding: 5px 7px; border-radius: 11px; }
+  .controls { gap: 3px; }
+  .iconButton { flex-basis: 38px; width: 38px; height: 38px; }
+  .volume { display: none; }
+  .timeLabel { font-size: 11px; }
+  .liveBadge { margin-left: 1px; font-size: 10px; }
+  .chrome[data-kind="live"] { right: 0; bottom: 0; left: 0; padding: 22px 8px 6px; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .chrome { background: #1a1d23; }
+}

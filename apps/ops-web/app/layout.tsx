@@ -2,18 +2,22 @@ import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import SiteShell from "./site-shell";
+import { Suspense } from "react";
+import { PlatformProvider } from "./platform/session";
+import { InstallProvider } from "./components/install/InstallProvider";
+import { installBootstrap } from "./components/install/install-bootstrap";
 
 export const viewport: Viewport = {
   themeColor: "#060708",
+  colorScheme: "dark",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
   viewportFit: "cover"
 };
 
 export const metadata: Metadata = {
-  title: "Flixify — Film, Dizi ve Canlı TV Deneyimi",
-  description: "Film, dizi ve canlı TV deneyimini düzenli ve sinematik bir arayüzde bir araya getiren Flixify’ı keşfedin.",
+  title: "Flixify — İçeriklerin. Tek yerde.",
+  description: "Medyan için sade, kişisel bir alan. Flixify medya oynatıcı.",
   manifest: "/logo/site.webmanifest",
   appleWebApp: {
     capable: true,
@@ -33,9 +37,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="tr">
+    <html lang="tr" style={{ colorScheme: "dark" }}>
+      <head><script dangerouslySetInnerHTML={{ __html: installBootstrap }} /></head>
       <body>
-        <SiteShell>{children}</SiteShell>
+        <Suspense fallback={<div style={{ minHeight: "100vh", background: "#07090c" }} />}><PlatformProvider><InstallProvider><SiteShell>{children}</SiteShell></InstallProvider></PlatformProvider></Suspense>
       </body>
     </html>
   );

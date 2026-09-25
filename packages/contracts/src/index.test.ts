@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { buildLiveVariantMetadata } from "./live-variants";
+import { livePlaybackSchema } from "./domain";
 import {
+  livePlaybackEventInputSchema,
   registerAnonInputSchema,
   loginByCodeInputSchema,
   nativeLivePlaybackResponseSchema,
@@ -9,6 +11,27 @@ import {
 } from "./schemas";
 
 describe("contracts", () => {
+  it("accepts direct-provider playback and bounded diagnostics", () => {
+    const playback = livePlaybackSchema.parse({
+      channelId: "33333333-3333-4333-8333-333333333333",
+      url: "https://sifiriptvdns.com:2087/live/own-line/own-pass/283.ts",
+      transport: "ts",
+      sourceTransport: "ts",
+      deliveryMode: "direct_provider",
+      diagnosticsSessionId: null,
+      healthStatus: "unknown",
+      lastCheckedAt: null,
+      expiresAt: null,
+      canPlay: true,
+      isVerified: false,
+      errorMessage: null
+    });
+    expect(playback.deliveryMode).toBe("direct_provider");
+    expect(livePlaybackEventInputSchema.parse({
+      event: "stalled", clientRuntime: "browser", deliveryMode: "direct_provider",
+      sourceTransport: "ts", playerEngine: "mpegts.js"
+    }).deliveryMode).toBe("direct_provider");
+  });
   it("requires installation id when creating anonymous accounts", () => {
     const payload = registerAnonInputSchema.parse({
       deviceName: "Apple TV",
@@ -17,6 +40,18 @@ describe("contracts", () => {
     });
 
     expect(payload.installationId).toBe("install-1234567890abcd");
+  });
+
+  it("preserves a separate twelve-character referral code during registration", () => {
+    const payload = registerAnonInputSchema.parse({
+      installationId: "install-1234567890abcd",
+      referralCode: "ABCDEFGHJKLM"
+    });
+    expect(payload.referralCode).toBe("ABCDEFGHJKLM");
+    expect(() => registerAnonInputSchema.parse({
+      installationId: "install-1234567890abcd",
+      referralCode: "ABCD1234EFGH5678"
+    })).toThrow();
   });
 
   it("accepts valid kryptonite code payloads", () => {

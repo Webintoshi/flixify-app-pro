@@ -3371,3 +3371,5 @@ a:focus-visible {
   background: var(--accent);
   flex: 0 0 auto;
 }
+/* Keep first-account guidance free of a competing installation promotion. */
+body:has([data-onboarding-preview]) [aria-label="Uygulama kurulumu"] { display: none; }

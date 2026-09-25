@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useCallback } from "react";
 import { apiRequest } from "../../lib/api";
+import { readReferralCode } from "../../lib/referral-link";
+import styles from "./registration.module.css";
 
 type RegisterResponse = {
   kryptoniteCode: string | null;
@@ -137,6 +139,11 @@ export default function RegisterPage() {
   const [acknowledged, setAcknowledged] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [referralCode, setReferralCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    setReferralCode(readReferralCode(window.location.search));
+  }, []);
 
   // More realistic code generation animation
   useEffect(() => {
@@ -209,12 +216,14 @@ export default function RegisterPage() {
     setIssuedCode("");
 
     try {
+      const inviteCode = readReferralCode(window.location.search);
       const response = await apiRequest<RegisterResponse>("/auth/register-anon", {
         method: "POST",
         body: {
           deviceName: "Flixify Public Web",
           platform: "web",
-          installationId: getInstallationId()
+          installationId: getInstallationId(),
+          ...(inviteCode ? { referralCode: inviteCode } : {})
         }
       });
       const normalized = normalizeCode(response.kryptoniteCode ?? "");
@@ -250,8 +259,8 @@ export default function RegisterPage() {
   const isComplete = issuedCode && !isGenerating && revealedCount === issuedCode.length;
 
   return (
-    <div className="login-page">
-      <main className="login-container">
+    <div className={`${styles.registrationPage} login-page`}>
+      <main className={`${styles.registrationContainer} login-container`}>
         {/* Logo */}
         <div className="login-logo">
           <Image
@@ -276,8 +285,9 @@ export default function RegisterPage() {
             <>
               <div className="register-intro">
                 <p className="register-description">
-                  Tek kullanımlık erişim kodunuzu oluşturun. Bu kod ile tüm içeriklere erişebilirsiniz.
+                  16 haneli kişisel kullanıcı kodunuzu oluşturun. Hesabınıza giriş yapmak için bu kodu kullanacaksınız; e-posta veya şifre belirlemeniz gerekmez.
                 </p>
+                {referralCode ? <p className="register-description">Arkadaşınızın daveti kaydınıza eklenecek.</p> : null}
               </div>
 
               <button 
@@ -317,8 +327,19 @@ export default function RegisterPage() {
                   )}
                 </div>
 
-                <div className="code-display-value">
-                  {formatCodeBlocks(displayCode)}
+                <div
+                  className="code-display-value"
+                  aria-label={`Erişim kodu: ${normalizeCode(displayCode)}`}
+                >
+                  {(() => {
+                    const groups = formatCodeBlocks(displayCode).split(" ");
+                    return groups.length === 4 ? (
+                      <>
+                        {groups.slice(0, 2).join("\u00a0")} <wbr />
+                        {groups.slice(2).join("\u00a0")}
+                      </>
+                    ) : formatCodeBlocks(displayCode);
+                  })()}
                 </div>
 
                 {/* Progress Bar */}

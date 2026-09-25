@@ -3,8 +3,8 @@ import styles from "../../downloads.module.css";
 const steps = [
   {
     step: "1",
-    title: "Uygulamayı İndir",
-    text: "Cihazına uygun sürümü seç ve indir.",
+    title: "Telefonunda Aç",
+    text: "Android veya iPhone’unda flixify.vip adresini aç.",
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -15,8 +15,8 @@ const steps = [
   },
   {
     step: "2",
-    title: "Kurulumu Tamamla",
-    text: "Birkaç tıkla hızlıca kurulumu yap.",
+    title: "Ana Ekrana Ekle",
+    text: "Uygulamayı yükle düğmesine dokun ve cihazına uygun adımları takip et.",
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="3" />
@@ -26,8 +26,8 @@ const steps = [
   },
   {
     step: "3",
-    title: "Giriş Yap ve İzle",
-    text: "Hesabınla anında yayına başla.",
+    title: "Kodunla Giriş Yap",
+    text: "Mevcut kullanıcı kodunla kişisel alanını aç.",
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10" />
@@ -45,7 +45,7 @@ export default function InstallSteps() {
           <span className={styles.sectionKicker}>NASIL KURULUR?</span>
           <h2 className={styles.sectionTitle}>3 Adımda Hazırsın</h2>
           <p className={styles.sectionDescription}>
-            Uygulamayı indir, kurulumu yap ve anında izlemeye başla.
+            Telefonunda Flixify’ı aç, ana ekranına ekle ve kullanıcı kodunla giriş yap.
           </p>
         </div>
 
