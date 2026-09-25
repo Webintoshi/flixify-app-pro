@@ -7,6 +7,11 @@ import test from "node:test";
 import { applyLiveVodLatencyPatch, patchLiveVodInPlace, transformLiveVodSource } from "./apply-live-vod-latency.mjs";
 
 const liveFragment = `
+  async function inspectSource(input: CreateVodPlaybackInput) {
+    const probe = await probeVodStream(input.sourceUrl, input.proxyUrl);
+    return probe;
+  }
+
   async function emitDiagnostic(input: DiagnosticInput) {
     try {
       await options.onDiagnostic?.(input);
@@ -18,6 +23,7 @@ const liveFragment = `
   async function createPlayback(input: CreateVodPlaybackInput): Promise<VodPlaybackRecord> {
     const debugEnabled = input.debug === true || process.env.FLIXIFY_VOD_DEBUG === "1";
     const probe = await probeVodStream(input.sourceUrl, input.proxyUrl);
+    debugLog("probe-result", { ok: probe.ok });
     const allowUnverifiedSource = input.allowUnverifiedSource === true;
     const explicitSourceFailure = !probe.ok && probe.statusCode !== 0;
     if (explicitSourceFailure || ((!probe.ok || !probe.finalUrl) && !allowUnverifiedSource)) {
@@ -52,6 +58,9 @@ test("live patch preserves proxy arguments and records nonblocking stage timings
   assert.match(patched, /probeVodStream\(input\.sourceUrl, input\.proxyUrl\)/);
   assert.match(patched, /probeVodMediaProfile\(options\.ffprobeBinary, effectiveSourceUrl, effectiveTransport, input\.proxyUrl\)/);
   assert.match(patched, /const probeDurationMs = Math\.round\(performance\.now\(\) - startupStartedAt\)/);
+  assert.match(patched, /async function inspectSource[\s\S]*?const probe = await probeVodStream\(input\.sourceUrl, input\.proxyUrl\);\n    return probe;/);
+  assert.equal((patched.match(/const probe = await probeVodStream\(input\.sourceUrl, input\.proxyUrl\);/g) ?? []).length, 2);
+  assert.equal((patched.match(/const probeDurationMs =/g) ?? []).length, 1);
   assert.match(patched, /const mediaProfileDurationMs = Math\.round\(performance\.now\(\) - mediaProfileStartedAt\)/);
   assert.match(patched, /sessionCreatedDurationMs: Math\.round\(performance\.now\(\) - startupStartedAt\)/);
   assert.match(patched, /errorCode: "source-probe-failed"/);
@@ -64,7 +73,10 @@ test("live patch preserves proxy arguments and records nonblocking stage timings
 
 test("live patch rejects missing or duplicate anchors", () => {
   assert.throws(() => transformLiveVodSource(liveFragment.replace("await options.onDiagnostic?.(input);", "return;")), /exactly one.*diagnostic/i);
-  assert.throws(() => transformLiveVodSource(liveFragment.replace("const probe = await probeVodStream(input.sourceUrl, input.proxyUrl);", "const probe = await probeVodStream(input.sourceUrl);")), /exactly one.*probe/i);
+  assert.throws(() => transformLiveVodSource(liveFragment.replace(
+    "const probe = await probeVodStream(input.sourceUrl, input.proxyUrl);\n    debugLog(\"probe-result\", { ok: probe.ok });",
+    "const probe = await probeVodStream(input.sourceUrl);\n    debugLog(\"probe-result\", { ok: probe.ok });"
+  )), /exactly one.*probe/i);
   assert.throws(() => transformLiveVodSource(liveFragment + liveFragment), /exactly one/i);
 });
 

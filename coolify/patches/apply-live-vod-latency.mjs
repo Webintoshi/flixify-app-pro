@@ -33,9 +33,9 @@ export function transformLiveVodSource(source) {
   patched = replaceExactlyOne(
     patched,
     "provider probe",
-    /^([ \t]*)const probe = await probeVodStream\(input\.sourceUrl, input\.proxyUrl\);$/gm,
-    (_, indent) =>
-      `${indent}const probe = await probeVodStream(input.sourceUrl, input.proxyUrl);\n${indent}const probeDurationMs = Math.round(performance.now() - startupStartedAt);`
+    /^([ \t]*)const probe = await probeVodStream\(input\.sourceUrl, input\.proxyUrl\);(\r?\n)(?=[ \t]*debugLog\("probe-result", \{)/gm,
+    (_, indent, newline) =>
+      `${indent}const probe = await probeVodStream(input.sourceUrl, input.proxyUrl);${newline}${indent}const probeDurationMs = Math.round(performance.now() - startupStartedAt);${newline}`
   );
 
   patched = replaceExactlyOne(
