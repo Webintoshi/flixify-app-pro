@@ -285,3 +285,9 @@
   .genreStrip button { min-height: 36px; padding: 7px 0; font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .expandedPreview { animation: none; } }
+
+/* Keep installed iPhone layouts and the sticky catalog header below the status bar. */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  .app, .landing { padding-top: env(safe-area-inset-top, 0px); }
+  .catalogApp .header { top: env(safe-area-inset-top, 0px); }
+}
