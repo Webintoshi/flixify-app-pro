@@ -292,7 +292,7 @@ describe("probeVodStream", () => {
 describe("createVodPlaybackManager", () => {
   it("reports failed source probe latency without disclosing its URL", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
-    const diagnostics: Array<{ event: string; errorCode?: string | null; detail?: Record<string, unknown> | null }> = [];
+    const diagnostics: Array<{ event: string; errorCode?: string | null; upstreamStatus?: number | null; detail?: Record<string, unknown> | null }> = [];
     const manager = createVodPlaybackManager({
       ffmpegBinary: "/nonexistent/ffmpeg",
       ffprobeBinary: "/nonexistent/ffprobe",
@@ -316,6 +316,7 @@ describe("createVodPlaybackManager", () => {
       expect(playback.canPlay).toBe(false);
       expect(failed).toMatchObject({
         errorCode: "source-probe-failed",
+        upstreamStatus: 503,
         detail: { probeDurationMs: expect.any(Number) }
       });
       expect(JSON.stringify(failed)).not.toContain("fixture-secret");

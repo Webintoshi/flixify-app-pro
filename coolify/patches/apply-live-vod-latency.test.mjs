@@ -64,6 +64,7 @@ test("live patch preserves proxy arguments and records nonblocking stage timings
   assert.match(patched, /const mediaProfileDurationMs = Math\.round\(performance\.now\(\) - mediaProfileStartedAt\)/);
   assert.match(patched, /sessionCreatedDurationMs: Math\.round\(performance\.now\(\) - startupStartedAt\)/);
   assert.match(patched, /errorCode: "source-probe-failed"/);
+  assert.match(patched, /upstreamStatus: probe\.statusCode >= 100 && probe\.statusCode <= 599 \? probe\.statusCode : null/);
   assert.match(patched, /errorCode: "ffmpeg-unavailable"/);
   assert.equal((patched.match(/event: "playback-failed"/g) ?? []).length, 2);
   assert.doesNotMatch(patched, /sourceUrl: input\.sourceUrl,\s*errorCode:/);

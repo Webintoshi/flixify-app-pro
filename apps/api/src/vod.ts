@@ -1649,6 +1649,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
         event: "playback-failed",
         deliveryMode: "hls_transcoded",
         sourceTransport: probe.transport,
+        upstreamStatus: probe.statusCode >= 100 && probe.statusCode <= 599 ? probe.statusCode : null,
         errorCode: "source-probe-failed",
         detail: {
           probeDurationMs,

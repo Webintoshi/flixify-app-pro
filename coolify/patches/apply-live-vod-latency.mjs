@@ -52,7 +52,7 @@ export function transformLiveVodSource(source) {
     /^([ \t]*)if \(explicitSourceFailure \|\| \(\(!probe\.ok \|\| !probe\.finalUrl\) && !allowUnverifiedSource\)\) \{(\r?\n)/gm,
     (match, indent, newline) => {
       const bodyIndent = `${indent}  `;
-      return `${match}${bodyIndent}await emitDiagnostic({${newline}${bodyIndent}  itemId: input.itemId,${newline}${bodyIndent}  kind: input.kind,${newline}${bodyIndent}  event: "playback-failed",${newline}${bodyIndent}  deliveryMode: "hls_transcoded",${newline}${bodyIndent}  sourceTransport: probe.transport,${newline}${bodyIndent}  errorCode: "source-probe-failed",${newline}${bodyIndent}  detail: {${newline}${bodyIndent}    probeDurationMs,${newline}${bodyIndent}    failedDurationMs: Math.round(performance.now() - startupStartedAt)${newline}${bodyIndent}  }${newline}${bodyIndent}});${newline}`;
+      return `${match}${bodyIndent}await emitDiagnostic({${newline}${bodyIndent}  itemId: input.itemId,${newline}${bodyIndent}  kind: input.kind,${newline}${bodyIndent}  event: "playback-failed",${newline}${bodyIndent}  deliveryMode: "hls_transcoded",${newline}${bodyIndent}  sourceTransport: probe.transport,${newline}${bodyIndent}  upstreamStatus: probe.statusCode >= 100 && probe.statusCode <= 599 ? probe.statusCode : null,${newline}${bodyIndent}  errorCode: "source-probe-failed",${newline}${bodyIndent}  detail: {${newline}${bodyIndent}    probeDurationMs,${newline}${bodyIndent}    failedDurationMs: Math.round(performance.now() - startupStartedAt)${newline}${bodyIndent}  }${newline}${bodyIndent}});${newline}`;
     }
   );
 

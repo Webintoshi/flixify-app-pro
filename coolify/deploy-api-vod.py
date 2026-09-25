@@ -49,8 +49,8 @@ def assert_protected_unchanged(before: dict[str, str]) -> None:
             raise RuntimeError(f"Protected service changed: {name}")
 
 
-def updated_compose(original: str, new_image: str) -> str:
-    old_line = f"    image: '{BASE_IMAGE}'"
+def updated_compose(original: str, new_image: str, base_image: str = BASE_IMAGE) -> str:
+    old_line = f"    image: '{base_image}'"
     if original.count(old_line) != 1:
         raise RuntimeError("Compose API image differs from the running baseline")
     api_match = re.search(r"^  api:\s*$", original, re.MULTILINE)
@@ -116,6 +116,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("new_image", help="flixify-api:vod-latency-<commit prefix>")
     parser.add_argument("expected_commit", help="full 40-character source commit SHA")
+    parser.add_argument("--base-image", default=BASE_IMAGE, help="exact image currently running in production")
     parser.add_argument("--dry-run", action="store_true", help="validate without changing the live service")
     args = parser.parse_args()
 
@@ -123,21 +124,25 @@ def main() -> None:
     tag = re.fullmatch(r"flixify-api:vod-latency-([0-9a-f]{7,40})", args.new_image)
     if not re.fullmatch(r"[0-9a-f]{40}", commit) or tag is None or not commit.startswith(tag.group(1)):
         raise RuntimeError("Unexpected image tag or source commit SHA")
+    if args.base_image != BASE_IMAGE and re.fullmatch(r"flixify-api:vod-latency-[0-9a-f]{7,40}", args.base_image) is None:
+        raise RuntimeError("Unexpected baseline image tag")
+    if args.new_image == args.base_image:
+        raise RuntimeError("New image must differ from the running baseline")
     label = inspect(args.new_image, '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
     if label != commit:
         raise RuntimeError("Image does not match the expected source commit")
     current_image = inspect(API, "{{.Config.Image}}")
-    if current_image != BASE_IMAGE:
+    if current_image != args.base_image:
         raise RuntimeError(f"Live API image changed: {current_image}")
 
     original = COMPOSE_FILE.read_text()
-    proposed = updated_compose(original, args.new_image)
+    proposed = updated_compose(original, args.new_image, args.base_image)
     validate_compose(proposed)
     protected_before = protected_snapshot()
 
     if args.dry_run:
         assert_protected_unchanged(protected_before)
-        print(f"Dry run passed: {BASE_IMAGE} -> {args.new_image}; API was not restarted")
+        print(f"Dry run passed: {args.base_image} -> {args.new_image}; API was not restarted")
         return
 
     backup = COMPOSE_FILE.with_name(f"docker-compose.yml.pre-vod-latency-{time.time_ns()}")
@@ -157,7 +162,7 @@ def main() -> None:
             try:
                 replace_compose(original)
                 run(*COMPOSE, "up", "-d", "--no-deps", "--no-build", "--force-recreate", "--pull", "never", "api")
-                if not wait_healthy(BASE_IMAGE):
+                if not wait_healthy(args.base_image):
                     raise RuntimeError("Original API image did not become healthy after rollback")
                 assert_protected_unchanged(protected_before)
             except Exception as rollback_error:
