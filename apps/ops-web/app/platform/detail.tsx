@@ -15,10 +15,10 @@ type Playback = { url: string | null; canPlay: boolean; errorMessage?: string | 
 type EndPrompt = { title: string; seconds?: number; onPlay?: () => void; onCancel: () => void };
 function playbackErrorMessage(cause: unknown, kind: MediaItem["kind"]): string {
   const message = cause instanceof Error ? cause.message : "İçerik açılamadı.";
-  if (/^Upstream\s+\d{3}\b/i.test(message)) {
+  if (/^Upstream\s+\d{3}\b/i.test(message) || /\b(?:operation was aborted|failed to fetch|networkerror)\b/i.test(message) || /^HTTP\s+\d{3}\b/i.test(message)) {
     return kind === "series"
-      ? "Bu bölüm şu anda yayın kaynağından açılamıyor. Biraz sonra yeniden dene veya başka bir bölüm seç."
-      : "Bu film şu anda yayın kaynağından açılamıyor. Biraz sonra yeniden dene.";
+      ? "Bu bölüm şu anda açılamıyor. Biraz sonra yeniden dene veya başka bir bölüm seç."
+      : "Bu film şu anda açılamıyor. Biraz sonra yeniden dene.";
   }
   return message;
 }
