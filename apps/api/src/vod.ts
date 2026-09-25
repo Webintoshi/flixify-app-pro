@@ -1389,7 +1389,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     detail?: Record<string, unknown> | null;
   }) {
     try {
-      await options.onDiagnostic?.(input);
+      void Promise.resolve(options.onDiagnostic?.(input)).catch(() => undefined);
     } catch {
       // Diagnostics should never block playback startup.
     }
@@ -1616,6 +1616,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
   }
 
   async function createPlayback(input: CreateVodPlaybackInput): Promise<VodPlaybackRecord> {
+    const startupStartedAt = performance.now();
     const debugEnabled = input.debug === true || process.env.FLIXIFY_VOD_DEBUG === "1";
     const debugLog = (event: string, detail?: Record<string, unknown>) => {
       if (!debugEnabled) {
@@ -1631,6 +1632,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     };
 
     const probe = await probeVodStream(input.sourceUrl);
+    const probeDurationMs = Math.round(performance.now() - startupStartedAt);
     debugLog("probe-result", {
       ok: probe.ok,
       statusCode: probe.statusCode,
@@ -1641,6 +1643,18 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     });
     const allowUnverifiedSource = input.allowUnverifiedSource === true;
     if ((!probe.ok || !probe.finalUrl) && !allowUnverifiedSource) {
+      await emitDiagnostic({
+        itemId: input.itemId,
+        kind: input.kind,
+        event: "playback-failed",
+        deliveryMode: "hls_transcoded",
+        sourceTransport: probe.transport,
+        errorCode: "source-probe-failed",
+        detail: {
+          probeDurationMs,
+          failedDurationMs: Math.round(performance.now() - startupStartedAt)
+        }
+      });
       return buildDisabledPlaybackRecord({
         itemId: input.itemId,
         kind: input.kind,
@@ -1655,7 +1669,9 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       probe.transport !== "unknown" ? probe.transport : (input.sourceTransportHint ?? "unknown");
     const isVerified = probe.ok && Boolean(probe.finalUrl);
     const supportsByteRange = isVerified ? probe.supportsByteRange : false;
+    const mediaProfileStartedAt = performance.now();
     const mediaProfile = await probeVodMediaProfile(options.ffprobeBinary, effectiveSourceUrl, effectiveTransport);
+    const mediaProfileDurationMs = Math.round(performance.now() - mediaProfileStartedAt);
 
     if (!isVerified && allowUnverifiedSource) {
       debugLog("probe-bypassed", {
@@ -1691,6 +1707,19 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       debugLog("unsupported-without-ffmpeg", {
         transport: effectiveTransport,
         preferTranscode: input.preferTranscode === true
+      });
+      await emitDiagnostic({
+        itemId: input.itemId,
+        kind: input.kind,
+        event: "playback-failed",
+        deliveryMode: "hls_transcoded",
+        sourceTransport: effectiveTransport,
+        errorCode: "ffmpeg-unavailable",
+        detail: {
+          probeDurationMs,
+          mediaProfileDurationMs,
+          failedDurationMs: Math.round(performance.now() - startupStartedAt)
+        }
       });
       return buildDisabledPlaybackRecord({
         itemId: input.itemId,
@@ -1774,7 +1803,10 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       detail: {
         audioTrackCount: session.audioTracks.length,
         defaultAudioTrackId: session.defaultAudioTrackId,
-        selectedAudioTrackId: session.selectedAudioTrackId
+        selectedAudioTrackId: session.selectedAudioTrackId,
+        probeDurationMs,
+        mediaProfileDurationMs,
+        sessionCreatedDurationMs: Math.round(performance.now() - startupStartedAt)
       }
     });
 

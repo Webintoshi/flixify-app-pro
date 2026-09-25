@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createFfmpegArgs, parseVodMediaProfile, probeVodStream, resolveVodTranscodeDecision, selectVodAudioTrackId } from "./vod.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { createFfmpegArgs, createVodPlaybackManager, parseVodMediaProfile, probeVodStream, resolveVodTranscodeDecision, selectVodAudioTrackId } from "./vod.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -283,6 +286,184 @@ describe("probeVodStream", () => {
     expect(probe.ok).toBe(false);
     expect(probe.transport).toBe("mkv");
     expect(probe.errorMessage).toContain("IP_BAN");
+  });
+});
+
+describe("createVodPlaybackManager", () => {
+  it("reports failed source probe latency without disclosing its URL", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
+    const diagnostics: Array<{ event: string; errorCode?: string | null; detail?: Record<string, unknown> | null }> = [];
+    const manager = createVodPlaybackManager({
+      ffmpegBinary: "/nonexistent/ffmpeg",
+      ffprobeBinary: "/nonexistent/ffprobe",
+      sessionTtlMs: 60_000,
+      onDiagnostic: (input) => {
+        diagnostics.push(input);
+      }
+    });
+
+    try {
+      const playback = await manager.createPlayback({
+        userId: "test-user",
+        itemId: "test-episode",
+        kind: "episode",
+        sourceUrl: "https://example.com/fixture-secret.mkv",
+        baseOrigin: "https://example.com",
+        clientRuntime: "browser"
+      });
+      const failed = diagnostics.find((item) => item.event === "playback-failed");
+
+      expect(playback.canPlay).toBe(false);
+      expect(failed).toMatchObject({
+        errorCode: "source-probe-failed",
+        detail: { probeDurationMs: expect.any(Number) }
+      });
+      expect(JSON.stringify(failed)).not.toContain("fixture-secret");
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it("reports source analysis latency when FFmpeg is unavailable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("media bytes", {
+        status: 200,
+        headers: { "content-type": "video/mp4", "accept-ranges": "bytes" }
+      }))
+    );
+    const diagnostics: Array<{ event: string; errorCode?: string | null; detail?: Record<string, unknown> | null }> = [];
+    const manager = createVodPlaybackManager({
+      ffmpegBinary: "/nonexistent/ffmpeg",
+      ffprobeBinary: "/nonexistent/ffprobe",
+      sessionTtlMs: 60_000,
+      onDiagnostic: (input) => {
+        diagnostics.push(input);
+      }
+    });
+
+    try {
+      const playback = await manager.createPlayback({
+        userId: "test-user",
+        itemId: "test-episode",
+        kind: "episode",
+        sourceUrl: "https://example.com/fixture-secret.mp4",
+        baseOrigin: "https://example.com",
+        clientRuntime: "browser"
+      });
+      const failed = diagnostics.find((item) => item.event === "playback-failed");
+
+      expect(playback.canPlay).toBe(false);
+      expect(failed).toMatchObject({
+        errorCode: "ffmpeg-unavailable",
+        detail: {
+          probeDurationMs: expect.any(Number),
+          mediaProfileDurationMs: expect.any(Number)
+        }
+      });
+      expect(JSON.stringify(failed)).not.toContain("fixture-secret");
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it("reports probe and media analysis latency with a prepared session", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return new Response("#EXTM3U\n#EXTINF:4,\nsegment-0.ts\n", {
+          status: 200,
+          headers: { "content-type": "application/vnd.apple.mpegurl" }
+        });
+      })
+    );
+
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "flixify-vod-timing-test-"));
+    const diagnostics: Array<{ event: string; detail?: Record<string, unknown> | null }> = [];
+    const manager = createVodPlaybackManager({
+      ffmpegBinary: "/nonexistent/ffmpeg",
+      ffprobeBinary: "/nonexistent/ffprobe",
+      sessionTtlMs: 60_000,
+      tempRoot,
+      onDiagnostic: (input) => {
+        diagnostics.push(input);
+      }
+    });
+
+    try {
+      const playback = await manager.createPlayback({
+        userId: "test-user",
+        itemId: "test-episode",
+        kind: "episode",
+        sourceUrl: "https://example.com/episode.m3u8",
+        baseOrigin: "https://example.com",
+        clientRuntime: "app"
+      });
+      const sessionCreated = diagnostics.find((item) => item.event === "session-created");
+
+      expect(playback.canPlay).toBe(true);
+      expect(sessionCreated?.detail).toMatchObject({
+        probeDurationMs: expect.any(Number),
+        mediaProfileDurationMs: expect.any(Number),
+        sessionCreatedDurationMs: expect.any(Number)
+      });
+      expect(sessionCreated?.detail?.probeDurationMs).toBeGreaterThanOrEqual(25);
+      expect(sessionCreated?.detail?.sessionCreatedDurationMs).toBeGreaterThanOrEqual(
+        sessionCreated?.detail?.probeDurationMs as number
+      );
+    } finally {
+      await manager.dispose();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("makes a playable HLS session available while diagnostic storage is pending", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response("#EXTM3U\n#EXTINF:4,\nsegment-0.ts\n", {
+          status: 200,
+          headers: { "content-type": "application/vnd.apple.mpegurl" }
+        })
+      )
+    );
+
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "flixify-vod-diagnostic-test-"));
+    let finishDiagnostic!: () => void;
+    const diagnosticStorage = new Promise<void>((resolve) => {
+      finishDiagnostic = resolve;
+    });
+    const manager = createVodPlaybackManager({
+      ffmpegBinary: "/nonexistent/ffmpeg",
+      ffprobeBinary: "/nonexistent/ffprobe",
+      sessionTtlMs: 60_000,
+      tempRoot,
+      onDiagnostic: () => diagnosticStorage
+    });
+
+    try {
+      const playback = manager.createPlayback({
+        userId: "test-user",
+        itemId: "test-episode",
+        kind: "episode",
+        sourceUrl: "https://example.com/episode.m3u8",
+        baseOrigin: "https://example.com",
+        clientRuntime: "app"
+      });
+      const result = await Promise.race([
+        playback,
+        new Promise<"diagnostic-blocked-playback">((resolve) => {
+          setTimeout(() => resolve("diagnostic-blocked-playback"), 500);
+        })
+      ]);
+
+      expect(result).toMatchObject({ canPlay: true, deliveryMode: "hls_proxy" });
+    } finally {
+      finishDiagnostic();
+      await manager.dispose();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 });
 

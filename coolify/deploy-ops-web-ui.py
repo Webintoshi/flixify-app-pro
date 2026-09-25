@@ -15,7 +15,7 @@ from pathlib import Path
 SERVICE = "eupquokyj7qegufqvqkjmuyr"
 COMPOSE_FILE = Path(f"/data/coolify/services/{SERVICE}/docker-compose.yml")
 WEB = f"ops-web-{SERVICE}"
-BASE_IMAGE = "flixify-ops-web:montana-front-d8c425a"
+BASE_IMAGE = "flixify-ops-web:montana-front-129864f"
 COMPOSE = ["docker", "compose", "-p", SERVICE, "-f", str(COMPOSE_FILE)]
 PROTECTED = [f"api-{SERVICE}", f"worker-{SERVICE}", f"db-{SERVICE}", "redis-dzaxcg8qzkth6xvwdhcicosh"]
 
@@ -91,10 +91,22 @@ def main() -> None:
                 raise RuntimeError(f"Protected service changed: {name}")
         print(f"Web-only deployment healthy: {new_image}")
         print(f"Rollback compose backup: {backup}")
-    except Exception:
+    except Exception as error:
         if changed:
-            replace_compose(original)
-            subprocess.run([*COMPOSE, "up", "-d", "--no-deps", "--no-build", "--force-recreate", "--pull", "never", "ops-web"], capture_output=True, timeout=180)
+            try:
+                replace_compose(original)
+                run(*COMPOSE, "up", "-d", "--no-deps", "--no-build", "--force-recreate", "--pull", "never", "ops-web")
+                for _ in range(40):
+                    if healthy(BASE_IMAGE):
+                        break
+                    time.sleep(2)
+                else:
+                    raise RuntimeError("Original web image did not become healthy after rollback")
+                for name, before in protected_before.items():
+                    if inspect(name, "{{.Id}} {{.State.StartedAt}}") != before:
+                        raise RuntimeError(f"Protected service changed during rollback: {name}")
+            except Exception as rollback_error:
+                raise RuntimeError(f"Deployment failed; rollback also failed: {rollback_error}") from error
         raise
 
 
