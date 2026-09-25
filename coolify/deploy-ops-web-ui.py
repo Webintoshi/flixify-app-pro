@@ -15,7 +15,7 @@ from pathlib import Path
 SERVICE = "eupquokyj7qegufqvqkjmuyr"
 COMPOSE_FILE = Path(f"/data/coolify/services/{SERVICE}/docker-compose.yml")
 WEB = f"ops-web-{SERVICE}"
-BASE_IMAGE = "flixify-ops-web:referral-page-v2-20260924"
+BASE_IMAGE = "flixify-ops-web:montana-front-773de06"
 COMPOSE = ["docker", "compose", "-p", SERVICE, "-f", str(COMPOSE_FILE)]
 PROTECTED = [f"api-{SERVICE}", f"worker-{SERVICE}", f"db-{SERVICE}", "redis-dzaxcg8qzkth6xvwdhcicosh"]
 

@@ -25,16 +25,29 @@ export function AppShell({ children, publicAccess = false }: { children: ReactNo
     document.addEventListener("pointerdown", close); document.addEventListener("keydown", key);
     return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", key); };
   }, []);
+  const focusCatalogSearch = () => {
+    const search = document.getElementById("catalog-search") as HTMLInputElement | null;
+    search?.scrollIntoView({ behavior: "smooth", block: "center" });
+    search?.focus({ preventScroll: true });
+  };
+  const accountControl = <div className={s.account} ref={codeRef}>
+    {session ? <button type="button" className={`${s.code}${catalogRoute ? ` ${s.catalogAccountToggle}` : ""}`} aria-label={catalogRoute ? (revealed ? "Hesap menüsünü kapat" : "Hesap menüsünü aç") : (revealed ? "Kullanıcı kodunu gizle" : "Kullanıcı kodunu göster")} aria-expanded={revealed} onClick={() => setRevealed(v => !v)}>
+      {catalogRoute && <svg className={s.catalogAccountIcon} width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="3"/><path d="M5.7 18.4c1.5-2.3 3.6-3.5 6.3-3.5s4.8 1.2 6.3 3.5"/></svg>}
+      <span>{revealed ? code : maskCode(code)}</span><Icon name="chevron" />
+    </button> : <div className={s.guestActions}><Link href="/giris-yap" className={s.code}>Giriş yap</Link><Link href="/kayit-ol" className={s.code}>Kayıt Ol</Link></div>}
+    {revealed && <div className={s.accountMenu}><span>Kullanıcı kodun</span><strong>{code}</strong><Link href="/ayarlar">Hesap ayarları</Link><button onClick={() => { logout(); router.push("/"); }}>Çıkış Yap</button></div>}
+  </div>;
   if (!ready) return <div className={s.loading} aria-busy="true">Flixify hazırlanıyor…</div>;
   if (!session && !publicAccess) return <div className={s.app}><Link href="/" className={s.brand}><img src="/logo/flixify-logo.png" alt="Flixify" width="142" height="37" /></Link><div className={s.loading}>İçeriklerin. Tek yerde.</div><LoginDialog onClose={() => router.push("/")} onSuccess={() => setRevealed(false)} /></div>;
   return <div className={`${s.app}${pathname === "/canli-tv" ? ` ${s.liveTvApp}` : ""}${catalogRoute ? ` ${s.catalogApp}` : ""}`}>
     <header className={s.header}>
       <Link href="/" className={s.brand} aria-label="Flixify ana sayfa"><img src="/logo/flixify-logo.png" alt="Flixify" width="142" height="37" /></Link>
       <nav className={s.nav} aria-label="Ana menü">{navigation.map(link => <Link key={link.href} href={link.href} className={pathname === link.href ? s.active : ""} aria-current={pathname === link.href ? "page" : undefined}>{link.label}</Link>)}</nav>
-      <div className={s.account} ref={codeRef}>
-        {session ? <button className={s.code} aria-label={revealed ? "Kullanıcı kodunu gizle" : "Kullanıcı kodunu göster"} aria-expanded={revealed} onClick={() => setRevealed(v => !v)}><span>{revealed ? code : maskCode(code)}</span><Icon name="chevron" /></button> : <div className={s.guestActions}><Link href="/giris-yap" className={s.code}>Giriş yap</Link><Link href="/kayit-ol" className={s.code}>Kayıt Ol</Link></div>}
-        {revealed && <div className={s.accountMenu}><span>Kullanıcı kodun</span><strong>{code}</strong><Link href="/ayarlar">Hesap ayarları</Link><button onClick={() => { logout(); router.push("/"); }}>Çıkış Yap</button></div>}
-      </div>
+      {catalogRoute ? <div className={s.catalogHeaderActions}>
+        <button type="button" className={s.catalogHeaderSearch} aria-label="Katalogda ara" onClick={focusCatalogSearch}><Icon name="search" /></button>
+        {accountControl}
+        <Link className={s.catalogExplore} href="/#kesfet">Kataloğu Keşfet</Link>
+      </div> : accountControl}
     </header>
     <div className={s.appBody}>
       <nav className={s.rail} aria-label="Hızlı menü">{links.map(link => <Link key={link.href} href={link.href} aria-label={link.label} className={pathname === link.href ? s.active : ""}><Icon name={link.icon} /></Link>)}<Link className={s.settings} href="/ayarlar" aria-label="Hesap ayarları"><Icon name="settings" /></Link></nav>

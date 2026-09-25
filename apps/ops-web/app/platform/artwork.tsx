@@ -15,8 +15,8 @@ export function Artwork({ item, hero = false }: { item: MediaItem; hero?: boolea
     {url && visible && !failed ? <img src={url} alt={hero ? "" : item.title} decoding="async" loading={hero ? "eager" : "lazy"} fetchPriority={hero ? "high" : "low"} onError={() => setFailed(true)}/> : <div className={s.artworkFallback}><Icon name={item.kind}/><span>{item.title}</span></div>}
   </div>;
 }
-export function FavoriteButton({ item }: { item: MediaItem }) {
+export function FavoriteButton({ item, expanded = false }: { item: MediaItem; expanded?: boolean }) {
   const { favorites, favoritesReady, pending, toggle } = usePlatform();
   const active = favorites.some(f => itemKey(f) === itemKey(item));
-  return <button className={`${s.favorite} ${active ? s.saved : ""}`} disabled={!favoritesReady || pending.has(itemKey(item))} aria-pressed={active} aria-label={`${item.title}: ${active ? "favorilerden çıkar" : "favorilere ekle"}`} onClick={e => { e.stopPropagation(); void toggle(item); }}><Icon name="heart" filled={active}/></button>;
+  return <button className={`${s.favorite} ${active ? s.saved : ""}${expanded ? ` ${s.previewFavorite}` : ""}`} disabled={!favoritesReady || pending.has(itemKey(item))} aria-pressed={active} aria-label={`${item.title}: ${active ? "favorilerden çıkar" : "favorilere ekle"}`} onClick={e => { e.stopPropagation(); void toggle(item); }}><Icon name="heart" filled={active}/>{expanded && <span>{active ? "Listemde" : "Listeme Ekle"}</span>}</button>;
 }

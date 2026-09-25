@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { apiRequest } from "../../lib/api";
 import { Artwork, FavoriteButton } from "./artwork";
 import { Detail } from "./detail";
@@ -28,8 +29,47 @@ function getCatalog(kind: Kind, page: number, search: string, group: string, acc
   });
 }
 function MediaTile({ item, open }: { item: MediaItem; open: (item: MediaItem) => void }) {
-  return <div className={`${s.tile} ${item.kind === "live" ? s.channelTile : ""}`}>
-    <button className={s.tileOpen} onClick={() => open(item)} disabled={item.available === false} aria-label={`${item.title} detayını aç`}><Artwork item={item}/>{item.kind !== "live" && <span className={s.tilePreview} aria-hidden="true"><b>{item.title}</b><span>{item.groupTitle}</span><em>Detayları Gör <Icon name="arrow"/></em></span>}<strong>{item.title}</strong>{item.available === false ? <small>{item.lookupFailed ? "Geçici olarak doğrulanamıyor" : "Şu anda kullanılamıyor"}</small> : <small>{item.groupTitle}</small>}</button><FavoriteButton item={item}/>
+  const tileRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<number | null>(null);
+  const [preview, setPreview] = useState<{ top: number; left: number; width: number; height: number; favoriteLeft: number; favoriteTop: number } | null>(null);
+  const hidePreview = () => setPreview(null);
+  const cancelClose = () => { if (closeTimer.current !== null) { window.clearTimeout(closeTimer.current); closeTimer.current = null; } };
+  const scheduleClose = () => { cancelClose(); closeTimer.current = window.setTimeout(hidePreview, 120); };
+  const showPreview = () => {
+    if (item.kind === "live" || item.available === false || !window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+    const anchor = tileRef.current?.querySelector<HTMLElement>(`.${s.artwork}`);
+    if (!anchor) return;
+    cancelClose();
+    const rect = anchor.getBoundingClientRect();
+    const width = Math.min(320, window.innerWidth - 24);
+    const height = Math.min(rect.height, window.innerHeight - 96);
+    const left = Math.max(12, Math.min(rect.left + width <= window.innerWidth - 12 ? rect.left : rect.right - width, window.innerWidth - width - 12));
+    const top = Math.max(76, Math.min(rect.top, window.innerHeight - height - 12));
+    setPreview({ top, left, width, height, favoriteLeft: Math.max(8, Math.min(rect.right - left - 40, width - 40)), favoriteTop: Math.max(8, Math.min(rect.top - top + 8, height - 40)) });
+  };
+  useEffect(() => {
+    if (!preview) return;
+    const closeOnFocus = () => { const active = document.activeElement; if (active && !tileRef.current?.contains(active) && !previewRef.current?.contains(active)) hidePreview(); };
+    const closeOnKey = (event: KeyboardEvent) => { if (event.key === "Escape") hidePreview(); };
+    document.addEventListener("scroll", hidePreview, true);
+    document.addEventListener("focusin", closeOnFocus);
+    window.addEventListener("resize", hidePreview);
+    window.addEventListener("keydown", closeOnKey);
+    return () => {
+      document.removeEventListener("scroll", hidePreview, true);
+      document.removeEventListener("focusin", closeOnFocus);
+      window.removeEventListener("resize", hidePreview);
+      window.removeEventListener("keydown", closeOnKey);
+    };
+  }, [preview]);
+  useEffect(() => () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); }, []);
+  const details = [item.kind === "series" ? "Dizi" : item.kind === "movie" ? "Film" : "Canlı TV", item.groupTitle, item.seasonCount ? `${item.seasonCount} sezon` : null, item.episodeCount ? `${item.episodeCount} bölüm` : null].filter(Boolean).join(" · ");
+  return <div ref={tileRef} className={`${s.tile} ${item.kind === "live" ? s.channelTile : ""}`} onMouseEnter={showPreview} onMouseLeave={scheduleClose}>
+    <button className={s.tileOpen} onFocus={showPreview} onClick={() => { hidePreview(); open(item); }} disabled={item.available === false} aria-label={`${item.title} detayını aç`}><div className={s.posterFrame}><Artwork item={item}/></div><strong>{item.title}</strong>{item.available === false ? <small>{item.lookupFailed ? "Geçici olarak doğrulanamıyor" : "Şu anda kullanılamıyor"}</small> : <small>{item.groupTitle}</small>}</button><FavoriteButton item={item}/>
+    {preview && createPortal(<div ref={previewRef} className={s.expandedPreview} data-media-preview role="group" aria-label={`${item.title} hızlı önizleme`} style={{ top: preview.top, left: preview.left, width: preview.width, height: preview.height }} onMouseEnter={cancelClose} onMouseLeave={scheduleClose}>
+      <Artwork item={item}/><div className={s.expandedPreviewShade}/><div className={s.expandedPreviewQuick} style={{ left: preview.favoriteLeft, top: preview.favoriteTop }}><FavoriteButton item={item}/></div><div className={s.expandedPreviewCopy}><span className={s.expandedPreviewEyebrow}>{item.kind === "series" ? "DİZİ" : "FİLM"}</span><h3>{item.title}</h3><p>{details}</p><div className={s.expandedPreviewActions}><button type="button" className={s.expandedPreviewMore} onClick={() => { hidePreview(); open(item); }}>Daha Fazla <Icon name="arrow"/></button><FavoriteButton item={item} expanded/></div></div>
+    </div>, document.body)}
   </div>;
 }
 function Skeletons() { return <div className={s.grid} aria-busy="true" aria-label="İçerikler yükleniyor">{Array.from({ length: 12 }, (_, i) => <div className={s.skeleton} key={i}/>)}</div>; }
@@ -142,11 +182,12 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   }, new Map<string, MediaItem[]>())).filter(([, row]) => row.length >= 3).slice(0, 4);
   return <main className={s.catalog}>
     <div className={s.catalogContent} data-catalog-results>
-    {overview && featured && !search && <section className={s.hero}><Artwork item={featured} hero/><div className={s.heroFade}/><div className={s.heroCopy}><span>{featured.kind === "series" ? "ÖNE ÇIKAN DİZİ" : "ÖNE ÇIKAN FİLM"}</span><h1>{featured.title}</h1><p>{featured.groupTitle}{featured.seasonCount ? ` · ${featured.seasonCount} sezon` : ""}</p><div className={s.heroActions}><button className={s.primary} onClick={() => open(featured)}><Icon name="play" filled/>Detayları Gör</button><FavoriteButton item={featured}/></div></div>{heroOptions.length > 1 && <div className={s.heroSlides} role="group" aria-label="Öne çıkan içerikler">{heroOptions.map((item, index) => <button key={itemKey(item)} type="button" aria-label={`${index + 1}. içerik: ${item.title}`} aria-pressed={heroIndex === index} onClick={() => setHeroIndex(index)}/>)}</div>}</section>}
-    <div className={s.catalogHeading}><h1>{title}</h1>{(!favoritesOnly || favoritesReady) && <span>{favoritesOnly ? favorites.length : shownCatalog.total.toLocaleString("tr-TR")} içerik</span>}</div>
-    {hasCategories && <div className={s.genreStrip} role="group" aria-label={kind === "movie" ? "Film kategorileri" : "Dizi kategorileri"}><button type="button" aria-pressed={!group} onClick={() => setGroup("")}>Tümü</button>{(categoryGroups.account === account && categoryGroups.kind === kind ? categoryGroups.groups : shownCatalog.groups ?? []).map(category => <button type="button" key={category.title} aria-pressed={group === category.title} onClick={() => setGroup(category.title)}>{category.title}</button>)}</div>}
-    <div className={s.filters}><label className={s.search}><Icon name="search"/><input aria-label={`${title} içinde ara`} placeholder={favoritesOnly ? "Favorilerinde ara…" : "İçerik ara…"} value={query} onChange={e => setQuery(e.target.value)}/>{query && <button onClick={() => setQuery("")} aria-label="Aramayı temizle"><Icon name="close"/></button>}</label>
+    {overview && featured && !search && <section className={s.hero}><Artwork item={featured} hero/><div className={s.heroFade}/><div className={s.heroCopy}><span>{featured.kind === "series" ? "DİZİ" : "FİLM"} <b>GÜNDEMDE</b></span><h1>{featured.title}</h1><p>{featured.groupTitle}{featured.seasonCount ? ` · ${featured.seasonCount} sezon` : ""}</p><div className={s.heroActions}><a className={s.heroDiscover} href="#kesfet"><Icon name="search"/>Kataloğu Keşfet</a><button className={s.heroMore} onClick={() => open(featured)}>Daha Fazla <Icon name="arrow"/></button><FavoriteButton item={featured} expanded/></div></div>{heroOptions.length > 1 && <div className={s.heroSlides} role="group" aria-label="Öne çıkan içerikler">{heroOptions.map((item, index) => <button key={itemKey(item)} type="button" aria-label={`${index + 1}. içerik: ${item.title}`} aria-pressed={heroIndex === index} onClick={() => setHeroIndex(index)}/>)}</div>}</section>}
+    {overview && !search && <section className={s.featureIntro}><span className={s.featureIntroMark}><Icon name="heart"/></span><div><small>FLIXIFY SEÇKİSİ</small><h2>Hazırsan perdeyi açalım.</h2><p>Filmleri, dizileri ve yeni hikâyeleri bir arada keşfet.</p></div><a href="#kesfet">Kataloğu Keşfet <Icon name="arrow"/></a></section>}
+    <div className={s.catalogToolbar}><div className={s.catalogHeading} id="kesfet"><h1>{title}</h1>{(!favoritesOnly || favoritesReady) && <span>{favoritesOnly ? favorites.length : shownCatalog.total.toLocaleString("tr-TR")} içerik</span>}</div>
+      <div className={s.filters}><label className={s.search}><Icon name="search"/><input id="catalog-search" aria-label={`${title} içinde ara`} placeholder={favoritesOnly ? "Favorilerinde ara…" : "İçerik ara…"} value={query} onChange={e => setQuery(e.target.value)}/>{query && <button onClick={() => setQuery("")} aria-label="Aramayı temizle"><Icon name="close"/></button>}</label></div>
     </div>
+    {hasCategories && <div className={s.genreStrip} role="group" aria-label={kind === "movie" ? "Film kategorileri" : "Dizi kategorileri"}><button type="button" aria-pressed={!group} onClick={() => setGroup("")}>Tümü</button>{(categoryGroups.account === account && categoryGroups.kind === kind ? categoryGroups.groups : shownCatalog.groups ?? []).map(category => <button type="button" key={category.title} aria-pressed={group === category.title} onClick={() => setGroup(category.title)}>{category.title}</button>)}</div>}
     {kind === "movie" && !overview && !favoritesOnly && account && <AdultMovieToggle key={account} account={account} onChanged={updateAdultPreference}/>}
     {favoritesOnly && <div className={s.chips}>{(["all","live","movie","series"] as const).map(value => <button key={value} className={filter === value ? s.selectedChip : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>{({all:"Tümü",live:"Canlı TV",movie:"Filmler",series:"Diziler"})[value]}</button>)}</div>}
     {error && <div className={s.inlineError} role="alert">{error}<button onClick={() => setReload(v => v+1)}>Tekrar Dene</button></div>}

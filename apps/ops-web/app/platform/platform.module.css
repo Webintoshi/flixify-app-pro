@@ -147,28 +147,61 @@
 
 /* Film ve dizi kataloğu: mevcut marka paletiyle sinema düzeni. */
 .catalogApp { padding: 0 clamp(20px, 3.7vw, 64px) 48px; }
-.catalogApp .header { position: sticky; top: 0; z-index: 80; min-height: 72px; max-width: 1680px; background: #07090c; backdrop-filter: blur(16px); }
-.catalogApp .nav a { padding-top: 25px; padding-bottom: 24px; }
+.catalogApp .header { position: sticky; top: 0; z-index: 80; display: flex; min-height: 72px; max-width: 1680px; gap: clamp(32px, 5vw, 76px); background: #07090cf0; backdrop-filter: blur(16px); }
+.catalogApp .brand img { width: 133px; }
+.catalogApp .nav { justify-content: flex-start; gap: clamp(16px, 2.1vw, 30px); }
+.catalogApp .nav a { padding-top: 25px; padding-bottom: 24px; font-size: 13px; font-weight: 600; }
 .catalogApp .nav .active:after { bottom: 13px; }
+.catalogHeaderActions { display: flex; align-items: center; gap: 18px; margin-left: auto; white-space: nowrap; }
+.catalogHeaderSearch { display: grid; place-items: center; width: 32px; height: 36px; padding: 0; border: 0; background: transparent; color: #e9eaed; }
+.catalogHeaderSearch svg { width: 20px; height: 20px; }
+.catalogHeaderSearch:hover, .catalogAccountToggle:hover { color: #fff; }
+.catalogApp .catalogAccountToggle { display: flex; align-items: center; gap: 5px; padding: 7px 0; color: #e9eaed; }
+.catalogApp .catalogAccountToggle span { display: none; }
+.catalogAccountIcon { width: 21px; height: 21px; }
+.catalogApp .catalogAccountToggle>svg:last-child { width: 13px; height: 13px; }
+.catalogExplore { display: inline-flex; align-items: center; justify-content: center; min-height: 37px; padding: 0 16px; border-radius: 4px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; }
+.catalogExplore:hover { filter: brightness(1.12); }
 .catalogApp .appBody { display: block; max-width: 1680px; margin: 0 auto; }
 .catalogApp .rail { display: none; }
 .catalogApp .main { width: 100%; }
-.catalogApp .catalogHeading { margin: 38px 0 20px; }
+.catalogToolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 26px; margin: 38px 0 20px; }
+.catalogApp .catalogHeading { display: block; margin: 0; }
 .catalogApp .catalogHeading h1 { font-size: clamp(28px, 2.6vw, 38px); }
-.catalogApp .filters { margin: 0 0 25px; }
-.catalogApp .hero { min-height: 470px; height: clamp(470px, 39vw, 620px); margin: 0 calc(-1 * clamp(20px, 3.7vw, 64px)) 40px; }
+.catalogApp .catalogHeading>span { display: block; margin-top: 6px; }
+.catalogApp .filters { width: min(360px, 42%); margin: 0; }
+.catalogApp .filters .search { max-width: none; }
+.catalogApp .hero { min-height: 440px; height: clamp(440px, 33vw, 530px); margin: 0 calc(-1 * clamp(20px, 3.7vw, 64px)) 34px; }
 .catalogApp .hero>.artwork { margin-left: 34%; width: 66%; }
 .catalogApp .heroFade { background: linear-gradient(90deg, #07090c 2%, #07090ce8 27%, #07090c52 63%, #07090c08), linear-gradient(0deg, #07090c, transparent 28%); }
 .catalogApp .heroCopy { max-width: min(630px, 60%); padding-left: clamp(30px, 5vw, 84px); }
-.catalogApp .heroCopy h1 { font-size: clamp(42px, 5vw, 76px); }
+.catalogApp .heroCopy h1 { max-width: 590px; font-size: clamp(38px, 4.2vw, 64px); }
+.catalogApp .heroCopy>span { display: inline-flex; align-items: center; gap: 9px; color: #f4f4f5; font-weight: 750; letter-spacing: .08em; }
+.catalogApp .heroCopy>span b { padding: 5px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-size: 10px; letter-spacing: .02em; }
+.catalogApp .heroActions { flex-wrap: wrap; gap: 10px; margin-top: 25px; }
+.heroDiscover, .heroMore { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 45px; padding: 0 16px; border: 0; border-radius: 5px; font-size: 12px!important; font-weight: 750; white-space: nowrap; }
+.heroDiscover { background: #f9f9fb; color: #101217; }
+.heroMore { background: #2b2d33; color: #f9f9fb; }
+.heroDiscover svg, .heroMore svg { width: 16px; height: 16px; }
+.heroActions .previewFavorite { position: static; display: inline-flex; gap: 8px; width: auto; height: 45px; padding: 0 15px; border: 0; border-radius: 5px; background: #2b2d33; color: #f9f9fb; font-size: 12px!important; }
+.heroActions .previewFavorite svg { width: 17px; height: 17px; }
+.featureIntro { display: flex; align-items: center; gap: 18px; min-height: 92px; padding: 17px 22px; margin: 0 0 32px; border: 1px solid #ffffff1b; border-radius: 11px; background: #171b22; }
+.featureIntroMark { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; border-radius: 8px; background: #ff3b431c; color: var(--accent); }
+.featureIntroMark svg { width: 19px; height: 19px; }
+.featureIntro>div { min-width: 0; }
+.featureIntro small { color: #a5aab3; font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.featureIntro h2 { margin: 5px 0 2px; font-size: 18px; letter-spacing: -.02em; }
+.featureIntro p { margin: 0; color: #aeb4bf; font-size: 12px; }
+.featureIntro>a { display: inline-flex; align-items: center; gap: 12px; min-height: 42px; padding: 0 18px; margin-left: auto; border-radius: 5px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 750; white-space: nowrap; }
+.featureIntro>a svg { width: 16px; height: 16px; }
 .heroSlides { position: absolute; right: clamp(30px, 5vw, 84px); bottom: 32px; z-index: 3; display: flex; gap: 8px; align-items: center; }
 .heroSlides button { width: 22px; height: 4px; padding: 0; border: 0; border-radius: 9px; background: #ffffff70; }
 .heroSlides button[aria-pressed="true"] { width: 38px; background: var(--accent); }
-.genreStrip { display: flex; gap: 9px; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; padding: 2px 0 18px; margin-bottom: 12px; }
+.genreStrip { display: flex; gap: 26px; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; padding: 2px 0 14px; margin-bottom: 16px; border-bottom: 1px solid #ffffff1b; }
 .genreStrip::-webkit-scrollbar { display: none; }
-.genreStrip button { flex: 0 0 auto; min-height: 38px; padding: 8px 16px; border: 1px solid #ffffff23; border-radius: 5px; background: #10141a; color: #c2c6cf; font-size: 13px; white-space: nowrap; }
-.genreStrip button:hover, .genreStrip button[aria-pressed="true"] { border-color: var(--accent); color: #fff; }
-.genreStrip button[aria-pressed="true"] { background: #ff3b431c; }
+.genreStrip button { flex: 0 0 auto; min-height: 38px; padding: 8px 0; border: 0; border-radius: 0; background: transparent; color: #aeb4bf; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.genreStrip button:hover, .genreStrip button[aria-pressed="true"] { color: #fff; }
+.genreStrip button[aria-pressed="true"] { box-shadow: inset 0 -2px var(--accent); }
 .railActions { display: flex; align-items: center; gap: 9px; }
 .railActions a { margin-right: 12px; }
 .railActions button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid #ffffff2c; border-radius: 50%; background: #15181e; color: #fff; font-size: 25px; line-height: 1; }
@@ -182,26 +215,52 @@
 .catalogApp .horizontalRail>.channelTile { flex-basis: 118px; }
 .catalogApp .artwork { border-radius: 7px; }
 .catalogApp .tileOpen { position: relative; }
-.tilePreview { position: absolute; inset: 0 0 auto; z-index: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 5px; aspect-ratio: 2 / 3; padding: 14px; border-radius: 7px; background: linear-gradient(0deg, #07090cf5, #07090c30 65%, transparent); color: #fff; opacity: 0; text-align: left; transition: opacity .2s ease; pointer-events: none; }
-.tileOpen:hover .tilePreview, .tileOpen:focus-visible .tilePreview { opacity: 1; }
-.tilePreview b { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 15px; line-height: 1.25; }
-.tilePreview>span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c2c6cf; font-size: 11px; }
-.tilePreview em { display: flex; align-items: center; gap: 5px; margin-top: 5px; color: #fff; font-size: 12px; font-style: normal; font-weight: 700; }
-.tilePreview svg { width: 13px; height: 13px; }
+.posterFrame { position: relative; display: block; overflow: hidden; border-radius: 7px; }
+.channelTile .posterFrame { border-radius: 50%; }
+.catalogApp .tileOpen strong { font-weight: 700; }
+.expandedPreview { position: fixed; z-index: 79; isolation: isolate; overflow: hidden; border: 1px solid #ffffff28; border-radius: 9px; background: #11151b; box-shadow: 0 24px 70px #000c; color: #fff; font-family: "Segoe UI", Helvetica, Arial, sans-serif; animation: previewEnter .18s ease-out both; }
+.expandedPreview>.artwork { position: absolute; inset: 0; width: 100%; height: 100%; aspect-ratio: auto; border-radius: 0; }
+.expandedPreview>.artwork img { width: 100%; height: 100%; object-fit: cover; }
+.expandedPreviewShade { position: absolute; inset: 0; z-index: 1; background: linear-gradient(0deg, #07090cf9 1%, #07090ce0 31%, #07090c6b 64%, #07090c0a 100%); }
+.expandedPreviewQuick { position: absolute; z-index: 4; width: 32px; height: 32px; }
+.expandedPreviewQuick .favorite { position: static; width: 32px; height: 32px; }
+.expandedPreviewCopy { position: relative; z-index: 2; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; padding: 17px; }
+.expandedPreviewEyebrow { color: #ff858b; font-size: 10px; font-weight: 800; letter-spacing: .13em; }
+.expandedPreviewCopy h3 { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; margin: 6px 0 4px; font-size: 20px; line-height: 1.13; letter-spacing: -.025em; }
+.expandedPreviewCopy p { overflow: hidden; margin: 0 0 13px; color: #d3d5da; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.expandedPreviewActions { display: flex; gap: 8px; align-items: center; }
+.expandedPreviewMore { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 35px; padding: 0 11px; border: 0; border-radius: 4px; background: #ff3b43; color: #fff; font-size: 11px; font-weight: 700; }
+.expandedPreviewMore svg { width: 13px; height: 13px; }
+.previewFavorite { position: static; display: inline-flex; gap: 6px; width: auto; height: 35px; padding: 0 11px; border: 1px solid #ffffff50; border-radius: 4px; background: #101419b8; color: #fff; font-size: 11px!important; font-weight: 700; white-space: nowrap; }
+.previewFavorite svg { width: 14px; height: 14px; }
+.previewFavorite.saved { background: #ff3b432b; border-color: #ff3b43; }
+@keyframes previewEnter { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
 @media (max-width: 1150px) and (min-width: 851px) {
   .catalogApp .horizontalRail>.tile { flex-basis: calc((100% - 56px) / 5); }
+  .catalogApp .header { gap: 22px; }
+  .catalogApp .nav { gap: 16px; }
+  .catalogHeaderActions { gap: 11px; }
+  .catalogExplore { padding: 0 10px; }
 }
 @media (max-width: 850px) {
   .catalogApp { padding: 0 16px 90px; }
   .catalogApp .header { min-height: 58px; }
+  .catalogApp .brand img { width: 120px; }
+  .catalogExplore { display: none; }
   .catalogApp .appBody { margin-top: 0; }
   .catalogApp .hero { height: 450px; min-height: 0; margin: 12px 0 29px; border-radius: 13px; }
   .catalogApp .hero>.artwork { margin-left: 0; width: 100%; }
   .catalogApp .heroFade { background: linear-gradient(0deg, #07090cf7 0%, #07090ccb 30%, #07090c00 75%); }
   .catalogApp .heroCopy { align-items: center; max-width: 100%; padding: 24px 20px 48px; text-align: center; }
   .catalogApp .heroCopy h1 { font-size: clamp(28px, 7vw, 40px); }
+  .catalogApp .heroActions { justify-content: center; }
+  .featureIntro { gap: 12px; padding: 16px; }
+  .featureIntro h2 { font-size: 16px; }
+  .featureIntro p { font-size: 11px; }
+  .featureIntro>a { min-height: 38px; padding: 0 11px; font-size: 10px; }
   .heroSlides { right: 50%; bottom: 17px; transform: translateX(50%); }
-  .catalogApp .catalogHeading { margin: 26px 0 16px; }
+  .catalogToolbar { margin: 26px 0 16px; }
+  .catalogApp .filters { width: min(330px, 50%); }
   .catalogApp .horizontalRail>.tile { flex-basis: 148px; }
   .catalogApp .horizontalRail>.channelTile { flex-basis: 102px; }
 }
@@ -209,10 +268,16 @@
   .catalogApp .horizontalRail>.tile { flex-basis: calc((100% - 24px) / 3.2); }
   .catalogApp .horizontalRail>.channelTile { flex-basis: 96px; }
   .catalogApp .sectionHeading h2 { font-size: 19px; }
+  .featureIntro { flex-wrap: wrap; }
+  .featureIntro>a { width: 100%; justify-content: center; }
+  .featureIntroMark { flex-basis: 38px; width: 38px; height: 38px; }
+  .heroDiscover, .heroMore, .heroActions .previewFavorite { min-height: 39px; padding: 0 11px; font-size: 10px!important; }
+  .catalogToolbar { display: block; }
+  .catalogApp .filters { width: 100%; margin-top: 16px; }
   .railActions { gap: 5px; }
   .railActions a { margin-right: 4px; }
   .railActions button { width: 29px; height: 29px; font-size: 22px; }
-  .genreStrip button { min-height: 36px; padding: 7px 13px; font-size: 12px; }
-  .tilePreview { display: none; }
+  .genreStrip { gap: 19px; }
+  .genreStrip button { min-height: 36px; padding: 7px 0; font-size: 12px; }
 }
-@media (prefers-reduced-motion: reduce) { .tilePreview { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .expandedPreview { animation: none; } }
