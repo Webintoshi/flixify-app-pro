@@ -1,0 +1,94 @@
+.surface { overflow: hidden; background: #0b0e12; color: #f7f7f8; }
+.hero { position: relative; min-height: 470px; isolation: isolate; overflow: hidden; background: #11151b; }
+.backdrop { position: absolute; inset: -25px; z-index: -2; filter: blur(22px) brightness(.7); transform: scale(1.08); opacity: .76; }
+.backdrop > div { width: 100%; height: 100%; aspect-ratio: auto; }
+.backdrop img { width: 100%; height: 100%; object-fit: cover; object-position: center 32%; }
+.backdropShade { position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, #0b0e12ee 2%, #0b0e12a6 52%, #0b0e1270), linear-gradient(0deg, #0b0e12 0%, #0b0e1200 50%); }
+.heroContent { position: relative; display: flex; align-items: flex-end; gap: 35px; min-height: 470px; padding: 76px 50px 44px; }
+.poster { flex: 0 0 190px; width: 190px; overflow: hidden; border: 1px solid #ffffff2a; border-radius: 8px; box-shadow: 0 22px 55px #000a; }
+.poster > div { width: 100%; aspect-ratio: 2 / 3; }
+.poster img { width: 100%; height: 100%; object-fit: cover; }
+.heroCopy { min-width: 0; max-width: 720px; padding-bottom: 3px; }
+.kind, .sectionLabel { color: #ff747a; font-size: 11px; font-weight: 800; letter-spacing: .16em; }
+.heroCopy h1 { margin: 12px 0 17px; font-size: clamp(36px, 4.6vw, 58px); line-height: 1.04; letter-spacing: -.045em; text-wrap: balance; }
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 9px 0; color: #e1e4e9; font-size: 13px; font-weight: 650; }
+.meta span + span::before { content: "•"; padding: 0 11px; color: #ff6169; }
+.nowShowing { margin: 20px 0 22px; color: #b9bec7; font-size: 13px; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.playAction { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-width: 164px; min-height: 47px; padding: 0 19px; border: 1px solid #ff3b43; border-radius: 5px; background: #ff3b43; color: #fff; font-size: 13px; font-weight: 750; cursor: pointer; }
+.playAction svg { width: 17px; height: 17px; }
+.playAction:hover:not(:disabled) { background: #f32834; }
+.playAction:disabled { opacity: .52; cursor: default; }
+.favoriteAction button { position: static; display: inline-flex; align-items: center; justify-content: center; gap: 9px; width: auto; height: 47px; min-height: 47px; padding: 0 17px; border: 1px solid #ffffff50; border-radius: 5px; background: #11161bba; color: #fff; font-size: 13px!important; font-weight: 700; }
+.favoriteAction button:hover:not(:disabled) { background: #242b34; }
+.favoriteAction button svg { width: 17px; height: 17px; }
+.body { padding: 26px 50px 55px; }
+.notice, .error { padding: 13px 16px; margin: 0 0 18px; border: 1px solid #ffffff20; border-radius: 5px; background: #171b22; color: #c9ced7; font-size: 13px; }
+.error { border-color: #ff3b4355; color: #ff9ba1; }
+.sectionHeader { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid #ffffff26; }
+.sectionHeader h2 { margin: 5px 0 0; font-size: 28px; letter-spacing: -.035em; }
+.sectionCount { padding-bottom: 4px; color: #aeb5c0; font-size: 12px; }
+.seasonTabs { display: flex; gap: 7px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; padding: 21px 0 12px; }
+.seasonTabs button { flex: 0 0 auto; min-height: 38px; padding: 0 14px; border: 1px solid #ffffff29; border-radius: 5px; background: #1c222a; color: #c8cdd5; font-size: 12px; font-weight: 650; cursor: pointer; }
+.seasonTabs button:hover { border-color: #ff3b43a8; color: #fff; }
+.seasonTabs button[aria-pressed="true"] { border-color: #ff3b43; background: #ff3b4329; color: #fff; }
+.episodeList { display: grid; gap: 0; padding: 0; margin: 0; list-style: none; }
+.episodeList li { border-bottom: 1px solid #ffffff1d; }
+.episode { display: grid; grid-template-columns: 33px 156px minmax(0, 1fr) 72px; align-items: center; gap: 21px; width: 100%; min-height: 116px; padding: 13px 10px; border: 0; border-radius: 5px; background: transparent; color: #f6f7f8; text-align: left; cursor: pointer; transition: background .15s ease; }
+.episode:hover:not(:disabled), .episode:focus-visible { background: #ffffff0f; }
+.episode:focus-visible, .seasonTabs button:focus-visible, .playAction:focus-visible { outline: 2px solid #ff6870; outline-offset: 2px; }
+.episode:disabled { cursor: default; opacity: .55; }
+.episodeNumber { color: #777f8b; font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; text-align: center; }
+.episodeArt { position: relative; display: block; width: 156px; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid #ffffff23; border-radius: 5px; background: #1c222a; }
+.episodeArt > div { width: 100%; height: 100%; aspect-ratio: auto; border-radius: 0; }
+.episodeArt img { width: 100%; height: 100%; object-fit: cover; object-position: center 29%; filter: brightness(.68) saturate(.84); }
+.episodeArt::after { content: ""; position: absolute; inset: 0; background: linear-gradient(0deg, #080a0bc9, transparent 65%); }
+.episodeArt > span { position: absolute; z-index: 1; left: 10px; bottom: 9px; color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-shadow: 0 1px 5px #000; }
+.episodeCopy { display: grid; gap: 8px; min-width: 0; }
+.episodeCopy strong { overflow: hidden; color: #f3f4f6; font-size: 16px; font-weight: 740; text-overflow: ellipsis; white-space: nowrap; }
+.episodeCopy small { color: #9da5b0; font-size: 12px; }
+.episodeCopy em { color: #ff9ca1; font-size: 11px; font-style: normal; }
+.episodeEnd { display: flex; align-items: center; justify-content: center; gap: 5px; color: #ff535b; }
+.episodeEnd svg { width: 20px; height: 20px; }
+.episodeEnd small { color: #67d998; font-size: 11px; white-space: nowrap; }
+.episodeEnd:has(small) svg { color: #67d998; }
+.empty { padding: 36px 0 7px; margin: 0; color: #aeb5c0; font-size: 14px; }
+@media (max-width: 850px) {
+  .hero, .heroContent { min-height: 420px; }
+  .heroContent { gap: 25px; padding: 78px 32px 36px; }
+  .poster { flex-basis: 152px; width: 152px; }
+  .body { padding: 26px 32px 48px; }
+}
+@media (max-width: 650px) {
+  .hero, .heroContent { min-height: 440px; }
+  .heroContent { align-items: flex-end; padding: 95px 23px 34px; }
+  .backdrop { filter: blur(9px) brightness(.68); }
+  .backdropShade { background: linear-gradient(0deg, #0b0e12 2%, #0b0e12a6 54%, #0b0e124d 100%); }
+  .poster { display: none; }
+  .heroCopy h1 { font-size: clamp(34px, 9vw, 45px); }
+  .body { padding: 18px 22px 70px; }
+  .episode { grid-template-columns: 25px 115px minmax(0, 1fr) 28px; gap: 11px; min-height: 94px; padding: 10px 2px; }
+  .episodeArt { width: 115px; }
+  .episodeArt > span { left: 7px; bottom: 6px; font-size: 8px; }
+  .episodeCopy { gap: 6px; }
+  .episodeCopy strong { font-size: 13px; }
+  .episodeCopy small { font-size: 10px; }
+  .episodeNumber { font-size: 16px; }
+  .episodeEnd small { display: none; }
+}
+@media (max-width: 440px) {
+  .hero, .heroContent { min-height: 415px; }
+  .heroContent { padding: 92px 20px 29px; }
+  .meta { font-size: 11px; }
+  .nowShowing { margin: 15px 0 19px; }
+  .actions { gap: 8px; }
+  .playAction { min-width: 0; padding: 0 14px; }
+  .favoriteAction button { padding: 0 12px; }
+  .body { padding: 17px 20px 65px; }
+  .sectionHeader h2 { font-size: 24px; }
+  .episode { grid-template-columns: 107px minmax(0, 1fr) 22px; gap: 9px; }
+  .episodeNumber { display: none; }
+  .episodeArt { width: 107px; }
+  .episodeEnd svg { width: 17px; height: 17px; }
+}
+@media (prefers-reduced-motion: reduce) { .episode { transition: none; } }

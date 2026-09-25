@@ -1,0 +1,9 @@
+.seriesPage .toolbar { margin-bottom: 16px; }
+.seriesPage .categories { margin-bottom: 24px; }
+.seriesPage .firstRail { margin-top: 16px; }
+.seriesPage .categoryRail { padding-top: 28px; border-top: 1px solid rgb(255 255 255 / 8%); }
+
+@media (max-width: 520px) {
+  .seriesPage .categories { margin-bottom: 18px; }
+  .seriesPage .categoryRail { padding-top: 21px; }
+}

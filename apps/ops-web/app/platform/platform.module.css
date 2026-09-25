@@ -59,6 +59,10 @@
   }
 }
 
+.seriesDialog { width: 1120px; max-height: 92dvh; border-radius: 12px; }
+.seriesDialog .close { position: sticky; top: 18px; margin: 18px 18px -56px auto; }
+@media (max-width: 850px) { .seriesDialog { width: 100%; max-width: 100vw; max-height: 100dvh; border-radius: 0; } }
+
 .adultPreference {
   display: flex;
   align-items: center;
