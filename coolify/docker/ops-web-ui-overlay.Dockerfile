@@ -1,4 +1,4 @@
-FROM flixify-ops-web:montana-front-b14aefc
+FROM flixify-ops-web:montana-front-47c1008
 ARG SOURCE_COMMIT
 LABEL org.opencontainers.image.revision=${SOURCE_COMMIT}
 

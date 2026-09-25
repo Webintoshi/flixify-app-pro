@@ -13,6 +13,15 @@ import s from "./platform.module.css";
 import player from "./vod-player.module.css";
 type Playback = { url: string | null; canPlay: boolean; errorMessage?: string | null; transport: string; deliveryMode?: string };
 type EndPrompt = { title: string; seconds?: number; onPlay?: () => void; onCancel: () => void };
+function playbackErrorMessage(cause: unknown, kind: MediaItem["kind"]): string {
+  const message = cause instanceof Error ? cause.message : "İçerik açılamadı.";
+  if (/^Upstream\s+\d{3}\b/i.test(message)) {
+    return kind === "series"
+      ? "Bu bölüm şu anda yayın kaynağından açılamıyor. Biraz sonra yeniden dene veya başka bir bölüm seç."
+      : "Bu film şu anda yayın kaynağından açılamıyor. Biraz sonra yeniden dene.";
+  }
+  return message;
+}
 function shouldUseNativeHls(userAgent: string, nativeSupport: string): boolean {
   if (!nativeSupport) return false;
   const appleMobile = /iPhone|iPad|iPod/i.test(userAgent);
@@ -311,7 +320,7 @@ export function Detail({ item, onClose }: { item: MediaItem; onClose: () => void
     resumeAt.current = 0;
     const version = ++request.current; setBusy(true); setError(""); setPlayback(null);
     try { const deliveryQuery = "vodDirect=1"; const data = await apiRequest<Playback>(`/me/vod/${selection.kind}/${encodeURIComponent(selection.id)}/playback?clientRuntime=browser&${deliveryQuery}`); if (version !== request.current) return; if (!data.canPlay || !data.url) throw new Error(data.errorMessage ?? "İçerik şu anda kullanılamıyor."); if (new URL(data.url, location.origin).protocol !== "https:" && location.protocol === "https:") throw new Error("Güvenli oynatma adresi hazırlanamadı."); setTitle(episode?.title ?? item.title); setPlayback(data); }
-    catch (error) { if (version === request.current) setError(error instanceof Error ? error.message : "İçerik açılamadı."); }
+    catch (error) { if (version === request.current) setError(playbackErrorMessage(error, item.kind)); }
     finally { if (version === request.current) setBusy(false); }
   };
   const fallbackToProxy = async (time: number) => {
@@ -327,7 +336,7 @@ export function Detail({ item, onClose }: { item: MediaItem; onClose: () => void
       if (!data.canPlay || !data.url || (location.protocol === "https:" && new URL(data.url, location.origin).protocol !== "https:")) throw new Error(data.errorMessage ?? "Uyumlu oynatma adresi hazırlanamadı.");
       setPlayback(data);
     } catch (cause) {
-      if (version === request.current) { setPlayback(null); setError(cause instanceof Error ? cause.message : "İçerik açılamadı."); }
+      if (version === request.current) { setPlayback(null); setError(playbackErrorMessage(cause, item.kind)); }
     } finally { if (version === request.current) setBusy(false); }
   };
   const persistWatched = async (episode: Episode) => {
