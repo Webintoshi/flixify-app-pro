@@ -42,7 +42,7 @@ function apiRouteLabel(url) {
   return label;
 }
 
-export function createRestrictedFetch({apiBaseUrl,resellerBaseUrl,transport=globalThis.fetch,onRoute,onUser,onValidation=()=>{}}) {
+export function createRestrictedFetch({apiBaseUrl,resellerBaseUrl,transport=globalThis.fetch,onRoute,onUser,onListMetadata,onValidation=()=>{}}) {
   const api = new URL(apiBaseUrl);
   const reseller = resellerBaseUrl ? new URL(resellerBaseUrl) : null;
   const apiPrefix = api.pathname.replace(/\/$/, "");
@@ -64,19 +64,28 @@ export function createRestrictedFetch({apiBaseUrl,resellerBaseUrl,transport=glob
     const started = performance.now();
     let status = null;
     let itemCount = null;
+    let totalCount = null;
+    const isUserList=apiPath === "/admin/users";
+    const hasSearch=isUserList && Boolean(url.searchParams.get("search"));
+    const page=isUserList ? Number(url.searchParams.get("page") ?? 1) : null;
     try {
       if (policyError) throw policyError;
       const response = await transport(url.href, {...options,method,redirect:"manual",signal:AbortSignal.timeout(20_000)});
       status = response.status;
       if (response.status >= 300 && response.status < 400) throw new ProbePolicyError("redirect-blocked");
+      if (!response.ok) onValidation({code:"upstream-http-error",errorType:"HttpError",status:response.status});
       try {
         const payload = await response.clone().json();
         const items = Array.isArray(payload) ? payload : Array.isArray(payload?.items) ? payload.items : Array.isArray(payload?.data) ? payload.data : null;
         itemCount = items?.length ?? null;
+        totalCount=Number.isSafeInteger(Number(payload?.total)) ? Number(payload.total) : null;
         if (method === "GET" && apiPath === "/admin/users" && response.ok) {
           if (!Array.isArray(payload?.items)) onValidation({code:"unexpected-user-list-schema",errorType:"SchemaError"});
-          const id = payload?.items?.find(item=>typeof item?.id === "string")?.id;
-          if (id) onUser?.(id);
+          const user = payload?.items?.find(item=>typeof item?.id === "string");
+          if (user) onUser?.({id:user.id,code:typeof user.kryptoniteCode === "string" ? user.kryptoniteCode : typeof user.codeSuffix === "string" ? user.codeSuffix : null});
+          if (!hasSearch && !url.searchParams.get("status") && !url.searchParams.get("m3u")) {
+            onListMetadata?.({totalCount,pageSize:Number(payload?.pageSize) || itemCount || 1,page});
+          }
         }
       } catch (error) {
         if (error instanceof ProbePolicyError) throw error;
@@ -86,15 +95,17 @@ export function createRestrictedFetch({apiBaseUrl,resellerBaseUrl,transport=glob
       onValidation(safeError(error,"network-request-failed"));
       throw error;
     } finally {
-      onRoute({route,method,status,durationMs:Math.round(performance.now()-started),itemCount});
+      onRoute({route,method,status,durationMs:Math.round(performance.now()-started),itemCount,totalCount,...(isUserList ? {page,hasSearch}: {})});
     }
   };
 }
 
 export async function runProbeSource(source,sourcePath,{transport=globalThis.fetch,environment=process.env,emit=record=>console.log(JSON.stringify(record)),onCapture}={}) {
-  let current = {routes:[],messages:[],validationErrors:[]};
+  let current = {routes:[],messages:[],calls:[],validationErrors:[]};
   let currentProbe = "source-load";
   let firstUserId = null;
+  let firstUserCode = null;
+  let allListMetadata = null;
   let restrictedFetch = null;
   const handlers = new Map();
   const textHandlers = [];
@@ -152,17 +163,23 @@ export async function runProbeSource(source,sourcePath,{transport=globalThis.fet
   const config = vm.runInContext("config",context);
   restrictedFetch = createRestrictedFetch({
     apiBaseUrl:config.flixifyApiBaseUrl,resellerBaseUrl:config.resellerApiBaseUrl,transport,
-    onRoute:route=>current.routes.push(route),onUser:id=>{firstUserId ??= id;},onValidation:error=>current.validationErrors.push(error)
+    onRoute:route=>current.routes.push(route),onUser:user=>{firstUserId ??= user.id;firstUserCode ??= user.code;},
+    onListMetadata:metadata=>{allListMetadata ??= metadata;},onValidation:error=>current.validationErrors.push(error)
   });
+  context.__probeRecordCall=name=>current.calls.push(name);
+  for (const name of ["showUserList","showUserManagementMenu","showUserDetailCard","promptUserSearch","handleUserSearchInput","showUserSearchPrompt","showPackagePickerV2"]) {
+    if (vm.runInContext(`typeof ${name}`,context) !== "function") continue;
+    vm.runInContext(`${name}=((original)=>async function(...args){__probeRecordCall(${JSON.stringify(name)});return original(...args);})(${name});`,context,{timeout:2000});
+  }
   const adminId = [...(config.telegramAdminIds ?? [])][0] ?? "0";
   const chatId = Number(adminId) || 1;
-  async function invoke(label,name,args,{callback=false,skip=false,messageHandler=false,command=null,inputAction=null}={}) {
+  async function invoke(label,name,args,{callback=false,skip=false,messageHandler=false,command=null,inputAction=null,expectedPage=null}={}) {
     currentProbe=label;
-    current = {routes:[],messages:[],validationErrors:[]};
+    current = {routes:[],messages:[],calls:[],validationErrors:[]};
     const started = performance.now();
     let status = "ok";
     try {
-      if (skip) { status="skipped"; current.validationErrors.push({code:"no-user-available",errorType:"ProbeSkip"}); }
+      if (skip) status="skipped";
       else if (callback) {
         const handler = handlers.get("callback_query");
         if (!handler) status = "missing";
@@ -190,25 +207,50 @@ export async function runProbeSource(source,sourcePath,{transport=globalThis.fet
         await bounded(vm.runInContext(`${name}(...__probeArguments)`,context,{timeout:2000}));
       }
     } catch (error) { status="error"; current.validationErrors.push(safeError(error)); }
+    if (inputAction === "user-search" && (current.calls.includes("showUserList") || current.routes.some(route=>route.route==="/admin/users" && !route.hasSearch) || current.messages.some(message=>message.renderedUserCount>0))) {
+      current.validationErrors.push({code:"search-action-routed-to-user-list",errorType:"RoutingError"});
+    }
+    if (inputAction === "user-search-query" && !current.routes.some(route=>route.route==="/admin/users" && route.hasSearch)) {
+      current.validationErrors.push({code:"search-query-not-sent",errorType:"RoutingError"});
+    }
+    if (expectedPage !== null && !current.routes.some(route=>route.route==="/admin/users" && route.page===expectedPage)) {
+      current.validationErrors.push({code:"user-list-page-not-requested",errorType:"RoutingError"});
+    }
     if (status === "error" || status === "missing" || current.validationErrors.length) failureCount+=1;
-    emit({probe:label,status,durationMs:Math.round(performance.now()-started),routes:current.routes,messageCount:current.messages.length,buttons:current.messages.reduce((sum,item)=>sum+item.buttons,0),renderedUserCount:current.messages.reduce((sum,item)=>sum+item.renderedUserCount,0),panels:[...new Set(current.messages.map(item=>item.panel))],...(inputAction ? {inputAction}:{}),validationErrors:current.validationErrors});
+    emit({probe:label,status,durationMs:Math.round(performance.now()-started),routes:current.routes,calls:[...new Set(current.calls)],messageCount:current.messages.length,buttons:current.messages.reduce((sum,item)=>sum+item.buttons,0),renderedUserCount:current.messages.reduce((sum,item)=>sum+item.renderedUserCount,0),panels:[...new Set(current.messages.map(item=>item.panel))],...(inputAction ? {inputAction}:{}),validationErrors:current.validationErrors});
   }
   await invoke("main-menu","showMainMenu",[chatId]);
   await invoke("user-management-menu","showUserManagementMenu",[chatId]);
   for (const filter of ["all","active","unassigned","blocked"]) await invoke(`user-list:${filter}`,"showUserList",[chatId,filter,1]);
+  const lastPage=allListMetadata?.totalCount ? Math.ceil(allListMetadata.totalCount/allListMetadata.pageSize) : 1;
+  if (lastPage>1) {
+    await invoke("user-list:all:page2","showUserList",[chatId,"all",2],{expectedPage:2});
+    if (lastPage>2) await invoke("user-list:all:last-page","showUserList",[chatId,"all",lastPage],{expectedPage:lastPage});
+  }
   await invoke("user-detail","showUserDetailCard",[chatId,firstUserId,"all",1],{skip:!firstUserId});
   await invoke("analytics","showAnalyticsDashboard",[chatId]);
   await invoke("system-status","showSystemStatus",[chatId]);
   await invoke("reseller-balance","showResellerBalance",[chatId]);
   await invoke("callback:users:all:1",null,[{id:"probe-callback",data:"users:all:1",from:{id:adminId},message:{message_id:1,chat:{id:chatId}}}],{callback:true});
+  await invoke("callback:user-detail",null,[{id:"probe-callback",data:`uview:${firstUserId}:all:1`,from:{id:adminId},message:{message_id:1,chat:{id:chatId}}}],{callback:true,skip:!firstUserId});
+  if (vm.runInContext("typeof showPackagePickerV2",context)==="function") await invoke("package-picker","showPackagePickerV2",[chatId,firstUserId,"all",1],{skip:!firstUserId});
+  if (vm.runInContext("typeof flixifyRequest",context)==="function") {
+    for (const endpoint of ["payment-requests","trial-requests","m3u-sources"]) await invoke(`metadata:${endpoint}`,"flixifyRequest",[`/admin/${endpoint}`,{method:"GET"}]);
+  }
+  let searchButtonText=null;
   if (vm.runInContext("typeof getMainMenuReplyMarkup",context) === "function") {
     const markup=vm.runInContext("getMainMenuReplyMarkup()",context,{timeout:2000});
     const keyboard=Array.isArray(markup?.keyboard) ? markup.keyboard.flat() : [];
     for (const [index,button] of keyboard.entries()) {
       const text=typeof button === "string" ? button : button?.text;
       if (typeof text !== "string") continue;
+      if (classifyPanel(text)==="user-search") searchButtonText ??= text;
       await invoke(`main-keyboard:${index+1}`,null,[{text,from:{id:adminId},chat:{id:chatId},message_id:1}],{messageHandler:true,inputAction:classifyPanel(text)});
     }
+  }
+  if (searchButtonText) {
+    await invoke("search-prompt",null,[{text:searchButtonText,from:{id:adminId},chat:{id:chatId},message_id:1}],{messageHandler:true,inputAction:"user-search"});
+    await invoke("search:first-user-code",null,[{text:firstUserCode,from:{id:adminId},chat:{id:chatId},message_id:1}],{messageHandler:true,inputAction:"user-search-query",skip:!firstUserCode});
   }
   for (const command of ["/kullanicilar","/bekleyenler"]) {
     await invoke(`command:${command}`,null,[{text:command,from:{id:adminId},chat:{id:chatId},message_id:1}],{messageHandler:true,command});
@@ -245,14 +287,18 @@ const bot = new TelegramBot("PRIVATE_FIXTURE", {polling:true});
 const message = async (chatId) => bot.sendMessage(chatId,"PRIVATE_FIXTURE",{reply_markup:{inline_keyboard:[[{text:"Private",callback_data:"uview:synthetic-user-id:all:1"}]]}});
 async function showMainMenu(chatId) { await Promise.resolve(); return message(chatId); }
 async function showUserManagementMenu(chatId) { return message(chatId); }
-async function showUserList(chatId,filter="all",page=1) { await fetch(config.flixifyApiBaseUrl+"/admin/users?private=PRIVATE_FIXTURE"); return message(chatId); }
+async function showUserList(chatId,filter="all",page=1) { await fetch(config.flixifyApiBaseUrl+"/admin/users?page="+page+"&private=PRIVATE_FIXTURE"); return message(chatId); }
 async function showUserDetailCard(chatId,id) { await fetch(config.flixifyApiBaseUrl+"/admin/users/"+id); return message(chatId); }
 async function showAnalyticsDashboard(chatId) { await fetch(config.flixifyApiBaseUrl+"/admin/dashboard"); return message(chatId); }
 async function showSystemStatus(chatId) { await fetch(config.flixifyApiBaseUrl+"/admin/login",{method:"POST",body:"PRIVATE_FIXTURE"}); return message(chatId); }
 async function showResellerBalance(chatId) { await fetch(config.resellerApiBaseUrl,{method:"POST",body:"action=user_info&api_key=PRIVATE_FIXTURE"}); return message(chatId); }
-bot.on("callback_query",async q=>{await showUserList(q.message.chat.id,"all",1); await bot.answerCallbackQuery(q.id);});
+bot.on("callback_query",async q=>{if(q.data.startsWith("uview:"))await showUserDetailCard(q.message.chat.id,"synthetic-user-id");else await showUserList(q.message.chat.id,"all",1); await bot.answerCallbackQuery(q.id);});
 function getMainMenuReplyMarkup() { return {keyboard:[[{text:"Kullanicilar"},{text:"Kullanici Ara / Paket"}]]}; }
-bot.on("message",async m=>{if(m.text.startsWith("/"))return; await message(m.chat.id);});
+async function promptUserSearch(chatId) { return bot.sendMessage(chatId,"Kullanici Ara",{}); }
+async function handleUserSearchInput(chatId,rawQuery) { await fetch(config.flixifyApiBaseUrl+"/admin/users?search="+encodeURIComponent(rawQuery)); return message(chatId); }
+async function showPackagePickerV2(chatId,id) { return showUserDetailCard(chatId,id); }
+async function flixifyRequest(endpoint,options={}) { return (await fetch(config.flixifyApiBaseUrl+endpoint,options)).json(); }
+bot.on("message",async m=>{if(m.text.startsWith("/"))return; if(m.text.includes("Ara"))return promptUserSearch(m.chat.id); if(m.text==="PRIVATE_CODE")return handleUserSearchInput(m.chat.id,m.text); await message(m.chat.id);});
 bot.onText(/\\/kullanicilar$/,async m=>showUserList(m.chat.id,"all",1));
 bot.onText(/\\/bekleyenler$/,async m=>showUserList(m.chat.id,"unassigned",1));
 process.on("SIGTERM",()=>{throw new Error("must not execute");});
@@ -265,18 +311,21 @@ Promise.resolve().then(async()=>{throw new Error("bootstrap must not execute");}
   const outbound = [];
   const transport = async (url, options) => {
     outbound.push({url, method:options.method,redirect:options.redirect});
-    return new Response(JSON.stringify({items:[{id:"synthetic-user-id"}],total:1}), {status:200, headers:{"content-type":"application/json"}});
+    return new Response(JSON.stringify({items:[{id:"synthetic-user-id",kryptoniteCode:"PRIVATE_CODE"}],total:13,pageSize:6}), {status:200, headers:{"content-type":"application/json"}});
   };
   const results = [];
   const run=await runProbeSource(fixture,"/tmp/synthetic-bot.mjs",{transport, environment:{}, emit:r=>results.push(r)});
   assert.equal(run.failureCount,0);
-  assert.equal(results.length,15);
-  assert.ok(results.every(r=>r.messageCount===1));
+  assert.equal(results.length,24);
+  assert.ok(results.filter(r=>!r.probe.startsWith("metadata:")).every(r=>r.messageCount===1));
   assert.ok(results.every(r=>r.validationErrors.length===0));
-  assert.ok(results.every(r=>r.renderedUserCount===1));
+  assert.equal(results.find(r=>r.probe==="user-list:all").renderedUserCount,1);
   assert.ok(results.some(r=>r.routes.some(route=>route.route==="/admin/users/:id")));
   assert.ok(!JSON.stringify(results).includes("PRIVATE_FIXTURE"));
   assert.ok(!JSON.stringify(results).includes("synthetic-user-id"));
+  assert.ok(!JSON.stringify(results).includes("PRIVATE_CODE"));
+  assert.ok(results.find(r=>r.probe==="user-list:all:last-page").routes.some(route=>route.page===3));
+  assert.ok(results.find(r=>r.probe==="search:first-user-code").routes.some(route=>route.hasSearch));
   const guarded = createRestrictedFetch({apiBaseUrl:"https://api.flixify.vip",resellerBaseUrl:"https://supplier.test/reseller",transport,onRoute:()=>{}});
   const before = outbound.length;
   for (const [url,options] of [
@@ -296,7 +345,12 @@ Promise.resolve().then(async()=>{throw new Error("bootstrap must not execute");}
   assert.equal(errorResults.find(r=>r.probe==="analytics").validationErrors[0].errorType,"TypeError");
   assert.ok(errorResults.find(r=>r.probe==="analytics").validationErrors[0].sourceLocation.line>0);
   assert.ok(!JSON.stringify(errorResults).includes("PRIVATE_FIXTURE"));
-  console.log(JSON.stringify({selfTest:"passed",testCount:12}));
+  const semanticResults=[];
+  const wrongSearch=fixture.replace('if(m.text.includes("Ara"))return promptUserSearch(m.chat.id);','if(m.text.includes("Ara"))return showUserList(m.chat.id,"all",1);');
+  const semantic=await runProbeSource(wrongSearch,"/tmp/synthetic-bot.mjs",{transport,environment:{},emit:r=>semanticResults.push(r)});
+  assert.ok(semantic.failureCount>0,"A search button routed to an unfiltered user list must fail");
+  assert.ok(semanticResults.find(r=>r.probe==="main-keyboard:2").validationErrors.some(e=>e.code==="search-action-routed-to-user-list"));
+  console.log(JSON.stringify({selfTest:"passed",testCount:16}));
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
