@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 
 // Patch the verified live version without replacing it with the older repository bot.
 export function transformLiveTelegramMenuSource(source) {
-  const anchor = /normalized\.includes\("kullanici"\)/g;
+  const anchor = /normalized\.includes\("(?:kullanici|kullanıcı)"\)/g;
   const matches = [...source.matchAll(anchor)];
   if (matches.length !== 1) {
     throw new Error(`Expected exactly one Telegram management menu anchor; found ${matches.length}.`);

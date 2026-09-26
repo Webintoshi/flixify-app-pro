@@ -46,6 +46,15 @@ test("search reply-keyboard reaches the existing search prompt", async () => {
   assert.deepEqual(await dispatch(transformLiveTelegramMenuSource(liveFragment), "🔍Kullanici Ara / Paket"), ["search"]);
 });
 
+test("the Turkish live condition also routes search to the existing prompt", async () => {
+  const source = liveFragment.replaceAll("kullanici", "kullanıcı").replaceAll("Kullanici", "Kullanıcı");
+  assert.deepEqual(await dispatch(source, "🔍Kullanıcı Ara / Paket"), ["management"]);
+  let patched;
+  assert.doesNotThrow(() => { patched = transformLiveTelegramMenuSource(source); });
+  assert.deepEqual(await dispatch(patched, "🔍Kullanıcı Ara / Paket"), ["search"]);
+  assert.deepEqual(await dispatch(patched, "kullanıcı@example.test"), ["query:kullanıcı@example.test"]);
+});
+
 test("management reply-keyboard and existing aliases remain available", async () => {
   const patched = transformLiveTelegramMenuSource(liveFragment);
   for (const text of ["👥Kullanici Yonetimi", "Kayitli Kullanicilar", "kullanici", "kullanıcı", "uyeler", "users", "liste"]) {
@@ -67,9 +76,12 @@ test("existing search aliases and authorization gate stay unchanged", async () =
 });
 
 test("only the one confirmed condition changes, including CRLF preservation", () => {
-  for (const source of [liveFragment, liveFragment.replaceAll("\n", "\r\n")]) {
-    const patched = transformLiveTelegramMenuSource(source);
-    assert.equal(patched.replace('(normalized === "kullanici" || normalized === "kullanıcı")', 'normalized.includes("kullanici")'), source);
+  for (const alias of ["kullanici", "kullanıcı"]) {
+    const variant = liveFragment.replace('normalized.includes("kullanici")', `normalized.includes("${alias}")`);
+    for (const source of [variant, variant.replaceAll("\n", "\r\n")]) {
+      const patched = transformLiveTelegramMenuSource(source);
+      assert.equal(patched.replace('(normalized === "kullanici" || normalized === "kullanıcı")', `normalized.includes("${alias}")`), source);
+    }
   }
 });
 
