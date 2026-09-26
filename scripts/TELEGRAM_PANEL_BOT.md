@@ -97,3 +97,20 @@ npm run telegram:panel
 - `/bekleyenler`
 - `/aktif`
 - `/paketler`
+
+## Canlı bot bakım notu — 26 Eylül 2026
+
+Canlı `flixify-telegram-bot` bağımsız konteynerdir. `/data/flixify/app/scripts/telegram-panel-bot.mjs` dosyası `/app/scripts/telegram-panel-bot.mjs` olarak bind edilir; data ve logs dizinleri de kalıcı bind mount kullanır. Canlı dosya depodaki bot dosyasından daha yeni menüler içerir. Canlı düzeltmeler, doğrulanan dosyanın kopyasına küçük bir patch uygulanarak hazırlanır.
+
+Arama düğmesi, yönetim menüsündeki geniş `normalized.includes("kullanıcı")` koşuluna takılıyordu. `coolify/patches/apply-live-telegram-menu.mjs` bunu tam eşleşen yönetim kısayollarıyla değiştirir. Diğer canlı işlevleri korur ve kaynak SHA kontrolü olmadan çalışmaz.
+
+- Düzeltme öncesi SHA256: `c525a518c4c1a6590e84097addd0a03850c659bc051e1295fca2587489a655e5`
+- Düzeltme sonrası SHA256: `7953c56ddf31556db90b0029db0c03ce388f7449eb19c0e52d7842382595d705`
+- Güvenli güncelleme: `coolify/deploy-telegram-bot.py NEW_SCRIPT EXPECTED_CURRENT_SHA EXPECTED_NEW_SHA --dry-run`; kontrol geçince aynı komut flagsiz çalıştırılır. Aynı konteyner yeniden başlatılır; heartbeat, sync, admin kayıtları ve diğer servislerin değişmediği doğrulanır.
+- Özel rollback yedekleri `/data/flixify/telegram-bot-backups/` altında tutulur. Bu güncellemenin yedeği `telegram-panel-bot-1790409456480065175.mjs` dosyasıdır.
+
+`scripts/telegram-panel-bot-probe.mjs SOURCE_MJS` botu polling başlatmadan izole olarak çalıştırır. Gerçek API'de yalnızca admin login ve okuma isteklerine izin verir; kullanıcı kodlarını ve kimliklerini çıktıya yazmaz. Menü yönlendirmesi, arama, liste sayfalama, detay callback'i, paket görünümü, analiz, sistem, bakiye, ödeme/deneme ve M3U metadata bağlantıları kontrol edilir.
+
+İsteğe bağlı `scripts/telegram-panel-bot-delivery-probe.mjs SOURCE_MJS --deliver-to-configured-admin` mevcut özel yönetici sohbetine tek sessiz test mesajı gönderir ve düzenler. Liste kodları ve kullanıcı düğmeleri sentetik değerlerle değiştirilir. Bu test, incelenen liste şablonunun HTML yapısını ve statik arama ekranını Telegram'a doğrulatır; listeye yeni kişisel alan eklenirse redaksiyon da güncellenmelidir.
+
+Bu incelemede 26 kayıtlı kullanıcı vardı; tamamı aktif olduğundan bekleyen/atanmamış ve engelli filtreleri boştu. 28 kontrol geçti; 32 API/sağlayıcı isteği HTTP 200 döndü. Liste ve arama HTML ekranları gerçek Telegram teslimat testini geçti. Yönetici menüsü `/start` ile yenilenebilir.
