@@ -1,7 +1,7 @@
 """Copy existing reseller settings into the Flixify worker's private Compose env file.
 
 The source is the already running Telegram bot. Values never appear in stdout,
-command arguments, or the repository. The target is backed up before changes.
+command arguments, or the repository. Validate the replacement before applying it.
 """
 
 from __future__ import annotations
@@ -10,10 +10,8 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import tempfile
-import time
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -96,11 +94,12 @@ def existing_settings(contents: bytes) -> dict[str, str]:
     return found
 
 
-def verify_worker(compose_file: Path, settings: dict[str, str]) -> None:
-    raw = run(
-        "docker", "compose", "-f", str(compose_file), "config", "--format", "json",
-        cwd=compose_file.parent,
-    )
+def verify_worker(compose_file: Path, settings: dict[str, str], env_file: Path | None = None) -> None:
+    command = ["docker", "compose"]
+    if env_file is not None:
+        command.extend(("--env-file", str(env_file)))
+    command.extend(("-f", str(compose_file), "config", "--format", "json"))
+    raw = run(*command, cwd=compose_file.parent)
     config = json.loads(raw)
     worker = config.get("services", {}).get("worker", {})
     actual = worker.get("environment", {})
@@ -135,9 +134,6 @@ def main() -> None:
         print("Worker reseller settings already configured and verified")
         return
 
-    backup = env_file.with_name(f".env.pre-auto-trial-{time.time_ns()}")
-    shutil.copy2(env_file, backup)
-    os.chmod(backup, 0o600)
     suffix = b"" if not contents or contents.endswith(b"\n") else b"\n"
     updated = contents + suffix + b"".join(
         f"{name}={settings[name]}\n".encode("utf-8") for name in missing
@@ -150,16 +146,13 @@ def main() -> None:
             handle.write(updated)
             handle.flush()
             os.fsync(handle.fileno())
+        verify_worker(compose_file, settings, Path(temporary_name))
         os.replace(temporary_name, env_file)
         temporary_name = None
-        verify_worker(compose_file, settings)
-    except Exception:
-        os.replace(backup, env_file)
-        raise
     finally:
         if temporary_name:
             Path(temporary_name).unlink(missing_ok=True)
-    print(f"Worker reseller settings verified; backup: {backup}")
+    print("Worker reseller settings verified and applied")
 
 
 if __name__ == "__main__":

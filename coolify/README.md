@@ -22,7 +22,7 @@ Bu klasor native-only repo yapisi icin sadece `api + worker` deploy etmek uzere 
 - VOD transcode icin `FFMPEG_BINARY=ffmpeg` tanimla.
 - `APP_UPDATE_MANIFEST_URL` bos birakilabilir; bu durumda API local fallback olarak `data/app-update-manifest.json` kullanir.
 - Otomatik 3 saatlik IPTV denemesi icin worker'a gercek `RESELLER_API_BASE_URL` ve `RESELLER_API_KEY` degerlerini Coolify secret ortam degiskenleriyle ver. Demo disinda bu degerler yoksa worker baslamaz.
-- Mevcut bot ortamini Coolify service `.env` dosyasina guvenle tasimak icin `python3 coolify/prepare-auto-trial-env.py --service-dir <coolify-service-dir> --dry-run` ile on kontrol yap; dogruladiktan sonra `--dry-run` olmadan calistir. Yardimci dosya secret degerlerini ekrana basmaz ve backup olusturur.
+- Mevcut bot ortamini Coolify service `.env` dosyasina guvenle tasimak icin `python3 coolify/prepare-auto-trial-env.py --service-dir <coolify-service-dir> --dry-run` ile on kontrol yap; dogruladiktan sonra `--dry-run` olmadan calistir. Yardimci dosya secret degerlerini ekrana basmaz, yeni ayarlari uygulamadan once dogrular ve yedek olusturmaz.
 - API, IP kotasini `APP_JWT_SECRET` ile HMAC'ler; anahtar degisirse mevcut 24 saatlik kota hash'leri eslesmez.
 
 ## 3) Deploy Sirasi
