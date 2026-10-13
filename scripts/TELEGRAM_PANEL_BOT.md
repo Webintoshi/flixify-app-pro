@@ -114,3 +114,16 @@ Arama düğmesi, yönetim menüsündeki geniş `normalized.includes("kullanıcı
 İsteğe bağlı `scripts/telegram-panel-bot-delivery-probe.mjs SOURCE_MJS --deliver-to-configured-admin` mevcut özel yönetici sohbetine tek sessiz test mesajı gönderir ve düzenler. Liste kodları ve kullanıcı düğmeleri sentetik değerlerle değiştirilir. Bu test, incelenen liste şablonunun HTML yapısını ve statik arama ekranını Telegram'a doğrulatır; listeye yeni kişisel alan eklenirse redaksiyon da güncellenmelidir.
 
 Bu incelemede 26 kayıtlı kullanıcı vardı; tamamı aktif olduğundan bekleyen/atanmamış ve engelli filtreleri boştu. 28 kontrol geçti; 32 API/sağlayıcı isteği HTTP 200 döndü. Liste ve arama HTML ekranları gerçek Telegram teslimat testini geçti. Yönetici menüsü `/start` ile yenilenebilir.
+
+## Canlı bot düğme düzeltmesi — 13 Ekim 2026
+
+`/start` ve yazılı komutlar çalışırken satır içi düğmelerin tamamı yanıtsızdı. Telegram'da bot için kayıtlı `allowed_updates` listesinde `callback_query` yoktu. Bot polling'i başlatırken bu listeyi belirtmediği için Telegram eski filtreyi koruyor ve düğme tıklamalarını bota iletmiyordu.
+
+`coolify/patches/apply-live-telegram-callback-polling.mjs` yalnızca bot kurucusunu değiştirir: polling başlamadan `message`, `edited_message`, `channel_post`, `edited_channel_post` ve `callback_query` türlerini açıkça ister. Kaynak SHA kontrolü vardır; depodaki eski bot dosyasını canlıdaki daha yeni sürümün üzerine yazmaz.
+
+- Düzeltme öncesi canlı dosya SHA256: `7953c56ddf31556db90b0029db0c03ce388f7449eb19c0e52d7842382595d705`
+- Düzeltme sonrası canlı dosya SHA256: `6f2432082b7dc03c1491c02ca604096886bc0ffe265704ce3e924ef69b4a5fe9`
+- Canlı geri alma yedeği: `/data/flixify/telegram-bot-backups/telegram-panel-bot-1791871273985625616.mjs`
+- Dağıtım: `coolify/deploy-telegram-bot.py` ile kuru kontrol ve ardından aynı konteynerin kontrollü yeniden başlatılması. Yönetici durumu ve diğer servisler korundu.
+
+Yeniden başlatmadan sonra Telegram güncelleme listesinde `callback_query` görüldü. Gerçek yönetici sohbetinde yeni menüden kullanıcı listesi, kullanıcı detayı, numara arama, bekleyen kayıt ve detay, M3U paket seçim ekranı, analiz, bakiye, sistem durumu ve geri/iptal düğmeleri açıldı. Gerçek kullanıcıya paket ataması yapılmadı; bu işlem kredi ve kullanıcı kaydı değiştirdiğinden ayrıca bir test hesabıyla doğrulanmalı.
