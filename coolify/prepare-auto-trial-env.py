@@ -15,11 +15,15 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 REQUIRED = ("RESELLER_API_BASE_URL", "RESELLER_API_KEY")
 SAFE_VALUE = re.compile(r"^[A-Za-z0-9:/?&=._%+@-]+$")
 ENV_KEY = re.compile(rb"^([A-Za-z_][A-Za-z0-9_]*)=")
+EXPECTED_RESELLER_HOST = "sifiriptvdns.com"
+HTTPS_RESELLER_PORT = 2087
 
 
 def run(*args: str, cwd: Path | None = None) -> bytes:
@@ -39,9 +43,43 @@ def source_settings(container: str) -> dict[str, str]:
         if not value or not SAFE_VALUE.fullmatch(value):
             raise RuntimeError(f"{name} is missing or cannot be safely written as an env value")
         selected[name] = value
-    if not selected["RESELLER_API_BASE_URL"].startswith("https://"):
-        raise RuntimeError("Reseller API URL must use HTTPS")
+    source = urlsplit(selected["RESELLER_API_BASE_URL"])
+    if source.scheme not in {"http", "https"} or source.hostname != EXPECTED_RESELLER_HOST:
+        raise RuntimeError("Reseller API origin is not the verified IPTV provider")
+    if source.username or source.password or not source.path or source.query or source.fragment:
+        raise RuntimeError("Reseller API URL has an unexpected format")
+    if source.scheme == "http":
+        selected["RESELLER_API_BASE_URL"] = urlunsplit(
+            ("https", f"{EXPECTED_RESELLER_HOST}:{HTTPS_RESELLER_PORT}", source.path, "", "")
+        )
     return selected
+
+
+def verify_provider(settings: dict[str, str]) -> None:
+    """Confirm the exact HTTPS API and key with a read-only, one-item request."""
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, request, fp, code, msg, headers, newurl):
+            return None
+
+    payload = urlencode({
+        "api_key": settings["RESELLER_API_KEY"],
+        "action": "get_lines",
+        "start": "0",
+        "limit": "1",
+    }).encode("ascii")
+    request = Request(
+        settings["RESELLER_API_BASE_URL"],
+        data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with build_opener(NoRedirect).open(request, timeout=15) as response:
+            result = json.load(response)
+        if result.get("status") != "STATUS_SUCCESS" or not isinstance(result.get("data"), list):
+            raise ValueError("unexpected provider response")
+    except Exception:
+        raise RuntimeError("Verified HTTPS reseller preflight failed; details suppressed") from None
 
 
 def existing_settings(contents: bytes) -> dict[str, str]:
@@ -83,6 +121,7 @@ def main() -> None:
     if not env_file.is_file() or not compose_file.is_file():
         raise RuntimeError("Expected Coolify service env and Compose files are missing")
     settings = source_settings(args.source_container)
+    verify_provider(settings)
     contents = env_file.read_bytes()
     existing = existing_settings(contents)
     if any(name in existing and existing[name] != value for name, value in settings.items()):
