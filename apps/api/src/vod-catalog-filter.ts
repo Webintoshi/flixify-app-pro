@@ -30,9 +30,49 @@ export type StoredSeriesEpisodeRow = {
   order_index?: number;
 };
 
+// The shared snapshot has group names but no provider category IDs. Only
+// verified general-audience groups may use it when account VOD is unavailable.
+const safeSharedMovieGroups = new Set([
+  "Aile",
+  "Aksiyon (Yabancı)",
+  "Aksiyon (Yerli)",
+  "Amazon",
+  "Animasyon",
+  "Apple TV+",
+  "Belgesel",
+  "Bilim Kurgu",
+  "Disney+",
+  "Dram (Yabancı)",
+  "Dram (Yerli)",
+  "Fantastik",
+  "Filmler",
+  "Gerilim (Yabancı)",
+  "HBO Max",
+  "Komedi (Yabancı)",
+  "Komedi (Yerli)",
+  "Korku (Yabancı)",
+  "Korku (Yerli)",
+  "MUBI FILMLER",
+  "Müzik",
+  "Netflix",
+  "Romantik",
+  "Savaş",
+  "Seri Filmler",
+  "Sinema",
+  "Suç",
+  "Tabii"
+]);
+
+export function shouldUseAccountMovieCatalog(
+  proxyConfigured: boolean,
+  policy: { visible: boolean; reconcileRequired?: boolean }
+) {
+  return proxyConfigured || policy.visible || Boolean(policy.reconcileRequired);
+}
+
 export function filterStoredMovieCatalogRows(rows: StoredMovieCatalogRow[]) {
   return rows.filter((row) =>
-    isValidMovieCatalogEntry({
+    safeSharedMovieGroups.has(row.group_title?.trim() ?? "") && isValidMovieCatalogEntry({
       title: row.title,
       groupTitle: row.group_title,
       source: row.stream_path

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { filterStoredMovieCatalogRows, filterStoredSeriesCatalogRows } from "./vod-catalog-filter.js";
+import {
+  filterStoredMovieCatalogRows,
+  filterStoredSeriesCatalogRows,
+  shouldUseAccountMovieCatalog
+} from "./vod-catalog-filter.js";
 
 describe("vod catalog repository filters", () => {
   it("keeps dirty movie snapshot rows off the first page", () => {
@@ -23,6 +27,31 @@ describe("vod catalog repository filters", () => {
     ];
 
     expect(filterStoredMovieCatalogRows(rows).map((row) => row.id)).toEqual(["movie-valid"]);
+  });
+
+  it("keeps adult and unclassified snapshot movies out of catalog and playback lookup", () => {
+    const movie = (id: string, group_title: string | null) => ({
+      id,
+      title: "Inception (2010) Turkce Dublaj",
+      poster_url: "https://cdn.example.com/inception.jpg",
+      group_title,
+      stream_path: `movie/__IPTV_USERNAME__/__IPTV_PASSWORD__/${id}.mkv`,
+      order_index: 1
+    });
+
+    expect(filterStoredMovieCatalogRows([
+      movie("safe", "Netflix"),
+      movie("adult", "XXX:ADULTS"),
+      movie("unclassified", null),
+      movie("unknown", "New Adults Vault")
+    ]).map((row) => row.id)).toEqual(["safe"]);
+  });
+
+  it("uses the shared movie catalog for a hidden account when retired proxies are absent", () => {
+    expect(shouldUseAccountMovieCatalog(false, { visible: false, reconcileRequired: false })).toBe(false);
+    expect(shouldUseAccountMovieCatalog(false, { visible: true, reconcileRequired: false })).toBe(true);
+    expect(shouldUseAccountMovieCatalog(false, { visible: false, reconcileRequired: true })).toBe(true);
+    expect(shouldUseAccountMovieCatalog(true, { visible: false, reconcileRequired: false })).toBe(true);
   });
 
   it("drops invalid series rows and keeps only valid episodes", () => {
