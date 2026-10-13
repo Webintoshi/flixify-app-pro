@@ -307,6 +307,72 @@ describe("probeVodStream", () => {
 });
 
 describe("createVodPlaybackManager", () => {
+  it("relays HLS tag URIs through the expiring VOD asset route", async () => {
+    const manifest = `#EXTM3U
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Turkish, dubbed",URI="audio/track.m3u8"
+#EXT-X-KEY:METHOD=AES-128,URI="https://provider.test/keys/key.bin"
+#EXT-X-MAP:URI="init.mp4"
+#EXTINF:4,
+segment-0.ts
+`;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(
+      String(url).endsWith(".m3u8") ? manifest : "asset bytes",
+      { status: 200, headers: { "content-type": String(url).endsWith(".m3u8") ? "application/vnd.apple.mpegurl" : "application/octet-stream" } }
+    )));
+    const manager = createVodPlaybackManager({ ffmpegBinary: "/nonexistent/ffmpeg", ffprobeBinary: "/nonexistent/ffprobe", sessionTtlMs: 60_000 });
+
+    try {
+      const playback = await manager.createPlayback({
+        userId: "trial-user", itemId: "trial-episode", kind: "episode",
+        sourceUrl: "https://provider.test/episode/master.m3u8", baseOrigin: "https://flixify.test",
+        clientRuntime: "app", accessUntil: new Date(Date.now() + 60_000).toISOString()
+      });
+      const playbackUrl = new URL(playback.url!);
+      const sessionId = playbackUrl.pathname.split("/")[3]!;
+      const token = playbackUrl.searchParams.get("token")!;
+      const reply = captureReply();
+      await manager.sendManifest(reply.reply as never, sessionId, token);
+
+      expect(reply.state.statusCode).toBe(200);
+      const body = String(reply.state.body);
+      expect(body).not.toContain("provider.test");
+      expect(body).toContain('NAME="Turkish, dubbed"');
+      const tagUrls = [...body.matchAll(/URI="([^"]+)"/g)].map((match) => new URL(match[1]!));
+      expect(tagUrls).toHaveLength(3);
+      for (const url of tagUrls) {
+        expect(url.origin).toBe("https://flixify.test");
+        expect(url.pathname).toContain(`/vod/playback/${sessionId}/assets/`);
+        expect(url.searchParams.get("token")).toBe(token);
+      }
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it("rejects a VOD manifest with an unsupported tag URI without returning it", async () => {
+    const manifest = '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="data:text/plain,secret"\n#EXTINF:4,\nsegment-0.ts\n';
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(manifest, {
+      status: 200, headers: { "content-type": "application/vnd.apple.mpegurl" }
+    })));
+    const manager = createVodPlaybackManager({ ffmpegBinary: "/nonexistent/ffmpeg", ffprobeBinary: "/nonexistent/ffprobe", sessionTtlMs: 60_000 });
+
+    try {
+      const playback = await manager.createPlayback({
+        userId: "trial-user", itemId: "trial-episode", kind: "episode",
+        sourceUrl: "https://provider.test/episode/master.m3u8", baseOrigin: "https://flixify.test",
+        clientRuntime: "app", accessUntil: new Date(Date.now() + 60_000).toISOString()
+      });
+      const playbackUrl = new URL(playback.url!);
+      const reply = captureReply();
+      await manager.sendManifest(reply.reply as never, playbackUrl.pathname.split("/")[3]!, playbackUrl.searchParams.get("token")!);
+
+      expect(reply.state.statusCode).toBe(502);
+      expect(String(reply.state.body)).not.toContain("data:text/plain");
+    } finally {
+      await manager.dispose();
+    }
+  });
+
   it("stops an active VOD segment at the subscription deadline despite recent requests", async () => {
     const manifest = "#EXTM3U\n#EXTINF:4,\nsegment-0.ts\n";
     vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(

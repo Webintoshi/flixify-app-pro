@@ -28,6 +28,109 @@ function captureReply() {
 }
 
 describe("live-playback helpers", () => {
+  it("relays live HLS tag URIs through viewer-token assets", async () => {
+    const manifest = `#EXTM3U
+#EXT-X-KEY:METHOD=AES-128,URI="https://provider.test/keys/live.bin"
+#EXT-X-PART:DURATION=0.5,URI="part-0.m4s"
+#EXTINF:4,
+segment-0.ts
+`;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(manifest, {
+      status: 200, headers: { "content-type": "application/vnd.apple.mpegurl" }
+    })));
+    const manager = createLivePlaybackManager({ ffmpegBinary: process.execPath, sessionTtlMs: 60_000 });
+
+    try {
+      const playback = await manager.createPlayback({
+        channelId: "trial-channel", snapshotVersion: 1,
+        sourceUrl: "https://provider.test/live/master.m3u8", cookie: null,
+        baseOrigin: "https://flixify.test", sourceTransport: "hls",
+        healthStatus: "healthy", lastCheckedAt: null,
+        canPlay: true, isVerified: true, errorMessage: null,
+        accessUntil: new Date(Date.now() + 60_000).toISOString()
+      });
+      const playbackUrl = new URL(playback.url!);
+      const sessionId = playbackUrl.pathname.split("/")[3]!;
+      const token = playbackUrl.searchParams.get("token")!;
+      const reply = captureReply();
+      await manager.sendManifest(reply.reply as never, sessionId, token);
+
+      expect(reply.state.statusCode).toBe(200);
+      const body = String(reply.state.body);
+      expect(body).not.toContain("provider.test");
+      const tagUrls = [...body.matchAll(/URI="([^"]+)"/g)].map((match) => new URL(match[1]!));
+      expect(tagUrls).toHaveLength(2);
+      for (const url of tagUrls) {
+        expect(url.origin).toBe("https://flixify.test");
+        expect(url.pathname).toContain(`/live/playback/${sessionId}/assets/`);
+        expect(url.searchParams.get("token")).toBe(token);
+      }
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it("rejects a live manifest with an unsupported tag URI", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="ftp://provider.test/key"\nsegment-0.ts\n', {
+      status: 200, headers: { "content-type": "application/vnd.apple.mpegurl" }
+    })));
+    const manager = createLivePlaybackManager({ ffmpegBinary: process.execPath, sessionTtlMs: 60_000 });
+
+    try {
+      const playback = await manager.createPlayback({
+        channelId: "trial-channel", snapshotVersion: 1,
+        sourceUrl: "https://provider.test/live/master.m3u8", cookie: null,
+        baseOrigin: "https://flixify.test", sourceTransport: "hls",
+        healthStatus: "healthy", lastCheckedAt: null,
+        canPlay: true, isVerified: true, errorMessage: null,
+        accessUntil: new Date(Date.now() + 60_000).toISOString()
+      });
+      const playbackUrl = new URL(playback.url!);
+      const reply = captureReply();
+      await manager.sendManifest(reply.reply as never, playbackUrl.pathname.split("/")[3]!, playbackUrl.searchParams.get("token")!);
+
+      expect(reply.state.statusCode).toBe(502);
+      expect(String(reply.state.body)).not.toContain("ftp://");
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it("rewrites a nested live playlist even when the provider calls it binary data", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(
+      String(url).includes("variant.m3u8")
+        ? '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="https://provider.test/key.bin"\nsegment-0.ts\n'
+        : "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000\nvariant.m3u8\n",
+      { status: 200, headers: { "content-type": String(url).includes("variant.m3u8") ? "application/octet-stream" : "application/vnd.apple.mpegurl" } }
+    )));
+    const manager = createLivePlaybackManager({ ffmpegBinary: process.execPath, sessionTtlMs: 60_000 });
+
+    try {
+      const playback = await manager.createPlayback({
+        channelId: "trial-channel", snapshotVersion: 1,
+        sourceUrl: "https://provider.test/live/master.m3u8", cookie: null,
+        baseOrigin: "https://flixify.test", sourceTransport: "hls",
+        healthStatus: "healthy", lastCheckedAt: null,
+        canPlay: true, isVerified: true, errorMessage: null,
+        accessUntil: new Date(Date.now() + 60_000).toISOString()
+      });
+      const playbackUrl = new URL(playback.url!);
+      const sessionId = playbackUrl.pathname.split("/")[3]!;
+      const token = playbackUrl.searchParams.get("token")!;
+      const masterReply = captureReply();
+      await manager.sendManifest(masterReply.reply as never, sessionId, token);
+      const variantUrl = new URL(String(masterReply.state.body).split("\n").find((line) => line.includes("/assets/"))!);
+      const variantReply = captureReply();
+      await manager.sendAsset(variantReply.reply as never, sessionId, token, variantUrl.pathname.split("/")[5]!);
+
+      expect(variantReply.state.statusCode).toBe(200);
+      expect(String(variantReply.state.body)).toContain(`/live/playback/${sessionId}/assets/`);
+      expect(String(variantReply.state.body)).not.toContain("provider.test");
+    } finally {
+      await manager.dispose();
+    }
+  });
+
   it("parses media sequence and segment count from manifest", () => {
     const manifest = `#EXTM3U
 #EXT-X-VERSION:3

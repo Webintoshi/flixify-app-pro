@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable } from "node:stream";
 import { accessExpired, limitStreamToAccess } from "./access-limited-stream.js";
+import { isSafeLocalHlsUri, resolveHttpHlsUri, rewriteHlsManifest } from "./hls-manifest.js";
 import type { FastifyReply } from "fastify";
 import type {
   VodAudioTrack,
@@ -920,17 +921,11 @@ function getLocalContentType(filePath: string) {
 }
 
 function rewriteLocalManifest(content: string, session: VodPlaybackSession) {
-  return content
-    .split(/\r?\n/)
-    .map((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) {
-        return line;
-      }
-
-      return `${session.baseOrigin}/vod/playback/${session.id}/files/${encodeURIComponent(trimmed)}?token=${encodeURIComponent(session.token)}`;
-    })
-    .join("\n");
+  return rewriteHlsManifest(content, (uri) =>
+    isSafeLocalHlsUri(uri)
+      ? `${session.baseOrigin}/vod/playback/${session.id}/files/${encodeURIComponent(uri)}?token=${encodeURIComponent(session.token)}`
+      : null
+  );
 }
 
 function getOrCreateAssetId(session: VodPlaybackSession, url: string) {
@@ -950,19 +945,12 @@ function getOrCreateAssetId(session: VodPlaybackSession, url: string) {
 }
 
 function rewriteProxyManifest(content: string, parentUrl: string, session: VodPlaybackSession) {
-  return content
-    .split(/\r?\n/)
-    .map((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) {
-        return line;
-      }
-
-      const targetUrl = new URL(trimmed, parentUrl).toString();
-      const assetId = getOrCreateAssetId(session, targetUrl);
-      return `${session.baseOrigin}/vod/playback/${session.id}/assets/${assetId}?token=${encodeURIComponent(session.token)}`;
-    })
-    .join("\n");
+  return rewriteHlsManifest(content, (uri) => {
+    const targetUrl = resolveHttpHlsUri(uri, parentUrl);
+    if (!targetUrl) return null;
+    const assetId = getOrCreateAssetId(session, targetUrl);
+    return `${session.baseOrigin}/vod/playback/${session.id}/assets/${assetId}?token=${encodeURIComponent(session.token)}`;
+  });
 }
 
 async function streamFetchResponse(
@@ -2006,6 +1994,9 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
 
       const manifest = await response.text();
       const rewritten = rewriteProxyManifest(manifest, response.url || session.proxyState.rootUrl, session);
+      if (rewritten === null) {
+        return reply.status(502).type("text/plain; charset=utf-8").send("VOD manifesti gecersiz.");
+      }
       return reply
         .header("content-type", "application/vnd.apple.mpegurl")
         .header("cache-control", VOD_PLAYLIST_NO_CACHE_HEADER)
@@ -2024,12 +2015,16 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     }
 
     const manifest = await fsp.readFile(session.localState.manifestPath, "utf8");
+    const rewritten = rewriteLocalManifest(manifest, session);
+    if (rewritten === null) {
+      return reply.status(502).type("text/plain; charset=utf-8").send("VOD manifesti gecersiz.");
+    }
     return reply
       .header("content-type", "application/vnd.apple.mpegurl")
       .header("cache-control", VOD_PLAYLIST_NO_CACHE_HEADER)
       .header("pragma", "no-cache")
       .header("expires", "0")
-      .send(rewriteLocalManifest(manifest, session));
+      .send(rewritten);
   }
 
   async function sendProxyAsset(reply: FastifyReply, sessionId: string, token: string | undefined, assetId: string) {
@@ -2062,6 +2057,9 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     if (isHlsManifest(response.url || targetUrl, contentType)) {
       const manifest = await response.text();
       const rewritten = rewriteProxyManifest(manifest, response.url || targetUrl, session);
+      if (rewritten === null) {
+        return reply.status(502).type("text/plain; charset=utf-8").send("VOD manifesti gecersiz.");
+      }
       return reply
         .header("content-type", "application/vnd.apple.mpegurl")
         .header("cache-control", VOD_PLAYLIST_NO_CACHE_HEADER)
@@ -2097,12 +2095,16 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
 
     if (safeFileName.endsWith(".m3u8")) {
       const manifest = await fsp.readFile(filePath, "utf8");
+      const rewritten = rewriteLocalManifest(manifest, session);
+      if (rewritten === null) {
+        return reply.status(502).type("text/plain; charset=utf-8").send("VOD manifesti gecersiz.");
+      }
       return reply
         .header("content-type", "application/vnd.apple.mpegurl")
         .header("cache-control", VOD_PLAYLIST_NO_CACHE_HEADER)
         .header("pragma", "no-cache")
         .header("expires", "0")
-        .send(rewriteLocalManifest(manifest, session));
+        .send(rewritten);
     }
 
     if (accessExpired(session.accessUntilMs)) {

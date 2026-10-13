@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable } from "node:stream";
 import { accessExpired, limitStreamToAccess } from "./access-limited-stream.js";
+import { isSafeLocalHlsUri, resolveHttpHlsUri, rewriteHlsManifest } from "./hls-manifest.js";
 import type { FastifyReply } from "fastify";
 import type {
   LiveDeliveryMode,
@@ -215,6 +216,13 @@ function getLocalContentType(filePath: string) {
   return "application/octet-stream";
 }
 
+function isHlsManifestResponse(url: string, contentType: string | null) {
+  const normalizedType = contentType?.split(";")[0]?.trim().toLowerCase();
+  return normalizedType === "application/vnd.apple.mpegurl" ||
+    normalizedType === "application/x-mpegurl" ||
+    /\.m3u8(?:$|[?#])/i.test(url);
+}
+
 function manifestLineExists(content: string) {
   return content
     .split(/\r?\n/)
@@ -337,43 +345,30 @@ async function removeDirectory(dirPath: string) {
 
 function rewriteProxyManifest(content: string, parentUrl: string, session: LiveRelaySession, viewerToken: string) {
   if (!session.proxyState) {
-    return content;
+    return null;
   }
 
-  return content
-    .split(/\r?\n/)
-    .map((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) {
-        return line;
-      }
+  return rewriteHlsManifest(content, (uri) => {
+    const absoluteUrl = resolveHttpHlsUri(uri, parentUrl);
+    if (!absoluteUrl) return null;
+    const existingAsset = session.proxyState.urlToAsset.get(absoluteUrl);
+    if (existingAsset) {
+      return `${session.baseOrigin}/live/playback/${session.id}/assets/${existingAsset}?token=${encodeURIComponent(viewerToken)}`;
+    }
 
-      const absoluteUrl = new URL(trimmed, parentUrl).toString();
-      const existingAsset = session.proxyState.urlToAsset.get(absoluteUrl);
-      if (existingAsset) {
-        return `${session.baseOrigin}/live/playback/${session.id}/assets/${existingAsset}?token=${encodeURIComponent(viewerToken)}`;
-      }
-
-      const assetId = crypto.randomBytes(12).toString("base64url");
-      session.proxyState.urlToAsset.set(absoluteUrl, assetId);
-      session.proxyState.assetToUrl.set(assetId, absoluteUrl);
-      return `${session.baseOrigin}/live/playback/${session.id}/assets/${assetId}?token=${encodeURIComponent(viewerToken)}`;
-    })
-    .join("\n");
+    const assetId = crypto.randomBytes(12).toString("base64url");
+    session.proxyState.urlToAsset.set(absoluteUrl, assetId);
+    session.proxyState.assetToUrl.set(assetId, absoluteUrl);
+    return `${session.baseOrigin}/live/playback/${session.id}/assets/${assetId}?token=${encodeURIComponent(viewerToken)}`;
+  });
 }
 
 function rewriteLocalManifest(content: string, session: LiveRelaySession, viewerToken: string) {
-  return content
-    .split(/\r?\n/)
-    .map((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) {
-        return line;
-      }
-
-      return `${session.baseOrigin}/live/playback/${session.id}/files/${encodeURIComponent(trimmed)}?token=${encodeURIComponent(viewerToken)}`;
-    })
-    .join("\n");
+  return rewriteHlsManifest(content, (uri) =>
+    isSafeLocalHlsUri(uri)
+      ? `${session.baseOrigin}/live/playback/${session.id}/files/${encodeURIComponent(uri)}?token=${encodeURIComponent(viewerToken)}`
+      : null
+  );
 }
 
 async function streamFetchResponse(reply: FastifyReply, response: Response, accessUntilMs: number | null) {
@@ -1313,6 +1308,9 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
         }
       }
       const rewritten = rewriteProxyManifest(manifest, response.url || session.proxyState.rootUrl, session, viewer.token);
+      if (rewritten === null) {
+        return reply.status(502).type("text/plain; charset=utf-8").send("Canli manifest gecersiz.");
+      }
       return reply
         .header("content-type", "application/vnd.apple.mpegurl")
         .header("cache-control", LIVE_NO_CACHE_HEADER)
@@ -1350,13 +1348,17 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
       session.localState.lastManifestSequence = manifestState.mediaSequence;
       session.localState.lastManifestAdvanceAt = Date.now();
     }
+    const rewritten = rewriteLocalManifest(manifest, session, viewer.token);
+    if (rewritten === null) {
+      return reply.status(502).type("text/plain; charset=utf-8").send("Canli manifest gecersiz.");
+    }
     return reply
       .header("content-type", "application/vnd.apple.mpegurl")
       .header("cache-control", LIVE_NO_CACHE_HEADER)
       .header("pragma", "no-cache")
       .header("expires", "0")
       .header("surrogate-control", "no-store")
-      .send(rewriteLocalManifest(manifest, session, viewer.token));
+      .send(rewritten);
   }
 
   async function sendAsset(reply: FastifyReply, sessionId: string, token: string | undefined, assetId: string) {
@@ -1410,10 +1412,13 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
       return reply.status(502).type("text/plain; charset=utf-8").send("Canli asset alinamadi.");
     }
 
-    const contentType = response.headers.get("content-type") ?? "";
-    if (contentType.includes("application/vnd.apple.mpegurl") || contentType.includes("application/x-mpegurl")) {
+    const contentType = response.headers.get("content-type");
+    if (isHlsManifestResponse(response.url || targetUrl, contentType)) {
       const manifest = await response.text();
       const rewritten = rewriteProxyManifest(manifest, response.url || targetUrl, session, viewer.token);
+      if (rewritten === null) {
+        return reply.status(502).type("text/plain; charset=utf-8").send("Canli manifest gecersiz.");
+      }
       return reply
         .header("content-type", "application/vnd.apple.mpegurl")
         .header("cache-control", LIVE_NO_CACHE_HEADER)
@@ -1492,13 +1497,17 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
         session.localState.lastManifestSequence = manifestState.mediaSequence;
         session.localState.lastManifestAdvanceAt = Date.now();
       }
+      const rewritten = rewriteLocalManifest(manifest, session, viewer.token);
+      if (rewritten === null) {
+        return reply.status(502).type("text/plain; charset=utf-8").send("Canli manifest gecersiz.");
+      }
       return reply
         .header("content-type", "application/vnd.apple.mpegurl")
         .header("cache-control", LIVE_NO_CACHE_HEADER)
         .header("pragma", "no-cache")
         .header("expires", "0")
         .header("surrogate-control", "no-store")
-        .send(rewriteLocalManifest(manifest, session, viewer.token));
+        .send(rewritten);
     }
 
     if (accessExpired(viewer.accessUntilMs)) {
