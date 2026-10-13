@@ -315,8 +315,12 @@ async function tick() {
         if (result === "review") {
           console.error("[worker] Automatic trial needs manual review", { jobId: autoTrialJob.id });
         }
-        return;
       }
+    } catch (error) {
+      if (shouldPauseWorker(error)) throw error;
+      console.error("[worker] Automatic trial processing failed; continuing shared jobs", {
+        errorType: error instanceof Error ? error.name : "UnknownError"
+      });
     } finally {
       autoTrialInFlight = false;
     }
