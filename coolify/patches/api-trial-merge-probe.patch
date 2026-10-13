@@ -1,8 +1,51 @@
+diff --git a/apps/api/src/access-limited-stream.ts b/apps/api/src/access-limited-stream.ts
+new file mode 100644
+index 0000000..a979da6
+--- /dev/null
++++ b/apps/api/src/access-limited-stream.ts
+@@ -0,0 +1,29 @@
++import type { Readable } from "node:stream";
++
++const MAX_TIMEOUT_MS = 2_147_483_647;
++
++export function accessExpired(accessUntilMs: number | null) {
++  return accessUntilMs !== null && accessUntilMs <= Date.now();
++}
++
++export function limitStreamToAccess(stream: Readable, accessUntilMs: number | null): Readable {
++  if (accessUntilMs === null) return stream;
++
++  let timeout: NodeJS.Timeout | null = null;
++  stream.once("close", () => {
++    if (timeout) clearTimeout(timeout);
++  });
++
++  const schedule = () => {
++    if (stream.destroyed) return;
++    const remainingMs = accessUntilMs - Date.now();
++    if (remainingMs <= 0) {
++      stream.destroy();
++      return;
++    }
++    timeout = setTimeout(schedule, Math.min(remainingMs, MAX_TIMEOUT_MS));
++    timeout.unref();
++  };
++  schedule();
++  return stream;
++}
 diff --git a/apps/api/src/live-playback.ts b/apps/api/src/live-playback.ts
-index b5b36c0..a63babd 100644
+index b5b36c0..609fafc 100644
 --- a/apps/api/src/live-playback.ts
 +++ b/apps/api/src/live-playback.ts
-@@ -97,6 +97,7 @@ type ViewerLease = {
+@@ -5,6 +5,7 @@ import os from "node:os";
+ import path from "node:path";
+ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+ import { Readable } from "node:stream";
++import { accessExpired, limitStreamToAccess } from "./access-limited-stream.js";
+ import type { FastifyReply } from "fastify";
+ import type {
+   LiveDeliveryMode,
+@@ -97,6 +98,7 @@ type ViewerLease = {
    token: string;
    diagnosticsSessionId: string;
    expiresAt: number;
@@ -10,7 +53,7 @@ index b5b36c0..a63babd 100644
    lastSeenAt: number;
  };
  
-@@ -152,6 +153,7 @@ type CreateLivePlaybackInput = {
+@@ -152,6 +154,7 @@ type CreateLivePlaybackInput = {
    canPlay: boolean;
    isVerified: boolean;
    errorMessage: string | null;
@@ -18,7 +61,35 @@ index b5b36c0..a63babd 100644
    forceRelayRestart?: boolean;
    allowFileProxyFallback?: boolean;
    preferDirectProxy?: boolean;
-@@ -451,8 +453,9 @@ function normalizeCacheProfile(value: LiveCacheProfile | string | null | undefin
+@@ -373,10 +376,14 @@ function rewriteLocalManifest(content: string, session: LiveRelaySession, viewer
+     .join("\n");
+ }
+ 
+-async function streamFetchResponse(reply: FastifyReply, response: Response) {
++async function streamFetchResponse(reply: FastifyReply, response: Response, accessUntilMs: number | null) {
+   if (!response.body) {
+     return reply.status(502).type("text/plain; charset=utf-8").send("Upstream akis okunamadi.");
+   }
++  if (accessExpired(accessUntilMs)) {
++    void response.body.cancel().catch(() => undefined);
++    return reply.status(403).type("text/plain; charset=utf-8").send("Canli playback oturumu gecersiz.");
++  }
+ 
+   const contentType = response.headers.get("content-type");
+   const contentRange = response.headers.get("content-range");
+@@ -401,7 +408,10 @@ async function streamFetchResponse(reply: FastifyReply, response: Response) {
+   reply.header("surrogate-control", "no-store");
+   reply.header("accept-ranges", "bytes");
+ 
+-  return reply.send(Readable.fromWeb(response.body as globalThis.ReadableStream<Uint8Array>));
++  return reply.send(limitStreamToAccess(
++    Readable.fromWeb(response.body as globalThis.ReadableStream<Uint8Array>),
++    accessUntilMs
++  ));
+ }
+ 
+ function createDisabledPlaybackRecord(input: {
+@@ -451,8 +461,9 @@ function normalizeCacheProfile(value: LiveCacheProfile | string | null | undefin
    return value === "safe" ? "safe" : "fast";
  }
  
@@ -30,7 +101,7 @@ index b5b36c0..a63babd 100644
  }
  
  function buildRelayDetail(session: LiveRelaySession, extra?: Record<string, unknown> | null) {
-@@ -597,7 +600,7 @@ function trimErrorMessage(value: string | null | undefined, fallback: string) {
+@@ -597,7 +608,7 @@ function trimErrorMessage(value: string | null | undefined, fallback: string) {
  
  export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
    const sessions = new Map<string, LiveRelaySession>();
@@ -39,7 +110,7 @@ index b5b36c0..a63babd 100644
    const sessionTtlMs = Math.max(options.sessionTtlMs, 60_000);
    const tempRoot = options.tempRoot ?? path.join(os.tmpdir(), "flixify-live");
    let ffmpegAvailablePromise: Promise<boolean> | null = null;
-@@ -648,9 +651,9 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
+@@ -648,9 +659,9 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
  
    async function destroySession(session: LiveRelaySession) {
      sessions.delete(session.id);
@@ -52,7 +123,7 @@ index b5b36c0..a63babd 100644
      }
      if (session.localState?.process && !session.localState.process.killed) {
        session.localState.process.kill("SIGKILL");
-@@ -690,7 +693,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
+@@ -690,7 +701,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
  
    function touchViewer(session: LiveRelaySession, viewer: ViewerLease) {
      const nextExpiry = Date.now() + sessionTtlMs;
@@ -61,7 +132,7 @@ index b5b36c0..a63babd 100644
      viewer.lastSeenAt = Date.now();
      session.expiresAt = nextExpiry;
      session.lastViewerAt = viewer.lastSeenAt;
-@@ -728,7 +731,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
+@@ -728,7 +739,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
        return null;
      }
  
@@ -70,7 +141,7 @@ index b5b36c0..a63babd 100644
        session.viewers.delete(token);
        return null;
      }
-@@ -1048,6 +1051,16 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
+@@ -1048,6 +1059,16 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
    }
  
    async function createPlayback(input: CreateLivePlaybackInput): Promise<LivePlaybackRecord> {
@@ -87,7 +158,7 @@ index b5b36c0..a63babd 100644
      if (!input.canPlay || !input.sourceUrl) {
        return createDisabledPlaybackRecord({
          channelId: input.channelId,
-@@ -1061,10 +1074,10 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
+@@ -1061,10 +1082,10 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
      const cacheProfile = normalizeCacheProfile(input.cacheProfile);
      const preferDirectProxy = input.preferDirectProxy !== false;
      const wantsRelay = input.sourceTransport !== "hls" && !preferDirectProxy;
@@ -100,7 +171,7 @@ index b5b36c0..a63babd 100644
        return existingSessionId ? sessions.get(existingSessionId) ?? null : null;
      })();
  
-@@ -1170,7 +1183,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
+@@ -1170,7 +1191,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
        }
  
        sessions.set(session.id, session);
@@ -109,7 +180,7 @@ index b5b36c0..a63babd 100644
  
        await emitDiagnostic({
          channelId: session.channelId,
-@@ -1215,7 +1228,8 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
+@@ -1215,7 +1236,8 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
      const viewer: ViewerLease = {
        token: crypto.randomBytes(32).toString("base64url"),
        diagnosticsSessionId: crypto.randomUUID(),
@@ -119,7 +190,43 @@ index b5b36c0..a63babd 100644
        lastSeenAt: Date.now()
      };
      session.viewers.set(viewer.token, viewer);
-@@ -1543,7 +1557,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
+@@ -1401,7 +1423,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
+         .send(rewritten);
+     }
+ 
+-    return streamFetchResponse(reply, response);
++    return streamFetchResponse(reply, response, viewer.accessUntilMs);
+   }
+ 
+   async function sendLocalAsset(reply: FastifyReply, sessionId: string, token: string | undefined, fileName: string) {
+@@ -1479,13 +1501,17 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
+         .send(rewriteLocalManifest(manifest, session, viewer.token));
+     }
+ 
++    if (accessExpired(viewer.accessUntilMs)) {
++      return reply.status(403).type("text/plain; charset=utf-8").send("Canli playback oturumu gecersiz.");
++    }
++
+     reply.header("content-type", getLocalContentType(filePath));
+     reply.header("cache-control", LIVE_NO_CACHE_HEADER);
+     reply.header("pragma", "no-cache");
+     reply.header("expires", "0");
+     reply.header("surrogate-control", "no-store");
+     session.localState.lastSegmentAt = Date.now();
+-    return reply.send(fs.createReadStream(filePath));
++    return reply.send(limitStreamToAccess(fs.createReadStream(filePath), viewer.accessUntilMs));
+   }
+ 
+   async function sendFile(
+@@ -1536,14 +1562,14 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
+       return reply.status(502).type("text/plain; charset=utf-8").send("Canli akis alinamadi.");
+     }
+ 
+-    return streamFetchResponse(reply, response);
++    return streamFetchResponse(reply, response, viewer.accessUntilMs);
+   }
+ 
+   async function dispose() {
      clearInterval(cleanupTimer);
      const activeSessions = [...sessions.values()];
      sessions.clear();
@@ -391,7 +498,7 @@ index 612da7d..46c1f56 100644
            set
              username = excluded.username,
 diff --git a/apps/api/src/server.ts b/apps/api/src/server.ts
-index d130d83..f21e7c2 100644
+index d130d83..9ccd90a 100644
 --- a/apps/api/src/server.ts
 +++ b/apps/api/src/server.ts
 @@ -40,6 +40,7 @@ import {
@@ -568,16 +675,17 @@ index d130d83..f21e7c2 100644
            isVerified: resolved.isVerified,
            errorMessage: canPlay ? null : errorMessage ?? "Canli yayin gecici olarak kullanilamiyor.",
            forceRelayRestart,
-@@ -1927,7 +1972,7 @@ export function buildServer() {
+@@ -1927,7 +1972,8 @@ export function buildServer() {
  
        if (
          !playback.canPlay &&
 -        userContext.canPlay &&
++        !userContext.isThreeHourTrial &&
 +        hasCurrentPlaybackAccess(userContext) &&
          typeof resolved.sourceUrl === "string" &&
          (optimisticProbeFallback ||
            optimisticDirectMessage ||
-@@ -1953,6 +1998,17 @@ export function buildServer() {
+@@ -1953,6 +1999,17 @@ export function buildServer() {
          });
        }
  
@@ -595,7 +703,7 @@ index d130d83..f21e7c2 100644
        return playback;
      } catch (error) {
        return sendUserRouteError(request, reply, error);
-@@ -2050,9 +2106,13 @@ export function buildServer() {
+@@ -2050,9 +2107,13 @@ export function buildServer() {
        if (!userContext.canViewCatalog) {
          return replyWithNativePlaybackError(reply, 403, "Icerik baglantisi atanmadi.");
        }
@@ -610,7 +718,7 @@ index d130d83..f21e7c2 100644
  
        const channel = await getLiveChannelForPlayback(userContext.snapshotVersion, channelId);
        if (!channel) {
-@@ -2061,7 +2121,7 @@ export function buildServer() {
+@@ -2061,7 +2122,7 @@ export function buildServer() {
  
        if (
          !userContext.playbackBaseUrl ||
@@ -619,7 +727,7 @@ index d130d83..f21e7c2 100644
        ) {
          return replyWithNativePlaybackError(reply, 503, "Canli yayin kaynagi hazir degil.");
        }
-@@ -2069,10 +2129,13 @@ export function buildServer() {
+@@ -2069,10 +2130,13 @@ export function buildServer() {
        const resolved = await resolveLiveSourceUrl({
          baseUrl: userContext.playbackBaseUrl,
          streamPath: channel.stream_path,
@@ -635,7 +743,7 @@ index d130d83..f21e7c2 100644
        const checkedAt = new Date().toISOString();
        const errorMessage = resolved.errorMessage;
        const upstreamStatus = extractUpstreamStatus(errorMessage);
-@@ -2140,6 +2203,7 @@ export function buildServer() {
+@@ -2140,6 +2204,7 @@ export function buildServer() {
            healthStatus,
            lastCheckedAt: checkedAt,
            canPlay: canAttemptRelay,
@@ -643,7 +751,7 @@ index d130d83..f21e7c2 100644
            isVerified: resolved.isVerified,
            errorMessage: canAttemptRelay ? null : errorMessage ?? "Canli yayin gecici olarak kullanilamiyor.",
            forceRelayRestart,
-@@ -2149,7 +2213,7 @@ export function buildServer() {
+@@ -2149,7 +2214,7 @@ export function buildServer() {
            cacheProfile
          });
  
@@ -652,7 +760,7 @@ index d130d83..f21e7c2 100644
            return buildNativeLivePlaybackResponse({
              url: playback.url,
              transport: playback.transport,
-@@ -2170,6 +2234,10 @@ export function buildServer() {
+@@ -2170,6 +2235,14 @@ export function buildServer() {
          );
        }
  
@@ -660,10 +768,14 @@ index d130d83..f21e7c2 100644
 +        return replyWithNativePlaybackError(reply, 403, "Bu icerigi oynatmak icin aktif paket gerekir.");
 +      }
 +
++      if (userContext.isThreeHourTrial) {
++        return replyWithNativePlaybackError(reply, 503, "Canli relay hazirlanamadi.");
++      }
++
        return buildNativeLivePlaybackResponse({
          url: resolved.sourceUrl,
          transport: resolved.transport,
-@@ -2334,6 +2402,10 @@ export function buildServer() {
+@@ -2334,6 +2407,10 @@ export function buildServer() {
        if (!userContext.canViewCatalog) {
          return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
        }
@@ -674,7 +786,7 @@ index d130d83..f21e7c2 100644
  
        const record =
          kind === "movie"
-@@ -2344,7 +2416,7 @@ export function buildServer() {
+@@ -2344,7 +2421,7 @@ export function buildServer() {
          return reply.status(404).send({ message: kind === "movie" ? "Film bulunamadi." : "Bolum bulunamadi." });
        }
  
@@ -683,7 +795,7 @@ index d130d83..f21e7c2 100644
          return {
            itemId,
            kind,
-@@ -2363,7 +2435,7 @@ export function buildServer() {
+@@ -2363,7 +2440,7 @@ export function buildServer() {
  
        if (
          !userContext.playbackBaseUrl ||
@@ -692,7 +804,7 @@ index d130d83..f21e7c2 100644
        ) {
          return buildDisabledVodPlaybackRecord({
            itemId,
-@@ -2377,8 +2449,8 @@ export function buildServer() {
+@@ -2377,8 +2454,8 @@ export function buildServer() {
          buildStreamCandidates(
            userContext.playbackBaseUrl,
            record.stream_path,
@@ -703,7 +815,7 @@ index d130d83..f21e7c2 100644
          )[0]?.url ?? null;
  
        let resolved: Awaited<ReturnType<typeof resolveVodSourceUrl>>;
-@@ -2386,8 +2458,8 @@ export function buildServer() {
+@@ -2386,8 +2463,8 @@ export function buildServer() {
          resolved = await resolveVodSourceUrl({
            baseUrl: userContext.playbackBaseUrl,
            streamPath: record.stream_path,
@@ -714,25 +826,25 @@ index d130d83..f21e7c2 100644
          });
        } catch (error) {
          request.log.warn(
-@@ -2401,7 +2473,7 @@ export function buildServer() {
+@@ -2401,7 +2478,7 @@ export function buildServer() {
          );
  
          if (
 -          canUseVodDirectPlaybackFallback({
-+          hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
++          !userContext.isThreeHourTrial && hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
              clientRuntime,
              platform,
              transport: guessVodTransportFromPath(record.stream_path),
-@@ -2427,7 +2499,7 @@ export function buildServer() {
+@@ -2427,7 +2504,7 @@ export function buildServer() {
  
        if (!resolved.sourceUrl) {
          if (
 -          canUseVodDirectPlaybackFallback({
-+          hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
++          !userContext.isThreeHourTrial && hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
              clientRuntime,
              platform,
              transport: resolved.transport,
-@@ -2466,6 +2538,7 @@ export function buildServer() {
+@@ -2466,6 +2543,7 @@ export function buildServer() {
            preferTranscode,
            allowUnverifiedSource: resolved.isVerified === false,
            sourceTransportHint: resolved.transport,
@@ -740,7 +852,7 @@ index d130d83..f21e7c2 100644
            selectedAudioTrackId: audioTrackId
          });
        } catch (error) {
-@@ -2492,12 +2565,21 @@ export function buildServer() {
+@@ -2492,12 +2570,21 @@ export function buildServer() {
          });
        }
  
@@ -759,11 +871,11 @@ index d130d83..f21e7c2 100644
  
        if (
 -        canUseVodDirectPlaybackFallback({
-+        hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
++        !userContext.isThreeHourTrial && hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
            clientRuntime,
            platform,
            transport: resolved.transport,
-@@ -2568,9 +2650,13 @@ export function buildServer() {
+@@ -2568,9 +2655,13 @@ export function buildServer() {
        if (!userContext.canViewCatalog) {
          return replyWithNativePlaybackError(reply, 403, "Icerik baglantisi atanmadi.");
        }
@@ -778,7 +890,7 @@ index d130d83..f21e7c2 100644
  
        const record =
          kind === "movie"
-@@ -2587,7 +2673,7 @@ export function buildServer() {
+@@ -2587,7 +2678,7 @@ export function buildServer() {
  
        if (
          !userContext.playbackBaseUrl ||
@@ -787,7 +899,7 @@ index d130d83..f21e7c2 100644
        ) {
          return replyWithNativePlaybackError(reply, 503, "VOD kaynagi hazir degil.");
        }
-@@ -2595,9 +2681,12 @@ export function buildServer() {
+@@ -2595,11 +2686,15 @@ export function buildServer() {
        const resolved = await resolveVodSourceUrl({
          baseUrl: userContext.playbackBaseUrl,
          streamPath: record.stream_path,
@@ -801,8 +913,11 @@ index d130d83..f21e7c2 100644
 +      }
  
        const allowOptimisticNativeDirect =
++        !userContext.isThreeHourTrial &&
          !resolved.ok &&
-@@ -2645,6 +2734,7 @@ export function buildServer() {
+         typeof resolved.sourceUrl === "string" &&
+         canUseVodDirectPlaybackFallback({
+@@ -2645,6 +2740,7 @@ export function buildServer() {
            cookie: resolved.cookie,
            allowUnverifiedSource: resolved.isVerified === false,
            sourceTransportHint: resolved.transport,
@@ -810,7 +925,15 @@ index d130d83..f21e7c2 100644
            selectedAudioTrackId: audioTrackId
          });
        } catch (error) {
-@@ -2681,7 +2771,7 @@ export function buildServer() {
+@@ -2672,6 +2768,7 @@ export function buildServer() {
+       }
+ 
+       const shouldFallbackToDirect =
++        !userContext.isThreeHourTrial &&
+         typeof resolved.sourceUrl === "string" &&
+         canUseVodDirectPlaybackFallback({
+           clientRuntime: "native",
+@@ -2681,7 +2778,7 @@ export function buildServer() {
          }) &&
          shouldRescueNativeVodToDirect(playback.errorMessage);
  
@@ -819,7 +942,7 @@ index d130d83..f21e7c2 100644
          return buildNativeVodPlaybackResponse({
            url: resolved.sourceUrl,
            transport: resolved.transport,
-@@ -2695,7 +2785,7 @@ export function buildServer() {
+@@ -2695,7 +2792,7 @@ export function buildServer() {
          });
        }
  
@@ -829,10 +952,18 @@ index d130d83..f21e7c2 100644
            url: playback.url,
            transport: playback.transport,
 diff --git a/apps/api/src/vod.ts b/apps/api/src/vod.ts
-index fbe980a..05de850 100644
+index fbe980a..8763fa0 100644
 --- a/apps/api/src/vod.ts
 +++ b/apps/api/src/vod.ts
-@@ -448,6 +448,7 @@ type VodPlaybackSession = {
+@@ -5,6 +5,7 @@ import os from "node:os";
+ import path from "node:path";
+ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+ import { Readable } from "node:stream";
++import { accessExpired, limitStreamToAccess } from "./access-limited-stream.js";
+ import type { FastifyReply } from "fastify";
+ import type {
+   VodAudioTrack,
+@@ -448,6 +449,7 @@ type VodPlaybackSession = {
    sourceTransport: VodTransport;
    deliveryMode: VodDeliveryMode;
    expiresAt: number;
@@ -840,7 +971,7 @@ index fbe980a..05de850 100644
    isVerified: boolean;
    audioTracks: VodAudioTrack[];
    defaultAudioTrackId: string | null;
-@@ -471,6 +472,7 @@ type CreateVodPlaybackInput = {
+@@ -471,6 +473,7 @@ type CreateVodPlaybackInput = {
    debug?: boolean;
    preferTranscode?: boolean;
    selectedAudioTrackId?: string | null;
@@ -848,7 +979,36 @@ index fbe980a..05de850 100644
  };
  
  type VodPlaybackManagerOptions = {
-@@ -1448,7 +1450,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
+@@ -965,11 +968,15 @@ function rewriteProxyManifest(content: string, parentUrl: string, session: VodPl
+ async function streamFetchResponse(
+   reply: FastifyReply,
+   response: Response,
+-  options: { fallbackContentType?: string } = {}
++  options: { fallbackContentType?: string; accessUntilMs?: number | null } = {}
+ ) {
+   if (!response.body) {
+     return reply.status(502).type("text/plain; charset=utf-8").send("Upstream akisi okunamadi.");
+   }
++  if (accessExpired(options.accessUntilMs ?? null)) {
++    void response.body.cancel().catch(() => undefined);
++    return reply.status(403).type("text/plain; charset=utf-8").send("VOD oturumu gecersiz.");
++  }
+ 
+   const rawContentType = response.headers.get("content-type");
+   const normalizedType = normalizeContentType(rawContentType ?? undefined);
+@@ -999,7 +1006,10 @@ async function streamFetchResponse(
+   reply.header("cache-control", cacheControl ?? "private, max-age=30, no-transform");
+   reply.header("accept-ranges", "bytes");
+ 
+-  return reply.send(Readable.fromWeb(response.body as globalThis.ReadableStream<Uint8Array>));
++  return reply.send(limitStreamToAccess(
++    Readable.fromWeb(response.body as globalThis.ReadableStream<Uint8Array>),
++    options.accessUntilMs ?? null
++  ));
+ }
+ 
+ function getFallbackContentTypeForTransport(transport: VodTransport) {
+@@ -1448,7 +1458,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
    cleanupTimer.unref();
  
    function touchSession(session: VodPlaybackSession) {
@@ -857,7 +1017,7 @@ index fbe980a..05de850 100644
    }
  
    async function startFfmpegPipeline(session: VodPlaybackSession) {
-@@ -1616,6 +1618,16 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
+@@ -1616,6 +1626,16 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
    }
  
    async function createPlayback(input: CreateVodPlaybackInput): Promise<VodPlaybackRecord> {
@@ -874,7 +1034,7 @@ index fbe980a..05de850 100644
      const startupStartedAt = performance.now();
      const debugEnabled = input.debug === true || process.env.FLIXIFY_VOD_DEBUG === "1";
      const debugLog = (event: string, detail?: Record<string, unknown>) => {
-@@ -1755,7 +1767,8 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
+@@ -1755,7 +1775,8 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
        cookie: mergeCookieHeaders(input.cookie, probe.cookie),
        sourceTransport: effectiveTransport,
        deliveryMode,
@@ -884,7 +1044,7 @@ index fbe980a..05de850 100644
        isVerified,
        audioTracks,
        defaultAudioTrackId: audioSelection.defaultTrackId,
-@@ -1865,7 +1878,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
+@@ -1865,7 +1886,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
        return null;
      }
  
@@ -893,3 +1053,49 @@ index fbe980a..05de850 100644
        void destroySession(session);
        return null;
      }
+@@ -2049,7 +2070,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
+         .send(rewritten);
+     }
+ 
+-    return streamFetchResponse(reply, response);
++    return streamFetchResponse(reply, response, { accessUntilMs: session.accessUntilMs });
+   }
+ 
+   async function sendLocalAsset(reply: FastifyReply, sessionId: string, token: string | undefined, fileName: string) {
+@@ -2084,9 +2105,13 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
+         .send(rewriteLocalManifest(manifest, session));
+     }
+ 
++    if (accessExpired(session.accessUntilMs)) {
++      return reply.status(403).type("text/plain; charset=utf-8").send("VOD oturumu gecersiz.");
++    }
++
+     reply.header("content-type", getLocalContentType(filePath));
+     reply.header("cache-control", "private, max-age=30");
+-    return reply.send(fs.createReadStream(filePath));
++    return reply.send(limitStreamToAccess(fs.createReadStream(filePath), session.accessUntilMs));
+   }
+ 
+   async function sendFile(
+@@ -2159,7 +2184,8 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
+     }
+ 
+     return streamFetchResponse(reply, response, {
+-      fallbackContentType: getFallbackContentTypeForTransport(session.sourceTransport)
++      fallbackContentType: getFallbackContentTypeForTransport(session.sourceTransport),
++      accessUntilMs: session.accessUntilMs
+     });
+   }
+ 
+diff --git a/packages/contracts/src/domain.ts b/packages/contracts/src/domain.ts
+index ad99329..aca3ade 100644
+--- a/packages/contracts/src/domain.ts
++++ b/packages/contracts/src/domain.ts
+@@ -84,6 +84,7 @@ export const userSummarySchema = z.object({
+   codeSuffix: z.string().length(4).nullable(),
+   hasAssignedLink: z.boolean(),
+   hasActiveSubscription: z.boolean(),
++  trialProvisionStatus: z.enum(["pending", "review"]).nullable().optional(),
+   activePackage: z
+     .object({
+       id: z.string().uuid(),
