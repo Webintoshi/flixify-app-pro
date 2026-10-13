@@ -1,9 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createLivePlaybackManager,
   getContentLengthFromContentRange,
   parseManifestState
 } from "./live-playback.js";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+function captureReply() {
+  const state: { statusCode: number; body: unknown } = { statusCode: 200, body: null };
+  const reply = {
+    status(statusCode: number) {
+      state.statusCode = statusCode;
+      return this;
+    },
+    type() { return this; },
+    header() { return this; },
+    send(body: unknown) {
+      state.body = body;
+      return this;
+    }
+  };
+  return { reply, state };
+}
 
 describe("live-playback helpers", () => {
   it("parses media sequence and segment count from manifest", () => {
@@ -150,6 +172,96 @@ segment-00043.ts
       expect(playbackB.deliveryMode).toBe("file_proxy");
       expect(sessionA).toBeTruthy();
       expect(sessionA).toBe(sessionB);
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it("keeps separate provider lines on the same live channel from terminating each other", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("#EXTM3U\n#EXTINF:4,\nsegment-0.ts\n", {
+      status: 200,
+      headers: { "content-type": "application/vnd.apple.mpegurl" }
+    })));
+    const manager = createLivePlaybackManager({ ffmpegBinary: process.execPath, sessionTtlMs: 60_000 });
+    const input = {
+      channelId: "shared-channel",
+      snapshotVersion: 1,
+      cookie: null,
+      baseOrigin: "https://flixify.test",
+      sourceTransport: "hls" as const,
+      healthStatus: "healthy" as const,
+      lastCheckedAt: null,
+      canPlay: true,
+      isVerified: true,
+      errorMessage: null
+    };
+
+    try {
+      const first = await manager.createPlayback({ ...input, sourceUrl: "https://provider.test/line-a/master.m3u8" });
+      const second = await manager.createPlayback({ ...input, sourceUrl: "https://provider.test/line-b/master.m3u8" });
+      const firstUrl = new URL(first.url!);
+      const secondUrl = new URL(second.url!);
+      const firstSessionId = firstUrl.pathname.split("/")[3]!;
+      const secondSessionId = secondUrl.pathname.split("/")[3]!;
+      expect(firstSessionId).not.toBe(secondSessionId);
+
+      const firstReply = captureReply();
+      await manager.sendManifest(firstReply.reply as never, firstSessionId, firstUrl.searchParams.get("token")!);
+      const secondReply = captureReply();
+      await manager.sendManifest(secondReply.reply as never, secondSessionId, secondUrl.searchParams.get("token")!);
+      expect(firstReply.state.statusCode).toBe(200);
+      expect(secondReply.state.statusCode).toBe(200);
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it("stops an active live segment at the subscription deadline despite recent requests", async () => {
+    const manifest = "#EXTM3U\n#EXTINF:4,\nsegment-0.ts\n";
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(
+      String(url).endsWith(".ts") ? "segment bytes" : manifest,
+      { status: 200, headers: { "content-type": String(url).endsWith(".ts") ? "video/mp2t" : "application/vnd.apple.mpegurl" } }
+    )));
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const accessUntil = new Date(now + 1_000).toISOString();
+    const manager = createLivePlaybackManager({ ffmpegBinary: process.execPath, sessionTtlMs: 60_000 });
+
+    try {
+      const playback = await manager.createPlayback({
+        channelId: "trial-channel",
+        snapshotVersion: 1,
+        sourceUrl: "https://example.com/live/master.m3u8",
+        cookie: null,
+        baseOrigin: "https://flixify.test",
+        sourceTransport: "hls",
+        healthStatus: "healthy",
+        lastCheckedAt: null,
+        canPlay: true,
+        isVerified: true,
+        errorMessage: null,
+        accessUntil
+      });
+      expect(playback.canPlay).toBe(true);
+      const playbackUrl = new URL(playback.url!);
+      const sessionId = playbackUrl.pathname.split("/")[3]!;
+      const token = playbackUrl.searchParams.get("token")!;
+      const first = captureReply();
+      await manager.sendManifest(first.reply as never, sessionId, token);
+      expect(first.state.statusCode).toBe(200);
+      const assetUrl = new URL(String(first.state.body).split("\n").find((line) => line.includes("/assets/"))!);
+      const assetId = assetUrl.pathname.split("/")[5]!;
+
+      now += 999;
+      const beforeExpiry = captureReply();
+      await manager.sendAsset(beforeExpiry.reply as never, sessionId, token, assetId);
+      expect(beforeExpiry.state.statusCode).toBe(200);
+      (beforeExpiry.state.body as { destroy?: () => void })?.destroy?.();
+
+      now += 1;
+      const afterExpiry = captureReply();
+      await manager.sendAsset(afterExpiry.reply as never, sessionId, token, assetId);
+      expect(afterExpiry.state.statusCode).toBe(403);
     } finally {
       await manager.dispose();
     }

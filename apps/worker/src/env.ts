@@ -16,6 +16,8 @@ const envSchema = z.object({
     .optional()
     .default("false")
     .transform((value) => value === "true"),
+  RESELLER_API_BASE_URL: z.string().url().optional().or(z.literal("")),
+  RESELLER_API_KEY: z.string().trim().min(1).optional().or(z.literal("")),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5000)
 });
 

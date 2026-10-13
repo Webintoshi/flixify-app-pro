@@ -40,6 +40,7 @@ import {
   createTrialRequest,
   createUser,
   findUserByCodeLookup,
+  AutoTrialRegistrationRateLimitError,
   findActiveUserByInstallationId,
   getEpisodeForPlayback,
   getAdminDashboard,
@@ -361,13 +362,18 @@ function getRequestBaseOrigin(request: FastifyRequest) {
   return `${protocol ?? "http"}://${host}`;
 }
 
-function signLiveCatalogResponse<T extends { items: LiveChannel[] }>(payload: T, request: FastifyRequest): T {
+function signLiveCatalogResponse<T extends { items: LiveChannel[] }>(
+  payload: T,
+  request: FastifyRequest,
+  hideStreamUrls = false
+): T {
   const requestOrigin = getRequestBaseOrigin(request);
   const clientRuntime = normalizeClientRuntime(request.headers["x-flixify-client-runtime"]);
   return {
     ...payload,
     items: payload.items.map((item) => ({
       ...item,
+      streamUrl: hideStreamUrls ? null : item.streamUrl,
       logoUrl: createCatalogArtworkUrl({
         sourceUrl: item.logoUrl,
         origin: requestOrigin,
@@ -457,6 +463,27 @@ function buildStreamCandidates(
   }
 
   return resolvedCandidates;
+}
+
+function getScopedPlaybackCredentials(userContext: Awaited<ReturnType<typeof getUserContext>>) {
+  const shared = userContext.sharedReferenceCredentials;
+  const primary = userContext.iptvCredentials;
+  const trial = userContext.isThreeHourTrial;
+  return {
+    primary: trial && samePlaybackCredentials(primary, shared) ? null : primary,
+    fallback: trial ? null : shared
+  };
+}
+
+function hasCurrentPlaybackAccess(userContext: Awaited<ReturnType<typeof getUserContext>>) {
+  if (!userContext.canPlay) {
+    return false;
+  }
+  if (!userContext.accessUntil) {
+    return !userContext.isThreeHourTrial;
+  }
+  const deadline = Date.parse(userContext.accessUntil);
+  return Number.isFinite(deadline) && deadline > Date.now();
 }
 
 function normalizeClientRuntime(value: unknown): ClientRuntime {
@@ -1251,7 +1278,7 @@ async function authenticateAdmin(authorization?: string): Promise<AdminRequest> 
 export function buildServer() {
   const app = Fastify({
     logger: true,
-    trustProxy: true
+    trustProxy: 1
   });
 
   app.register(cors, API_CORS_CONFIG);
@@ -1302,7 +1329,13 @@ export function buildServer() {
     }
 
     try {
-      await pool.query("select 1");
+      const schema = await pool.query<{ trial_jobs: string | null; trial_ip_quota: string | null }>(`
+        select to_regclass('public.auto_trial_provision_jobs')::text as trial_jobs,
+               to_regclass('public.registration_trial_ip_quota')::text as trial_ip_quota
+      `);
+      if (!schema.rows[0]?.trial_jobs || !schema.rows[0]?.trial_ip_quota) {
+        throw new Error("Automatic trial database schema is missing.");
+      }
       return {
         ok: true,
         database: "up",
@@ -1388,9 +1421,13 @@ export function buildServer() {
             await hashSecret(candidate),
             candidate.slice(-4),
             candidate,
-            payload.installationId
+            payload.installationId,
+            requestIp
           );
         } catch (error) {
+          if (error instanceof AutoTrialRegistrationRateLimitError) {
+            return reply.status(429).send({ message: "Gunluk deneme kayit limiti doldu. Lutfen 24 saat sonra tekrar deneyin." });
+          }
           const databaseCode = getDatabaseErrorCode(error);
           const constraint = getDatabaseConstraint(error);
           if (
@@ -1656,13 +1693,16 @@ export function buildServer() {
         return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
       }
 
+      const playbackCredentials = getScopedPlaybackCredentials(userContext);
+
       return signLiveCatalogResponse(
         await listLiveCatalog(userContext.snapshotVersion, query.page, query.pageSize, query.search, query.group, {
           baseUrl: userContext.playbackBaseUrl,
-          credentials: userContext.iptvCredentials,
-          canPlay: userContext.canPlay
+          credentials: userContext.isThreeHourTrial ? null : playbackCredentials.primary,
+          canPlay: userContext.canPlay && Boolean(playbackCredentials.primary || playbackCredentials.fallback)
         }),
-        request
+        request,
+        userContext.isThreeHourTrial
       );
     } catch (error) {
       return sendUserRouteError(request, reply, error);
@@ -1781,6 +1821,10 @@ export function buildServer() {
       if (!userContext.canViewCatalog) {
         return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
       }
+      const playbackCredentials = getScopedPlaybackCredentials(userContext);
+      if (userContext.isThreeHourTrial && !playbackCredentials.primary) {
+        return reply.status(403).send({ message: "Deneme hatti hazir degil." });
+      }
 
       const channel = await getLiveChannelForPlayback(userContext.snapshotVersion, channelId);
       if (!channel) {
@@ -1790,8 +1834,8 @@ export function buildServer() {
       const cooldownMs = 5 * 60 * 1000;
       const normalizedLastError = typeof channel.last_error === "string" ? channel.last_error.trim().toLowerCase() : "";
       const shouldHonorRecent404Failure = shouldHonorSharedLive404Cooldown(
-        userContext.iptvCredentials,
-        userContext.sharedReferenceCredentials
+        playbackCredentials.primary,
+        playbackCredentials.fallback
       );
       const isRecent404Failure =
         shouldHonorRecent404Failure &&
@@ -1813,7 +1857,7 @@ export function buildServer() {
 
       if (
         !userContext.playbackBaseUrl ||
-        (!userContext.iptvCredentials && !userContext.sharedReferenceCredentials)
+        (!playbackCredentials.primary && !playbackCredentials.fallback)
       ) {
         return {
           channelId,
@@ -1835,8 +1879,8 @@ export function buildServer() {
         ? await resolveLiveSourceUrl({
             baseUrl: userContext.playbackBaseUrl,
             streamPath: channel.stream_path,
-            primaryCredentials: userContext.iptvCredentials,
-            fallbackCredentials: userContext.sharedReferenceCredentials,
+            primaryCredentials: playbackCredentials.primary,
+            fallbackCredentials: playbackCredentials.fallback,
             fallbackTransport: channel.transport
           })
         : {
@@ -1883,7 +1927,7 @@ export function buildServer() {
         });
       }
 
-      const canPlay = Boolean(userContext.canPlay) && (resolved.ok || optimisticProbeFallback);
+      const canPlay = hasCurrentPlaybackAccess(userContext) && (resolved.ok || optimisticProbeFallback);
 
       let playback: LivePlaybackRecord;
       try {
@@ -1897,6 +1941,7 @@ export function buildServer() {
           healthStatus,
           lastCheckedAt: checkedAt,
           canPlay,
+          accessUntil: userContext.accessUntil,
           isVerified: resolved.isVerified,
           errorMessage: canPlay ? null : errorMessage ?? "Canli yayin gecici olarak kullanilamiyor.",
           forceRelayRestart,
@@ -1927,7 +1972,7 @@ export function buildServer() {
 
       if (
         !playback.canPlay &&
-        userContext.canPlay &&
+        hasCurrentPlaybackAccess(userContext) &&
         typeof resolved.sourceUrl === "string" &&
         (optimisticProbeFallback ||
           optimisticDirectMessage ||
@@ -1950,6 +1995,17 @@ export function buildServer() {
           status: healthStatus === "broken" ? "broken" : "degraded",
           errorMessage: playback.errorMessage ?? "Canli relay hazirlanamadi.",
           touchPlaybackRequest: true
+        });
+      }
+
+      if (!hasCurrentPlaybackAccess(userContext)) {
+        return buildDisabledLivePlaybackRecord({
+          channelId,
+          transport,
+          healthStatus,
+          lastCheckedAt: checkedAt,
+          isVerified: resolved.isVerified,
+          errorMessage: "Canli yayin icin aktif paket gerekiyor."
         });
       }
 
@@ -2050,8 +2106,12 @@ export function buildServer() {
       if (!userContext.canViewCatalog) {
         return replyWithNativePlaybackError(reply, 403, "Icerik baglantisi atanmadi.");
       }
-      if (!userContext.canPlay) {
+      if (!hasCurrentPlaybackAccess(userContext)) {
         return replyWithNativePlaybackError(reply, 403, "Bu icerigi oynatmak icin aktif paket gerekir.");
+      }
+      const playbackCredentials = getScopedPlaybackCredentials(userContext);
+      if (userContext.isThreeHourTrial && !playbackCredentials.primary) {
+        return replyWithNativePlaybackError(reply, 403, "Deneme hatti hazir degil.");
       }
 
       const channel = await getLiveChannelForPlayback(userContext.snapshotVersion, channelId);
@@ -2061,7 +2121,7 @@ export function buildServer() {
 
       if (
         !userContext.playbackBaseUrl ||
-        (!userContext.iptvCredentials && !userContext.sharedReferenceCredentials)
+        (!playbackCredentials.primary && !playbackCredentials.fallback)
       ) {
         return replyWithNativePlaybackError(reply, 503, "Canli yayin kaynagi hazir degil.");
       }
@@ -2069,10 +2129,13 @@ export function buildServer() {
       const resolved = await resolveLiveSourceUrl({
         baseUrl: userContext.playbackBaseUrl,
         streamPath: channel.stream_path,
-        primaryCredentials: userContext.iptvCredentials,
-        fallbackCredentials: userContext.sharedReferenceCredentials,
+        primaryCredentials: playbackCredentials.primary,
+        fallbackCredentials: playbackCredentials.fallback,
         fallbackTransport: channel.transport
       });
+      if (!hasCurrentPlaybackAccess(userContext)) {
+        return replyWithNativePlaybackError(reply, 403, "Bu icerigi oynatmak icin aktif paket gerekir.");
+      }
       const checkedAt = new Date().toISOString();
       const errorMessage = resolved.errorMessage;
       const upstreamStatus = extractUpstreamStatus(errorMessage);
@@ -2140,6 +2203,7 @@ export function buildServer() {
           healthStatus,
           lastCheckedAt: checkedAt,
           canPlay: canAttemptRelay,
+          accessUntil: userContext.accessUntil,
           isVerified: resolved.isVerified,
           errorMessage: canAttemptRelay ? null : errorMessage ?? "Canli yayin gecici olarak kullanilamiyor.",
           forceRelayRestart,
@@ -2149,7 +2213,7 @@ export function buildServer() {
           cacheProfile
         });
 
-        if (playback.canPlay && typeof playback.url === "string") {
+        if (playback.canPlay && typeof playback.url === "string" && hasCurrentPlaybackAccess(userContext)) {
           return buildNativeLivePlaybackResponse({
             url: playback.url,
             transport: playback.transport,
@@ -2168,6 +2232,10 @@ export function buildServer() {
           },
           "Native live playback manager error"
         );
+      }
+
+      if (!hasCurrentPlaybackAccess(userContext)) {
+        return replyWithNativePlaybackError(reply, 403, "Bu icerigi oynatmak icin aktif paket gerekir.");
       }
 
       return buildNativeLivePlaybackResponse({
@@ -2334,6 +2402,10 @@ export function buildServer() {
       if (!userContext.canViewCatalog) {
         return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
       }
+      const playbackCredentials = getScopedPlaybackCredentials(userContext);
+      if (userContext.isThreeHourTrial && !playbackCredentials.primary) {
+        return reply.status(403).send({ message: "Deneme hatti hazir degil." });
+      }
 
       const record =
         kind === "movie"
@@ -2344,7 +2416,7 @@ export function buildServer() {
         return reply.status(404).send({ message: kind === "movie" ? "Film bulunamadi." : "Bolum bulunamadi." });
       }
 
-      if (!userContext.canPlay) {
+      if (!hasCurrentPlaybackAccess(userContext)) {
         return {
           itemId,
           kind,
@@ -2363,7 +2435,7 @@ export function buildServer() {
 
       if (
         !userContext.playbackBaseUrl ||
-        (!userContext.iptvCredentials && !userContext.sharedReferenceCredentials)
+        (!playbackCredentials.primary && !playbackCredentials.fallback)
       ) {
         return buildDisabledVodPlaybackRecord({
           itemId,
@@ -2377,8 +2449,8 @@ export function buildServer() {
         buildStreamCandidates(
           userContext.playbackBaseUrl,
           record.stream_path,
-          userContext.iptvCredentials,
-          userContext.sharedReferenceCredentials
+          playbackCredentials.primary,
+          playbackCredentials.fallback
         )[0]?.url ?? null;
 
       let resolved: Awaited<ReturnType<typeof resolveVodSourceUrl>>;
@@ -2386,8 +2458,8 @@ export function buildServer() {
         resolved = await resolveVodSourceUrl({
           baseUrl: userContext.playbackBaseUrl,
           streamPath: record.stream_path,
-          primaryCredentials: userContext.iptvCredentials,
-          fallbackCredentials: userContext.sharedReferenceCredentials
+          primaryCredentials: playbackCredentials.primary,
+          fallbackCredentials: playbackCredentials.fallback
         });
       } catch (error) {
         request.log.warn(
@@ -2401,7 +2473,7 @@ export function buildServer() {
         );
 
         if (
-          canUseVodDirectPlaybackFallback({
+          hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
             clientRuntime,
             platform,
             transport: guessVodTransportFromPath(record.stream_path),
@@ -2427,7 +2499,7 @@ export function buildServer() {
 
       if (!resolved.sourceUrl) {
         if (
-          canUseVodDirectPlaybackFallback({
+          hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
             clientRuntime,
             platform,
             transport: resolved.transport,
@@ -2466,6 +2538,7 @@ export function buildServer() {
           preferTranscode,
           allowUnverifiedSource: resolved.isVerified === false,
           sourceTransportHint: resolved.transport,
+          accessUntil: userContext.accessUntil,
           selectedAudioTrackId: audioTrackId
         });
       } catch (error) {
@@ -2492,12 +2565,21 @@ export function buildServer() {
         });
       }
 
+      if (!hasCurrentPlaybackAccess(userContext)) {
+        return buildDisabledVodPlaybackRecord({
+          itemId,
+          kind,
+          transport: resolved.transport,
+          errorMessage: "Bu icerigi oynatmak icin aktif paket gerekir."
+        });
+      }
+
       if (playback.canPlay) {
         return playback;
       }
 
       if (
-        canUseVodDirectPlaybackFallback({
+        hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
           clientRuntime,
           platform,
           transport: resolved.transport,
@@ -2568,8 +2650,12 @@ export function buildServer() {
       if (!userContext.canViewCatalog) {
         return replyWithNativePlaybackError(reply, 403, "Icerik baglantisi atanmadi.");
       }
-      if (!userContext.canPlay) {
+      if (!hasCurrentPlaybackAccess(userContext)) {
         return replyWithNativePlaybackError(reply, 403, "Bu icerigi oynatmak icin aktif paket gerekir.");
+      }
+      const playbackCredentials = getScopedPlaybackCredentials(userContext);
+      if (userContext.isThreeHourTrial && !playbackCredentials.primary) {
+        return replyWithNativePlaybackError(reply, 403, "Deneme hatti hazir degil.");
       }
 
       const record =
@@ -2587,7 +2673,7 @@ export function buildServer() {
 
       if (
         !userContext.playbackBaseUrl ||
-        (!userContext.iptvCredentials && !userContext.sharedReferenceCredentials)
+        (!playbackCredentials.primary && !playbackCredentials.fallback)
       ) {
         return replyWithNativePlaybackError(reply, 503, "VOD kaynagi hazir degil.");
       }
@@ -2595,9 +2681,12 @@ export function buildServer() {
       const resolved = await resolveVodSourceUrl({
         baseUrl: userContext.playbackBaseUrl,
         streamPath: record.stream_path,
-        primaryCredentials: userContext.iptvCredentials,
-        fallbackCredentials: userContext.sharedReferenceCredentials
+        primaryCredentials: playbackCredentials.primary,
+        fallbackCredentials: playbackCredentials.fallback
       });
+      if (!hasCurrentPlaybackAccess(userContext)) {
+        return replyWithNativePlaybackError(reply, 403, "Bu icerigi oynatmak icin aktif paket gerekir.");
+      }
 
       const allowOptimisticNativeDirect =
         !resolved.ok &&
@@ -2645,6 +2734,7 @@ export function buildServer() {
           cookie: resolved.cookie,
           allowUnverifiedSource: resolved.isVerified === false,
           sourceTransportHint: resolved.transport,
+          accessUntil: userContext.accessUntil,
           selectedAudioTrackId: audioTrackId
         });
       } catch (error) {
@@ -2681,7 +2771,7 @@ export function buildServer() {
         }) &&
         shouldRescueNativeVodToDirect(playback.errorMessage);
 
-      if (shouldFallbackToDirect && resolved.sourceUrl) {
+      if (shouldFallbackToDirect && resolved.sourceUrl && hasCurrentPlaybackAccess(userContext)) {
         return buildNativeVodPlaybackResponse({
           url: resolved.sourceUrl,
           transport: resolved.transport,
@@ -2695,7 +2785,7 @@ export function buildServer() {
         });
       }
 
-      if (playback.canPlay && playback.url) {
+      if (playback.canPlay && playback.url && hasCurrentPlaybackAccess(userContext)) {
         return buildNativeVodPlaybackResponse({
           url: playback.url,
           transport: playback.transport,

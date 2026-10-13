@@ -1,5 +1,6 @@
 import type { QueryResultRow } from "pg";
 import type { PoolClient } from "pg";
+import { createHmac, randomInt } from "node:crypto";
 import type {
   AdminAuditLogRecord,
   CatalogGroup,
@@ -24,6 +25,7 @@ import { buildLiveVariantMetadata, dedupeMovieCatalogEntries } from "@flixify/co
 import { buildPlaylistUrl, buildStreamUrl, parsePlaylistUrl, type PlaylistConfig } from "./iptv.js";
 import { filterStoredMovieCatalogRows, filterStoredSeriesCatalogRows } from "./vod-catalog-filter.js";
 import { query, withTransaction } from "./db.js";
+import { env } from "./env.js";
 import { addPackageDuration, calculateRemainingDays } from "./time.js";
 
 type UserContextRow = QueryResultRow & {
@@ -47,7 +49,9 @@ type UserContextRow = QueryResultRow & {
   package_id: string | null;
   package_title: string | null;
   package_duration: PackageDuration | null;
-  ends_at: string | null;
+  ends_at: string | Date | null;
+  subscription_end_reason: string | null;
+  trial_provision_status?: "queued" | "reconcile" | "verified" | "completed" | "review" | null;
   has_used_trial?: boolean | null;
   has_expired_subscription?: boolean | null;
 };
@@ -328,6 +332,8 @@ export type UserContext = {
   snapshotVersion: number;
   canViewCatalog: boolean;
   canPlay: boolean;
+  accessUntil: string | null;
+  isThreeHourTrial: boolean;
   sourceStatus: string | null;
   playbackBaseUrl: string | null;
   iptvCredentials: { username: string; password: string } | null;
@@ -561,7 +567,13 @@ function getCurrentSourceUrl(row: Pick<UserContextRow, "iptv_username" | "iptv_p
 
 function mapUserSummary(row: UserContextRow): UserSummary {
   const hasAssignedLink = hasAssignedSource(row);
-  const hasActiveSubscription = row.status !== "blocked" && Boolean(row.package_id && row.ends_at);
+  const endsAt = row.ends_at instanceof Date ? row.ends_at.toISOString() : row.ends_at;
+  const hasActiveSubscription = row.status !== "blocked" && Boolean(row.package_id && endsAt);
+  const trialProvisionStatus = row.trial_provision_status === "review"
+    ? "review"
+    : row.trial_provision_status === "queued" || row.trial_provision_status === "reconcile" || row.trial_provision_status === "verified"
+      ? "pending"
+      : null;
   const hasUsedTrial = Boolean(row.has_used_trial || (hasAssignedLink && !hasActiveSubscription));
   const hasExpiredSubscription = Boolean(row.has_expired_subscription);
 
@@ -574,20 +586,21 @@ function mapUserSummary(row: UserContextRow): UserSummary {
     codeSuffix: row.code_suffix,
     hasAssignedLink,
     hasActiveSubscription,
+    trialProvisionStatus,
     hasUsedTrial,
     hasExpiredSubscription,
     activePackage:
-      row.package_id && row.package_title && row.package_duration && row.ends_at
+      row.package_id && row.package_title && row.package_duration && endsAt
         ? {
             id: row.package_id,
             title: row.package_title,
             duration: row.package_duration,
-            endsAt: row.ends_at,
-            remainingDays: calculateRemainingDays(row.ends_at)
+            endsAt,
+            remainingDays: calculateRemainingDays(endsAt)
           }
         : null,
     popup:
-      !hasAssignedLink && row.status !== "blocked"
+      !hasAssignedLink && row.status !== "blocked" && trialProvisionStatus === null
         ? {
             required: true,
             actions: hasUsedTrial ? ["buy-package", "contact"] : ["free-trial", "contact", "buy-package"]
@@ -603,7 +616,7 @@ function mapAdminUserListItem(row: UserContextRow) {
     ...summary,
     notes: row.notes ?? null,
     deletedAt: row.deleted_at ?? null,
-    subscriptionEndsAt: row.ends_at ?? null,
+    subscriptionEndsAt: row.ends_at instanceof Date ? row.ends_at.toISOString() : row.ends_at,
     remainingDays: summary.activePackage?.remainingDays ?? null,
     packageStatus: summary.activePackage ? "active" : "none",
     m3uAssigned: summary.hasAssignedLink,
@@ -700,30 +713,70 @@ export async function findActiveUserByInstallationId(installationId: string) {
   return result.rows[0] ?? null;
 }
 
+export class AutoTrialRegistrationRateLimitError extends Error {}
+
 export async function createUser(
   codeLookup: string,
   codeHash: string,
   codeSuffix: string | null,
   kryptoniteCode: string | null,
-  registrationInstallationId: string | null = null
+  registrationInstallationId: string | null,
+  requestIp: string
 ) {
   await ensureUserInstallationGuardSchema();
-
-  const result = await query<{ id: string }>(
-    `
-      insert into public.users (
-        code_lookup,
-        code_hash,
-        code_suffix,
-        kryptonite_code,
-        registration_installation_id,
-        status
-      ) values ($1, $2, $3, $4, $5, 'new')
-      returning id
-    `,
-    [codeLookup, codeHash, codeSuffix, kryptoniteCode, registrationInstallationId]
-  );
-  return result.rows[0]?.id;
+  return withTransaction(async (client) => {
+    const ipHash = createHmac("sha256", env.APP_JWT_SECRET)
+      .update(`auto-trial-registration-ip:v1:${requestIp.trim() || "unknown"}`)
+      .digest("hex");
+    const quota = await client.query(`
+      insert into public.registration_trial_ip_quota (ip_hash, window_started_at, count)
+      values ($1, now(), 1)
+      on conflict (ip_hash) do update
+      set count = case
+            when registration_trial_ip_quota.window_started_at <= now() - interval '24 hours' then 1
+            else registration_trial_ip_quota.count + 1
+          end,
+          window_started_at = case
+            when registration_trial_ip_quota.window_started_at <= now() - interval '24 hours' then now()
+            else registration_trial_ip_quota.window_started_at
+          end
+      where registration_trial_ip_quota.window_started_at <= now() - interval '24 hours'
+         or registration_trial_ip_quota.count < 10
+      returning count
+    `, [ipHash]);
+    if (quota.rowCount !== 1) throw new AutoTrialRegistrationRateLimitError("Daily trial registration limit reached.");
+    const providerAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const createProviderCredential = () =>
+      Array.from({ length: 16 }, () => providerAlphabet[randomInt(providerAlphabet.length)]).join("");
+    let providerUsername = createProviderCredential();
+    while (providerUsername === kryptoniteCode) providerUsername = createProviderCredential();
+    let providerPassword = createProviderCredential();
+    while (providerPassword === kryptoniteCode || providerPassword === providerUsername) {
+      providerPassword = createProviderCredential();
+    }
+    const result = await client.query<{ id: string }>(
+      `
+        insert into public.users (
+          code_lookup,
+          code_hash,
+          code_suffix,
+          kryptonite_code,
+          registration_installation_id,
+          status
+        ) values ($1, $2, $3, $4, $5, 'new')
+        returning id
+      `,
+      [codeLookup, codeHash, codeSuffix, kryptoniteCode, registrationInstallationId]
+    );
+    const userId = result.rows[0]?.id;
+    if (!userId) throw new Error("User insert did not return an ID.");
+    await client.query(
+      `insert into public.auto_trial_provision_jobs (user_id, provider_username, provider_password, status)
+       values ($1, $2, $3, 'queued')`,
+      [userId, providerUsername, providerPassword]
+    );
+    return userId;
+  });
 }
 
 export async function storePlainKryptoniteCode(userId: string, kryptoniteCode: string) {
@@ -821,6 +874,8 @@ async function getUserContextRow(userId: string, includeDeleted = false): Promis
         sub.package_title,
         sub.package_duration,
         sub.ends_at,
+        sub.end_reason as subscription_end_reason,
+        trial_job.status as trial_provision_status,
         coalesce(
           exists(
             select 1 from public.subscriptions s_tr
@@ -841,6 +896,7 @@ async function getUserContextRow(userId: string, includeDeleted = false): Promis
           false
         ) as has_expired_subscription
       from public.users u
+      left join public.auto_trial_provision_jobs trial_job on trial_job.user_id = u.id
       left join public.app_settings settings on settings.id = true
       left join public.user_iptv_credentials cred on cred.user_id = u.id
       left join lateral (
@@ -848,10 +904,12 @@ async function getUserContextRow(userId: string, includeDeleted = false): Promis
           s.package_id,
           case
             when s.end_reason = 'trial-24h' then '24 Saat Test'
+            when s.end_reason = 'trial-3h' then '3 Saat Deneme'
             else p.title
           end as package_title,
           p.duration as package_duration,
-          s.ends_at
+          s.ends_at,
+          s.end_reason
         from public.subscriptions s
         join public.packages p on p.id = s.package_id
         where s.user_id = u.id
@@ -892,6 +950,8 @@ export async function getUserContext(userId: string): Promise<UserContext> {
     snapshotVersion: row.current_snapshot_version ?? 0,
     canViewCatalog: row.status !== "blocked" && hasAssignedLink && sourceReady,
     canPlay: row.status !== "blocked" && hasAssignedLink && sourceReady && Boolean(row.package_id && row.ends_at),
+    accessUntil: row.ends_at instanceof Date ? row.ends_at.toISOString() : row.ends_at,
+    isThreeHourTrial: row.subscription_end_reason === "trial-3h",
     sourceStatus: row.source_status,
     playbackBaseUrl,
     iptvCredentials:
@@ -2561,6 +2621,7 @@ export async function listAdminUsers(
           sub.package_title,
           sub.package_duration,
           sub.ends_at,
+          sub.end_reason as subscription_end_reason,
           coalesce(
             exists(
               select 1 from public.subscriptions s_tr
@@ -2588,10 +2649,12 @@ export async function listAdminUsers(
             s.package_id,
             case
               when s.end_reason = 'trial-24h' then '24 Saat Test'
+              when s.end_reason = 'trial-3h' then '3 Saat Deneme'
               else p.title
             end as package_title,
             p.duration as package_duration,
-            s.ends_at
+            s.ends_at,
+            s.end_reason
           from public.subscriptions s
           join public.packages p on p.id = s.package_id
           where s.user_id = u.id
@@ -3558,6 +3621,7 @@ export async function listSubscriptions(userId?: string) {
         s.ends_at,
         case
           when s.end_reason = 'trial-24h' then '24 Saat Test'
+          when s.end_reason = 'trial-3h' then '3 Saat Deneme'
           else p.title
         end as package_title
       from public.subscriptions s
@@ -3950,6 +4014,14 @@ export async function updateAppSettings(
               where s.user_id = u.id
                 and s.status = 'active'
                 and s.ends_at > timezone('utc', now())
+            )
+            and not exists (
+              select 1
+              from public.subscriptions s_trial
+              where s_trial.user_id = u.id
+                and s_trial.end_reason = 'trial-3h'
+                and s_trial.status = 'active'
+                and s_trial.ends_at > timezone('utc', now())
             )
           on conflict (user_id) do update
           set

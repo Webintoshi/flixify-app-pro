@@ -448,6 +448,7 @@ type VodPlaybackSession = {
   sourceTransport: VodTransport;
   deliveryMode: VodDeliveryMode;
   expiresAt: number;
+  accessUntilMs: number | null;
   isVerified: boolean;
   audioTracks: VodAudioTrack[];
   defaultAudioTrackId: string | null;
@@ -471,6 +472,7 @@ type CreateVodPlaybackInput = {
   debug?: boolean;
   preferTranscode?: boolean;
   selectedAudioTrackId?: string | null;
+  accessUntil?: string | null;
 };
 
 type VodPlaybackManagerOptions = {
@@ -1448,7 +1450,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
   cleanupTimer.unref();
 
   function touchSession(session: VodPlaybackSession) {
-    session.expiresAt = Date.now() + sessionTtlMs;
+    session.expiresAt = Math.min(Date.now() + sessionTtlMs, session.accessUntilMs ?? Infinity);
   }
 
   async function startFfmpegPipeline(session: VodPlaybackSession) {
@@ -1616,6 +1618,16 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
   }
 
   async function createPlayback(input: CreateVodPlaybackInput): Promise<VodPlaybackRecord> {
+    const accessUntilMs = input.accessUntil == null ? null : Date.parse(input.accessUntil);
+    if (accessUntilMs !== null && (!Number.isFinite(accessUntilMs) || accessUntilMs <= Date.now())) {
+      return buildDisabledPlaybackRecord({
+        itemId: input.itemId,
+        kind: input.kind,
+        transport: "unknown",
+        deliveryMode: "hls_transcoded",
+        errorMessage: "Bu icerigi oynatmak icin aktif paket gerekir."
+      });
+    }
     const startupStartedAt = performance.now();
     const debugEnabled = input.debug === true || process.env.FLIXIFY_VOD_DEBUG === "1";
     const debugLog = (event: string, detail?: Record<string, unknown>) => {
@@ -1755,7 +1767,8 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       cookie: mergeCookieHeaders(input.cookie, probe.cookie),
       sourceTransport: effectiveTransport,
       deliveryMode,
-      expiresAt: Date.now() + sessionTtlMs,
+      expiresAt: Math.min(Date.now() + sessionTtlMs, accessUntilMs ?? Infinity),
+      accessUntilMs,
       isVerified,
       audioTracks,
       defaultAudioTrackId: audioSelection.defaultTrackId,
@@ -1865,7 +1878,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
       return null;
     }
 
-    if (session.expiresAt <= Date.now()) {
+    if (session.expiresAt <= Date.now() || (session.accessUntilMs !== null && session.accessUntilMs <= Date.now())) {
       void destroySession(session);
       return null;
     }

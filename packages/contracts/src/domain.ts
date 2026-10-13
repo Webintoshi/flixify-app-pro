@@ -84,6 +84,7 @@ export const userSummarySchema = z.object({
   codeSuffix: z.string().length(4).nullable(),
   hasAssignedLink: z.boolean(),
   hasActiveSubscription: z.boolean(),
+  trialProvisionStatus: z.enum(["pending", "review"]).nullable().optional(),
   activePackage: z
     .object({
       id: z.string().uuid(),

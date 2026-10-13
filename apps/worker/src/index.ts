@@ -10,12 +10,25 @@ import {
 } from "./iptv.js";
 import { classifyLiveProbeHealth, probeLiveStream } from "./live.js";
 import { loadSharedSourceConfig, processJob, type SharedSourceRow } from "./sync-job.js";
+import { createAutoTrialStore } from "./auto-trial-db.js";
+import { runAutoTrialProvisioning } from "./auto-trial.js";
+import { createResellerClient } from "./reseller.js";
+
+const autoTrialStore = createAutoTrialStore(pool);
+const autoTrialProvider = env.RESELLER_API_BASE_URL && env.RESELLER_API_KEY
+  ? createResellerClient({ url: env.RESELLER_API_BASE_URL, apiKey: env.RESELLER_API_KEY })
+  : null;
+if (!env.APP_DEMO_MODE && !autoTrialProvider) {
+  throw new Error("Automatic three-hour trials require RESELLER_API_BASE_URL and RESELLER_API_KEY.");
+}
+let autoTrialInFlight = false;
 
 let pausedUntil = 0;
 const HEALTH_SWEEP_INTERVAL_MS = 60_000;
 const HEALTH_PROBE_LIMIT = 24;
 const PLAYLIST_ACCESS_PROBE_TIMEOUT_MS = 5_000;
 let lastHealthSweepAt = 0;
+let lastTrialQuotaSweepAt = 0;
 
 type HealthCandidateRow = QueryResultRow & {
   id: string;
@@ -289,6 +302,25 @@ async function tick() {
   }
 
   await expireSubscriptions();
+  if (Date.now() - lastTrialQuotaSweepAt >= 60 * 60 * 1000) {
+    await pool.query("delete from public.registration_trial_ip_quota where window_started_at < now() - interval '48 hours'");
+    lastTrialQuotaSweepAt = Date.now();
+  }
+  if (autoTrialProvider && !autoTrialInFlight) {
+    autoTrialInFlight = true;
+    try {
+      const autoTrialJob = await autoTrialStore.claim();
+      if (autoTrialJob) {
+        const result = await runAutoTrialProvisioning(autoTrialJob, autoTrialStore, autoTrialProvider);
+        if (result === "review") {
+          console.error("[worker] Automatic trial needs manual review", { jobId: autoTrialJob.id });
+        }
+        return;
+      }
+    } finally {
+      autoTrialInFlight = false;
+    }
+  }
   const job = await pullNextJob();
   if (job) {
     await processJob(job);

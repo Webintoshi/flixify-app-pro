@@ -1,6 +1,7 @@
 export type AccountUser = {
   kryptoniteCode?: string | null; status?: string; hasAssignedLink?: boolean;
   hasActiveSubscription?: boolean;
+  trialProvisionStatus?: 'pending' | 'review' | null;
   accessHistory?: { hasPreviousAccess: boolean; lastAccessEndedAt: string | null; hasRequestedTrial: boolean; hasReceivedTrial: boolean; canRequestTrial: boolean };
   activePackage?: { title: string; endsAt: string; remainingDays?: number } | null;
 };
@@ -25,7 +26,12 @@ export function packagePaymentHref(slug: string) { return `/odeme-bildirimi?pake
 export function accountState(user: AccountUser | null, now = Date.now()) {
   const expires = Date.parse(user?.activePackage?.endsAt ?? '');
   const active = Boolean(user && user.status !== 'blocked' && user.hasActiveSubscription && Number.isFinite(expires) && expires > now);
-  return { code: user?.kryptoniteCode ?? '', active, remainingDays: active ? Math.ceil((expires-now)/86400000) : 0 };
+  const remainingDays = active ? Math.ceil((expires-now)/86400000) : 0;
+  const remainingMinutes = active ? Math.ceil((expires-now)/60000) : 0;
+  const remainingLabel = active && user?.activePackage?.title === '3 Saat Deneme'
+    ? `${Math.floor(remainingMinutes / 60) > 0 ? `${Math.floor(remainingMinutes / 60)} saat ` : ''}${remainingMinutes % 60} dakika`.trim()
+    : `${remainingDays} gün`;
+  return { code: user?.kryptoniteCode ?? '', active, remainingDays, remainingLabel };
 }
 export function methodConfigured(method: MethodChoice) {
   if (!method.enabled) return false;

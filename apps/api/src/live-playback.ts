@@ -97,6 +97,7 @@ type ViewerLease = {
   token: string;
   diagnosticsSessionId: string;
   expiresAt: number;
+  accessUntilMs: number | null;
   lastSeenAt: number;
 };
 
@@ -152,6 +153,7 @@ type CreateLivePlaybackInput = {
   canPlay: boolean;
   isVerified: boolean;
   errorMessage: string | null;
+  accessUntil?: string | null;
   forceRelayRestart?: boolean;
   allowFileProxyFallback?: boolean;
   preferDirectProxy?: boolean;
@@ -451,8 +453,9 @@ function normalizeCacheProfile(value: LiveCacheProfile | string | null | undefin
   return value === "safe" ? "safe" : "fast";
 }
 
-function getSessionKey(channelId: string, cacheProfile: LiveCacheProfile) {
-  return `${channelId}:${cacheProfile}`;
+function getSessionKey(channelId: string, cacheProfile: LiveCacheProfile, sourceUrl: string) {
+  const sourceHash = crypto.createHash("sha256").update(sourceUrl).digest("hex");
+  return `${channelId}:${cacheProfile}:${sourceHash}`;
 }
 
 function buildRelayDetail(session: LiveRelaySession, extra?: Record<string, unknown> | null) {
@@ -597,7 +600,7 @@ function trimErrorMessage(value: string | null | undefined, fallback: string) {
 
 export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
   const sessions = new Map<string, LiveRelaySession>();
-  const sessionIdsByChannel = new Map<string, string>();
+  const sessionIdsBySource = new Map<string, string>();
   const sessionTtlMs = Math.max(options.sessionTtlMs, 60_000);
   const tempRoot = options.tempRoot ?? path.join(os.tmpdir(), "flixify-live");
   let ffmpegAvailablePromise: Promise<boolean> | null = null;
@@ -648,9 +651,9 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
 
   async function destroySession(session: LiveRelaySession) {
     sessions.delete(session.id);
-    const sessionKey = getSessionKey(session.channelId, session.cacheProfile);
-    if (sessionIdsByChannel.get(sessionKey) === session.id) {
-      sessionIdsByChannel.delete(sessionKey);
+    const sessionKey = getSessionKey(session.channelId, session.cacheProfile, session.sourceUrl);
+    if (sessionIdsBySource.get(sessionKey) === session.id) {
+      sessionIdsBySource.delete(sessionKey);
     }
     if (session.localState?.process && !session.localState.process.killed) {
       session.localState.process.kill("SIGKILL");
@@ -690,7 +693,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
 
   function touchViewer(session: LiveRelaySession, viewer: ViewerLease) {
     const nextExpiry = Date.now() + sessionTtlMs;
-    viewer.expiresAt = nextExpiry;
+    viewer.expiresAt = Math.min(nextExpiry, viewer.accessUntilMs ?? Infinity);
     viewer.lastSeenAt = Date.now();
     session.expiresAt = nextExpiry;
     session.lastViewerAt = viewer.lastSeenAt;
@@ -728,7 +731,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
       return null;
     }
 
-    if (viewer.expiresAt <= Date.now()) {
+    if (viewer.expiresAt <= Date.now() || (viewer.accessUntilMs !== null && viewer.accessUntilMs <= Date.now())) {
       session.viewers.delete(token);
       return null;
     }
@@ -1048,6 +1051,16 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
   }
 
   async function createPlayback(input: CreateLivePlaybackInput): Promise<LivePlaybackRecord> {
+    const accessUntilMs = input.accessUntil == null ? null : Date.parse(input.accessUntil);
+    if (accessUntilMs !== null && (!Number.isFinite(accessUntilMs) || accessUntilMs <= Date.now())) {
+      return createDisabledPlaybackRecord({
+        channelId: input.channelId,
+        sourceTransport: input.sourceTransport,
+        healthStatus: input.healthStatus,
+        lastCheckedAt: input.lastCheckedAt,
+        errorMessage: "Canli yayin icin aktif paket gerekiyor."
+      });
+    }
     if (!input.canPlay || !input.sourceUrl) {
       return createDisabledPlaybackRecord({
         channelId: input.channelId,
@@ -1061,10 +1074,10 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
     const cacheProfile = normalizeCacheProfile(input.cacheProfile);
     const preferDirectProxy = input.preferDirectProxy !== false;
     const wantsRelay = input.sourceTransport !== "hls" && !preferDirectProxy;
-    const sessionKey = getSessionKey(input.channelId, cacheProfile);
+    const sessionKey = getSessionKey(input.channelId, cacheProfile, input.sourceUrl);
 
     let session = (() => {
-      const existingSessionId = sessionIdsByChannel.get(sessionKey);
+      const existingSessionId = sessionIdsBySource.get(sessionKey);
       return existingSessionId ? sessions.get(existingSessionId) ?? null : null;
     })();
 
@@ -1170,7 +1183,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
       }
 
       sessions.set(session.id, session);
-      sessionIdsByChannel.set(sessionKey, session.id);
+      sessionIdsBySource.set(sessionKey, session.id);
 
       await emitDiagnostic({
         channelId: session.channelId,
@@ -1215,7 +1228,8 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
     const viewer: ViewerLease = {
       token: crypto.randomBytes(32).toString("base64url"),
       diagnosticsSessionId: crypto.randomUUID(),
-      expiresAt: Date.now() + sessionTtlMs,
+      expiresAt: Math.min(Date.now() + sessionTtlMs, accessUntilMs ?? Infinity),
+      accessUntilMs,
       lastSeenAt: Date.now()
     };
     session.viewers.set(viewer.token, viewer);
@@ -1543,7 +1557,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
     clearInterval(cleanupTimer);
     const activeSessions = [...sessions.values()];
     sessions.clear();
-    sessionIdsByChannel.clear();
+    sessionIdsBySource.clear();
     for (const session of activeSessions) {
       await destroySession(session);
     }

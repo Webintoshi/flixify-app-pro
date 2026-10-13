@@ -9,6 +9,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function captureReply() {
+  const state: { statusCode: number; body: unknown } = { statusCode: 200, body: null };
+  const reply = {
+    status(statusCode: number) {
+      state.statusCode = statusCode;
+      return this;
+    },
+    type() { return this; },
+    header() { return this; },
+    send(body: unknown) {
+      state.body = body;
+      return this;
+    }
+  };
+  return { reply, state };
+}
+
 describe("resolveVodTranscodeDecision", () => {
   it("keeps browser runtime on transcode-first mode for mp4 sources", () => {
     const decision = resolveVodTranscodeDecision({
@@ -290,6 +307,56 @@ describe("probeVodStream", () => {
 });
 
 describe("createVodPlaybackManager", () => {
+  it("stops an active VOD segment at the subscription deadline despite recent requests", async () => {
+    const manifest = "#EXTM3U\n#EXTINF:4,\nsegment-0.ts\n";
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(
+      String(url).endsWith(".ts") ? "segment bytes" : manifest,
+      { status: 200, headers: { "content-type": String(url).endsWith(".ts") ? "video/mp2t" : "application/vnd.apple.mpegurl" } }
+    )));
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const accessUntil = new Date(now + 1_000).toISOString();
+    const manager = createVodPlaybackManager({
+      ffmpegBinary: "/nonexistent/ffmpeg",
+      ffprobeBinary: "/nonexistent/ffprobe",
+      sessionTtlMs: 60_000
+    });
+
+    try {
+      const playback = await manager.createPlayback({
+        userId: "trial-user",
+        itemId: "trial-episode",
+        kind: "episode",
+        sourceUrl: "https://example.com/episode/master.m3u8",
+        baseOrigin: "https://flixify.test",
+        clientRuntime: "app",
+        accessUntil
+      });
+      expect(playback.canPlay).toBe(true);
+      const playbackUrl = new URL(playback.url!);
+      const sessionId = playbackUrl.pathname.split("/")[3]!;
+      const token = playbackUrl.searchParams.get("token")!;
+      const first = captureReply();
+      await manager.sendManifest(first.reply as never, sessionId, token);
+      expect(first.state.statusCode).toBe(200);
+      const assetUrl = new URL(String(first.state.body).split("\n").find((line) => line.includes("/assets/"))!);
+      const assetId = assetUrl.pathname.split("/")[5]!;
+
+      now += 999;
+      const beforeExpiry = captureReply();
+      await manager.sendProxyAsset(beforeExpiry.reply as never, sessionId, token, assetId);
+      expect(beforeExpiry.state.statusCode).toBe(200);
+      (beforeExpiry.state.body as { destroy?: () => void })?.destroy?.();
+
+      now += 1;
+      const afterExpiry = captureReply();
+      await manager.sendProxyAsset(afterExpiry.reply as never, sessionId, token, assetId);
+      expect(afterExpiry.state.statusCode).toBe(403);
+    } finally {
+      await manager.dispose();
+    }
+  });
+
   it("reports failed source probe latency without disclosing its URL", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
     const diagnostics: Array<{ event: string; errorCode?: string | null; upstreamStatus?: number | null; detail?: Record<string, unknown> | null }> = [];

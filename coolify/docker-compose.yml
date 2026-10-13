@@ -35,10 +35,8 @@ services:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL}
       APP_DEMO_MODE: ${APP_DEMO_MODE:-false}
-    depends_on:
-      api:
-        condition: service_healthy
-
+      RESELLER_API_BASE_URL: ${RESELLER_API_BASE_URL:-}
+      RESELLER_API_KEY: ${RESELLER_API_KEY:-}
   ops-web:
     build:
       context: .

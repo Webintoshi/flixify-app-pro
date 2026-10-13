@@ -35,6 +35,14 @@ export function useAccountResource<T>(path:string) {
   const [state,setState]=useState<{data:T|null;loading:boolean;error:boolean}>({data:null,loading:true,error:false});
   const [version,setVersion]=useState(0);
   const reload=useCallback(()=>setVersion(v=>v+1),[]);
+  const refresh=useCallback(async(signal?:AbortSignal)=>{
+    try {
+      const data=await apiRequest<T>(path,{signal});
+      setState(previous=>({...previous,data,loading:false,error:false}));
+    } catch {
+      // Keep the last confirmed account state during background refresh failures.
+    }
+  },[path]);
   useEffect(()=>{
     let current=true;const controller=new AbortController();
     const timer=setTimeout(()=>controller.abort(),15000);
@@ -42,7 +50,7 @@ export function useAccountResource<T>(path:string) {
     apiRequest<T>(path,{signal:controller.signal}).then(data=>{if(current)setState({data,loading:false,error:false});}).catch(()=>{if(current)setState({data:null,loading:false,error:true});}).finally(()=>clearTimeout(timer));
     return ()=>{current=false;clearTimeout(timer);controller.abort();};
   },[path,version]);
-  return {...state,reload};
+  return {...state,reload,refresh};
 }
 export function Loading(){return <div className={s.loading} role="status" aria-busy="true"><span/><span/><span/><p>Bilgiler yükleniyor…</p></div>;}
 export function LoadError({onRetry}: {onRetry:()=>void}){return <div className={s.notice} role="alert"><h2>Bilgiler yüklenemedi</h2><p>Bağlantıyı kontrol edip tekrar deneyin. Hesap bilgileriniz değiştirilmedi.</p><button className={s.secondary} onClick={onRetry}>Tekrar dene</button></div>;}
