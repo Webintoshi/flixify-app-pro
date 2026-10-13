@@ -11,7 +11,12 @@ export default function SettingsPage(){
   const [revealed,setRevealed]=useState(false);
   const [portalPending,setPortalPending]=useState(false);
   const [portalError,setPortalError]=useState(false);
-  const user=data?.user??null;const state=accountState(user);
+  const [now,setNow]=useState(()=>Date.now());
+  const user=data?.user??null;const state=accountState(user,now);
+  useEffect(()=>{
+    const timer=window.setInterval(()=>setNow(Date.now()),30000);
+    return ()=>window.clearInterval(timer);
+  },[]);
   useEffect(()=>{
     if(user?.trialProvisionStatus!=='pending')return;
     const controller=new AbortController();
