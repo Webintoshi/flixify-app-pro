@@ -1972,6 +1972,7 @@ export function buildServer() {
 
       if (
         !playback.canPlay &&
+        !userContext.isThreeHourTrial &&
         hasCurrentPlaybackAccess(userContext) &&
         typeof resolved.sourceUrl === "string" &&
         (optimisticProbeFallback ||
@@ -2238,6 +2239,10 @@ export function buildServer() {
         return replyWithNativePlaybackError(reply, 403, "Bu icerigi oynatmak icin aktif paket gerekir.");
       }
 
+      if (userContext.isThreeHourTrial) {
+        return replyWithNativePlaybackError(reply, 503, "Canli relay hazirlanamadi.");
+      }
+
       return buildNativeLivePlaybackResponse({
         url: resolved.sourceUrl,
         transport: resolved.transport,
@@ -2473,7 +2478,7 @@ export function buildServer() {
         );
 
         if (
-          hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
+          !userContext.isThreeHourTrial && hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
             clientRuntime,
             platform,
             transport: guessVodTransportFromPath(record.stream_path),
@@ -2499,7 +2504,7 @@ export function buildServer() {
 
       if (!resolved.sourceUrl) {
         if (
-          hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
+          !userContext.isThreeHourTrial && hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
             clientRuntime,
             platform,
             transport: resolved.transport,
@@ -2579,7 +2584,7 @@ export function buildServer() {
       }
 
       if (
-        hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
+        !userContext.isThreeHourTrial && hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
           clientRuntime,
           platform,
           transport: resolved.transport,
@@ -2689,6 +2694,7 @@ export function buildServer() {
       }
 
       const allowOptimisticNativeDirect =
+        !userContext.isThreeHourTrial &&
         !resolved.ok &&
         typeof resolved.sourceUrl === "string" &&
         canUseVodDirectPlaybackFallback({
@@ -2762,6 +2768,7 @@ export function buildServer() {
       }
 
       const shouldFallbackToDirect =
+        !userContext.isThreeHourTrial &&
         typeof resolved.sourceUrl === "string" &&
         canUseVodDirectPlaybackFallback({
           clientRuntime: "native",

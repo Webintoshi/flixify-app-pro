@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable } from "node:stream";
+import { accessExpired, limitStreamToAccess } from "./access-limited-stream.js";
 import type { FastifyReply } from "fastify";
 import type {
   LiveDeliveryMode,
@@ -375,9 +376,13 @@ function rewriteLocalManifest(content: string, session: LiveRelaySession, viewer
     .join("\n");
 }
 
-async function streamFetchResponse(reply: FastifyReply, response: Response) {
+async function streamFetchResponse(reply: FastifyReply, response: Response, accessUntilMs: number | null) {
   if (!response.body) {
     return reply.status(502).type("text/plain; charset=utf-8").send("Upstream akis okunamadi.");
+  }
+  if (accessExpired(accessUntilMs)) {
+    void response.body.cancel().catch(() => undefined);
+    return reply.status(403).type("text/plain; charset=utf-8").send("Canli playback oturumu gecersiz.");
   }
 
   const contentType = response.headers.get("content-type");
@@ -403,7 +408,10 @@ async function streamFetchResponse(reply: FastifyReply, response: Response) {
   reply.header("surrogate-control", "no-store");
   reply.header("accept-ranges", "bytes");
 
-  return reply.send(Readable.fromWeb(response.body as globalThis.ReadableStream<Uint8Array>));
+  return reply.send(limitStreamToAccess(
+    Readable.fromWeb(response.body as globalThis.ReadableStream<Uint8Array>),
+    accessUntilMs
+  ));
 }
 
 function createDisabledPlaybackRecord(input: {
@@ -1415,7 +1423,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
         .send(rewritten);
     }
 
-    return streamFetchResponse(reply, response);
+    return streamFetchResponse(reply, response, viewer.accessUntilMs);
   }
 
   async function sendLocalAsset(reply: FastifyReply, sessionId: string, token: string | undefined, fileName: string) {
@@ -1493,13 +1501,17 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
         .send(rewriteLocalManifest(manifest, session, viewer.token));
     }
 
+    if (accessExpired(viewer.accessUntilMs)) {
+      return reply.status(403).type("text/plain; charset=utf-8").send("Canli playback oturumu gecersiz.");
+    }
+
     reply.header("content-type", getLocalContentType(filePath));
     reply.header("cache-control", LIVE_NO_CACHE_HEADER);
     reply.header("pragma", "no-cache");
     reply.header("expires", "0");
     reply.header("surrogate-control", "no-store");
     session.localState.lastSegmentAt = Date.now();
-    return reply.send(fs.createReadStream(filePath));
+    return reply.send(limitStreamToAccess(fs.createReadStream(filePath), viewer.accessUntilMs));
   }
 
   async function sendFile(
@@ -1550,7 +1562,7 @@ export function createLivePlaybackManager(options: LivePlaybackManagerOptions) {
       return reply.status(502).type("text/plain; charset=utf-8").send("Canli akis alinamadi.");
     }
 
-    return streamFetchResponse(reply, response);
+    return streamFetchResponse(reply, response, viewer.accessUntilMs);
   }
 
   async function dispose() {

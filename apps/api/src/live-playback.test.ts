@@ -266,4 +266,50 @@ segment-00043.ts
       await manager.dispose();
     }
   });
+
+  it("closes a live file proxy stream already open when access expires", async () => {
+    let upstreamCancelled = false;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("first chunk"));
+      },
+      cancel() {
+        upstreamCancelled = true;
+      }
+    }), { status: 200, headers: { "content-type": "video/mp2t" } })));
+    const accessUntil = new Date(Date.now() + 160).toISOString();
+    const manager = createLivePlaybackManager({ ffmpegBinary: process.execPath, sessionTtlMs: 60_000 });
+
+    try {
+      const playback = await manager.createPlayback({
+        channelId: "trial-live-file",
+        snapshotVersion: 1,
+        sourceUrl: "https://example.com/live/channel.ts",
+        cookie: null,
+        baseOrigin: "https://flixify.test",
+        sourceTransport: "ts",
+        healthStatus: "healthy",
+        lastCheckedAt: null,
+        canPlay: true,
+        isVerified: true,
+        errorMessage: null,
+        preferDirectProxy: true,
+        accessUntil
+      });
+      expect(playback.deliveryMode).toBe("file_proxy");
+      const playbackUrl = new URL(playback.url!);
+      const sessionId = playbackUrl.pathname.split("/")[3]!;
+      const token = playbackUrl.searchParams.get("token")!;
+      const sent = captureReply();
+      await manager.sendFile(sent.reply as never, sessionId, token);
+      const stream = sent.state.body as import("node:stream").Readable;
+      expect(stream.destroyed).toBe(false);
+      await new Promise<void>((resolve) => stream.once("data", () => resolve()));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(stream.destroyed).toBe(true);
+      expect(upstreamCancelled).toBe(true);
+    } finally {
+      await manager.dispose();
+    }
+  });
 });

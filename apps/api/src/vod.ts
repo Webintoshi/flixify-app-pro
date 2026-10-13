@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable } from "node:stream";
+import { accessExpired, limitStreamToAccess } from "./access-limited-stream.js";
 import type { FastifyReply } from "fastify";
 import type {
   VodAudioTrack,
@@ -967,10 +968,14 @@ function rewriteProxyManifest(content: string, parentUrl: string, session: VodPl
 async function streamFetchResponse(
   reply: FastifyReply,
   response: Response,
-  options: { fallbackContentType?: string } = {}
+  options: { fallbackContentType?: string; accessUntilMs?: number | null } = {}
 ) {
   if (!response.body) {
     return reply.status(502).type("text/plain; charset=utf-8").send("Upstream akisi okunamadi.");
+  }
+  if (accessExpired(options.accessUntilMs ?? null)) {
+    void response.body.cancel().catch(() => undefined);
+    return reply.status(403).type("text/plain; charset=utf-8").send("VOD oturumu gecersiz.");
   }
 
   const rawContentType = response.headers.get("content-type");
@@ -1001,7 +1006,10 @@ async function streamFetchResponse(
   reply.header("cache-control", cacheControl ?? "private, max-age=30, no-transform");
   reply.header("accept-ranges", "bytes");
 
-  return reply.send(Readable.fromWeb(response.body as globalThis.ReadableStream<Uint8Array>));
+  return reply.send(limitStreamToAccess(
+    Readable.fromWeb(response.body as globalThis.ReadableStream<Uint8Array>),
+    options.accessUntilMs ?? null
+  ));
 }
 
 function getFallbackContentTypeForTransport(transport: VodTransport) {
@@ -2062,7 +2070,7 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
         .send(rewritten);
     }
 
-    return streamFetchResponse(reply, response);
+    return streamFetchResponse(reply, response, { accessUntilMs: session.accessUntilMs });
   }
 
   async function sendLocalAsset(reply: FastifyReply, sessionId: string, token: string | undefined, fileName: string) {
@@ -2097,9 +2105,13 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
         .send(rewriteLocalManifest(manifest, session));
     }
 
+    if (accessExpired(session.accessUntilMs)) {
+      return reply.status(403).type("text/plain; charset=utf-8").send("VOD oturumu gecersiz.");
+    }
+
     reply.header("content-type", getLocalContentType(filePath));
     reply.header("cache-control", "private, max-age=30");
-    return reply.send(fs.createReadStream(filePath));
+    return reply.send(limitStreamToAccess(fs.createReadStream(filePath), session.accessUntilMs));
   }
 
   async function sendFile(
@@ -2172,7 +2184,8 @@ export function createVodPlaybackManager(options: VodPlaybackManagerOptions) {
     }
 
     return streamFetchResponse(reply, response, {
-      fallbackContentType: getFallbackContentTypeForTransport(session.sourceTransport)
+      fallbackContentType: getFallbackContentTypeForTransport(session.sourceTransport),
+      accessUntilMs: session.accessUntilMs
     });
   }
 

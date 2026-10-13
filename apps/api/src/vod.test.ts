@@ -357,6 +357,61 @@ describe("createVodPlaybackManager", () => {
     }
   });
 
+  it("closes a VOD file proxy stream already open when access expires", async () => {
+    let fetchCount = 0;
+    let upstreamCancelled = false;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return new Response("media bytes", {
+          status: 200,
+          headers: { "content-type": "video/mp4", "accept-ranges": "bytes" }
+        });
+      }
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("first chunk"));
+        },
+        cancel() {
+          upstreamCancelled = true;
+        }
+      }), { status: 200, headers: { "content-type": "video/mp4" } });
+    }));
+    const accessUntil = new Date(Date.now() + 200).toISOString();
+    const manager = createVodPlaybackManager({
+      ffmpegBinary: "/nonexistent/ffmpeg",
+      ffprobeBinary: "/nonexistent/ffprobe",
+      sessionTtlMs: 60_000
+    });
+
+    try {
+      const playback = await manager.createPlayback({
+        userId: "trial-user",
+        itemId: "trial-movie",
+        kind: "movie",
+        sourceUrl: "https://example.com/movie/1.mp4",
+        baseOrigin: "https://flixify.test",
+        clientRuntime: "native",
+        platform: "windows-native-qt",
+        accessUntil
+      });
+      expect(playback.deliveryMode).toBe("file_proxy");
+      const playbackUrl = new URL(playback.url!);
+      const sessionId = playbackUrl.pathname.split("/")[3]!;
+      const token = playbackUrl.searchParams.get("token")!;
+      const sent = captureReply();
+      await manager.sendFile(sent.reply as never, sessionId, token);
+      const stream = sent.state.body as import("node:stream").Readable;
+      expect(stream.destroyed).toBe(false);
+      await new Promise<void>((resolve) => stream.once("data", () => resolve()));
+      await new Promise((resolve) => setTimeout(resolve, 240));
+      expect(stream.destroyed).toBe(true);
+      expect(upstreamCancelled).toBe(true);
+    } finally {
+      await manager.dispose();
+    }
+  });
+
   it("reports failed source probe latency without disclosing its URL", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
     const diagnostics: Array<{ event: string; errorCode?: string | null; upstreamStatus?: number | null; detail?: Record<string, unknown> | null }> = [];
