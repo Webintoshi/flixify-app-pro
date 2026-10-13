@@ -211,6 +211,39 @@ test("provider confirmation without a real id or matching password fails", async
   }
 });
 
+test("different fallback indentation and CRLF remain patchable without changing other lines", () => {
+  const variantReturn = `return {
+\t\t\tid: detail.iptvUsername || requestedCredentials.username,
+\t\t\tusername: requestedCredentials.username,
+\t\t\tpassword: requestedCredentials.password,
+\t\t\texp_date: null
+\t\t};`;
+  const variant = source.replace(fakeSuccessAnchor, variantReturn).replaceAll("\n", "\r\n");
+  return withFiles(async ({ sourcePath, outputPath }) => {
+    const result = runPatch(sourcePath, outputPath, sha(variant));
+    assert.equal(result.status, 0, result.stderr);
+    const patched = await readFile(outputPath, "utf8");
+    assert.equal(await readFile(sourcePath, "utf8"), variant);
+    assert.doesNotMatch(patched, /(?<!\r)\n/);
+    assert.match(patched, /\/\/ Unrelated live bot logic remains byte-for-byte intact\.\r\n$/);
+    const functions = loadFunctions(patched, [{ id: "wrong-line", username: "another-person" }]);
+    await assert.rejects(
+      () => functions.createOrRenewPanelLine({ lineAlreadyExists: true }, { username: "requested-person", password: "fixture" }, {}),
+      /Mevcut hat bulunamadı/i
+    );
+  }, variant);
+});
+
+test("fallback-shaped text outside the assignment branch remains untouched", () => {
+  const appendix = `\n/*\n${fakeSuccessAnchor}\n*/\n`;
+  const variant = source + appendix;
+  return withFiles(async ({ sourcePath, outputPath }) => {
+    const result = runPatch(sourcePath, outputPath, sha(variant));
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok((await readFile(outputPath, "utf8")).endsWith(appendix));
+  }, variant);
+});
+
 test("source SHA mismatch refuses patch without creating output", () => withFiles(async ({ sourcePath, outputPath }) => {
   const result = runPatch(sourcePath, outputPath, "0".repeat(64));
   assert.equal(result.status, 1);
@@ -224,7 +257,7 @@ test("missing or duplicate exact anchors fail closed", async () => {
     source.replace(lookupAnchor, "return items[0] || null;"),
     source.replace(fakeSuccessAnchor, "return null;"),
     `${source}\n${lookupAnchor}\n`,
-    `${source}\n${fakeSuccessAnchor}\n`
+    source.replace(fakeSuccessAnchor, `${fakeSuccessAnchor}\n    ${fakeSuccessAnchor}`)
   ];
   for (const variant of variants) {
     await withFiles(async ({ sourcePath, outputPath }) => {

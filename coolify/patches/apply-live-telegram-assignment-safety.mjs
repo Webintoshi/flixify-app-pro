@@ -6,12 +6,7 @@ import { pathToFileURL } from "node:url";
 
 const lookupAnchor = "return items.find((l) => String(l.username).trim().toLowerCase() === String(username).trim().toLowerCase()) || items[0] || null;";
 const lookupReplacement = "return items.find((l) => String(l.username).trim().toLowerCase() === String(username).trim().toLowerCase()) || null;";
-const fakeSuccessAnchor = `return {
-      id: detail.iptvUsername || requestedCredentials.username,
-      username: requestedCredentials.username,
-      password: requestedCredentials.password,
-      exp_date: null
-    };`;
+const fallbackReturnAnchor = /return\s*\{\s*id\s*:\s*detail\.iptvUsername\s*\|\|\s*requestedCredentials\.username\s*,\s*username\s*:\s*requestedCredentials\.username\s*,\s*password\s*:\s*requestedCredentials\.password\s*,\s*exp_date\s*:\s*null\s*\}\s*;/g;
 const failureReplacement = 'throw new Error("Mevcut hat bulunamadı.");';
 const renewStartAnchor = "if (existingLine?.id) {";
 const renewStartReplacement = `if (existingLine?.id) {
@@ -34,16 +29,15 @@ const verifiedCreateReplacement = `const isValidResellerId = (id) =>
     throw new Error("Yeni hat doğrulanamadı.");
   }
   return normalizePanelLine(verifiedLine, requestedCredentials);`;
-const existingLineBranchAnchor = /if \(lineAlreadyExists\) \{\s*const existingLine = await findResellerLine\(requestedCredentials\.username\);\s*if \(existingLine\?\.id\) \{\s*const extended = await extendPanelLine\(existingLine\.id, packageConfig\);\s*return normalizePanelLine\(extended\?\.data \|\| extended, requestedCredentials\);\s*\}\s*return \{\s*id: detail\.iptvUsername \|\| requestedCredentials\.username,\s*username: requestedCredentials\.username,\s*password: requestedCredentials\.password,\s*exp_date: null\s*\};\s*\}/g;
+const existingLineBranchAnchor = new RegExp(
+  String.raw`if \(lineAlreadyExists\) \{\s*const existingLine = await findResellerLine\(requestedCredentials\.username\);\s*if \(existingLine\?\.id\) \{\s*const extended = await extendPanelLine\(existingLine\.id, packageConfig\);\s*return normalizePanelLine\(extended\?\.data \|\| extended, requestedCredentials\);\s*\}\s*${fallbackReturnAnchor.source}\s*\}`,
+  "g"
+);
 
 export function transformLiveTelegramAssignmentSource(source) {
   const lookupCount = source.split(lookupAnchor).length - 1;
   if (lookupCount !== 1) {
     throw new Error(`Expected exactly one reseller lookup anchor; found ${lookupCount}.`);
-  }
-  const fakeSuccessCount = source.split(fakeSuccessAnchor).length - 1;
-  if (fakeSuccessCount !== 1) {
-    throw new Error(`Expected exactly one fake-success assignment anchor; found ${fakeSuccessCount}.`);
   }
   const createReturnCount = source.split(createReturnAnchor).length - 1;
   if (createReturnCount !== 1) {
@@ -53,13 +47,19 @@ export function transformLiveTelegramAssignmentSource(source) {
   if (branches.length !== 1) {
     throw new Error(`Expected exactly one existing-line assignment anchor; found ${branches.length}.`);
   }
-  const safeBranch = branches[0][0]
-    .replace(renewStartAnchor, renewStartReplacement)
-    .replace(fakeSuccessAnchor, failureReplacement);
+  const branch = branches[0][0];
+  const fallbackReturns = [...branch.matchAll(fallbackReturnAnchor)];
+  if (fallbackReturns.length !== 1) {
+    throw new Error(`Expected exactly one fake-success assignment anchor within the existing-line branch; found ${fallbackReturns.length}.`);
+  }
+  const newline = source.includes("\r\n") ? "\r\n" : "\n";
+  const safeBranch = branch
+    .replace(renewStartAnchor, renewStartReplacement.replaceAll("\n", newline))
+    .replace(fallbackReturnAnchor, failureReplacement);
   return source
     .replace(lookupAnchor, lookupReplacement)
-    .replace(branches[0][0], safeBranch)
-    .replace(createReturnAnchor, verifiedCreateReplacement);
+    .replace(branch, safeBranch)
+    .replace(createReturnAnchor, verifiedCreateReplacement.replaceAll("\n", newline));
 }
 
 export async function applyLiveTelegramAssignmentSafetyPatch({ sourcePath, outputPath, expectedSha256 }) {
