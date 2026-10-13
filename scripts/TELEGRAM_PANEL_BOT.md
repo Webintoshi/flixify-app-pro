@@ -127,3 +127,14 @@ Bu incelemede 26 kayıtlı kullanıcı vardı; tamamı aktif olduğundan bekleye
 - Dağıtım: `coolify/deploy-telegram-bot.py` ile kuru kontrol ve ardından aynı konteynerin kontrollü yeniden başlatılması. Yönetici durumu ve diğer servisler korundu.
 
 Yeniden başlatmadan sonra Telegram güncelleme listesinde `callback_query` görüldü. Gerçek yönetici sohbetinde yeni menüden kullanıcı listesi, kullanıcı detayı, numara arama, bekleyen kayıt ve detay, M3U paket seçim ekranı, analiz, bakiye, sistem durumu ve geri/iptal düğmeleri açıldı. Gerçek kullanıcıya paket ataması yapılmadı; bu işlem kredi ve kullanıcı kaydı değiştirdiğinden ayrıca bir test hesabıyla doğrulanmalı.
+
+## Canlı bot atama güvenliği — 13 Ekim 2026
+
+Sağlayıcının `get_lines?search=` yanıtı kısmi eşleşme ve başka alan eşleşmeleri içeriyor. Eski bot tam kullanıcı adı bulunmadığında ilk sonucu seçip başka bir hattı uzatabiliyordu. Mevcut hat bulunamadığında da gerçek hat bilgisi olmadan başarılıymış gibi aboneliğe devam edebiliyordu. `coolify/patches/apply-live-telegram-assignment-safety.mjs` bu iki yolu kapatır: yalnız tam kullanıcı adı, geçerli hat kimliği ve beklenen şifreyle eşleşen hat kabul edilir; yeni hat yanıtı eksikse sağlayıcıdan tam eşleşme teyidi istenir. Teyit yoksa kullanıcı aboneliğine devam edilmez ve yöneticiye açık hata gösterilir.
+
+- Önceki canlı dosya SHA256: `6f2432082b7dc03c1491c02ca604096886bc0ffe265704ce3e924ef69b4a5fe9`
+- Güncel canlı dosya SHA256: `8fcb20731153a246ff13d7aaf0d2de9842ec8f74e9c7faf880e00a1e3e2e6110`
+- Geri alma yedeği: `/data/flixify/telegram-bot-backups/telegram-panel-bot-1791873396607126604.mjs`
+- Değişiklikten önce kaynak SHA, yama SHA, sözdizimi ve dağıtımın kuru kontrolü doğrulandı. Yeniden başlatmadan sonra host ve konteyner SHA değerleri, heartbeat, `callback_query` ve bot logları sağlıklıydı. Gerçek kullanıcıya yeni paket ataması yapılmadı.
+
+Atama akışı sağlayıcı, M3U ve abonelik işlemlerini ardışık yapıyor; bu işlemler için kalıcı idempotency veya otomatik geri alma yok. Bu nedenle aynı paket düğmesine üst üste basarak deneme yapılmamalı; kısmi hata ekranı görülürse önce hattın ve aboneliğin durumu incelenmeli.
