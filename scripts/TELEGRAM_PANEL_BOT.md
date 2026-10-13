@@ -138,3 +138,12 @@ Sağlayıcının `get_lines?search=` yanıtı kısmi eşleşme ve başka alan e�
 - Değişiklikten önce kaynak SHA, yama SHA, sözdizimi ve dağıtımın kuru kontrolü doğrulandı. Yeniden başlatmadan sonra host ve konteyner SHA değerleri, heartbeat, `callback_query` ve bot logları sağlıklıydı. Gerçek kullanıcıya yeni paket ataması yapılmadı.
 
 Atama akışı sağlayıcı, M3U ve abonelik işlemlerini ardışık yapıyor; bu işlemler için kalıcı idempotency veya otomatik geri alma yok. Bu nedenle aynı paket düğmesine üst üste basarak deneme yapılmamalı; kısmi hata ekranı görülürse önce hattın ve aboneliğin durumu incelenmeli.
+
+## Kullanıcı listesi süre etiketi — 13 Ekim 2026
+
+M3U bağlı olup aktif paketi olmayan kullanıcılarda API `remainingDays: null` döndürür. Canlı botta `Number(null)` sıfır sayıldığı için listede `null gün` yazıyordu. `coolify/patches/apply-live-telegram-days-label.mjs` sayı kontrolünden önce null/undefined değerini ayırır; bu kayıtlar artık `M3U Bağlı (Aktif)` gösterilir. Sıfır ve pozitif gün değerleri aynı kalır.
+
+- Önceki canlı dosya SHA256: `8fcb20731153a246ff13d7aaf0d2de9842ec8f74e9c7faf880e00a1e3e2e6110`
+- Güncel canlı dosya SHA256: `aabba2e98c0cc46e4323a38674dfd94d73003e2b3cc12afba5a371ea74cf229a`
+- Geri alma yedeği: `/data/flixify/telegram-bot-backups/telegram-panel-bot-1791878946166871348.mjs`
+- Canlı Telegram sohbetinde liste yeniden açılıp `M3U Bağlı (Aktif)` metni görüldü. Bot heartbeat, polling, callback güncellemeleri ve logları sağlıklıydı.
