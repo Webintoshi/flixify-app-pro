@@ -137,10 +137,17 @@ def parsed(contents: str | bytes) -> dict:
     return result
 
 
-def container_snapshot() -> dict[str, dict]:
+def container_snapshot(*, allow_missing_changed: bool = False) -> dict[str, dict]:
     result = {}
     for name in SERVICES:
-        item = json.loads(command("docker", "inspect", f"{name}-{UUID}"))[0]
+        try:
+            item = json.loads(command("docker", "inspect", f"{name}-{UUID}"))[0]
+        except (GateError, ValueError, IndexError):
+            if allow_missing_changed and name in CHANGED:
+                result[name] = {"id": None, "image_id": None, "tag": None,
+                                "hash": None, "running": False, "health": None}
+                continue
+            raise
         labels = item.get("Config", {}).get("Labels") or {}
         if labels.get("com.docker.compose.project") != UUID:
             raise GateError(f"container_project_differs:{name}")
@@ -184,6 +191,8 @@ def validate_plan(raw: dict, rendered: dict, generated: dict,
                 raise GateError(f"running_image_differs:{name}")
     if stage == "target":
         for name in CHANGED:
+            if containers[name]["tag"] is None:
+                continue
             if containers[name]["tag"] not in {SOURCE[name], TARGET[name]}:
                 raise GateError(f"unexpected_running_image:{name}")
             if containers[name]["image_id"] != image_id(containers[name]["tag"]):
@@ -204,7 +213,7 @@ def preflight(stage: str) -> tuple[dict, bytes, bytes, dict, dict, dict]:
     if not COMPOSE.is_file() or not ENV.is_file():
         raise GateError("coolify_service_files_missing")
     compose_bytes, env_bytes = COMPOSE.read_bytes(), ENV.read_bytes()
-    record, containers = service_record(), container_snapshot()
+    record, containers = service_record(), container_snapshot(allow_missing_changed=stage == "target")
     raw, rendered, generated = (
         parsed(record["docker_compose_raw"]),
         parsed(record["docker_compose"]),
@@ -318,7 +327,8 @@ def sync_images(record: dict, compose_bytes: bytes, env_bytes: bytes,
     if sha(fresh["docker_compose_raw"]) != sha(record["docker_compose_raw"]) or \
        sha(fresh["docker_compose"]) != sha(record["docker_compose"]):
         raise GateError("database_changed_during_preflight")
-    if container_identity(container_snapshot()) != container_identity(containers) or \
+    allow_missing = old_images == TARGET
+    if container_identity(container_snapshot(allow_missing_changed=allow_missing)) != container_identity(containers) or \
        application_images() != old_images:
         raise GateError("containers_or_application_changed_during_preflight")
     payload = {
@@ -349,7 +359,7 @@ def sync_images(record: dict, compose_bytes: bytes, env_bytes: bytes,
         raise GateError("coolify_source_differs_after_sync")
     if application_images() != new_images:
         raise GateError("application_image_differs_after_sync")
-    if container_identity(container_snapshot()) != container_identity(containers):
+    if container_identity(container_snapshot(allow_missing_changed=allow_missing)) != container_identity(containers):
         raise GateError("containers_changed_during_sync")
     if ENV.read_bytes() != env_bytes:
         restore_bytes(ENV, env_bytes, env_stat)
@@ -359,13 +369,13 @@ def sync_images(record: dict, compose_bytes: bytes, env_bytes: bytes,
 
 
 def healthy(name: str, expected_tag: str) -> bool:
-    item = container_snapshot()[name]
-    if (item["tag"] != expected_tag or item["image_id"] != image_id(expected_tag) or
-        not item["running"] or item["health"] == "unhealthy" or
-        item["hash"] != compose_hash(name)):
-        return False
-    route = "https://api.flixify.vip/health" if name == "api" else "https://flixify.vip/"
     try:
+        item = container_snapshot(allow_missing_changed=True)[name]
+        if (item["tag"] != expected_tag or item["image_id"] != image_id(expected_tag) or
+            not item["running"] or item["health"] == "unhealthy" or
+            item["hash"] != compose_hash(name)):
+            return False
+        route = "https://api.flixify.vip/health" if name == "api" else "https://flixify.vip/"
         request = Request(route, headers={"User-Agent": "Flixify-release-check/1"})
         with urlopen(request, timeout=8) as response:
             if response.status != 200:
@@ -380,8 +390,8 @@ def healthy(name: str, expected_tag: str) -> bool:
 def recreate(before: dict[str, dict], env_bytes: bytes) -> None:
     protected = container_identity({name: before[name] for name in ("db", "worker")})
     for name in CHANGED:
-        current = container_snapshot()[name]
-        if current["tag"] == SOURCE[name]:
+        current = container_snapshot(allow_missing_changed=True)[name]
+        if current["tag"] != TARGET[name]:
             command(
                 "docker", "compose", "-p", UUID, "--project-directory", str(DIRECTORY),
                 "-f", str(COMPOSE), "up", "-d", "--no-deps", "--no-build",
@@ -393,7 +403,7 @@ def recreate(before: dict[str, dict], env_bytes: bytes) -> None:
             time.sleep(2)
         else:
             raise GateError(f"new_container_unhealthy:{name}")
-        snapshot = container_snapshot()
+        snapshot = container_snapshot(allow_missing_changed=True)
         current_protected = container_identity({name: snapshot[name] for name in protected})
         for protected_name, expected in protected.items():
             if current_protected[protected_name] != expected:
@@ -411,7 +421,7 @@ def rollback() -> None:
     sync_images(record, compose_bytes, env_bytes, before, raw, rendered, TARGET, SOURCE)
     protected = container_identity({name: before[name] for name in ("db", "worker")})
     for name in CHANGED:
-        current = container_snapshot()[name]
+        current = container_snapshot(allow_missing_changed=True)[name]
         if current["tag"] != SOURCE[name] or not healthy(name, SOURCE[name]):
             command(
                 "docker", "compose", "-p", UUID, "--project-directory", str(DIRECTORY),
@@ -424,7 +434,7 @@ def rollback() -> None:
             time.sleep(2)
         else:
             raise GateError(f"rollback_container_unhealthy:{name}")
-        snapshot = container_snapshot()
+        snapshot = container_snapshot(allow_missing_changed=True)
         current_protected = container_identity({name: snapshot[name] for name in protected})
         for protected_name, expected in protected.items():
             if current_protected[protected_name] != expected:

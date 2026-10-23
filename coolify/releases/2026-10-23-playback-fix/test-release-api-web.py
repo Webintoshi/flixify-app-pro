@@ -79,6 +79,12 @@ class ReleasePlanTests(unittest.TestCase):
         with self.assertRaises(release.GateError):
             release.validate_plan(raw, rendered, generated, containers, applications, "target")
 
+    def test_recreate_or_rollback_can_recover_missing_api_container(self):
+        raw, rendered, generated, containers, applications = fixture("target")
+        containers["api"]["tag"] = None
+        containers["api"]["image_id"] = None
+        release.validate_plan(raw, rendered, generated, containers, applications, "target")
+
     def test_candidate_requires_exact_commit_label(self):
         def inspect(tag):
             return {"Id": f"id:{tag}", "Config": {"Labels": {
