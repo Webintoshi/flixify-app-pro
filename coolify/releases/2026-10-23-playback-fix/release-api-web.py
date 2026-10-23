@@ -34,7 +34,7 @@ SERVICE_ID = 1
 DIRECTORY = Path("/data/coolify/services") / UUID
 COMPOSE = DIRECTORY / "docker-compose.yml"
 ENV = DIRECTORY / ".env"
-REVISION = "661b498e515eccf470a208a78a2db9654ecef3cf"
+REVISION = "39300d047403dc6c91618dd4a0fdad90ca131c63"
 SERVICES = ("db", "api", "worker", "ops-web")
 CHANGED = ("api", "ops-web")
 SOURCE = {
@@ -42,8 +42,8 @@ SOURCE = {
     "ops-web": "flixify-ops-web:trial-20261013",
 }
 TARGET = {
-    "api": "flixify-api:playback-fix-661b498-20261023",
-    "ops-web": "flixify-ops-web:playback-fix-661b498-20261023",
+    "api": "flixify-api:playback-fix-39300d0-20261023",
+    "ops-web": "flixify-ops-web:playback-fix-39300d0-20261023",
 }
 
 
@@ -56,7 +56,7 @@ SYNC_PHASES = frozenset({
     "payload_decode", "transaction_begin", "service_lookup",
     "service_precondition", "compose_parse", "service_set",
     "compose_image_drift", "source_image_drift", "compose_dump",
-    "save_raw_compose", "service_parse", "rendered_diff",
+    "save_compose_models", "application_set", "rendered_diff",
     "application_diff", "save_compose_files", "transaction_commit",
 })
 
@@ -312,10 +312,18 @@ try {
         }
         $phase = 'compose_dump';
         $service->docker_compose_raw = Yaml::dump($raw, 10, 2);
-        $phase = 'save_raw_compose';
+        $service->docker_compose = Yaml::dump($expected, 10, 2);
+        $phase = 'save_compose_models';
         $service->save();
-        $phase = 'service_parse';
-        $service->parse();
+        foreach ($p['new'] as $name => $tag) {
+            $phase = 'application_set';
+            $application = $service->applications()->where('name', $name)->firstOrFail();
+            if ($application->image !== $p['old'][$name]) {
+                throw new RuntimeException('application drift');
+            }
+            $application->image = $tag;
+            $application->save();
+        }
         $phase = 'rendered_diff';
         if (canonical(Yaml::parse($service->docker_compose)) !== canonical($expected) ||
             canonical(Yaml::parse($service->docker_compose_raw)) !== canonical($raw)) {
@@ -355,6 +363,76 @@ def restore_bytes(path: Path, contents: bytes, previous: os.stat_result) -> None
             os.unlink(temporary)
 
 
+def locked_image_swap(record: dict, old_images: dict[str, str],
+                      new_images: dict[str, str]) -> None:
+    payload = {
+        "uuid": UUID, "old": old_images, "new": new_images,
+        "raw_sha": sha(record["docker_compose_raw"]),
+        "rendered_sha": sha(record["docker_compose"]),
+    }
+    command("docker", "exec", "-i", "coolify", "php", "-r", PHP_APPLY,
+            input_data=json.dumps(payload, separators=(",", ":")).encode(), timeout=180,
+            capture_sync_phase=True)
+
+
+def expected_swapped(raw: dict, rendered: dict,
+                     new_images: dict[str, str]) -> tuple[dict, dict]:
+    expected_raw, expected_rendered = copy.deepcopy(raw), copy.deepcopy(rendered)
+    for name in CHANGED:
+        expected_raw["services"][name]["image"] = new_images[name]
+        expected_rendered["services"][name]["image"] = new_images[name]
+    return expected_raw, expected_rendered
+
+
+def restore_prior_images_after_postcheck(compose_bytes: bytes, env_bytes: bytes,
+                                         compose_stat: os.stat_result,
+                                         env_stat: os.stat_result, containers: dict,
+                                         raw: dict, rendered: dict,
+                                         old_images: dict[str, str],
+                                         new_images: dict[str, str]) -> None:
+    """Reverse this swap only if the exact target structure still owns the service."""
+    target_raw, target_rendered = expected_swapped(raw, rendered, new_images)
+    current = service_record()
+    if parsed(current["docker_compose_raw"]) != target_raw or \
+       parsed(current["docker_compose"]) != target_rendered or \
+       application_images() != new_images:
+        raise GateError("source_restore_target_metadata_differs")
+    if container_identity(container_snapshot(allow_missing_changed=old_images == TARGET)) != \
+       container_identity(containers):
+        raise GateError("source_restore_containers_changed")
+    current_compose = COMPOSE.read_bytes()
+    if current_compose != compose_bytes and parsed(current_compose) not in (rendered, target_rendered):
+        raise GateError("source_restore_generated_compose_differs")
+    reverse_compose_stat, reverse_env_stat = COMPOSE.stat(), ENV.stat()
+    reverse_env_bytes = ENV.read_bytes()
+    try:
+        locked_image_swap(current, new_images, old_images)
+    except GateError:
+        after_failure = service_record()
+        if sha(after_failure["docker_compose_raw"]) == sha(current["docker_compose_raw"]) and \
+           sha(after_failure["docker_compose"]) == sha(current["docker_compose"]):
+            if COMPOSE.read_bytes() != current_compose:
+                restore_bytes(COMPOSE, current_compose, reverse_compose_stat)
+            if ENV.read_bytes() != reverse_env_bytes:
+                restore_bytes(ENV, reverse_env_bytes, reverse_env_stat)
+        raise
+    restored = service_record()
+    if parsed(restored["docker_compose_raw"]) != raw or \
+       parsed(restored["docker_compose"]) != rendered or \
+       application_images() != old_images or \
+       parsed(COMPOSE.read_bytes()) != rendered:
+        raise GateError("source_restore_postcondition_failed")
+    if container_identity(container_snapshot(allow_missing_changed=old_images == TARGET)) != \
+       container_identity(containers):
+        raise GateError("source_restore_containers_changed_after_swap")
+    if COMPOSE.read_bytes() != compose_bytes:
+        restore_bytes(COMPOSE, compose_bytes, compose_stat)
+    if ENV.read_bytes() != env_bytes:
+        restore_bytes(ENV, env_bytes, env_stat)
+    command("docker", "compose", "-p", UUID, "--project-directory", str(DIRECTORY),
+            "-f", str(COMPOSE), "config", "-q")
+
+
 def sync_images(record: dict, compose_bytes: bytes, env_bytes: bytes,
                 containers: dict, raw: dict, rendered: dict,
                 old_images: dict[str, str], new_images: dict[str, str]) -> None:
@@ -369,42 +447,44 @@ def sync_images(record: dict, compose_bytes: bytes, env_bytes: bytes,
     if container_identity(container_snapshot(allow_missing_changed=allow_missing)) != container_identity(containers) or \
        application_images() != old_images:
         raise GateError("containers_or_application_changed_during_preflight")
-    payload = {
-        "uuid": UUID, "old": old_images, "new": new_images,
-        "raw_sha": sha(record["docker_compose_raw"]),
-        "rendered_sha": sha(record["docker_compose"]),
-    }
     try:
-        command("docker", "exec", "-i", "coolify", "php", "-r", PHP_APPLY,
-                input_data=json.dumps(payload, separators=(",", ":")).encode(), timeout=180,
-                capture_sync_phase=True)
+        locked_image_swap(record, old_images, new_images)
     except GateError:
         current = service_record()
-        if sha(current["docker_compose_raw"]) == payload["raw_sha"] and \
-           sha(current["docker_compose"]) == payload["rendered_sha"]:
+        if sha(current["docker_compose_raw"]) == sha(record["docker_compose_raw"]) and \
+           sha(current["docker_compose"]) == sha(record["docker_compose"]):
             if COMPOSE.read_bytes() != compose_bytes:
                 restore_bytes(COMPOSE, compose_bytes, compose_stat)
             if ENV.read_bytes() != env_bytes:
                 restore_bytes(ENV, env_bytes, env_stat)
         raise
-    expected_raw, expected_rendered = copy.deepcopy(raw), copy.deepcopy(rendered)
-    for name in CHANGED:
-        expected_raw["services"][name]["image"] = new_images[name]
-        expected_rendered["services"][name]["image"] = new_images[name]
-    updated = service_record()
-    if parsed(updated["docker_compose_raw"]) != expected_raw or \
-       parsed(updated["docker_compose"]) != expected_rendered or \
-       parsed(COMPOSE.read_bytes()) != expected_rendered:
-        raise GateError("coolify_source_differs_after_sync")
-    if application_images() != new_images:
-        raise GateError("application_image_differs_after_sync")
-    if container_identity(container_snapshot(allow_missing_changed=allow_missing)) != container_identity(containers):
-        raise GateError("containers_changed_during_sync")
-    if ENV.read_bytes() != env_bytes:
-        restore_bytes(ENV, env_bytes, env_stat)
-        raise GateError("env_changed_after_sync_restored")
-    command("docker", "compose", "-p", UUID, "--project-directory", str(DIRECTORY),
-            "-f", str(COMPOSE), "config", "-q")
+    expected_raw, expected_rendered = expected_swapped(raw, rendered, new_images)
+    try:
+        updated = service_record()
+        if parsed(updated["docker_compose_raw"]) != expected_raw or \
+           parsed(updated["docker_compose"]) != expected_rendered or \
+           parsed(COMPOSE.read_bytes()) != expected_rendered:
+            raise GateError("coolify_source_differs_after_sync")
+        if application_images() != new_images:
+            raise GateError("application_image_differs_after_sync")
+        if container_identity(container_snapshot(allow_missing_changed=allow_missing)) != \
+           container_identity(containers):
+            raise GateError("containers_changed_during_sync")
+        if ENV.read_bytes() != env_bytes:
+            raise GateError("env_changed_after_sync")
+        command("docker", "compose", "-p", UUID, "--project-directory", str(DIRECTORY),
+                "-f", str(COMPOSE), "config", "-q")
+    except Exception as postcheck_error:
+        try:
+            restore_prior_images_after_postcheck(
+                compose_bytes, env_bytes, compose_stat, env_stat,
+                containers, raw, rendered, old_images, new_images,
+            )
+        except Exception as restore_error:
+            label = str(restore_error) if isinstance(restore_error, GateError) else type(restore_error).__name__
+            raise GateError(f"postcheck_failed_source_restore_failed:{label}") from postcheck_error
+        label = str(postcheck_error) if isinstance(postcheck_error, GateError) else type(postcheck_error).__name__
+        raise GateError(f"postcheck_failed_source_restored:{label}") from postcheck_error
 
 
 def healthy(name: str, expected_tag: str) -> bool:

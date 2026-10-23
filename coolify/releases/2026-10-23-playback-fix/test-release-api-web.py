@@ -130,16 +130,16 @@ class ReleasePlanTests(unittest.TestCase):
     def test_sync_command_exposes_only_a_known_failure_phase(self):
         failed = subprocess.CompletedProcess(
             args=("docker", "exec"), returncode=1, stdout=b"",
-            stderr=b"coolify_api_web_source_sync_failed:service_parse\n",
+            stderr=b"coolify_api_web_source_sync_failed:application_set\n",
         )
         with patch.object(release.subprocess, "run", return_value=failed):
-            with self.assertRaisesRegex(release.GateError, "^coolify_sync_failed:service_parse$"):
+            with self.assertRaisesRegex(release.GateError, "^coolify_sync_failed:application_set$"):
                 release.command("docker", "exec", "coolify", capture_sync_phase=True)
             with self.assertRaisesRegex(release.GateError, "^command_failed$"):
                 release.command("docker", "exec", "coolify")
 
         for unsafe_stderr in (
-            b"coolify_api_web_source_sync_failed:service_parse\nTOKEN=secret\n",
+            b"coolify_api_web_source_sync_failed:application_set\nTOKEN=secret\n",
             b"coolify_api_web_source_sync_failed:unexpected_secret\n",
         ):
             failed.stderr = unsafe_stderr
@@ -148,22 +148,62 @@ class ReleasePlanTests(unittest.TestCase):
                 with self.assertRaisesRegex(release.GateError, "^command_failed$"):
                     release.command("docker", "exec", "coolify", capture_sync_phase=True)
 
+    def test_postcheck_reversion_requires_exact_target_metadata(self):
+        raw, rendered, _, containers, _ = fixture()
+        target_raw, target_rendered = release.expected_swapped(raw, rendered, release.TARGET)
+        target_raw["services"]["worker"]["environment"]["SAFE"] = "changed"
+        record = {"docker_compose_raw": target_raw, "docker_compose": target_rendered}
+        with patch.object(release, "service_record", return_value=record), \
+             patch.object(release, "parsed", side_effect=lambda value: value), \
+             patch.object(release, "locked_image_swap") as swap:
+            with self.assertRaisesRegex(release.GateError, "source_restore_target_metadata_differs"):
+                release.restore_prior_images_after_postcheck(
+                    b"source", b"env", object(), object(), containers,
+                    raw, rendered, release.SOURCE, release.TARGET,
+                )
+            swap.assert_not_called()
+
+    def test_postcheck_reversion_swaps_back_only_when_target_is_exact(self):
+        raw, rendered, _, containers, _ = fixture()
+        for name, item in containers.items():
+            item.update(id=f"container:{name}", hash=f"config:{name}")
+        target_raw, target_rendered = release.expected_swapped(raw, rendered, release.TARGET)
+        target_record = {"docker_compose_raw": target_raw, "docker_compose": target_rendered}
+        source_record = {"docker_compose_raw": raw, "docker_compose": rendered}
+        compose = types.SimpleNamespace(read_bytes=unittest.mock.Mock(
+            side_effect=[b"target", b"source", b"source"]),
+            stat=unittest.mock.Mock(return_value=object()))
+        env = types.SimpleNamespace(read_bytes=unittest.mock.Mock(return_value=b"env"),
+            stat=unittest.mock.Mock(return_value=object()))
+        with patch.object(release, "service_record", side_effect=[target_record, source_record]), \
+             patch.object(release, "parsed", side_effect=lambda value: {
+                 b"target": target_rendered, b"source": rendered,
+             }.get(value, value) if isinstance(value, bytes) else value), \
+             patch.object(release, "application_images", side_effect=[release.TARGET, release.SOURCE]), \
+             patch.object(release, "container_snapshot", return_value=containers), \
+             patch.object(release, "COMPOSE", compose), patch.object(release, "ENV", env), \
+             patch.object(release, "locked_image_swap") as swap, \
+             patch.object(release, "command"):
+            release.restore_prior_images_after_postcheck(
+                b"source", b"env", object(), object(), containers,
+                raw, rendered, release.SOURCE, release.TARGET,
+            )
+            swap.assert_called_once_with(target_record, release.TARGET, release.SOURCE)
+
 
 class ApiOverlayTests(unittest.TestCase):
     def setUp(self):
         self.repo = Path(__file__).resolve().parents[3]
-        self.previous = build.git_file(self.repo, build.REVISION + "^", build.API_SERVER)
+        self.previous = build.git_file(self.repo, build.BASE_REVISION, build.API_SERVER)
 
     def test_git_patch_keeps_live_only_source_bytes(self):
         live_only = b"// Catalog guard from the pinned live API image.\n"
         original = live_only + self.previous
         with TemporaryDirectory() as directory:
             patched = build.apply_api_patch(self.repo, Path(directory), original)
-        helper, branch = build.api_insertions(self.repo)
         self.assertTrue(patched.startswith(live_only))
-        self.assertEqual(patched.count(helper), 1)
-        self.assertEqual(patched.count(branch), 1)
-        self.assertEqual(patched.replace(helper, b"", 1).replace(branch, b"", 1), original)
+        self.assertIn(b"function buildPersonalVodSourceUrl(", patched)
+        build.verify_api_patch(self.repo, original, patched)
 
     def test_pinned_source_rejects_unknown_live_api(self):
         with self.assertRaisesRegex(build.GateError, "api_source_hash_differs"):

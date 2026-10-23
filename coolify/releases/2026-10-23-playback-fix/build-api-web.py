@@ -18,7 +18,8 @@ from pathlib import Path
 
 
 UUID = "eupquokyj7qegufqvqkjmuyr"
-REVISION = "661b498e515eccf470a208a78a2db9654ecef3cf"
+REVISION = "39300d047403dc6c91618dd4a0fdad90ca131c63"
+BASE_REVISION = "63b82f0d5d37c3041178fc2232f5240785c0a9e0"
 BASE = {
     "api": (
         "flixify-api:proxy-free-movies-v2-20261013",
@@ -30,8 +31,8 @@ BASE = {
     ),
 }
 TARGET = {
-    "api": "flixify-api:playback-fix-661b498-20261023",
-    "ops-web": "flixify-ops-web:playback-fix-661b498-20261023",
+    "api": "flixify-api:playback-fix-39300d0-20261023",
+    "ops-web": "flixify-ops-web:playback-fix-39300d0-20261023",
 }
 OVERLAYS = {
     "api": ("apps/api/src/server.ts",),
@@ -43,7 +44,7 @@ OVERLAYS = {
 API_SERVER = "apps/api/src/server.ts"
 PINNED_API_SERVER_SHA256 = "490ab6772938338c33b7c65d0556dd9b7d6dbcab1b2708919da9a5201a752f47"
 CANDIDATE_API_TEST = "coolify/releases/2026-10-23-playback-fix/candidate-vod-direct.test.ts"
-CANDIDATE_API_TEST_SHA256 = "8324db67abe5b38500f567e9ecbdca336ee4a48af58560a95464f0cb1b2b5f46"
+CANDIDATE_API_TEST_SHA256 = "36c6d3a4ba109291cec8fd18fa4289d48d346b47d192368d8f5c91f54ee1c201"
 PUBLIC_WEB_KEYS = (
     "NEXT_PUBLIC_API_BASE_URL",
     "NEXT_PUBLIC_SUPABASE_URL",
@@ -93,47 +94,41 @@ def verify_pinned_api_source(source: bytes) -> None:
         raise GateError("api_source_hash_differs")
 
 
-def api_insertions(repo: Path) -> tuple[bytes, bytes]:
-    """Pin the two additive changes in the release commit before merging them."""
-    previous = git_file(repo, REVISION + "^", API_SERVER)
-    revised = git_file(repo, REVISION, API_SERVER)
-    helper_start = b"function isHttpsVodSourceUrl("
-    helper_end = b"function buildDirectVodPlaybackFallback("
-    branch_start = b"      const directTransport = guessVodTransportFromPath(record.stream_path);"
-    branch_end = b"      let resolved: Awaited<ReturnType<typeof resolveVodSourceUrl>>;"
-    if revised.count(helper_start) != 1 or revised.count(helper_end) != 1 or \
-       revised.count(branch_start) != 1 or revised.count(branch_end) != 1:
-        raise GateError("unexpected_api_commit_shape")
-    helper = revised[revised.index(helper_start):revised.index(helper_end)]
-    branch_begin = revised.index(branch_start)
-    branch = revised[branch_begin:revised.index(branch_end, branch_begin)]
-    if not helper or not branch or previous != revised.replace(helper, b"", 1).replace(branch, b"", 1):
-        raise GateError("api_commit_is_not_additive")
-    return helper, branch
-
-
-def verify_api_patch(repo: Path, original: bytes, patched: bytes) -> None:
-    helper, branch = api_insertions(repo)
-    if original.count(helper) or original.count(branch):
-        raise GateError("api_patch_already_present")
-    if patched.count(helper) != 1 or patched.count(branch) != 1 or \
-       patched.replace(helper, b"", 1).replace(branch, b"", 1) != original:
-        raise GateError("api_patch_changed_existing_source")
-    route = b'app.get("/me/vod/:kind/:itemId/playback"'
-    if patched.count(route) != 1 or not (
-        patched.index(route) < patched.index(branch) < patched.index(b"      let resolved:", patched.index(route))
-    ):
-        raise GateError("api_patch_outside_playback_route")
-
-
-def apply_api_patch(repo: Path, root: Path, original: bytes) -> bytes:
-    api_insertions(repo)
+def api_patch(repo: Path) -> bytes:
+    """Pin the exact reviewed API diff from the source image revision."""
     patch = command("git", "-C", str(repo), "diff", "--no-ext-diff", "--no-textconv",
-                    REVISION + "^", REVISION, "--", API_SERVER)
+                    BASE_REVISION, REVISION, "--", API_SERVER)
     if patch.count(b"diff --git ") != 1 or not patch.startswith(
         b"diff --git a/apps/api/src/server.ts b/apps/api/src/server.ts\n"
     ):
         raise GateError("unexpected_api_patch_scope")
+    return patch
+
+
+def verify_api_patch(repo: Path, original: bytes, patched: bytes) -> None:
+    with tempfile.TemporaryDirectory(prefix="flixify-api-patch-verify-") as directory:
+        root = Path(directory)
+        destination = root / API_SERVER
+        destination.parent.mkdir(parents=True)
+        destination.write_bytes(original)
+        patch_file = root / "api-playback.patch"
+        patch_file.write_bytes(api_patch(repo))
+        try:
+            command("git", "-C", str(root), "apply", "--check", str(patch_file))
+            command("git", "-C", str(root), "apply", str(patch_file))
+        except GateError as error:
+            raise GateError("api_patch_changed_existing_source") from error
+        if destination.read_bytes() != patched:
+            raise GateError("api_patch_changed_existing_source")
+    route = b'app.get("/me/vod/:kind/:itemId/playback"'
+    if patched.count(route) != 1 or \
+       patched.count(b"function buildPersonalVodSourceUrl(") != 1 or \
+       patched.count(b"      const personalDirectSourceUrl = buildPersonalVodSourceUrl(") < 2:
+        raise GateError("api_patch_outside_playback_route")
+
+
+def apply_api_patch(repo: Path, root: Path, original: bytes) -> bytes:
+    patch = api_patch(repo)
     destination = root / API_SERVER
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(original)
@@ -170,7 +165,7 @@ def verify_candidate_api_source(repo: Path) -> None:
 def verify_candidate_api_bundle() -> None:
     bundle = command("docker", "run", "--rm", "--network", "none",
                      "--entrypoint", "cat", TARGET["api"], "/app/apps/api/dist/server.js")
-    if b"function isHttpsVodSourceUrl(" not in bundle or \
+    if b"function buildPersonalVodSourceUrl(" not in bundle or \
        b"const directTransport = guessVodTransportFromPath(record.stream_path);" not in bundle:
         raise GateError("api_candidate_bundle_missing_direct_branch")
 
@@ -217,7 +212,7 @@ def check_source(repo: Path, names: tuple[str, ...]) -> None:
         if labels.get("com.docker.compose.project") != UUID:
             raise GateError(f"unexpected_compose_project:{name}")
         for path in OVERLAYS[name]:
-            previous = git_file(repo, REVISION + "^", path)
+            previous = git_file(repo, BASE_REVISION, path)
             in_image = command("docker", "run", "--rm", "--network", "none",
                                "--entrypoint", "cat", tag, "/app/" + path)
             if name == "api" and path == API_SERVER:
@@ -227,7 +222,7 @@ def check_source(repo: Path, names: tuple[str, ...]) -> None:
                 if b"shouldUseAccountMovieCatalog" not in in_image or \
                    b"accountVodProxyConfigured" not in in_image:
                     raise GateError("api_catalog_guard_missing")
-                api_insertions(repo)
+                api_patch(repo)
             elif in_image != previous:
                 raise GateError(f"base_source_file_drift:{name}")
         try:
@@ -291,7 +286,7 @@ def build_one(repo: Path, name: str, web_env: dict[str, str], scratch: Path) -> 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source_repo", type=Path,
-                        help="Git checkout containing commit 661b498; it is never edited")
+                        help="Git checkout containing the pinned playback revision; it is never edited")
     parser.add_argument("--only", choices=("api", "ops-web"),
                         help="build only this image after an interrupted candidate build")
     parser.add_argument("--verify-existing-api", action="store_true",

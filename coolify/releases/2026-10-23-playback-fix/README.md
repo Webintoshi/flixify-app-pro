@@ -5,14 +5,14 @@ güncellenir. Askıdaki sunucuya, db/worker/VPN konteynerlerine, sağlayıcı
 ayarlarına ve yedeklemeye dokunulmaz. Bu komutları **87.76.130.252** aktif
 sunucusunda çalıştırın. Coolify panelinde ayrıca Deploy düğmesine basmayın.
 
-Kaynak olarak `661b498e515eccf470a208a78a2db9654ecef3cf` commitini içeren bir
+Kaynak olarak `39300d047403dc6c91618dd4a0fdad90ca131c63` commitini içeren bir
 Git checkout ve bu klasördeki iki Python betiği gerekir. Kaynak checkout
 değiştirilmez. Betikler mevcut API ve web imajlarının sabit imaj kimliklerini,
 çalışan konteynerleri, değişen dosyaların commit öncesi içeriğini, aday imajın
 commit etiketini ve Coolify Compose durumunu doğrular. Fark varsa durur.
 
 ```sh
-git -C /data/flixify/source cat-file -e '661b498e515eccf470a208a78a2db9654ecef3cf^{commit}'
+git -C /data/flixify/source cat-file -e '39300d047403dc6c91618dd4a0fdad90ca131c63^{commit}'
 python3 /data/flixify/releases/2026-10-23-playback-fix/build-api-web.py /data/flixify/source
 python3 /data/flixify/releases/2026-10-23-playback-fix/release-api-web.py
 python3 /data/flixify/releases/2026-10-23-playback-fix/release-api-web.py --apply
@@ -20,9 +20,9 @@ python3 /data/flixify/releases/2026-10-23-playback-fix/release-api-web.py --recr
 ```
 
 `/data/flixify/source` gerçek checkout yoluna göre değiştirilebilir. Build
-betiği API kaynak dosyasını sabit canlı imajdan çıkarır, yalnız `661b498`
-commitindeki iki ekleme bloğunu `git apply --check` ile sınayıp uygular ve
-diğer tüm baytların korunduğunu doğrular. Böylece canlı API'deki mevcut film
+betiği API kaynak dosyasını sabit canlı imajdan çıkarır, sabit temel commit ile
+`39300d0` arasındaki API yamasını `git apply --check` ile sınayıp uygular ve
+adayın bu yamanın tam sonucu olduğunu doğrular. Böylece canlı API'deki mevcut film
 kataloğu koruması korunur. Web için committe değişen kaynak dosyalarını sabit
 canlı imajın üzerine koyup yeniden derler. Aday API imajında, canlı sürümün
 film kategori politikası için ayrıca veri tabanı gerektirmeyen bölüm rotasında
