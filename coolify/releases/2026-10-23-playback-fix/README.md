@@ -20,8 +20,12 @@ python3 /data/flixify/releases/2026-10-23-playback-fix/release-api-web.py --recr
 ```
 
 `/data/flixify/source` gerçek checkout yoluna göre değiştirilebilir. Build
-betiği API ve web için yalnız committe değişen kaynak dosyalarını sabit canlı
-imajların üzerine koyup yeniden derler. Web derlemesinin `NEXT_PUBLIC_*`
+betiği API kaynak dosyasını sabit canlı imajdan çıkarır, yalnız `661b498`
+commitindeki iki ekleme bloğunu `git apply --check` ile sınayıp uygular ve
+diğer tüm baytların korunduğunu doğrular. Böylece canlı API'deki mevcut film
+kataloğu koruması korunur. Web için committe değişen kaynak dosyalarını sabit
+canlı imajın üzerine koyup yeniden derler. Aday API imajında deneme ve ücretli
+hesap oynatma testini çalıştırır. Web derlemesinin `NEXT_PUBLIC_*`
 değerlerini çalışan web konteynerinden bellek içinde okur; değerleri çıktıya
 yazmaz. Docker build logları da gösterilmez. Çıktı yalnız aday imaj kimlikleri
 ve sabit durum etiketleridir. Aday imajlar hâlihazırda varsa betik üzerine
