@@ -215,6 +215,26 @@ describe("three-hour trial direct source fallback", () => {
     expect(response.json().url).toContain(PROVIDER_URL_MARKER);
   });
 
+  it.each([
+    ["browser with no personal line", null, "/me/vod/movie/movie-1/playback?clientRuntime=browser&vodDirect=1"],
+    ["native with no personal line", null, "/me/native/vod/movie/movie-1/playback?platform=windows-native-qt"],
+    ["browser with shared line assigned as primary", { username: "shared-line", password: "shared-pass" }, "/me/vod/movie/movie-1/playback?clientRuntime=browser&vodDirect=1"],
+    ["native with shared line assigned as primary", { username: "shared-line", password: "shared-pass" }, "/me/native/vod/movie/movie-1/playback?platform=windows-native-qt"]
+  ])("does not expose a shared provider line to a paid %s", async (_case, credentials, url) => {
+    vi.spyOn(repository, "getUserContext").mockResolvedValue({
+      ...(userContext(false) as Record<string, unknown>),
+      iptvCredentials: credentials
+    } as never);
+
+    const response = await app.inject({ method: "GET", url, headers: { authorization } });
+    expect(response.body).not.toContain("/shared-line/shared-pass/");
+    if (url.includes("/native/")) {
+      expect(response.statusCode).toBe(503);
+    } else {
+      expect(response.json()).toMatchObject({ canPlay: false, url: null });
+    }
+  });
+
   it("serves a paid browser an HTTPS direct VOD source without asking the blocked server to probe it", async () => {
     vi.spyOn(repository, "getUserContext").mockResolvedValue(userContext(false));
     vi.spyOn(repository, "getMovieForPlayback").mockResolvedValue({

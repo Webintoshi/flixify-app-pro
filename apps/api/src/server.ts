@@ -465,6 +465,18 @@ function buildStreamCandidates(
   return resolvedCandidates;
 }
 
+function buildPersonalVodSourceUrl(
+  baseUrl: string,
+  streamPath: string,
+  primaryCredentials: PlaybackCredentials | null,
+  sharedCredentials: PlaybackCredentials | null
+) {
+  if (!primaryCredentials || samePlaybackCredentials(primaryCredentials, sharedCredentials)) {
+    return null;
+  }
+  return buildStreamCandidates(baseUrl, streamPath, primaryCredentials, null)[0]?.url ?? null;
+}
+
 function getScopedPlaybackCredentials(userContext: Awaited<ReturnType<typeof getUserContext>>) {
   const shared = userContext.sharedReferenceCredentials;
   const primary = userContext.iptvCredentials;
@@ -2459,13 +2471,12 @@ export function buildServer() {
         });
       }
 
-      const directSourceUrlFromCandidates =
-        buildStreamCandidates(
-          userContext.playbackBaseUrl,
-          record.stream_path,
-          playbackCredentials.primary,
-          playbackCredentials.fallback
-        )[0]?.url ?? null;
+      const personalDirectSourceUrl = buildPersonalVodSourceUrl(
+        userContext.playbackBaseUrl,
+        record.stream_path,
+        playbackCredentials.primary,
+        userContext.sharedReferenceCredentials
+      );
 
       const directTransport = guessVodTransportFromPath(record.stream_path);
       if (
@@ -2474,14 +2485,14 @@ export function buildServer() {
         rawQuery?.direct !== "0" &&
         !userContext.isThreeHourTrial &&
         (directTransport === "hls" || directTransport === "mp4") &&
-        isHttpsVodSourceUrl(directSourceUrlFromCandidates) &&
+        isHttpsVodSourceUrl(personalDirectSourceUrl) &&
         hasCurrentPlaybackAccess(userContext)
       ) {
         return {
           ...buildDirectVodPlaybackFallback({
             itemId,
             kind,
-            sourceUrl: directSourceUrlFromCandidates,
+            sourceUrl: personalDirectSourceUrl,
             transport: directTransport,
             isVerified: false
           }),
@@ -2509,17 +2520,17 @@ export function buildServer() {
         );
 
         if (
-          !userContext.isThreeHourTrial && hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
+          !userContext.isThreeHourTrial && personalDirectSourceUrl && hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
             clientRuntime,
             platform,
             transport: guessVodTransportFromPath(record.stream_path),
-            sourceUrl: directSourceUrlFromCandidates
+            sourceUrl: personalDirectSourceUrl
           })
         ) {
           return buildDirectVodPlaybackFallback({
             itemId,
             kind,
-            sourceUrl: directSourceUrlFromCandidates,
+            sourceUrl: personalDirectSourceUrl,
             transport: guessVodTransportFromPath(record.stream_path),
             isVerified: false
           });
@@ -2535,17 +2546,17 @@ export function buildServer() {
 
       if (!resolved.sourceUrl) {
         if (
-          !userContext.isThreeHourTrial && hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
+          !userContext.isThreeHourTrial && personalDirectSourceUrl && hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
             clientRuntime,
             platform,
             transport: resolved.transport,
-            sourceUrl: directSourceUrlFromCandidates
+            sourceUrl: personalDirectSourceUrl
           })
         ) {
           return buildDirectVodPlaybackFallback({
             itemId,
             kind,
-            sourceUrl: directSourceUrlFromCandidates,
+            sourceUrl: personalDirectSourceUrl,
             transport: resolved.transport,
             isVerified: false
           });
@@ -2615,17 +2626,17 @@ export function buildServer() {
       }
 
       if (
-        !userContext.isThreeHourTrial && hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
+        !userContext.isThreeHourTrial && personalDirectSourceUrl && hasCurrentPlaybackAccess(userContext) && canUseVodDirectPlaybackFallback({
           clientRuntime,
           platform,
           transport: resolved.transport,
-          sourceUrl: resolved.sourceUrl
+          sourceUrl: personalDirectSourceUrl
         })
       ) {
         return buildDirectVodPlaybackFallback({
           itemId,
           kind,
-          sourceUrl: resolved.sourceUrl,
+          sourceUrl: personalDirectSourceUrl,
           transport: resolved.transport,
           isVerified: resolved.isVerified
         });
@@ -2714,6 +2725,13 @@ export function buildServer() {
         return replyWithNativePlaybackError(reply, 503, "VOD kaynagi hazir degil.");
       }
 
+      const personalDirectSourceUrl = buildPersonalVodSourceUrl(
+        userContext.playbackBaseUrl,
+        record.stream_path,
+        playbackCredentials.primary,
+        userContext.sharedReferenceCredentials
+      );
+
       const resolved = await resolveVodSourceUrl({
         baseUrl: userContext.playbackBaseUrl,
         streamPath: record.stream_path,
@@ -2727,12 +2745,12 @@ export function buildServer() {
       const allowOptimisticNativeDirect =
         !userContext.isThreeHourTrial &&
         !resolved.ok &&
-        typeof resolved.sourceUrl === "string" &&
+        typeof personalDirectSourceUrl === "string" &&
         canUseVodDirectPlaybackFallback({
           clientRuntime: "native",
           platform,
           transport: resolved.transport,
-          sourceUrl: resolved.sourceUrl
+          sourceUrl: personalDirectSourceUrl
         });
 
       if ((!resolved.ok || !resolved.sourceUrl) && !allowOptimisticNativeDirect) {
@@ -2743,9 +2761,9 @@ export function buildServer() {
         );
       }
 
-      if (allowOptimisticNativeDirect && resolved.sourceUrl) {
+      if (allowOptimisticNativeDirect && personalDirectSourceUrl) {
         return buildNativeVodPlaybackResponse({
-          url: resolved.sourceUrl,
+          url: personalDirectSourceUrl,
           transport: resolved.transport,
           deliveryMode: "direct",
           audioTracks: [],
@@ -2800,18 +2818,18 @@ export function buildServer() {
 
       const shouldFallbackToDirect =
         !userContext.isThreeHourTrial &&
-        typeof resolved.sourceUrl === "string" &&
+        typeof personalDirectSourceUrl === "string" &&
         canUseVodDirectPlaybackFallback({
           clientRuntime: "native",
           platform,
           transport: resolved.transport,
-          sourceUrl: resolved.sourceUrl
+          sourceUrl: personalDirectSourceUrl
         }) &&
         shouldRescueNativeVodToDirect(playback.errorMessage);
 
-      if (shouldFallbackToDirect && resolved.sourceUrl && hasCurrentPlaybackAccess(userContext)) {
+      if (shouldFallbackToDirect && personalDirectSourceUrl && hasCurrentPlaybackAccess(userContext)) {
         return buildNativeVodPlaybackResponse({
-          url: resolved.sourceUrl,
+          url: personalDirectSourceUrl,
           transport: resolved.transport,
           deliveryMode: "direct",
           audioTracks: [],

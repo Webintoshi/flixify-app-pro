@@ -111,6 +111,20 @@ describe("candidate API episode direct playback", () => {
     expect(response.body).not.toContain("/trial-line/trial-pass/");
   });
 
+  it.each([
+    ["no personal line", null],
+    ["shared line assigned as primary", { username: "shared-line", password: "shared-pass" }]
+  ])("never exposes shared reference credentials with %s", async (_case, credentials) => {
+    vi.spyOn(repository, "getUserContext").mockResolvedValue({
+      ...(context(false) as Record<string, unknown>),
+      iptvCredentials: credentials
+    } as never);
+    const response = await app.inject({ method: "GET", url: route, headers: { authorization } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ canPlay: false, url: null });
+    expect(response.body).not.toContain("/shared-line/shared-pass/");
+  });
+
   it("does not start direct playback after access expires", async () => {
     vi.spyOn(repository, "getUserContext").mockResolvedValue(context(false, "https://provider.example.test", -60_000));
     const response = await app.inject({ method: "GET", url: route, headers: { authorization } });
