@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 import types
 import unittest
@@ -125,6 +126,27 @@ class ReleasePlanTests(unittest.TestCase):
              patch.object(release, "rollback") as rollback:
             release.main()
             rollback.assert_called_once_with()
+
+    def test_sync_command_exposes_only_a_known_failure_phase(self):
+        failed = subprocess.CompletedProcess(
+            args=("docker", "exec"), returncode=1, stdout=b"",
+            stderr=b"coolify_api_web_source_sync_failed:service_parse\n",
+        )
+        with patch.object(release.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(release.GateError, "^coolify_sync_failed:service_parse$"):
+                release.command("docker", "exec", "coolify", capture_sync_phase=True)
+            with self.assertRaisesRegex(release.GateError, "^command_failed$"):
+                release.command("docker", "exec", "coolify")
+
+        for unsafe_stderr in (
+            b"coolify_api_web_source_sync_failed:service_parse\nTOKEN=secret\n",
+            b"coolify_api_web_source_sync_failed:unexpected_secret\n",
+        ):
+            failed.stderr = unsafe_stderr
+            with self.subTest(stderr=unsafe_stderr), \
+                 patch.object(release.subprocess, "run", return_value=failed):
+                with self.assertRaisesRegex(release.GateError, "^command_failed$"):
+                    release.command("docker", "exec", "coolify", capture_sync_phase=True)
 
 
 class ApiOverlayTests(unittest.TestCase):

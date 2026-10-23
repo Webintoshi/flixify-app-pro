@@ -17,6 +17,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -50,7 +51,18 @@ class GateError(Exception):
     """A fixed-label precondition or postcondition failure."""
 
 
-def command(*args: str, input_data: bytes | None = None, timeout: int = 45) -> bytes:
+SYNC_PHASES = frozenset({
+    "bootstrap_autoload", "bootstrap_app", "bootstrap_kernel",
+    "payload_decode", "transaction_begin", "service_lookup",
+    "service_precondition", "compose_parse", "service_set",
+    "compose_image_drift", "source_image_drift", "compose_dump",
+    "save_raw_compose", "service_parse", "rendered_diff",
+    "application_diff", "save_compose_files", "transaction_commit",
+})
+
+
+def command(*args: str, input_data: bytes | None = None, timeout: int = 45,
+            capture_sync_phase: bool = False) -> bytes:
     try:
         result = subprocess.run(
             args, input=input_data, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -60,6 +72,14 @@ def command(*args: str, input_data: bytes | None = None, timeout: int = 45) -> b
         raise GateError("command_unavailable") from exc
     if result.returncode:
         # Both Docker and PHP may echo secret-bearing environment material.
+        if capture_sync_phase:
+            match = re.fullmatch(
+                rb"coolify_api_web_source_sync_failed:([a-z_]+)\n?", result.stderr,
+            )
+            if match:
+                phase = match.group(1).decode("ascii")
+                if phase in SYNC_PHASES:
+                    raise GateError(f"coolify_sync_failed:{phase}")
         raise GateError("command_failed")
     return result.stdout
 
@@ -234,9 +254,6 @@ def preflight(stage: str) -> tuple[dict, bytes, bytes, dict, dict, dict]:
 
 
 PHP_APPLY = r'''
-require "/var/www/html/vendor/autoload.php";
-$app = require "/var/www/html/bootstrap/app.php";
-$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 use App\Models\Service;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Yaml\Yaml;
@@ -247,17 +264,29 @@ function canonical($x) {
     }
     return $x;
 }
+$phase = 'bootstrap_autoload';
 try {
+    require "/var/www/html/vendor/autoload.php";
+    $phase = 'bootstrap_app';
+    $app = require "/var/www/html/bootstrap/app.php";
+    $phase = 'bootstrap_kernel';
+    $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+    $phase = 'payload_decode';
     $p = json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR);
-    DB::transaction(function () use ($p) {
+    $phase = 'transaction_begin';
+    DB::transaction(function () use ($p, &$phase) {
+        $phase = 'service_lookup';
         $service = Service::where('uuid', $p['uuid'])->lockForUpdate()->firstOrFail();
+        $phase = 'service_precondition';
         if ($service->id !== 1 ||
             hash('sha256', $service->docker_compose_raw) !== $p['raw_sha'] ||
             hash('sha256', $service->docker_compose) !== $p['rendered_sha']) {
             throw new RuntimeException('precondition');
         }
+        $phase = 'compose_parse';
         $raw = Yaml::parse($service->docker_compose_raw);
         $expected = Yaml::parse($service->docker_compose);
+        $phase = 'service_set';
         $rawNames = array_keys($raw['services']);
         $renderedNames = array_keys($expected['services']);
         sort($rawNames);
@@ -267,10 +296,12 @@ try {
             throw new RuntimeException('service set');
         }
         foreach ($expected['services'] as $name => $details) {
+            $phase = 'compose_image_drift';
             if ($raw['services'][$name]['image'] !== $details['image']) {
                 throw new RuntimeException('image drift');
             }
             if (array_key_exists($name, $p['old'])) {
+                $phase = 'source_image_drift';
                 if ($raw['services'][$name]['image'] !== $p['old'][$name] ||
                     $service->applications()->where('name', $name)->firstOrFail()->image !== $p['old'][$name]) {
                     throw new RuntimeException('source drift');
@@ -279,23 +310,30 @@ try {
                 $expected['services'][$name]['image'] = $p['new'][$name];
             }
         }
+        $phase = 'compose_dump';
         $service->docker_compose_raw = Yaml::dump($raw, 10, 2);
+        $phase = 'save_raw_compose';
         $service->save();
+        $phase = 'service_parse';
         $service->parse();
+        $phase = 'rendered_diff';
         if (canonical(Yaml::parse($service->docker_compose)) !== canonical($expected) ||
             canonical(Yaml::parse($service->docker_compose_raw)) !== canonical($raw)) {
             throw new RuntimeException('rendered diff');
         }
         foreach ($p['new'] as $name => $tag) {
+            $phase = 'application_diff';
             if ($service->applications()->where('name', $name)->firstOrFail()->image !== $tag) {
                 throw new RuntimeException('application diff');
             }
         }
+        $phase = 'save_compose_files';
         $service->saveComposeConfigs();
+        $phase = 'transaction_commit';
     }, 1);
     echo "coolify_api_web_source_synced\n";
 } catch (Throwable $e) {
-    fwrite(STDERR, "coolify_api_web_source_sync_failed\n");
+    fwrite(STDERR, "coolify_api_web_source_sync_failed:$phase\n");
     exit(1);
 }
 '''
@@ -338,7 +376,8 @@ def sync_images(record: dict, compose_bytes: bytes, env_bytes: bytes,
     }
     try:
         command("docker", "exec", "-i", "coolify", "php", "-r", PHP_APPLY,
-                input_data=json.dumps(payload, separators=(",", ":")).encode(), timeout=180)
+                input_data=json.dumps(payload, separators=(",", ":")).encode(), timeout=180,
+                capture_sync_phase=True)
     except GateError:
         current = service_record()
         if sha(current["docker_compose_raw"]) == payload["raw_sha"] and \
