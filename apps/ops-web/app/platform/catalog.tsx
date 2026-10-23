@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiRequest } from "../../lib/api";
+import { accountState, type AccountUser } from "../../lib/account-model";
 import { Artwork, FavoriteButton } from "./artwork";
 import { Detail } from "./detail";
 import { AdultMovieToggle } from "./adult-movie-toggle";
@@ -103,6 +104,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const [page, setPage] = useState(1);
   const [catalog, setCatalog] = useState<Catalog>({ items: [], total: 0 });
   const [catalogAccount, setCatalogAccount] = useState("");
+  const [accessAccount, setAccessAccount] = useState<{ account: string; user: AccountUser } | null>(null);
   const [categoryGroups, setCategoryGroups] = useState<{ account: string; kind: Kind; groups: NonNullable<Catalog["groups"]> }>({ account: "", kind, groups: [] });
   const [otherRows, setOtherRows] = useState<{ kind: Kind; data: Catalog }[]>([]);
   const [otherRowsAccount, setOtherRowsAccount] = useState("");
@@ -115,11 +117,32 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const [detailLoading, setDetailLoading] = useState(false);
   const openedHere = useRef(false);
   const account = session?.kryptoniteCode ?? session?.accessToken ?? "";
+  const hasSession = Boolean(session);
   const currentMovieRevision = movieRevision.account === account ? movieRevision.revision : 0;
   const selectedId = params.get("item");
   const selectedKind = params.get("kind");
   useEffect(() => { const timer = setTimeout(() => { setSearch(query.trim()); setPage(1); }, 300); return () => clearTimeout(timer); }, [query]);
   useEffect(() => { const q = params.get("q"); if (q !== null) setQuery(q); }, [params]);
+  useEffect(() => {
+    if (!hasSession) { setAccessAccount(null); return; }
+    let cancelled = false;
+    apiRequest<{ user: AccountUser }>("/me").then(data => {
+      if (!cancelled && data.user && typeof data.user.hasAssignedLink === "boolean") {
+        setAccessAccount({ account, user: data.user });
+      }
+    }).catch(() => { if (!cancelled) setAccessAccount(null); });
+    return () => { cancelled = true; };
+  }, [account, hasSession, reload]);
+  useEffect(() => {
+    if (accessAccount?.account !== account) return;
+    const endsAt = Date.parse(accessAccount.user.activePackage?.endsAt ?? "");
+    if (!Number.isFinite(endsAt) || endsAt <= Date.now()) return;
+    const refreshAtDeadline = () => setReload(value => value + 1);
+    const timer = setTimeout(refreshAtDeadline, Math.min(endsAt - Date.now() + 25, 2_147_483_647));
+    const onVisible = () => { if (document.visibilityState === "visible" && Date.now() >= endsAt) refreshAtDeadline(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, [accessAccount, account]);
   useEffect(() => { setPage(1); setHeroIndex(0); setCatalog(previous => ({ ...previous, items: [], total: 0 })); setDetail(null); }, [account, kind, group, search]);
   useEffect(() => {
     if (!session || favoritesOnly) { setLoading(false); return; }
@@ -171,6 +194,19 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     invalidateFavorites();
   };
   const title = favoritesOnly ? "Favorilerim" : overview ? "Senin Alanın" : kind === "movie" ? "Filmler" : "Diziler";
+  const verifiedUser = accessAccount?.account === account ? accessAccount.user : null;
+  const accessCopy = verifiedUser ? emptyCatalogCopy(kind, "", "", {
+    status: verifiedUser.status ?? "active",
+    active: accountState(verifiedUser).active,
+    hasAssignedLink: Boolean(verifiedUser.hasAssignedLink),
+    trialProvisionStatus: verifiedUser.trialProvisionStatus ?? null
+  }) : null;
+  if (accessCopy) return <main className={`${s.catalog} ${kind === "series" && !overview && !favoritesOnly ? seriesStyles.seriesPage : ""}`}>
+    <div className={s.catalogContent} data-catalog-results>
+      <div className={s.catalogToolbar}><div className={s.catalogHeading}><h1>{title}</h1></div></div>
+      <div className={s.empty} role="status"><Icon name="settings"/><h2>{accessCopy.heading}</h2><p>{accessCopy.body}</p>{accessCopy.action && <Link className={s.primary} href={accessCopy.action.href}>{accessCopy.action.label}</Link>}</div>
+    </div>
+  </main>;
   const shownCatalog: Catalog = catalogAccount === account ? catalog : { items: [], total: 0, groups: [] };
   const items = favoritesOnly ? favorites.filter(item => (filter === "all" || item.kind === filter) && item.title.toLocaleLowerCase("tr").includes(search.toLocaleLowerCase("tr"))) : shownCatalog.items;
   const emptyCopy = emptyCatalogCopy(kind, group, search);

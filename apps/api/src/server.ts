@@ -813,6 +813,15 @@ function guessVodTransportFromPath(streamPath: string): VodTransport {
   return "unknown";
 }
 
+function isHttpsVodSourceUrl(sourceUrl: string | null): sourceUrl is string {
+  if (!sourceUrl) return false;
+  try {
+    return new URL(sourceUrl).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function buildDirectVodPlaybackFallback(input: {
   itemId: string;
   kind: "movie" | "episode";
@@ -2457,6 +2466,28 @@ export function buildServer() {
           playbackCredentials.primary,
           playbackCredentials.fallback
         )[0]?.url ?? null;
+
+      const directTransport = guessVodTransportFromPath(record.stream_path);
+      if (
+        clientRuntime === "browser" &&
+        rawQuery?.vodDirect === "1" &&
+        rawQuery?.direct !== "0" &&
+        !userContext.isThreeHourTrial &&
+        (directTransport === "hls" || directTransport === "mp4") &&
+        isHttpsVodSourceUrl(directSourceUrlFromCandidates) &&
+        hasCurrentPlaybackAccess(userContext)
+      ) {
+        return {
+          ...buildDirectVodPlaybackFallback({
+            itemId,
+            kind,
+            sourceUrl: directSourceUrlFromCandidates,
+            transport: directTransport,
+            isVerified: false
+          }),
+          deliveryMode: "direct_provider" as const
+        };
+      }
 
       let resolved: Awaited<ReturnType<typeof resolveVodSourceUrl>>;
       try {

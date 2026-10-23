@@ -48,7 +48,7 @@ import { buildServer } from "./server.js";
 
 const PROVIDER_URL_MARKER = "/trial-line/trial-pass/";
 
-function userContext(isThreeHourTrial: boolean) {
+function userContext(isThreeHourTrial: boolean, playbackBaseUrl = "https://provider.example.test") {
   return {
     summary: { id: "trial-user", status: "active" },
     snapshotVersion: 1,
@@ -57,7 +57,7 @@ function userContext(isThreeHourTrial: boolean) {
     accessUntil: new Date(Date.now() + 60_000).toISOString(),
     isThreeHourTrial,
     sourceStatus: "ready",
-    playbackBaseUrl: "https://provider.example.test",
+    playbackBaseUrl,
     iptvCredentials: { username: "trial-line", password: "trial-pass" },
     sharedReferenceCredentials: { username: "shared-line", password: "shared-pass" }
   } as never;
@@ -150,6 +150,7 @@ describe("three-hour trial direct source fallback", () => {
   });
 
   it.each([
+    "/me/vod/movie/movie-1/playback?clientRuntime=browser&vodDirect=1",
     "/me/vod/movie/movie-1/playback?clientRuntime=app&platform=android",
     "/me/native/vod/movie/movie-1/playback?platform=windows-native-qt"
   ])("does not expose the VOD provider URL to a trial on %s", async (url) => {
@@ -212,5 +213,74 @@ describe("three-hour trial direct source fallback", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().url).toContain(PROVIDER_URL_MARKER);
+  });
+
+  it("serves a paid browser an HTTPS direct VOD source without asking the blocked server to probe it", async () => {
+    vi.spyOn(repository, "getUserContext").mockResolvedValue(userContext(false));
+    vi.spyOn(repository, "getMovieForPlayback").mockResolvedValue({
+      id: "movie-1",
+      snapshot_version: 1,
+      title: "Test Movie",
+      poster_url: null,
+      group_title: "Test",
+      stream_path: "movie/__IPTV_USERNAME__/__IPTV_PASSWORD__/1.mp4",
+      order_index: 1
+    });
+    probe.vod.mockRejectedValue(new Error("provider forbids this server country"));
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/me/vod/movie/movie-1/playback?clientRuntime=browser&vodDirect=1",
+      headers: { authorization }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      canPlay: true,
+      deliveryMode: "direct_provider",
+      transport: "mp4",
+      url: "https://provider.example.test/movie/trial-line/trial-pass/1.mp4"
+    });
+  });
+
+  it("honors direct=0 when the paid browser retries through the relay", async () => {
+    vi.spyOn(repository, "getUserContext").mockResolvedValue(userContext(false));
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/me/vod/movie/movie-1/playback?clientRuntime=browser&vodDirect=1&direct=0",
+      headers: { authorization }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ canPlay: false, url: null });
+    expect(response.body).not.toContain(PROVIDER_URL_MARKER);
+  });
+
+  it("keeps an insecure paid source on the relay path", async () => {
+    vi.spyOn(repository, "getUserContext").mockResolvedValue(userContext(false, "http://provider.example.test"));
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/me/vod/movie/movie-1/playback?clientRuntime=browser&vodDirect=1",
+      headers: { authorization }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ canPlay: false, url: null });
+    expect(response.body).not.toContain("http://provider.example.test/");
+  });
+
+  it("does not claim a malformed HTTPS source can play directly", async () => {
+    vi.spyOn(repository, "getUserContext").mockResolvedValue(userContext(false, "https://bad host"));
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/me/vod/movie/movie-1/playback?clientRuntime=browser&vodDirect=1",
+      headers: { authorization }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ canPlay: false, url: null });
   });
 });
