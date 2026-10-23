@@ -147,6 +147,11 @@ class ApiOverlayTests(unittest.TestCase):
         with self.assertRaisesRegex(build.GateError, "api_source_hash_differs"):
             build.verify_pinned_api_source(self.previous)
 
+    def test_candidate_bundle_requires_compiled_direct_branch(self):
+        with patch.object(build, "command", return_value=b"compiled old API"), \
+             self.assertRaisesRegex(build.GateError, "api_candidate_bundle_missing_direct_branch"):
+            build.verify_candidate_api_bundle()
+
     def test_patch_check_rejects_changed_playback_context(self):
         original = self.previous.replace(
             b"      let resolved: Awaited<ReturnType<typeof resolveVodSourceUrl>>;",

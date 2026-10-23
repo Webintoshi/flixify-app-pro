@@ -42,6 +42,8 @@ OVERLAYS = {
 }
 API_SERVER = "apps/api/src/server.ts"
 PINNED_API_SERVER_SHA256 = "490ab6772938338c33b7c65d0556dd9b7d6dbcab1b2708919da9a5201a752f47"
+CANDIDATE_API_TEST = "coolify/releases/2026-10-23-playback-fix/candidate-vod-direct.test.ts"
+CANDIDATE_API_TEST_SHA256 = "8324db67abe5b38500f567e9ecbdca336ee4a48af58560a95464f0cb1b2b5f46"
 PUBLIC_WEB_KEYS = (
     "NEXT_PUBLIC_API_BASE_URL",
     "NEXT_PUBLIC_SUPABASE_URL",
@@ -144,6 +146,51 @@ def apply_api_patch(repo: Path, root: Path, original: bytes) -> bytes:
     return patched
 
 
+def verify_candidate_api_source(repo: Path) -> None:
+    base = inspect(BASE["api"][0])
+    candidate = inspect(TARGET["api"])
+    if base["Id"] != BASE["api"][1] or candidate["Id"] == base["Id"]:
+        raise GateError("api_candidate_image_differs")
+    labels = candidate.get("Config", {}).get("Labels") or {}
+    if labels.get("org.opencontainers.image.revision") != REVISION:
+        raise GateError("api_candidate_revision_differs")
+    base_layers = base.get("RootFS", {}).get("Layers") or []
+    candidate_layers = candidate.get("RootFS", {}).get("Layers") or []
+    if not base_layers or candidate_layers[:len(base_layers)] != base_layers:
+        raise GateError("api_candidate_base_differs")
+    original = command("docker", "run", "--rm", "--network", "none",
+                       "--entrypoint", "cat", BASE["api"][0], "/app/" + API_SERVER)
+    patched = command("docker", "run", "--rm", "--network", "none",
+                      "--entrypoint", "cat", TARGET["api"], "/app/" + API_SERVER)
+    verify_pinned_api_source(original)
+    verify_api_patch(repo, original, patched)
+    verify_candidate_api_bundle()
+
+
+def verify_candidate_api_bundle() -> None:
+    bundle = command("docker", "run", "--rm", "--network", "none",
+                     "--entrypoint", "cat", TARGET["api"], "/app/apps/api/dist/server.js")
+    if b"function isHttpsVodSourceUrl(" not in bundle or \
+       b"const directTransport = guessVodTransportFromPath(record.stream_path);" not in bundle:
+        raise GateError("api_candidate_bundle_missing_direct_branch")
+
+
+def test_candidate_api(repo: Path, scratch: Path) -> None:
+    source = repo / CANDIDATE_API_TEST
+    if not source.is_file():
+        raise GateError("candidate_api_test_missing")
+    contents = source.read_bytes()
+    if hashlib.sha256(contents).hexdigest() != CANDIDATE_API_TEST_SHA256:
+        raise GateError("candidate_api_test_hash_differs")
+    test = scratch / "candidate-vod-direct.test.ts"
+    test.write_bytes(contents)
+    command("docker", "run", "--rm", "--network", "none", "-v",
+            f"{test}:/app/apps/api/src/candidate-vod-direct.test.ts:ro",
+            "--entrypoint", "npm", TARGET["api"], "test", "-w", "@flixify/api",
+            "--", "src/candidate-vod-direct.test.ts", timeout=180)
+    print("candidate_api_trial_and_paid_episode_playback_test_passed")
+
+
 def public_web_environment() -> dict[str, str]:
     entries = running("ops-web")["Config"].get("Env") or []
     env = dict(item.split("=", 1) for item in entries if "=" in item)
@@ -236,14 +283,8 @@ def build_one(repo: Path, name: str, web_env: dict[str, str], scratch: Path) -> 
         elif in_image != git_file(repo, REVISION, path):
             raise GateError(f"candidate_source_file_differs:{name}")
     if name == "api":
-        test = root / "apps/api/src/trial-direct-fallback.test.ts"
-        test.parent.mkdir(parents=True, exist_ok=True)
-        test.write_bytes(git_file(repo, REVISION, "apps/api/src/trial-direct-fallback.test.ts"))
-        command("docker", "run", "--rm", "--network", "none", "-v",
-                f"{test}:/app/apps/api/src/trial-direct-fallback.test.ts:ro",
-                "--entrypoint", "npm", TARGET[name], "test", "-w", "@flixify/api",
-                "--", "src/trial-direct-fallback.test.ts", timeout=180)
-        print("candidate_api_trial_and_direct_playback_test_passed")
+        verify_candidate_api_bundle()
+        test_candidate_api(repo, root)
     print(f"candidate_built:{name}:{candidate['Id']}")
 
 
@@ -253,7 +294,17 @@ def main() -> None:
                         help="Git checkout containing commit 661b498; it is never edited")
     parser.add_argument("--only", choices=("api", "ops-web"),
                         help="build only this image after an interrupted candidate build")
+    parser.add_argument("--verify-existing-api", action="store_true",
+                        help="verify and test the already built API candidate without rebuilding it")
     args = parser.parse_args()
+    if args.verify_existing_api:
+        if args.only:
+            raise GateError("conflicting_build_options")
+        verify_candidate_api_source(args.source_repo)
+        with tempfile.TemporaryDirectory(prefix="flixify-playback-test-") as directory:
+            test_candidate_api(args.source_repo, Path(directory))
+        print("existing_api_candidate_verified; live_containers_unchanged")
+        return
     names = (args.only,) if args.only else ("api", "ops-web")
     check_source(args.source_repo, names)
     web_env = public_web_environment() if "ops-web" in names else {}
