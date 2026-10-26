@@ -2518,11 +2518,18 @@ export function buildServer() {
         (rawQuery?.vodDirect === "1" || rawQuery?.direct === "1") &&
         rawQuery?.direct !== "0" &&
         canUseClientIpPlayback(userContext) &&
-        (directTransport === "hls" || directTransport === "mp4" || directTransport === "mkv") &&
         canonicalDirectUrl?.protocol === "https:" &&
         personalDirectSourceUrl !== null &&
         hasCurrentPlaybackAccess(userContext)
       ) {
+        if (directTransport !== "hls" && directTransport !== "mp4" && directTransport !== "mkv") {
+          return buildDisabledVodPlaybackRecord({
+            itemId,
+            kind,
+            transport: /\.avi$/i.test(canonicalDirectUrl.pathname) ? "avi" : "unknown",
+            errorMessage: "Bu video formati tarayicida desteklenmiyor."
+          });
+        }
         return {
           ...buildDirectVodPlaybackFallback({
             itemId,

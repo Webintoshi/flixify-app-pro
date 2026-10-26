@@ -80,6 +80,36 @@ describe("viewer IP browser playback", () => {
       expect(fetch).not.toHaveBeenCalled();
     });
   }
+  for (const trial of [true, false]) {
+    for (const [suffix, transport] of [["1.avi", "avi"], ["1.unknown", "unknown"], ["folder.mp4/1?subtitle=.m3u8", "unknown"]]) {
+      it(`fails fast for eligible ${trial ? "trial" : "paid"} browser unsupported ${suffix}`, async () => {
+        context.isThreeHourTrial = trial;
+        vi.mocked(repository.getEpisodeForPlayback).mockResolvedValue({ id: "1", snapshot_version: 1,
+          stream_path: `series/__IPTV_USERNAME__/__IPTV_PASSWORD__/${suffix}` } as never);
+        const flag = trial ? "direct=1" : "vodDirect=1";
+        const response = await request(`/me/vod/episode/1/playback?clientRuntime=browser&${flag}`);
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({ canPlay: false, url: null, transport,
+          errorMessage: expect.stringContaining("tarayicida") });
+        expect(vod.probeVodStream).not.toHaveBeenCalled();
+        expect(live.probeLiveStream).not.toHaveBeenCalled();
+        expect(repository.updateLiveChannelHealth).not.toHaveBeenCalled();
+        expect(fetch).not.toHaveBeenCalled();
+      });
+    }
+  }
+  for (const variant of ["http", "native", "optOut", "ineligible"]) {
+    it(`preserves source preparation for unsupported ${variant} requests`, async () => {
+      vi.mocked(repository.getEpisodeForPlayback).mockResolvedValue({ id: "1", snapshot_version: 1,
+        stream_path: "series/__IPTV_USERNAME__/__IPTV_PASSWORD__/1.avi" } as never);
+      if (variant === "http") context.playbackBaseUrl = "http://provider.example.test";
+      if (variant === "ineligible") context.trialProviderExpiresAt = null;
+      const query = variant === "native" ? "clientRuntime=native&direct=1" :
+        variant === "optOut" ? "clientRuntime=browser&vodDirect=1&direct=0" : "clientRuntime=browser&direct=1";
+      await request(`/me/vod/episode/1/playback?${query}`);
+      expect(vod.probeVodStream).toHaveBeenCalled();
+    });
+  }
   for (const variant of ["shared", "missing", "overlong", "malformed", "expired", "currentExpired", "missingDeadline", "http", "unsupported"]) {
     it(`does not issue direct playback for ${variant}`, async () => {
       if (variant === "shared") context.iptvCredentials = context.sharedReferenceCredentials;
