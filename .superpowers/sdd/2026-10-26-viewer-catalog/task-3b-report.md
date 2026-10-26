@@ -52,6 +52,6 @@ TDD: new helper tests initially failed because the helper module was absent; det
 
 `git diff --check` — clean.
 
-Additional existing `direct-playback-deadline.test.mts` attempt: 5/5 fail before deadline behavior runs because its dynamic import sees `createDirectPlaybackDeadline` as undefined under the current TSX CJS/ESM import shape. Existing test and implementation were not edited (outside ownership); new tests use the working default-import interop form. Reported to root. This is separate from the clean 27-test focused suite.
+`node --test apps/ops-web/app/platform/direct-playback-deadline.test.mts` — 5/5 pass under native Node TypeScript stripping. An earlier attempt through TSX produced import-shape failures before execution; root identified the existing test runner convention and the correct native command passes without source edits. Total focused evidence: 27 integration/adapter tests plus 5 existing deadline tests pass.
 
 No Next build/cache, browser, provider/production request or push. Root owns browser/end-to-end verification. Commit contains only the owned files listed above and this report; commit hash supplied in task completion message.
