@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiRequest } from "../../lib/api";
 import { accountState, type AccountUser } from "../../lib/account-model";
@@ -12,6 +12,7 @@ import { emptyCatalogCopy } from "./catalog-empty";
 import { Icon } from "./icons";
 import { usePlatform } from "./session";
 import { pagePersonalCatalog, sessionIdentity, resolvePersonalDetail } from "./personal-integration";
+import { buildShowcaseRails, orderShowcaseCatalog, selectShowcaseHero, showcaseDayKey } from "./catalog-showcase";
 import { itemKey, type Catalog, type Kind, type MediaItem } from "./types";
 import s from "./platform.module.css";
 import seriesStyles from "./series-catalog.module.css";
@@ -118,11 +119,52 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const [detailLoading, setDetailLoading] = useState(false);
   const openedHere = useRef(false);
   const account = `${sessionIdentity(session)}:${providerMode}:${providerScope}`;
-  const loadCatalog = (kind: Kind, page: number, search: string, group: string, account: string, revision = 0) => personalProvider && providerMode === "personal" ? personalProvider.catalog(kind).then(items=>pagePersonalCatalog(items,page,search,group)) : providerMode === "legacy" ? getCatalog(kind,page,search,group,account,revision) : Promise.reject(new Error("Provider loading"));
+  const [day, setDay] = useState(showcaseDayKey);
+  // A view owns a frozen raw snapshot, even when playback refreshes provider caches.
+  const personalSnapshot = useMemo(() => ({ raw: new Map<Kind, Promise<MediaItem[]>>(), daily: new Map<string, MediaItem[]>() }), [account, personalProvider]);
+  const [catalogSnapshot, setCatalogSnapshot] = useState<typeof personalSnapshot | null>(null);
+  const [rowsSnapshot, setRowsSnapshot] = useState<typeof personalSnapshot | null>(null);
+  const loadCatalog = useCallback((kind: Kind, page: number, search: string, group: string, account: string, revision = 0): Promise<Catalog> => {
+    if (personalProvider && providerMode === "personal") {
+      const snapshot = personalSnapshot;
+      let raw = snapshot.raw.get(kind);
+      if (!raw) {
+        raw = personalProvider.catalog(kind).then(items => [...items]);
+        snapshot.raw.set(kind, raw);
+        const pending = raw;
+        raw.catch(() => { if (snapshot.raw.get(kind) === pending) snapshot.raw.delete(kind); });
+      }
+      return raw.then(items => {
+        const original = pagePersonalCatalog(items, page, search, group);
+        if (kind === "live" || search || group) return original;
+        const key = `${kind}:${day}`;
+        let ordered = snapshot.daily.get(key);
+        if (!ordered) {
+          ordered = orderShowcaseCatalog(items, kind, day);
+          if (snapshot.daily.size >= 6) snapshot.daily.delete(snapshot.daily.keys().next().value!);
+          snapshot.daily.set(key, ordered);
+        }
+        return { ...original, items: ordered.slice((page - 1) * 48, page * 48) };
+      });
+    }
+    return providerMode === "legacy" ? getCatalog(kind, page, search, group, account, revision) : Promise.reject(new Error("Provider loading"));
+  }, [personalProvider, providerMode, day, personalSnapshot]);
   const hasSession = Boolean(session);
   const currentMovieRevision = movieRevision.account === account ? movieRevision.revision : 0;
   const selectedId = params.get("item");
   const selectedKind = params.get("kind");
+  const catalogOwner = JSON.stringify([account, kind, search, group, day]);
+  const rowsOwner = JSON.stringify([account, search, day]);
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== "hidden" && page === 1 && !query && !search && !group && !selectedId && !detail) setDay(showcaseDayKey());
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    const timer = window.setInterval(refresh, 60_000);
+    return () => { window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); window.clearInterval(timer); };
+  }, [account, kind, page, query, search, group, selectedId, detail]);
   useEffect(() => { const timer = setTimeout(() => { setSearch(query.trim()); setPage(1); }, 300); return () => clearTimeout(timer); }, [query]);
   useEffect(() => { const q = params.get("q"); if (q !== null) setQuery(q); }, [params]);
   useEffect(() => {
@@ -152,18 +194,19 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     let cancelled = false; setLoading(true); setError("");
     loadCatalog(kind, page, search, group, account, currentMovieRevision).then(data => {
       if (cancelled) return;
-      setCatalog(previous => ({ ...data, items: page === 1 || catalogAccount !== account ? data.items : Array.from(new Map([...previous.items, ...data.items].map(i => [itemKey(i), i])).values()) }));
+      setCatalog(previous => ({ ...data, items: page === 1 || catalogAccount !== catalogOwner ? data.items : Array.from(new Map([...previous.items, ...data.items].map(i => [itemKey(i), i])).values()) }));
       if (!group && data.groups?.length) setCategoryGroups({ account, kind, groups: data.groups });
-      setCatalogAccount(account);
+      setCatalogAccount(catalogOwner);
+      setCatalogSnapshot(personalSnapshot);
     }).catch(() => { if (!cancelled) setError("İçerikler yüklenemedi. Tekrar deneyebilirsin."); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [session, account, kind, page, search, group, favoritesOnly, reload, currentMovieRevision]);
+  }, [session, account, kind, page, search, group, favoritesOnly, reload, currentMovieRevision, loadCatalog]);
   useEffect(() => {
     if (!overview || !session || providerMode === "loading") return;
     let cancelled = false;
-    Promise.all((["series", "live"] as Kind[]).map(async rowKind => ({ kind: rowKind, data: await loadCatalog(rowKind, 1, search, "", account) }))).then(rows => { if (!cancelled) { setOtherRows(rows); setOtherRowsAccount(account); } }).catch(() => { if (!cancelled) setError("Bazı içerikler yüklenemedi. Tekrar deneyebilirsin."); });
+    Promise.all((["series", "live"] as Kind[]).map(async rowKind => ({ kind: rowKind, data: await loadCatalog(rowKind, 1, search, "", account) }))).then(rows => { if (!cancelled) { setOtherRows(rows); setOtherRowsAccount(rowsOwner); setRowsSnapshot(personalSnapshot); } }).catch(() => { if (!cancelled) setError("Bazı içerikler yüklenemedi. Tekrar deneyebilirsin."); });
     return () => { cancelled = true; };
-  }, [overview, session, account, search, reload, currentMovieRevision]);
+  }, [overview, session, account, search, reload, currentMovieRevision, loadCatalog]);
   useEffect(() => {
     if (!selectedId || !["movie", "series"].includes(selectedKind ?? "")) { setDetail(null); return; }
     let cancelled = false; setDetail(null); setDetailLoading(true); setError("");
@@ -207,38 +250,31 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     hasAssignedLink: Boolean(verifiedUser.hasAssignedLink),
     trialProvisionStatus: verifiedUser.trialProvisionStatus ?? null
   }) : null;
+  const shownCatalog: Catalog = catalogAccount === catalogOwner && catalogSnapshot === personalSnapshot ? catalog : { items: [], total: 0, groups: [] };
+  const items = useMemo(() => favoritesOnly ? favorites.filter(item => (filter === "all" || item.kind === filter) && item.title.toLocaleLowerCase("tr").includes(search.toLocaleLowerCase("tr"))) : shownCatalog.items, [favoritesOnly, favorites, filter, search, shownCatalog.items]);
+  const emptyCopy = emptyCatalogCopy(kind, group, search);
+  const currentOtherRows = useMemo(() => otherRowsAccount === rowsOwner && rowsSnapshot === personalSnapshot ? otherRows : [], [otherRowsAccount, rowsOwner, otherRows, rowsSnapshot, personalSnapshot]);
+  const dailyPool = useMemo(() => {
+    const movies = shownCatalog.items;
+    const series = overview ? currentOtherRows.find(row => row.kind === "series")?.data.items ?? [] : [];
+    return providerMode === "legacy" ? [...orderShowcaseCatalog(movies, "movie", day), ...orderShowcaseCatalog(series, "series", day)] : [...movies, ...series];
+  }, [shownCatalog.items, overview, currentOtherRows, providerMode, day]);
+  const heroOptions = useMemo(() => overview ? selectShowcaseHero(dailyPool, day) : [], [overview, dailyPool, day]);
+  const featured = heroOptions[heroIndex % heroOptions.length];
+  const heroExclusions = useMemo(() => new Set(heroOptions.map(itemKey)), [heroOptions]);
+  // Include the full combined pool so excluded hero aliases seed both row selectors.
+  const overviewRails = useMemo(() => ({ movie: buildShowcaseRails(dailyPool, "movie", heroExclusions).primary, series: buildShowcaseRails(dailyPool, "series", heroExclusions).primary }), [dailyPool, heroExclusions]);
+  const seriesCatalog = kind === "series" && !overview && !favoritesOnly;
+  const discoveryRows = useMemo(() => !favoritesOnly && !overview && !group && !search && kind !== "live" ? buildShowcaseRails(providerMode === "legacy" ? orderShowcaseCatalog(items, kind, day) : items, kind) : null, [favoritesOnly, overview, group, search, kind, items, providerMode, day]);
   if (accessCopy) return <main className={`${s.catalog} ${kind === "series" && !overview && !favoritesOnly ? seriesStyles.seriesPage : ""}`}>
     <div className={s.catalogContent} data-catalog-results>
       <div className={s.catalogToolbar}><div className={s.catalogHeading}><h1>{title}</h1></div></div>
       <div className={s.empty} role="status"><Icon name="settings"/><h2>{accessCopy.heading}</h2><p>{accessCopy.body}</p>{accessCopy.action && <Link className={s.primary} href={accessCopy.action.href}>{accessCopy.action.label}</Link>}</div>
     </div>
   </main>;
-  const shownCatalog: Catalog = catalogAccount === account ? catalog : { items: [], total: 0, groups: [] };
-  const items = favoritesOnly ? favorites.filter(item => (filter === "all" || item.kind === filter) && item.title.toLocaleLowerCase("tr").includes(search.toLocaleLowerCase("tr"))) : shownCatalog.items;
-  const emptyCopy = emptyCatalogCopy(kind, group, search);
-  const currentOtherRows = otherRowsAccount === account ? otherRows : [];
-  const heroOptions = [...shownCatalog.items, ...(overview ? currentOtherRows.find(row => row.kind === "series")?.data.items ?? [] : [])].filter(item => item.posterUrl && item.available !== false).slice(0, 5);
-  const featured = heroOptions[heroIndex % heroOptions.length] ?? shownCatalog.items[0];
-  const categoryRows = Array.from(items.reduce((rows, item) => {
-    if (item.groupTitle) rows.set(item.groupTitle, [...(rows.get(item.groupTitle) ?? []), item]);
-    return rows;
-  }, new Map<string, MediaItem[]>())).filter(([, row]) => row.length >= 3).slice(0, 4);
-  const seriesCatalog = kind === "series" && !overview && !favoritesOnly;
-  const seriesRows = seriesCatalog && !group && !search ? (() => {
-    const firstRow = items.slice(0, 12);
-    const remaining = items.slice(firstRow.length);
-    const byGroup = remaining.reduce((rows, item) => {
-      if (item.groupTitle) rows.set(item.groupTitle, [...(rows.get(item.groupTitle) ?? []), item]);
-      return rows;
-    }, new Map<string, MediaItem[]>());
-    const categories = Array.from(byGroup).filter(([, row]) => row.length >= 3).slice(0, 4);
-    const categorized = new Set(categories.flatMap(([, row]) => row.map(itemKey)));
-    const other = remaining.filter(item => !categorized.has(itemKey(item)));
-    return { firstRow, categories, other };
-  })() : null;
   return <main className={`${s.catalog} ${seriesCatalog ? seriesStyles.seriesPage : ""}`}>
     <div className={s.catalogContent} data-catalog-results>
-    {overview && featured && !search && <section className={s.hero}><Artwork item={featured} hero/><div className={s.heroFade}/><div className={s.heroCopy}><span>{featured.kind === "series" ? "DİZİ" : "FİLM"} <b>GÜNDEMDE</b></span><h1>{featured.title}</h1><p>{featured.groupTitle}{featured.seasonCount ? ` · ${featured.seasonCount} sezon` : ""}</p><div className={s.heroActions}><a className={s.heroDiscover} href="#kesfet"><Icon name="search"/>Kataloğu Keşfet</a><button className={s.heroMore} onClick={() => open(featured)}>Daha Fazla <Icon name="arrow"/></button><FavoriteButton item={featured} expanded/></div></div>{heroOptions.length > 1 && <div className={s.heroSlides} role="group" aria-label="Öne çıkan içerikler">{heroOptions.map((item, index) => <button key={itemKey(item)} type="button" aria-label={`${index + 1}. içerik: ${item.title}`} aria-pressed={heroIndex === index} onClick={() => setHeroIndex(index)}/>)}</div>}</section>}
+    {overview && featured && !search && <section className={s.hero}><Artwork item={featured} hero/><div className={s.heroFade}/><div className={s.heroCopy}><span>{featured.kind === "series" ? "DİZİ" : "FİLM"} <b>GÜNÜN SEÇKİSİ</b></span><h1>{featured.title}</h1><p>{featured.groupTitle}{featured.seasonCount ? ` · ${featured.seasonCount} sezon` : ""}</p><div className={s.heroActions}><a className={s.heroDiscover} href="#kesfet"><Icon name="search"/>Kataloğu Keşfet</a><button className={s.heroMore} onClick={() => open(featured)}>Daha Fazla <Icon name="arrow"/></button><FavoriteButton item={featured} expanded/></div></div>{heroOptions.length > 1 && <div className={s.heroSlides} role="group" aria-label="Öne çıkan içerikler">{heroOptions.map((item, index) => <button key={itemKey(item)} type="button" aria-label={`${index + 1}. içerik: ${item.title}`} aria-pressed={heroIndex === index} onClick={() => setHeroIndex(index)}/>)}</div>}</section>}
     {overview && !search && <section className={s.featureIntro}><span className={s.featureIntroMark}><Icon name="heart"/></span><div><small>FLIXIFY SEÇKİSİ</small><h2>Hazırsan perdeyi açalım.</h2><p>Filmleri, dizileri ve yeni hikâyeleri bir arada keşfet.</p></div><a href="#kesfet">Kataloğu Keşfet <Icon name="arrow"/></a></section>}
     <div className={`${s.catalogToolbar} ${seriesCatalog ? seriesStyles.toolbar : ""}`}><div className={s.catalogHeading} id="kesfet"><h1>{title}</h1>{(!favoritesOnly || favoritesReady) && <span>{favoritesOnly ? favorites.length : shownCatalog.total.toLocaleString("tr-TR")} içerik</span>}</div>
       <div className={s.filters}><label className={s.search}><Icon name="search"/><input id="catalog-search" aria-label={`${title} içinde ara`} placeholder={favoritesOnly ? "Favorilerinde ara…" : "İçerik ara…"} value={query} onChange={e => setQuery(e.target.value)}/>{query && <button onClick={() => setQuery("")} aria-label="Aramayı temizle"><Icon name="close"/></button>}</label></div>
@@ -248,7 +284,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     {favoritesOnly && <div className={s.chips}>{(["all","live","movie","series"] as const).map(value => <button key={value} className={filter === value ? s.selectedChip : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>{({all:"Tümü",live:"Canlı TV",movie:"Filmler",series:"Diziler"})[value]}</button>)}</div>}
     {(error || providerError) && <div className={s.inlineError} role="alert">{providerError || error}<button onClick={() => { setReload(v => v+1); if(providerMode === "loading") reloadFavorites(); }}>Tekrar Dene</button></div>}
     {favoritesOnly && favoritesError && <div className={s.inlineError} role="alert">{favoritesError}<button disabled={favoritesLoading} onClick={reloadFavorites}>{favoritesLoading ? "Yükleniyor…" : "Tekrar Dene"}</button></div>}
-    {favoritesOnly && !favoritesReady ? (favoritesError && !favoritesLoading ? null : <Skeletons/>) : (loading && !items.length) ? <Skeletons/> : !items.length ? (favoritesOnly && favoritesError ? null : <div className={s.empty}><Icon name={favoritesOnly ? "heart" : "search"}/><h2>{emptyCopy?.heading ?? (favoritesOnly && !search ? "Henüz favori eklemediniz" : "İçerik bulunamadı")}</h2><p>{emptyCopy?.body ?? (favoritesOnly && !search ? "Beğendiğin içeriklerin kalbine dokun; hepsi burada bir araya gelsin." : "Başka bir arama veya kategori deneyebilirsin.")}</p>{favoritesOnly && <Link className={s.primary} href="/filmler">Filmlere Git</Link>}</div>) : favoritesOnly ? (["live","movie","series"] as Kind[]).map(rowKind => { const row = items.filter(item => item.kind === rowKind); return row.length ? <MediaRail key={rowKind} label={({live:"Canlı TV",movie:"Filmler",series:"Diziler"})[rowKind]} row={row} open={open}/> : null; }) : overview ? <><MediaRail label="Filmler" row={items.slice(0,12)} href="/filmler" open={open}/>{currentOtherRows.map(row => <MediaRail key={row.kind} label={row.kind === "series" ? "Diziler" : "Canlı TV"} row={row.data.items.slice(0,12)} href={row.kind === "series" ? "/diziler" : "/canli-tv"} open={open}/>)}</> : seriesRows ? <><MediaRail label="Diziler" row={seriesRows.firstRow} className={seriesStyles.firstRail} open={open}/>{seriesRows.categories.map(([label, row]) => <MediaRail key={label} label={label} row={row} className={seriesStyles.categoryRail} open={open}/>)}{seriesRows.other.length > 0 && <MediaRail label="Diğer Diziler" row={seriesRows.other} className={seriesStyles.categoryRail} open={open}/>}</> : !group && !search ? <><MediaRail label={kind === "movie" ? "Filmler" : "Diziler"} row={items} open={open}/>{categoryRows.map(([label, row]) => <MediaRail key={label} label={label} row={row} open={open}/>)}</> : <div className={s.grid}>{items.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div>}
+    {favoritesOnly && !favoritesReady ? (favoritesError && !favoritesLoading ? null : <Skeletons/>) : (loading && !items.length) ? <Skeletons/> : !items.length ? (favoritesOnly && favoritesError ? null : <div className={s.empty}><Icon name={favoritesOnly ? "heart" : "search"}/><h2>{emptyCopy?.heading ?? (favoritesOnly && !search ? "Henüz favori eklemediniz" : "İçerik bulunamadı")}</h2><p>{emptyCopy?.body ?? (favoritesOnly && !search ? "Beğendiğin içeriklerin kalbine dokun; hepsi burada bir araya gelsin." : "Başka bir arama veya kategori deneyebilirsin.")}</p>{favoritesOnly && <Link className={s.primary} href="/filmler">Filmlere Git</Link>}</div>) : favoritesOnly ? (["live","movie","series"] as Kind[]).map(rowKind => { const row = items.filter(item => item.kind === rowKind); return row.length ? <MediaRail key={rowKind} label={({live:"Canlı TV",movie:"Filmler",series:"Diziler"})[rowKind]} row={row} open={open}/> : null; }) : overview ? <><MediaRail label="Filmler" row={search ? items.slice(0,12) : overviewRails.movie} href="/filmler" open={open}/>{currentOtherRows.map(row => <MediaRail key={row.kind} label={row.kind === "series" ? "Diziler" : "Canlı TV"} row={row.kind === "series" && !search ? overviewRails.series : row.data.items.slice(0,12)} href={row.kind === "series" ? "/diziler" : "/canli-tv"} open={open}/>)}</> : kind === "live" && !group && !search ? <MediaRail label="Diziler" row={items} open={open}/> : discoveryRows ? <><MediaRail label="Günün Seçkisi" row={discoveryRows.primary} className={seriesCatalog ? seriesStyles.firstRail : undefined} open={open}/>{discoveryRows.categories.map(([label, row]) => <MediaRail key={label} label={label} row={row} className={seriesCatalog ? seriesStyles.categoryRail : undefined} open={open}/>)}{discoveryRows.other.length > 0 && <MediaRail label={kind === "series" ? "Diğer Diziler" : "Diğer Filmler"} row={discoveryRows.other} open={open}/>}</> : <div className={s.grid}>{items.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div>}
     {!favoritesOnly && !overview && items.length < shownCatalog.total && <button className={s.more} disabled={loading} onClick={() => setPage(p => p+1)}>{loading ? "Yükleniyor…" : "Daha Fazla Göster"}</button>}
     </div>
     {detailLoading && <div className={s.toast} role="status">İçerik hazırlanıyor…</div>}{detail && detailAccount === account && providerMode !== "loading" && <Detail key={detail.id} item={detail} onClose={close}/>}
