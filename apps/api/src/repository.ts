@@ -26,6 +26,7 @@ import { buildPlaylistUrl, buildStreamUrl, parsePlaylistUrl, type PlaylistConfig
 import { filterStoredMovieCatalogRows, filterStoredSeriesCatalogRows } from "./vod-catalog-filter.js";
 import { query, withTransaction } from "./db.js";
 import { env } from "./env.js";
+import { getVerifiedTrialProviderExpiry } from "./client-playback-access.js";
 import { addPackageDuration, calculateRemainingDays } from "./time.js";
 
 type UserContextRow = QueryResultRow & {
@@ -52,6 +53,11 @@ type UserContextRow = QueryResultRow & {
   ends_at: string | Date | null;
   subscription_end_reason: string | null;
   trial_provision_status?: "queued" | "reconcile" | "verified" | "completed" | "review" | null;
+  trial_job_user_id?: string | null;
+  trial_provider_line_id?: string | null;
+  trial_provider_expires_at?: string | Date | null;
+  trial_provider_username?: string | null;
+  trial_provider_password?: string | null;
   has_used_trial?: boolean | null;
   has_expired_subscription?: boolean | null;
 };
@@ -334,6 +340,7 @@ export type UserContext = {
   canPlay: boolean;
   accessUntil: string | null;
   isThreeHourTrial: boolean;
+  trialProviderExpiresAt?: string | null;
   sourceStatus: string | null;
   playbackBaseUrl: string | null;
   iptvCredentials: { username: string; password: string } | null;
@@ -876,6 +883,11 @@ async function getUserContextRow(userId: string, includeDeleted = false): Promis
         sub.ends_at,
         sub.end_reason as subscription_end_reason,
         trial_job.status as trial_provision_status,
+        trial_job.user_id as trial_job_user_id,
+        trial_job.provider_line_id as trial_provider_line_id,
+        trial_job.provider_expires_at as trial_provider_expires_at,
+        trial_job.provider_username as trial_provider_username,
+        trial_job.provider_password as trial_provider_password,
         coalesce(
           exists(
             select 1 from public.subscriptions s_tr
@@ -952,6 +964,19 @@ export async function getUserContext(userId: string): Promise<UserContext> {
     canPlay: row.status !== "blocked" && hasAssignedLink && sourceReady && Boolean(row.package_id && row.ends_at),
     accessUntil: row.ends_at instanceof Date ? row.ends_at.toISOString() : row.ends_at,
     isThreeHourTrial: row.subscription_end_reason === "trial-3h",
+    trialProviderExpiresAt: getVerifiedTrialProviderExpiry({
+      userId: row.id,
+      jobUserId: row.trial_job_user_id ?? null,
+      status: row.trial_provision_status ?? null,
+      providerLineId: row.trial_provider_line_id ?? null,
+      providerExpiresAt: row.trial_provider_expires_at ?? null,
+      jobUsername: row.trial_provider_username ?? null,
+      jobPassword: row.trial_provider_password ?? null,
+      username: row.iptv_username,
+      password: row.iptv_password,
+      sharedUsername: row.source_reference_username,
+      sharedPassword: row.source_reference_password
+    }),
     sourceStatus: row.source_status,
     playbackBaseUrl,
     iptvCredentials:
