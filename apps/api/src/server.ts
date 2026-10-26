@@ -24,6 +24,7 @@ import {
   vodPlaybackEventInputSchema
 } from "@flixify/contracts";
 import { canUseClientIpPlayback } from "./client-playback-access.js";
+import { derivePersonalProviderSession } from "./personal-provider-session.js";
 import type {
   LiveChannel,
   LiveHealthStatus,
@@ -1632,6 +1633,29 @@ export function buildServer() {
       };
     } catch (error) {
       return sendUserRouteError(request, reply, error);
+    }
+  });
+
+  app.get("/me/provider-session", async (request, reply) => {
+    reply.header("cache-control", "private, no-store, max-age=0");
+    reply.header("pragma", "no-cache");
+    reply.header("vary", "Authorization, Origin");
+    try {
+      const auth = await authenticateUser(request.headers.authorization);
+      if (isDemoMode) {
+        return reply.status(403).send({ message: "Kisisel yayin erisimi kullanilamiyor." });
+      }
+      const context = await getUserContext(auth.userId);
+      const session = derivePersonalProviderSession(auth.userId, context, env.APP_JWT_SECRET);
+      if (!session) {
+        return reply.status(403).send({ message: "Kisisel yayin erisimi kullanilamiyor." });
+      }
+      return session;
+    } catch (error) {
+      // Repository errors may contain provider credentials. Classify without serializing the error.
+      const classified = classifyUserRouteError(error);
+      request.log.warn({ statusClass: classified.statusClass }, "Personal provider session unavailable");
+      return reply.status(classified.statusCode).send({ message: classified.message });
     }
   });
 
