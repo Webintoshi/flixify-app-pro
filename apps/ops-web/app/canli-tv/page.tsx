@@ -577,10 +577,11 @@ export default function LiveTvPage() {
     setEpg(null);
     if (providerMode !== "personal" || !personalProvider || !selectedChannel?.personalRef) return;
     const ref = selectedChannel.personalRef;
+    const controller = new AbortController();
     let expired = false;
     const refresh = async () => {
       try {
-        const result = await personalProvider.shortEpg(ref);
+        const result = await personalProvider.shortEpg(ref, controller.signal);
         if (!expired && epgScope.current.current(generation)) setEpg(result);
       } catch {
         if (!expired && epgScope.current.current(generation)) setEpg({status:"error", programmes:[], error:"Program bilgisi alınamadı"});
@@ -589,9 +590,9 @@ export default function LiveTvPage() {
     void refresh();
     const timer = setInterval(() => void refresh(), 60000);
     const deadline = playback?.expiresAt ? createDirectPlaybackDeadline(playback.expiresAt, () => {
-      expired = true; clearInterval(timer); epgScope.current.clear(); setEpg(null);
+      expired = true; controller.abort(); clearInterval(timer); epgScope.current.clear(); setEpg(null);
     }) : null;
-    return () => { expired = true; clearInterval(timer); deadline?.dispose(); epgScope.current.clear(); };
+    return () => { expired = true; controller.abort(); clearInterval(timer); deadline?.dispose(); epgScope.current.clear(); };
   }, [personalProvider, providerMode, selectedChannel, providerScope, platformSession?.accessToken, epgRevision, playback?.expiresAt]);
 
   const recentKey = useMemo(() => {

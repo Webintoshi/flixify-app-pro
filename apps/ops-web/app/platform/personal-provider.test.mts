@@ -123,3 +123,29 @@ for (const shortened of [true,false]) {
   now=Date.parse('2026-01-01T00:03:00Z');release();assert.equal((await ongoing).status,shortened?'error':'empty');client.clear();
  });
 }
+for (const prerequisite of ['bootstrap','catalog'] as const) {
+ test(`cancelled EPG waiting for ${prerequisite} never starts provider guide request`,async()=>{
+  let release:()=>void=()=>{};let entered:()=>void=()=>{};
+  const blocked=new Promise<void>(r=>entered=r);const gate=new Promise<void>(r=>release=r);const actions:string[]=[];
+  const client=createPersonalProviderClient({loadBootstrap:async()=>{if(prerequisite==='bootstrap'){entered();await gate;}return bootstrap;},fetch:async(url)=>{
+   const action=new URL(String(url)).searchParams.get('action')!;actions.push(action);
+   if(prerequisite==='catalog' && action==='get_live_streams'){entered();await gate;}
+   return new Response(JSON.stringify(action==='get_live_categories'?[]:action==='get_live_streams'?[{stream_id:7,name:'Channel'}]:{epg_listings:[]}));
+  }});
+  const controller=new AbortController();const ongoing=client.shortEpg({source:'personal',sourceVersion:'v1',kind:'live',id:'7'},controller.signal);
+  await blocked;controller.abort();release();assert.equal((await ongoing).status,'error');assert.equal(actions.includes('get_short_epg'),false);
+  assert.equal((await client.catalog('live')).length,1);client.clear();
+ });
+}
+test('cancelling selected EPG aborts its fetch and preserves the shared live catalog',async()=>{
+ let entered:()=>void=()=>{};const blocked=new Promise<void>(r=>entered=r);let epgSignal:AbortSignal|undefined;let catalogRequests=0;
+ const client=createPersonalProviderClient({loadBootstrap:async()=>bootstrap,fetch:async(url,init)=>{
+  const action=new URL(String(url)).searchParams.get('action');
+  if(action==='get_short_epg') {epgSignal=init!.signal as AbortSignal;entered();return new Promise<Response>((_,reject)=>epgSignal!.addEventListener('abort',()=>reject(new Error('private transport detail')),{once:true}));}
+  catalogRequests++;return new Response(JSON.stringify(action==='get_live_categories'?[]:[{stream_id:7,name:'Channel'}]));
+ }});
+ const controller=new AbortController();const ongoing=client.shortEpg({source:'personal',sourceVersion:'v1',kind:'live',id:'7'},controller.signal);
+ await blocked;controller.abort();assert.equal(epgSignal!.aborted,true);
+ assert.deepEqual(await ongoing,{status:'error',programmes:[],error:'Program bilgisi alınamadı'});
+ assert.equal((await client.catalog('live')).length,1);assert.equal(catalogRequests,2);client.clear();
+});

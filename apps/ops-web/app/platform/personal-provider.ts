@@ -113,19 +113,21 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
   void promise.then(()=>{if(pendingBootstrap === promise) pendingBootstrap=undefined;},()=>{if(pendingBootstrap === promise) pendingBootstrap=undefined;});
   return promise;
  }
- async function request(b: PersonalProviderBootstrap,g: number,action: string,providerId?: string) {
-  active(g,b); if (!ACTIONS.has(action) || (['get_series_info','get_short_epg'].includes(action) && !id(providerId))) fail();
+ async function request(b: PersonalProviderBootstrap,g: number,action: string,providerId?: string,signal?: AbortSignal) {
+  active(g,b); if (signal?.aborted) fail(); if (!ACTIONS.has(action) || (['get_series_info','get_short_epg'].includes(action) && !id(providerId))) fail();
   const url = new URL('/player_api.php',b.providerOrigin); url.searchParams.set('username',b.username); url.searchParams.set('password',b.password); url.searchParams.set('action',action);
   if (action === 'get_series_info') url.searchParams.set('series_id',providerId!);
   if (action === 'get_short_epg') {url.searchParams.set('stream_id',providerId!);url.searchParams.set('limit','24');}
   const controller = new AbortController(); controllers.add(controller); const timeout = setTimeout(()=>controller.abort(),15000);
+  const abort = () => controller.abort(); signal?.addEventListener('abort',abort,{once:true});
   try {
+   if (signal?.aborted) fail();
    const response = await fetcher(url.toString(),{signal:controller.signal,credentials:'omit',referrerPolicy:'no-referrer',redirect:'error',cache:'no-store'}); active(g,b);
    if (!response.ok || response.redirected || Number(response.headers.get('content-length')) > MAX_BYTES || !response.body) fail();
    const reader = response.body!.getReader(); const decoder = new TextDecoder('utf-8',{fatal:true}); let size=0; let body='';
    try { while (true) { const chunk = await reader.read(); active(g,b); if (controller.signal.aborted) fail(); if (chunk.done) break; size += chunk.value.byteLength; if (size > MAX_BYTES) fail(); body += decoder.decode(chunk.value,{stream:true}); } body += decoder.decode(); } catch { await reader.cancel().catch(()=>{}); return fail(); } finally { reader.releaseLock(); }
    active(g,b); return JSON.parse(body) as unknown;
-  } catch { return fail(); } finally { clearTimeout(timeout);controllers.delete(controller); }
+  } catch { return fail(); } finally { clearTimeout(timeout);signal?.removeEventListener('abort',abort);controllers.delete(controller); }
  }
  async function catalogFor(kind: Kind,b: PersonalProviderBootstrap,g: number,force = false) {
   active(g,b); if (!['live','movie','series'].includes(kind)) fail(); if (!force && cache.has(kind)) return structuredClone(cache.get(kind)!);
@@ -144,7 +146,18 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
   clear,
   async catalog(kind: Kind) { const {b,g} = await bootstrap();return catalogFor(kind,b,g); },
   async series(value: unknown) {const ref=validatePersonalRef(value);const {b,g}=await bootstrap();return seriesFor(ref,b,g);},
-  async shortEpg(value: unknown): Promise<PersonalEpgResult> { try {const ref=validatePersonalRef(value);const {b,g}=await bootstrap();if(ref.kind !== 'live' || ref.sourceVersion !== b.sourceVersion || !(await catalogFor('live',b,g)).some(i=>i.personalRef.id===ref.id)) fail();const programmes=normalizeEpg(await request(b,g,'get_short_epg',ref.id));return {status:programmes.length?'ready':'empty',programmes};} catch {return {status:'error',programmes:[],error:'Program bilgisi alınamadı'};}},
+  async shortEpg(value: unknown, signal?: AbortSignal): Promise<PersonalEpgResult> {
+   try {
+    if (signal?.aborted) fail();
+    const ref=validatePersonalRef(value); const {b,g}=await bootstrap();
+    if (signal?.aborted) fail();
+    if (ref.kind !== 'live' || ref.sourceVersion !== b.sourceVersion) fail();
+    const items=await catalogFor('live',b,g);
+    if (signal?.aborted || !items.some(i=>i.personalRef.id===ref.id)) fail();
+    const programmes=normalizeEpg(await request(b,g,'get_short_epg',ref.id,signal));
+    return {status:programmes.length?'ready':'empty',programmes};
+   } catch {return {status:'error',programmes:[],error:'Program bilgisi alınamadı'};}
+  },
   async playback(value: unknown) {
    const ref = validatePersonalRef(value);const {b,g}=await bootstrap(true);if(ref.sourceVersion !== b.sourceVersion) fail();let verified: PersonalRef | undefined;
    if(ref.kind === 'episode') {const detail=await seriesFor({source:'personal',sourceVersion:ref.sourceVersion,kind:'series',id:ref.seriesId!},b,g,true);verified=detail.seasons.flatMap(s=>s.episodes).find(e=>e.personalRef.id===ref.id)?.personalRef;}
