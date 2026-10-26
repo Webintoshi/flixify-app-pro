@@ -106,6 +106,7 @@ class ReleasePlanTests(unittest.TestCase):
         with patch.object(sys, "argv", ["release-api-web.py", "--recreate"]), \
              patch.object(release, "preflight", return_value=empty_preflight), \
              patch.object(release, "recreate", side_effect=release.GateError("new_container_unhealthy:api")), \
+             patch.object(release, "verify_recovery_context"), \
              patch.object(release, "rollback") as rollback:
             with self.assertRaisesRegex(release.GateError, "deploy_failed_but_source_restored"):
                 release.main()
@@ -116,6 +117,7 @@ class ReleasePlanTests(unittest.TestCase):
         with patch.object(sys, "argv", ["release-api-web.py", "--recreate"]), \
              patch.object(release, "preflight", return_value=empty_preflight), \
              patch.object(release, "recreate", side_effect=release.GateError("protected_container_changed:db")), \
+             patch.object(release, "verify_recovery_context"), \
              patch.object(release, "rollback") as rollback:
             with self.assertRaisesRegex(release.GateError, "protected_container_changed:db"):
                 release.main()
@@ -123,6 +125,7 @@ class ReleasePlanTests(unittest.TestCase):
 
     def test_explicit_rollback_selects_guarded_recovery(self):
         with patch.object(sys, "argv", ["release-api-web.py", "--rollback"]), \
+             patch.object(release, "verify_recovery_context"), \
              patch.object(release, "rollback") as rollback:
             release.main()
             rollback.assert_called_once_with()
@@ -189,6 +192,54 @@ class ReleasePlanTests(unittest.TestCase):
                 raw, rendered, release.SOURCE, release.TARGET,
             )
             swap.assert_called_once_with(target_record, release.TARGET, release.SOURCE)
+
+    def test_operational_recreate_failures_attempt_guarded_rollback(self):
+        for label in ("command_failed", "command_unavailable", "candidate_tag_drift:api"):
+            with self.subTest(label=label), patch.object(sys, "argv", ["release", "--recreate"]), \
+                 patch.object(release, "preflight", return_value=({}, b"compose", b"env", {}, {}, {})), \
+                 patch.object(release, "recreate", side_effect=release.GateError(label)), \
+                 patch.object(release, "verify_recovery_context") as guard, \
+                 patch.object(release, "rollback") as rollback:
+                with self.assertRaisesRegex(release.GateError, "deploy_failed_but_source_restored"):
+                    release.main()
+                guard.assert_called_once_with({}, b"compose", b"env")
+                rollback.assert_called_once_with()
+
+    def test_guard_failure_blocks_operational_rollback(self):
+        with patch.object(sys, "argv", ["release", "--recreate"]), \
+             patch.object(release, "preflight", return_value=({}, b"", b"", {}, {}, {})), \
+             patch.object(release, "recreate", side_effect=release.GateError("command_failed")), \
+             patch.object(release, "verify_recovery_context", side_effect=release.GateError("protected_container_changed:worker")), \
+             patch.object(release, "rollback") as rollback:
+            with self.assertRaisesRegex(release.GateError, "protected_container_changed:worker"):
+                release.main()
+            rollback.assert_not_called()
+
+    def test_recreate_revalidates_candidate_before_any_mutation(self):
+        with patch.object(release, "candidate_images", side_effect=release.GateError("candidate_revision_differs:api")), \
+             patch.object(release, "command") as command:
+            with self.assertRaisesRegex(release.GateError, "candidate_revision_differs"):
+                release.recreate({}, b"")
+            command.assert_not_called()
+
+    def test_accepted_candidate_ids_reject_mutable_tag(self):
+        accepted = {name: "accepted:" + name for name in release.CHANGED}
+        with patch.object(release, "image_id", side_effect=lambda tag: "unrelated"):
+            with self.assertRaisesRegex(release.GateError, "candidate_tag_drift"):
+                release.verify_candidate_ids(accepted)
+
+    def test_target_retag_does_not_block_rollback_validation(self):
+        raw, rendered, generated, containers, applications = fixture("target")
+        containers["api"]["image_id"] = "old accepted candidate now untagged"
+        with self.assertRaisesRegex(release.GateError, "running_image_id_differs"):
+            release.validate_plan(raw, rendered, generated, containers, applications, "target")
+        release.validate_plan(raw, rendered, generated, containers, applications, "target", recovering=True)
+
+    def test_health_compares_running_image_to_accepted_id(self):
+        item = {"tag": release.TARGET["api"], "image_id": "retagged", "running": True, "health": "healthy", "hash": "same"}
+        with patch.object(release, "container_snapshot", return_value={"api": item}), patch.object(release, "urlopen") as request:
+            self.assertFalse(release.healthy("api", release.TARGET["api"], "accepted"))
+            request.assert_not_called()
 
 
 class ApiOverlayTests(unittest.TestCase):

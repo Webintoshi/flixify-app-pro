@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 UUID = "eupquokyj7qegufqvqkjmuyr"
-REVISION = "908911eda83c637c6069a1c0d04a6a9bf32a5f5b"
+REVISION = "e1092086e06f8322dc46cfa405010e6cb3fa51e4"
 BASE_REVISION = "51be56cfa2927c3f4a41a84e5a4f3acfaa4a0cea"
 BASE = {
     "api": (
@@ -31,21 +31,21 @@ BASE = {
     ),
 }
 TARGET = {
-    "api": "flixify-api:viewer-ip-908911e-20261026",
-    "ops-web": "flixify-ops-web:viewer-ip-908911e-20261026",
+    "api": "flixify-api:viewer-ip-e109208-20261026",
+    "ops-web": "flixify-ops-web:viewer-ip-e109208-20261026",
 }
 PINNED_API_SOURCES = {
     "apps/api/src/server.ts": "79ca80dc7996fd532dbd89984c89b0f18ada63ff050337d7d274a51e84714283",
     "apps/api/src/repository.ts": "2b3cd5d2b9de0b3d340733b01af1a4b171c9c9ff88536f4120d69b78e3b760b9",
 }
-NEW_FILES = {"apps/api/src/client-playback-access.ts", "apps/ops-web/app/platform/direct-playback-deadline.ts"}
+NEW_FILES = {"apps/api/src/client-playback-access.ts", "apps/ops-web/app/platform/direct-playback-deadline.ts", "apps/ops-web/app/platform/playback-transport.ts"}
 OVERLAYS = {
     "api": (*PINNED_API_SOURCES, "apps/api/src/client-playback-access.ts"),
-    "ops-web": ("apps/ops-web/app/platform/detail.tsx", "apps/ops-web/app/canli-tv/page.tsx", "apps/ops-web/app/platform/direct-playback-deadline.ts"),
+    "ops-web": ("apps/ops-web/app/platform/detail.tsx", "apps/ops-web/app/canli-tv/page.tsx", "apps/ops-web/app/platform/direct-playback-deadline.ts", "apps/ops-web/app/platform/playback-transport.ts"),
 }
 API_SERVER = "apps/api/src/server.ts"
 CANDIDATE_API_TEST = "coolify/releases/2026-10-26-viewer-ip/candidate-viewer-playback.test.ts"
-CANDIDATE_API_TEST_SHA256 = "380e47c7aea6f5f55711ee8d3fd6050d958df99daf8306f88b563b43b61aa1fe"
+CANDIDATE_API_TEST_SHA256 = "565a30d5f6f369740024d2c813dfcdc64fe39f7e638b100ba5f4c6f2403fe2af"
 PUBLIC_WEB_KEYS = (
     "NEXT_PUBLIC_API_BASE_URL",
     "NEXT_PUBLIC_SUPABASE_URL",

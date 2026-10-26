@@ -34,7 +34,7 @@ SERVICE_ID = 1
 DIRECTORY = Path("/data/coolify/services") / UUID
 COMPOSE = DIRECTORY / "docker-compose.yml"
 ENV = DIRECTORY / ".env"
-REVISION = "908911eda83c637c6069a1c0d04a6a9bf32a5f5b"
+REVISION = "e1092086e06f8322dc46cfa405010e6cb3fa51e4"
 SERVICES = ("db", "api", "worker", "ops-web")
 CHANGED = ("api", "ops-web")
 SOURCE = {
@@ -42,8 +42,8 @@ SOURCE = {
     "ops-web": "flixify-ops-web:playback-fix-39300d0-20261023",
 }
 TARGET = {
-    "api": "flixify-api:viewer-ip-908911e-20261026",
-    "ops-web": "flixify-ops-web:viewer-ip-908911e-20261026",
+    "api": "flixify-api:viewer-ip-e109208-20261026",
+    "ops-web": "flixify-ops-web:viewer-ip-e109208-20261026",
 }
 
 SOURCE_IDS = {
@@ -110,7 +110,8 @@ def image_id(tag: str) -> str:
     return image(tag)["Id"]
 
 
-def candidate_images() -> None:
+def candidate_images() -> dict[str, str]:
+    accepted = {}
     for name in CHANGED:
         candidate = image(TARGET[name])
         if candidate["Id"] == image_id(SOURCE[name]):
@@ -118,6 +119,14 @@ def candidate_images() -> None:
         labels = candidate.get("Config", {}).get("Labels") or {}
         if labels.get("org.opencontainers.image.revision") != REVISION:
             raise GateError(f"candidate_revision_differs:{name}")
+        accepted[name] = candidate["Id"]
+    return accepted
+
+
+def verify_candidate_ids(accepted: dict[str, str]) -> None:
+    for name in CHANGED:
+        if image_id(TARGET[name]) != accepted[name]:
+            raise GateError("candidate_tag_drift:" + name)
 
 
 def service_record() -> dict:
@@ -207,7 +216,7 @@ def expected_images(stage: str) -> dict[str, str]:
 
 def validate_plan(raw: dict, rendered: dict, generated: dict,
                   containers: dict[str, dict], applications: dict[str, str],
-                  stage: str) -> None:
+                  stage: str, *, recovering: bool = False) -> None:
     if rendered != generated:
         raise GateError("generated_compose_differs_from_database")
     images = expected_images(stage)
@@ -226,7 +235,7 @@ def validate_plan(raw: dict, rendered: dict, generated: dict,
                 continue
             if containers[name]["tag"] not in {SOURCE[name], TARGET[name]}:
                 raise GateError(f"unexpected_running_image:{name}")
-            if containers[name]["image_id"] != image_id(containers[name]["tag"]):
+            if not (recovering and containers[name]["tag"] == TARGET[name]) and containers[name]["image_id"] != image_id(containers[name]["tag"]):
                 raise GateError(f"running_image_id_differs:{name}")
 
 
@@ -240,7 +249,7 @@ def compose_hash(name: str) -> str:
     return output[-1]
 
 
-def preflight(stage: str) -> tuple[dict, bytes, bytes, dict, dict, dict]:
+def preflight(stage: str, *, recovering: bool = False) -> tuple[dict, bytes, bytes, dict, dict, dict]:
     verify_source_images()
     if not COMPOSE.is_file() or not ENV.is_file():
         raise GateError("coolify_service_files_missing")
@@ -253,7 +262,7 @@ def preflight(stage: str) -> tuple[dict, bytes, bytes, dict, dict, dict]:
     )
     if stage == "source":
         candidate_images()
-    validate_plan(raw, rendered, generated, containers, application_images(), stage)
+    validate_plan(raw, rendered, generated, containers, application_images(), stage, recovering=recovering)
     for name in SERVICES:
         if name in CHANGED and (stage == "source" or containers[name]["tag"] == TARGET[name]):
             if containers[name]["hash"] != compose_hash(name):
@@ -499,10 +508,10 @@ def sync_images(record: dict, compose_bytes: bytes, env_bytes: bytes,
         raise GateError(f"postcheck_failed_source_restored:{label}") from postcheck_error
 
 
-def healthy(name: str, expected_tag: str) -> bool:
+def healthy(name: str, expected_tag: str, expected_id: str | None = None) -> bool:
     try:
         item = container_snapshot(allow_missing_changed=True)[name]
-        if (item["tag"] != expected_tag or item["image_id"] != image_id(expected_tag) or
+        if (item["tag"] != expected_tag or item["image_id"] != (expected_id or image_id(expected_tag)) or
             not item["running"] or item["health"] == "unhealthy" or
             item["hash"] != compose_hash(name)):
             return False
@@ -519,17 +528,21 @@ def healthy(name: str, expected_tag: str) -> bool:
 
 
 def recreate(before: dict[str, dict], env_bytes: bytes) -> None:
+    accepted = candidate_images()
+    verify_candidate_ids(accepted)
     protected = container_identity({name: before[name] for name in ("db", "worker")})
     for name in CHANGED:
         current = container_snapshot(allow_missing_changed=True)[name]
-        if current["tag"] != TARGET[name]:
+        verify_candidate_ids(accepted)
+        if current["tag"] != TARGET[name] or current["image_id"] != accepted[name]:
             command(
                 "docker", "compose", "-p", UUID, "--project-directory", str(DIRECTORY),
                 "-f", str(COMPOSE), "up", "-d", "--no-deps", "--no-build",
                 "--pull", "never", "--force-recreate", name, timeout=180,
             )
         for _ in range(30):
-            if healthy(name, TARGET[name]):
+            verify_candidate_ids(accepted)
+            if healthy(name, TARGET[name], accepted[name]):
                 break
             time.sleep(2)
         else:
@@ -541,11 +554,26 @@ def recreate(before: dict[str, dict], env_bytes: bytes) -> None:
                 raise GateError(f"protected_container_changed:{protected_name}")
         if ENV.read_bytes() != env_bytes:
             raise GateError("env_changed_during_recreate")
+    verify_candidate_ids(accepted)
+    for name in CHANGED:
+        if not healthy(name, TARGET[name], accepted[name]):
+            raise GateError("new_container_unhealthy:" + name)
     print("api_and_web_recreated_healthy; db_and_worker_unchanged")
 
 
+def verify_recovery_context(before: dict, compose_bytes: bytes, env_bytes: bytes) -> None:
+    current = container_snapshot(allow_missing_changed=True)
+    for name in ("db", "worker"):
+        if container_identity({name: current[name]}) != container_identity({name: before[name]}):
+            raise GateError("protected_container_changed:" + name)
+    if COMPOSE.read_bytes() != compose_bytes:
+        raise GateError("config_changed_during_recreate")
+    if ENV.read_bytes() != env_bytes:
+        raise GateError("env_changed_during_recreate")
+
+
 def rollback() -> None:
-    record, compose_bytes, env_bytes, before, raw, rendered = preflight("target")
+    record, compose_bytes, env_bytes, before, raw, rendered = preflight("target", recovering=True)
     # The source images must still be present before changing Coolify metadata.
     for name in CHANGED:
         image_id(SOURCE[name])
@@ -586,11 +614,12 @@ def main() -> None:
         rollback()
         return
     if args.recreate:
-        _, _, env_bytes, containers, _, _ = preflight("target")
+        _, compose_bytes, env_bytes, containers, _, _ = preflight("target")
         try:
             recreate(containers, env_bytes)
         except GateError as error:
-            if str(error).startswith("new_container_unhealthy:"):
+            if str(error) in {"command_failed", "command_unavailable"} or str(error).startswith(("new_container_unhealthy:", "candidate_tag_drift:")):
+                verify_recovery_context(containers, compose_bytes, env_bytes)
                 try:
                     rollback()
                 except GateError as rollback_error:

@@ -2,14 +2,14 @@
 
 Bu klasör yalnız aktif Coolify hizmeti `eupquokyj7qegufqvqkjmuyr` (id 1) için
 API/web adaylarını hazırlar ve korumalı yayını yürütür. Uygulama sürümü
-`908911eda83c637c6069a1c0d04a6a9bf32a5f5b`, yama temeli
+`e1092086e06f8322dc46cfa405010e6cb3fa51e4`, yama temeli
 `51be56cfa2927c3f4a41a84e5a4f3acfaa4a0cea` olarak sabittir. Yayın betiklerini
 ekleyen commitin uygulama imajındaki revision etiketiyle aynı olması gerekmez.
 
 Kaynak imajlar `flixify-api:playback-fix-39300d0-20261023` ve
 `flixify-ops-web:playback-fix-39300d0-20261023`; hedefler
-`flixify-api:viewer-ip-908911e-20261026` ve
-`flixify-ops-web:viewer-ip-908911e-20261026`. İmaj SHA256 kimlikleri ve iki
+`flixify-api:viewer-ip-e109208-20261026` ve
+`flixify-ops-web:viewer-ip-e109208-20261026`. İmaj SHA256 kimlikleri ve iki
 API kaynak SHA256 değeri betiklerde sabittir. Etiket başka imaja taşınırsa durur.
 
 `server.ts` ve `repository.ts` canlıya özgü katalog/yetişkin içerik kuralları
@@ -18,7 +18,7 @@ iki commit arasındaki kendi Git yaması uygulanır. Aday dosyanın tam yama son
 olduğu byte düzeyinde yeniden doğrulanır; yama dışındaki tüm canlı içerik korunur.
 Yeni `client-playback-access.ts` yokluk kontrolünden sonra kopyalanır. Webde
 `detail.tsx` ve `canli-tv/page.tsx` temel commit ile eşit olmalıdır; yeni
-`direct-playback-deadline.ts` yokluk kontrolünden sonra eklenir. Başka kaynak,
+`direct-playback-deadline.ts` ve `playback-transport.ts` yokluk kontrolünden sonra eklenir. Başka kaynak,
 contracts veya bağımlılık kopyalanmaz.
 
 Aktif hostta, gerçek checkout yolunu kullanarak sırasıyla:
@@ -67,3 +67,5 @@ loglamayın; native video denemesini sınırlı sürede kapatın. Saf politika t
 ve aday rota testi gerçek tarayıcı oynatmasını kanıtlamaz. Safari codec/container
 desteği ve sağlayıcının izleyici IP politikası ayrı kısıtlardır; uygun hesap veya
 medya bulunamazsa gerçek oynatma doğrulamasının tamamlanmadığını raporlayın.
+
+Recreate revalidates candidate revision labels before mutation, retains accepted image IDs, checks mutable tags before each recreate and health check, and checks both final running IDs. Operational Docker failures/timeouts trigger rollback only after protected container, Compose and environment guards pass. Explicit rollback permits target retag drift while source image IDs remain pinned.
