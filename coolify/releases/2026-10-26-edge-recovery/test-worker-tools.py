@@ -259,11 +259,28 @@ class WorkerPolicyTests(unittest.TestCase):
     def test_command_errors_do_not_expose_secret_stderr(self):
         failed = subprocess.CompletedProcess(("docker",), 1, stdout=b"", stderr=b"TOKEN=secret")
         with patch.object(build.subprocess, "run", return_value=failed):
-            with self.assertRaisesRegex(build.GateError, "^command_failed$"):
+            with self.assertRaisesRegex(build.GateError, "^command_failed:external_command:exit_1:unclassified_output_withheld$"):
                 build.command("docker")
         with patch.object(release.subprocess, "run", return_value=failed):
             with self.assertRaisesRegex(release.GateError, "^command_failed$"):
                 release.command("docker", capture_sync_phase=True)
+
+    def test_build_diagnostics_are_fixed_labels_without_urls_or_secrets(self):
+        failed = subprocess.CompletedProcess(("docker", "build"), 1, stdout=b"pull access denied\nTOKEN=secret\nhttps://private.invalid/key",
+                                             stderr=b"failed to resolve source metadata username=private")
+        with patch.object(build.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(build.GateError, "^command_failed:docker_build:exit_1:base_image_resolution$"):
+                build.command("docker", "build", "--build-arg", "KEY=secret", "/private/path")
+        killed = build.safe_failure_summary(137, b"heap out of memory secret", b"https://private.invalid")
+        self.assertEqual(killed, "exit_137:memory_exhausted,process_killed")
+        missing = build.safe_failure_summary(1, b"", b"Error: Cannot find module 'secret-package' https://secret.invalid")
+        self.assertEqual(missing, "exit_1:dependency_missing")
+
+    def test_candidate_failure_phase_is_distinct_from_build(self):
+        failed = subprocess.CompletedProcess(("docker", "run"), 1, stdout=b"", stderr=b"Cannot find module 'vitest'")
+        with patch.object(build.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(build.GateError, "^command_failed:candidate_regressions:exit_1:dependency_missing$"):
+                build.command("docker", "run", "--entrypoint", "npx", "candidate", "vitest")
 
     def test_base_reseller_hash_is_observed_pre_fix_git_bytes(self):
         repo = Path(__file__).resolve().parents[3]

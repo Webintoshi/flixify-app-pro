@@ -30,13 +30,61 @@ class GateError(Exception):
     pass
 
 
+def command_stage(args: tuple[str, ...]) -> str:
+    """Return fixed labels only; command arguments may contain public settings."""
+    if args[:2] == ("docker", "build"):
+        return "docker_build"
+    if args[:3] == ("docker", "image", "inspect"):
+        return "image_inspect"
+    if args[:3] == ("docker", "image", "ls"):
+        return "image_list"
+    if args[:2] == ("docker", "inspect"):
+        return "container_inspect"
+    if args[:2] == ("docker", "run"):
+        if "--entrypoint" in args:
+            entrypoint = args[args.index("--entrypoint") + 1]
+            return {"cat": "image_source_read", "npx": "candidate_regressions",
+                    "node": "candidate_syntax_check", "sh": "candidate_artifact_check"}.get(entrypoint, "isolated_container_check")
+        return "isolated_container_check"
+    if args and args[0] == "git":
+        for operation, label in (("show", "git_source_read"), ("diff", "git_scope_check"), ("rev-parse", "git_revision_check")):
+            if operation in args:
+                return label
+        return "git_check"
+    return "external_command"
+
+
+def safe_failure_summary(returncode: int, stdout: bytes, stderr: bytes) -> str:
+    """Classify bounded output without echoing a single byte of its contents."""
+    output = (stdout[-32768:] + b"\n" + stderr[-32768:]).lower()
+    known = (
+        ("disk_full", rb"no space left on device|enospc"),
+        ("memory_exhausted", rb"heap out of memory|out of memory|cannot allocate memory|enomem"),
+        ("process_killed", rb"(?:^|\s)killed(?:\s|$)|signal: (?:sig)?kill|exit code: 137"),
+        ("base_image_resolution", rb"pull access denied|failed to resolve source metadata|manifest unknown|cannot pull image by digest"),
+        ("invalid_image_reference", rb"invalid reference format|invalid repository name"),
+        ("unsupported_build_option", rb"unknown flag|unknown shorthand flag"),
+        ("dependency_missing", rb"cannot find (?:module|package)|err_module_not_found|vitest: (?:not found|not installed)|tsup: not found"),
+        ("test_failure", rb"failed tests|test files\s+\d+ failed|assertionerror"),
+        ("typescript_build_failure", rb"type error:|typescript error|error ts\d+"),
+        ("permission_denied", rb"permission denied|eacces"),
+    )
+    labels = [name for name, pattern in known if re.search(pattern, output)]
+    if returncode in (-9, 137) and "process_killed" not in labels:
+        labels.append("process_killed")
+    return "exit_" + str(returncode) + ":" + (",".join(labels[:4]) if labels else "unclassified_output_withheld")
+
+
 def command(*args: str, timeout: int = 90) -> bytes:
+    stage = command_stage(args)
     try:
         result = subprocess.run(args, capture_output=True, timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise GateError("command_unavailable") from error
+    except subprocess.TimeoutExpired as error:
+        raise GateError("command_timeout:" + stage) from error
+    except OSError as error:
+        raise GateError("command_unavailable:" + stage) from error
     if result.returncode:
-        raise GateError("command_failed")
+        raise GateError("command_failed:" + stage + ":" + safe_failure_summary(result.returncode, result.stdout, result.stderr))
     return result.stdout
 
 
