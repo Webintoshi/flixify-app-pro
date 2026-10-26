@@ -137,7 +137,10 @@ def preflight(repo: Path, revision: str) -> tuple[dict, bytes]:
 def dockerfile(revision: str) -> str:
     target(revision)
     return "\n".join((
-        f"FROM {SOURCE_ID}",
+        # BuildKit parses a bare sha256 config ID as an image repository/tag.
+        # The local source tag is checked against SOURCE_ID before this build;
+        # immutable ancestry, runtime config and exact source are checked after.
+        f"FROM {SOURCE_TAG}",
         f"LABEL org.opencontainers.image.revision={revision}",
         f"LABEL vip.flixify.edge-recovery.base={SOURCE_ID}",
         f"COPY {PATH} /app/{PATH}",

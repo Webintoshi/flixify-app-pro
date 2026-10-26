@@ -68,7 +68,8 @@ class WorkerPolicyTests(unittest.TestCase):
 
     def test_only_worker_source_is_copied_and_dist_is_rebuilt_from_pinned_image(self):
         dockerfile = build.dockerfile(REVISION)
-        self.assertIn("FROM " + build.SOURCE_ID, dockerfile)
+        self.assertIn("FROM " + build.SOURCE_TAG, dockerfile)
+        self.assertIn("vip.flixify.edge-recovery.base=" + build.SOURCE_ID, dockerfile)
         self.assertEqual([line for line in dockerfile.splitlines() if line.startswith("COPY")],
                          [f"COPY {build.PATH} /app/{build.PATH}"])
         self.assertIn("RUN npm run build -w @flixify/worker", dockerfile)
