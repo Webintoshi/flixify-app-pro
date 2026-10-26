@@ -17,6 +17,7 @@ function line(overrides: Record<string, unknown> = {}) {
     is_trial: "1",
     enabled: "1",
     admin_enabled: "1",
+    private_cdn: "1",
     reseller_notes: "Flixify auto trial user:user-1",
     ...overrides
   };
@@ -29,6 +30,10 @@ function fakeResponse(data: unknown, status = "STATUS_SUCCESS") {
   });
 }
 
+function fakeLookupResponse(value: unknown, init?: RequestInit) {
+  return fakeResponse(new URLSearchParams(String(init?.body)).get("action") === "get_line" ? value : [value]);
+}
+
 describe("reseller three-hour trial", () => {
   it("finds only the exact username and accepts a verified three-hour trial line", async () => {
     const requests: URLSearchParams[] = [];
@@ -37,8 +42,12 @@ describe("reseller three-hour trial", () => {
       apiKey: "test-only-key",
       now: () => NOW,
       fetchImpl: async (_url, init) => {
-        requests.push(new URLSearchParams(String(init?.body)));
-        return fakeResponse([line({ username: "OTHER1234USER5678" }), line()]);
+        const request = new URLSearchParams(String(init?.body));
+        requests.push(request);
+        return fakeResponse(request.get("action") === "get_line" ? line() : [
+          { id: "420", username: "OTHER1234USER5678" },
+          { id: "421", username: USERNAME }
+        ]);
       }
     });
 
@@ -50,6 +59,38 @@ describe("reseller three-hour trial", () => {
     });
     expect(requests[0]?.get("action")).toBe("get_lines");
     expect(requests[0]?.get("line_username")).toBe(USERNAME);
+    expect(Object.fromEntries(requests[1] ?? new URLSearchParams())).toEqual({
+      api_key: "test-only-key",
+      action: "get_line",
+      id: "421"
+    });
+  });
+
+  it("refuses a detail response whose line ID differs from the exact listing match", async () => {
+    const client = createResellerClient({
+      url: "https://provider.example/reseller/index.php",
+      apiKey: "test-only-key",
+      now: () => NOW,
+      fetchImpl: async (_url, init) => fakeResponse(
+        new URLSearchParams(String(init?.body)).get("action") === "get_line" ? line({ id: "422" }) : [line()]
+      )
+    });
+    await expect(client.findExactLine(USERNAME, PASSWORD, "user-1")).rejects.toThrow(/id.*mismatch/i);
+  });
+
+  it.each(["invalid", ""])("refuses an exact listing match with invalid provider ID %s", async (id) => {
+    const requests: string[] = [];
+    const client = createResellerClient({
+      url: "https://provider.example/reseller/index.php",
+      apiKey: "test-only-key",
+      now: () => NOW,
+      fetchImpl: async (_url, init) => {
+        requests.push(new URLSearchParams(String(init?.body)).get("action") ?? "");
+        return fakeResponse([line({ id })]);
+      }
+    });
+    await expect(client.findExactLine(USERNAME, PASSWORD, "user-1")).rejects.toThrow(/id.*invalid/i);
+    expect(requests).toEqual(["get_lines"]);
   });
 
   it("refuses a mismatched password rather than granting another line", async () => {
@@ -57,7 +98,7 @@ describe("reseller three-hour trial", () => {
       url: "https://provider.example/reseller/index.php",
       apiKey: "test-only-key",
       now: () => NOW,
-      fetchImpl: async () => fakeResponse([line({ password: "different" })])
+      fetchImpl: async (_url, init) => fakeLookupResponse(line({ password: "different" }), init)
     });
     await expect(client.findExactLine(USERNAME, PASSWORD, "user-1")).rejects.toThrow(/password/i);
   });
@@ -67,7 +108,7 @@ describe("reseller three-hour trial", () => {
       url: "https://provider.example/reseller/index.php",
       apiKey: "test-only-key",
       now: () => NOW,
-      fetchImpl: async () => fakeResponse([line({ exp_date: String(EXPIRY + 24 * 60 * 60) })])
+      fetchImpl: async (_url, init) => fakeLookupResponse(line({ exp_date: String(EXPIRY + 24 * 60 * 60) }), init)
     });
     await expect(client.findExactLine(USERNAME, PASSWORD, "user-1")).rejects.toThrow(/expiry/i);
   });
@@ -77,7 +118,7 @@ describe("reseller three-hour trial", () => {
       url: "https://provider.example/reseller/index.php",
       apiKey: "test-only-key",
       now: () => NOW,
-      fetchImpl: async () => fakeResponse([line({ exp_date: String(Math.floor((NOW + 10 * 60 * 1000) / 1000)) })])
+      fetchImpl: async (_url, init) => fakeLookupResponse(line({ exp_date: String(Math.floor((NOW + 10 * 60 * 1000) / 1000)) }), init)
     });
     await expect(client.findExactLine(USERNAME, PASSWORD, "user-1")).rejects.toThrow(/expiry/i);
   });
@@ -87,12 +128,22 @@ describe("reseller three-hour trial", () => {
       url: "https://provider.example/reseller/index.php",
       apiKey: "test-only-key",
       now: () => NOW,
-      fetchImpl: async () => fakeResponse([line({ reseller_notes: "another account" })])
+      fetchImpl: async (_url, init) => fakeLookupResponse(line({ reseller_notes: "another account" }), init)
     });
     await expect(client.findExactLine(USERNAME, PASSWORD, "user-1")).rejects.toThrow(/ownership/i);
   });
 
-  it("creates only provider package 4 with credentials separate from the application login code", async () => {
+  it.each(["0", undefined, "true"])("refuses a trial whose Private CDN state is %s", async (privateCdn) => {
+    const client = createResellerClient({
+      url: "https://provider.example/reseller/index.php",
+      apiKey: "test-only-key",
+      now: () => NOW,
+      fetchImpl: async (_url, init) => fakeLookupResponse(line({ private_cdn: privateCdn }), init)
+    });
+    await expect(client.findExactLine(USERNAME, PASSWORD, "user-1")).rejects.toThrow(/private cdn/i);
+  });
+
+  it("creates provider package 4 with Private CDN, EPG, and separate provider credentials", async () => {
     const requests: URLSearchParams[] = [];
     const client = createResellerClient({
       url: "https://provider.example/reseller/index.php",
@@ -109,8 +160,11 @@ describe("reseller three-hour trial", () => {
       action: "create_line",
       package: "4",
       trial: "1",
+      private_cdn: "1",
+      allow_epg: "1",
       username: USERNAME,
-      password: PASSWORD
+      password: PASSWORD,
+      reseller_notes: "Flixify auto trial user:user-1"
     });
     expect(USERNAME).not.toBe(LOGIN_CODE);
     expect(PASSWORD).not.toBe(LOGIN_CODE);
@@ -151,6 +205,28 @@ function job(overrides: Partial<AutoTrialJob> = {}): AutoTrialJob {
 }
 
 describe("automatic trial provisioning", () => {
+  it("holds a provider trial for review before granting access when Private CDN is disabled", async () => {
+    const state = { eligible: true, attempted: false, verified: false, completed: false, deferred: false, review: false };
+    let lineExists = false;
+    const provider = createResellerClient({
+      url: "https://provider.example/reseller/index.php",
+      apiKey: "test-only-key",
+      now: () => NOW,
+      fetchImpl: async (_url, init) => {
+        const action = new URLSearchParams(String(init?.body)).get("action");
+        if (action === "create_line") {
+          lineExists = true;
+          return fakeResponse(line({ private_cdn: "0" }));
+        }
+        if (action === "get_line") return fakeResponse(line({ private_cdn: "0" }));
+        return fakeResponse(lineExists ? [{ id: "421", username: USERNAME }] : []);
+      }
+    });
+
+    await expect(runAutoTrialProvisioning(job(), makeStore(state), provider)).resolves.toBe("review");
+    expect(state).toEqual({ eligible: true, attempted: true, verified: false, completed: false, deferred: false, review: true });
+  });
+
   it("marks create attempted before contacting the provider and completes only after exact lookup", async () => {
     const state = { eligible: true, attempted: false, verified: false, completed: false, deferred: false, review: false };
     let lineExists = false;

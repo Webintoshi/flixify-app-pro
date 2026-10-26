@@ -48,6 +48,9 @@ function parseProviderLine(value: unknown, expectedUsername: string, expectedPas
   if (String(line.enabled ?? "") !== "1" || String(line.admin_enabled ?? "") !== "1") {
     throw new InvalidProviderLineError("Provider trial line is disabled.");
   }
+  if (String(line.private_cdn ?? "") !== "1") {
+    throw new InvalidProviderLineError("Provider trial Private CDN is not enabled.");
+  }
   if (
     !Number.isSafeInteger(expirySeconds) ||
     expirySeconds * 1000 < now + MINIMUM_TRIAL_REMAINING_MS ||
@@ -94,7 +97,17 @@ export function createResellerClient(options: ResellerClientOptions) {
       if (matches.length > 1) {
         throw new InvalidProviderLineError("Provider returned duplicate exact usernames.");
       }
-      return matches.length ? parseProviderLine(matches[0], username, password, userId, now()) : null;
+      if (!matches.length) return null;
+      const listedId = String((matches[0] as Record<string, unknown>).id ?? "").trim();
+      if (!/^\d+$/.test(listedId)) {
+        throw new InvalidProviderLineError("Provider line ID is invalid.");
+      }
+      const detail = await request("get_line", { id: listedId });
+      const line = parseProviderLine(detail, username, password, userId, now());
+      if (line.id !== listedId) {
+        throw new InvalidProviderLineError("Provider line ID mismatch.");
+      }
+      return line;
     },
 
     async createThreeHourTrial(input: { userId: string; username: string; password: string }): Promise<void> {
@@ -104,6 +117,8 @@ export function createResellerClient(options: ResellerClientOptions) {
       await request("create_line", {
         package: THREE_HOUR_TRIAL_PACKAGE_ID,
         trial: "1",
+        private_cdn: "1",
+        allow_epg: "1",
         username: input.username,
         password: input.password,
         reseller_notes: `Flixify auto trial user:${input.userId}`

@@ -6,7 +6,8 @@ import { sessionIdentity, hydratePersonalFavorites, createScopedBootstrapLoader 
 import { createDirectPlaybackDeadline } from "./direct-playback-deadline";
 import { itemKey, sessionKey, type MediaItem, type Session } from "./types";
 
-type Value = { personalProvider: ReturnType<typeof createPersonalProviderClient> | null; providerMode: "loading" | "personal" | "legacy"; providerError: string; providerScope: string; session: Session | null; ready: boolean; favorites: MediaItem[]; favoritesReady: boolean; favoritesLoading: boolean; favoritesError: string; error: string; pending: Set<string>; toggle: (item: MediaItem) => Promise<void>; reload: () => void; invalidateFavorites: () => void; dismissError: () => void; saveSession: (s: Session) => void; logout: () => void };
+type Value = { personalProvider: ReturnType<typeof createPersonalProviderClient> | null; providerMode: "loading" | "personal" | "legacy"; providerError: string; providerScope: string; session: Session | null; ready: boolean; favorites: MediaItem[]; favoritesReady: boolean; favoritesLoading: boolean; favoritesError: string; error: string; pending: Set<string>; toggle: (item: MediaItem) => Promise<void>; reload: () => void; refreshProvider: () => void; invalidateFavorites: () => void; dismissError: () => void; saveSession: (s: Session) => void; logout: () => void };
+type BootstrapRequest = { identity: string; controller?: AbortController; retryRequested: boolean };
 const Context = createContext<Value | null>(null);
 export function readSession(): Session | null {
   try { const s = JSON.parse(localStorage.getItem(sessionKey) ?? "null"); return typeof s?.accessToken === "string" ? s : null; } catch { return null; }
@@ -15,6 +16,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [personalProvider, setPersonalProvider] = useState<ReturnType<typeof createPersonalProviderClient> | null>(null);
   const providerRef = useRef<ReturnType<typeof createPersonalProviderClient> | null>(null);
+  const bootstrapRef = useRef<BootstrapRequest | null>(null);
   const identityRef = useRef("");
   const sourceRef = useRef("");
   const [providerMode, setProviderMode] = useState<"loading" | "personal" | "legacy">("loading");
@@ -31,6 +33,13 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState(new Set<string>());
   const pendingRef = useRef(new Set<string>());
   const generation = useRef(0);
+  const refreshProvider = useCallback(() => {
+    const identity = identityRef.current;
+    if (!identity || providerRef.current) return;
+    if (bootstrapRef.current?.identity === identity) { bootstrapRef.current.retryRequested = true; return; }
+    bootstrapRef.current = { identity, retryRequested: false };
+    setProviderRetry(value => value + 1);
+  }, []);
   const saveSession = useCallback((s: Session) => { localStorage.setItem(sessionKey, JSON.stringify(s)); window.dispatchEvent(new Event("flixify-session")); }, []);
   const logout = useCallback(() => { providerRef.current?.clear(); providerRef.current = null; localStorage.removeItem(sessionKey); sessionStorage.removeItem("flixify-search-intent"); window.dispatchEvent(new Event("flixify-session")); }, []);
   useEffect(() => {
@@ -44,6 +53,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       setSession(next); setReady(true);
       if (identity === identityRef.current) return;
       identityRef.current = identity; sourceRef.current = "";
+      bootstrapRef.current?.controller?.abort(); bootstrapRef.current = null;
       providerRef.current?.clear(); providerRef.current = null; setPersonalProvider(null); setProviderMode(next ? "loading" : "legacy"); setProviderScope(""); setProviderError("");
       pendingRef.current.clear(); setPending(new Set());
       generation.current++; setFavorites([]); setFavoritesReady(false); setFavoritesLoading(false); setFavoritesError(""); setReady(true); setError("");
@@ -63,16 +73,18 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!identity) return;
     const controller = new AbortController(); let disposed = false; let deadline: ReturnType<typeof createDirectPlaybackDeadline> | undefined;
+    const bootstrapRequest: BootstrapRequest = { identity, controller, retryRequested: false };
+    bootstrapRef.current = bootstrapRequest;
     const g = generation.current;
     const publish = (bootstrap: PersonalProviderBootstrap) => {
       if (disposed || identityRef.current !== identity) throw new Error("Session changed");
-      if(sourceRef.current && sourceRef.current !== bootstrap.sourceVersion) {
+      if(sourceRef.current !== bootstrap.sourceVersion) {
         generation.current++; loadingGeneration.current = null; pendingRef.current.clear(); setPending(new Set()); setFavorites([]); setFavoritesReady(false); setFavoritesError("");
       }
       sourceRef.current = bootstrap.sourceVersion;
       setProviderScope(bootstrap.sourceVersion);
       deadline?.dispose();
-      deadline = createDirectPlaybackDeadline(bootstrap.expiresAt, () => { generation.current++; loadingGeneration.current = null; pendingRef.current.clear(); setPending(new Set()); providerRef.current?.clear(); setPersonalProvider(null); setProviderMode("loading"); setProviderScope(""); setProviderError("İzleme süren doldu."); setFavorites([]); setFavoritesReady(false); });
+      deadline = createDirectPlaybackDeadline(bootstrap.expiresAt, () => { generation.current++; loadingGeneration.current = null; pendingRef.current.clear(); setPending(new Set()); providerRef.current?.clear(); providerRef.current = null; setPersonalProvider(null); setProviderMode("loading"); setProviderScope(""); setProviderError("İzleme süren doldu."); setFavorites([]); setFavoritesReady(false); });
       return bootstrap;
     };
     apiRequest<PersonalProviderBootstrap>("/me/provider-session", {signal:AbortSignal.any([controller.signal, AbortSignal.timeout(15000)])}).then(value => {
@@ -89,11 +101,16 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       // This endpoint's fixed ineligible response is the only permitted legacy fallback.
       if (cause instanceof Error && cause.message === "Kisisel yayin erisimi kullanilamiyor.") setProviderMode("legacy");
       else setProviderError("Kişisel yayın erişimi doğrulanamadı. Tekrar deneyebilirsin.");
+    }).finally(() => {
+      if (bootstrapRef.current !== bootstrapRequest) return;
+      bootstrapRef.current = null;
+      // An activation received during an older request must survive its ineligible response.
+      if (!disposed && bootstrapRequest.retryRequested && identityRef.current === identity) refreshProvider();
     });
-    return () => { disposed = true; controller.abort(); deadline?.dispose(); providerRef.current?.clear(); };
-  }, [identity, providerRetry]);
-  const reload = useCallback(() => {
-    if (providerMode === "loading") { setProviderRetry(value => value+1); return; }
+    return () => { disposed = true; controller.abort(); if (bootstrapRef.current === bootstrapRequest) bootstrapRef.current = null; deadline?.dispose(); providerRef.current?.clear(); };
+  }, [identity, providerRetry, refreshProvider]);
+  const reloadFavorites = useCallback(() => {
+    if (providerMode === "loading") return;
     if (!identity || pendingRef.current.size || loadingGeneration.current === generation.current) return;
     const g = generation.current;
     loadingGeneration.current = g; setFavoritesLoading(true);
@@ -116,6 +133,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       if (g === generation.current) setFavoritesLoading(false);
     });
   }, [identity, personalProvider, providerMode, providerScope]);
+  const reload = useCallback(() => { refreshProvider(); reloadFavorites(); }, [refreshProvider, reloadFavorites]);
   const invalidateFavorites = useCallback(() => {
     generation.current++;
     loadingGeneration.current = null;
@@ -124,7 +142,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     setFavoritesError("");
     reload();
   }, [reload, providerMode]);
-  useEffect(() => { if(providerMode === "loading") return; reload(); window.addEventListener("focus", reload); return () => window.removeEventListener("focus", reload); }, [reload, providerMode]);
+  useEffect(() => { reloadFavorites(); window.addEventListener("focus", reload); return () => window.removeEventListener("focus", reload); }, [reload, reloadFavorites]);
   const toggle = async (item: MediaItem) => {
     const key = itemKey(item);
     if (!session || pendingRef.current.has(key) || !favoritesReady) return;
@@ -142,6 +160,6 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     catch { if (g === generation.current) { setFavorites(list => existing ? [existing, ...list.filter(f => itemKey(f) !== key)] : list.filter(f => itemKey(f) !== key)); setError("Favori değişikliği kaydedilemedi. Lütfen tekrar dene."); } }
     finally { if(g === generation.current) {pendingRef.current.delete(key); setPending(new Set(pendingRef.current));} }
   };
-  return <Context.Provider value={{ personalProvider, providerMode, providerError, providerScope, session, ready, favorites, favoritesReady, favoritesLoading, favoritesError, error, pending, toggle, reload, invalidateFavorites, dismissError: () => setError(""), saveSession, logout }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ personalProvider, providerMode, providerError, providerScope, session, ready, favorites, favoritesReady, favoritesLoading, favoritesError, error, pending, toggle, reload, refreshProvider, invalidateFavorites, dismissError: () => setError(""), saveSession, logout }}>{children}</Context.Provider>;
 }
 export function usePlatform() { const value = useContext(Context); if (!value) throw new Error("PlatformProvider missing"); return value; }

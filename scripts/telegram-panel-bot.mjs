@@ -911,6 +911,8 @@ async function createPanelLine(userDetail, packageConfig) {
   return resellerRequest("create_line", {
     package: packageConfig.resellerPackageId,
     trial: packageConfig.resellerTrial,
+    private_cdn: "1",
+    allow_epg: "1",
     username: credentials.username,
     password: credentials.password,
     reseller_notes: `Flixify user:${userDetail.summary.id}${codeSuffix}`

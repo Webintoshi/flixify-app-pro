@@ -93,6 +93,7 @@ function Preview({ user, refresh, busy, error }: { user: User; refresh: () => vo
 }
 
 function AccountAccess({ children, token }: { children: ReactNode; token: string }) {
+  const { refreshProvider } = usePlatform();
   const [user, setUser] = useState<User | null>(null);
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(true);
@@ -100,6 +101,7 @@ function AccountAccess({ children, token }: { children: ReactNode; token: string
   const refresh = useCallback(() => setVersion(value => value + 1), []);
   // Surface changes only on an authoritative response, never merely as the local clock advances.
   const [active, setActive] = useState(false);
+  useEffect(() => { if (active) refreshProvider(); }, [active, refreshProvider]);
   useEffect(() => {
     let current = true;
     const controller = new AbortController();
