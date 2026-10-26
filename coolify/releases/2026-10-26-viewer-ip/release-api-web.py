@@ -34,7 +34,7 @@ SERVICE_ID = 1
 DIRECTORY = Path("/data/coolify/services") / UUID
 COMPOSE = DIRECTORY / "docker-compose.yml"
 ENV = DIRECTORY / ".env"
-REVISION = "e970f8eb7305e3d8a11e43ecef22304fcd531c33"
+REVISION = "9830208163582ac49af89b5f29b4993c42b1ea19"
 SERVICES = ("db", "api", "worker", "ops-web")
 CHANGED = ("api", "ops-web")
 SOURCE = {
@@ -42,8 +42,8 @@ SOURCE = {
     "ops-web": "flixify-ops-web:playback-fix-39300d0-20261023",
 }
 TARGET = {
-    "api": "flixify-api:viewer-ip-e970f8e-20261026",
-    "ops-web": "flixify-ops-web:viewer-ip-e970f8e-20261026",
+    "api": "flixify-api:viewer-ip-9830208-20261026",
+    "ops-web": "flixify-ops-web:viewer-ip-9830208-20261026",
 }
 
 SOURCE_IDS = {
