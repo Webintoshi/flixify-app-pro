@@ -1,3 +1,4 @@
+import { canUseClientIpPlayback } from "./client-playback-access.js";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -1852,6 +1853,32 @@ export function buildServer() {
         return reply.status(404).send({ message: "Canli kanal bulunamadi." });
       }
 
+      const personalDirectSourceUrl = userContext.playbackBaseUrl
+        ? buildPersonalVodSourceUrl(userContext.playbackBaseUrl, channel.stream_path,
+            playbackCredentials.primary, userContext.sharedReferenceCredentials)
+        : null;
+      const directTransport = personalDirectSourceUrl ? detectLiveTransport(personalDirectSourceUrl) : "unknown";
+      if (
+        clientRuntime === "browser" &&
+        rawQuery?.direct !== "0" &&
+        canUseClientIpPlayback(userContext) &&
+        isHttpsVodSourceUrl(personalDirectSourceUrl) &&
+        (directTransport === "hls" || directTransport === "ts" || directTransport === "mp4" || directTransport === "mkv")
+      ) {
+        return {
+          ...buildDirectLivePlaybackFallback({
+            channelId,
+            sourceUrl: personalDirectSourceUrl,
+            transport: directTransport,
+            healthStatus: channel.health_status,
+            lastCheckedAt: channel.last_checked_at,
+            isVerified: false
+          }),
+          deliveryMode: "direct_provider" as const,
+          expiresAt: userContext.accessUntil
+        };
+      }
+
       const cooldownMs = 5 * 60 * 1000;
       const normalizedLastError = typeof channel.last_error === "string" ? channel.last_error.trim().toLowerCase() : "";
       const shouldHonorRecent404Failure = shouldHonorSharedLive404Cooldown(
@@ -2481,11 +2508,12 @@ export function buildServer() {
       const directTransport = guessVodTransportFromPath(record.stream_path);
       if (
         clientRuntime === "browser" &&
-        rawQuery?.vodDirect === "1" &&
+        (rawQuery?.vodDirect === "1" || rawQuery?.direct === "1") &&
         rawQuery?.direct !== "0" &&
-        !userContext.isThreeHourTrial &&
-        (directTransport === "hls" || directTransport === "mp4") &&
+        canUseClientIpPlayback(userContext) &&
+        (directTransport === "hls" || directTransport === "mp4" || directTransport === "mkv") &&
         isHttpsVodSourceUrl(personalDirectSourceUrl) &&
+        /\.(?:m3u8|mp4|mkv)$/i.test(new URL(personalDirectSourceUrl).pathname) &&
         hasCurrentPlaybackAccess(userContext)
       ) {
         return {
@@ -2496,7 +2524,8 @@ export function buildServer() {
             transport: directTransport,
             isVerified: false
           }),
-          deliveryMode: "direct_provider" as const
+          deliveryMode: "direct_provider" as const,
+          expiresAt: userContext.accessUntil
         };
       }
 
