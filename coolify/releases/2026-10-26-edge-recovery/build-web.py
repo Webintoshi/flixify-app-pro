@@ -31,6 +31,7 @@ PATHS = (
     "apps/ops-web/app/platform/onboarding.tsx",
     "apps/ops-web/app/canli-tv/page.tsx",
 )
+NEW_PATHS = ()
 CONFIG = "apps/ops-web/next.config.ts"
 ANCHOR = "const nextConfig: NextConfig = {"
 PUBLIC_WEB_KEYS = (
@@ -53,10 +54,38 @@ def image_file(image_id: str, path: str) -> bytes:
     return command("docker", "run", "--rm", "--network", "none", "--entrypoint", "cat", image_id, "/app/" + path)
 
 
+def validate_manifest() -> None:
+    if len(set(PATHS)) != len(PATHS) or len(set(NEW_PATHS)) != len(NEW_PATHS) or not set(NEW_PATHS) <= set(PATHS):
+        raise GateError("web_overlay_manifest_invalid")
+    for path in PATHS:
+        if not isinstance(path, str) or not re.fullmatch(r"apps/ops-web/app/[A-Za-z0-9_./-]+", path) or any(part in ("", ".", "..") for part in path.split("/")):
+            raise GateError("web_overlay_path_invalid")
+
+
+def git_entry(repo: Path, revision: str, path: str) -> bytes:
+    return command("git", "-C", str(repo), "ls-tree", "-z", revision, "--", path)
+
+
+def require_regular_blob(repo: Path, revision: str, path: str) -> None:
+    entry = git_entry(repo, revision, path)
+    if not re.fullmatch(rb"100(?:644|755) blob [0-9a-f]{40}\t" + re.escape(path.encode()) + rb"\x00", entry):
+        raise GateError("web_candidate_not_regular_blob:" + path)
+
+
+def require_image_absent(path: str) -> None:
+    # Check every ancestor as well as the leaf, including dangling symlinks.
+    script = 'p="$1"; q="${p%/*}"; while [ "$q" != / ]; do test ! -L "$q" || exit 1; q="${q%/*}"; [ -n "$q" ] || q=/; done; test ! -e "$p" && test ! -L "$p"'
+    command("docker", "run", "--rm", "--network", "none", "--entrypoint", "sh", SOURCE_ID,
+            "-c", script, "sh", "/app/" + path)
+
+
 def preflight(repo: Path, revision: str) -> tuple[dict, dict, dict, bytes]:
     target(revision)
+    validate_manifest()
     if command("git", "-C", str(repo), "rev-parse", f"{revision}^{{commit}}").decode().strip() != revision:
         raise GateError("revision_not_exact_commit")
+    if command("git", "-C", str(repo), "rev-parse", f"{BASE_REVISION}^{{commit}}").decode().strip() != BASE_REVISION:
+        raise GateError("baseline_not_exact_commit")
     base = core.image(SOURCE_ID)
     if base["Id"] != SOURCE_ID or core.image(SOURCE_TAG)["Id"] != SOURCE_ID:
         raise GateError("web_base_image_drift")
@@ -71,6 +100,19 @@ def preflight(repo: Path, revision: str) -> tuple[dict, dict, dict, bytes]:
         raise GateError("web_runtime_overlay_scope_differs")
     updated = {}
     for path in PATHS:
+        if path in NEW_PATHS:
+            if git_entry(repo, BASE_REVISION, path):
+                raise GateError("web_new_path_exists_in_baseline:" + path)
+            for ancestor in Path(path).parents:
+                if str(ancestor) == ".":
+                    continue
+                entry = git_entry(repo, BASE_REVISION, str(ancestor))
+                if entry and not entry.startswith(b"040000 tree "):
+                    raise GateError("web_new_path_baseline_ancestor_not_tree:" + str(ancestor))
+            require_image_absent(path)
+            require_regular_blob(repo, revision, path)
+            updated[path] = core.git_file(repo, revision, path)
+            continue
         original = core.git_file(repo, BASE_REVISION, path)
         if image_file(SOURCE_ID, path) != original:
             raise GateError("web_base_source_differs:" + path)
