@@ -32,3 +32,13 @@ python3 coolify/releases/2026-10-26-edge-recovery/test-web-builder.py
 ```
 
 Buildx resource flags require the daemon per-step resource capability; unsupported flags or failed cgroup verification stop the operation. Caps apply to compilation, not the Docker daemon itself. No swap or other host service settings are changed. The temporary settings follow the [Next.js 15 memory guide](https://nextjs.org/docs/15/app/guides/memory-usage); resource semantics follow the [Docker Buildx reference](https://docs.docker.com/reference/cli/docker/buildx/build/#set-cpu-and-memory-limits-for-build-containers---resource).
+
+## Quiet player badge follow-up
+
+Application revision `f8737c27d1d161d5268e8003bf53ef0a7a91147d` removes only the transient player badge. Use `build-quiet-web.py` and `release-quiet-web.py`; they pin the observed current web `sha256:1a1e54ab741b5564462ed62645a7590617420ea5005b68595676f6e63df52552` / `edge-recovery-2a7c60e07826-20261026`, compare against base revision `2a7c60e07826fc3dd81606f8eb5534641a931bb7`, and overlay only `canli-tv/page.tsx`.
+
+```sh
+python3 coolify/releases/2026-10-26-edge-recovery/build-quiet-web.py . --revision f8737c27d1d161d5268e8003bf53ef0a7a91147d --build
+```
+
+Use that same full application revision with `release-quiet-web.py`, the new accepted candidate ID, and the unchanged explicit worker tag/ID shown above. Preflight, `--apply`, `--recreate` and `--rollback` behave as above; rollback restores the healthy `2a7c60e07826` web. The 8 GiB free-space gate and all resource/configuration/preservation guards remain required. Focused adapter checks: `python3 coolify/releases/2026-10-26-edge-recovery/test-quiet-web.py`.
