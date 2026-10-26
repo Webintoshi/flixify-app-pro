@@ -1,0 +1,17 @@
+# Task 3 offline tooling report
+
+Owned changes: four new provider-sync worker/web build/release adapters and focused offline tests under `coolify/releases/2026-10-26-edge-recovery/`. Historical builders/releases are unchanged. No runtime/schema changes are included in this tooling commit.
+
+Worker baseline: `7731936e27df42925405f0686ccb8b625cb24abc`, tag `flixify-worker:edge-recovery-7731936e27df-20261026`, image `sha256:9b5d544dacd6da3eec903ceaef16302767cffff4b10e5d987e86494ce8ac23b3`.
+Web baseline: `5340ff94219453507e426d2741605b47f18c612e`, tag `flixify-ops-web:edge-recovery-5340ff942194-20261026`, image `sha256:9b9a3f9895351ee9860213403a005078ae41744b040462d35e67043ac2a118dc`.
+API and actual running DB identity checks remain inherited unchanged, including the deliberate refusal to resolve the floating DB tag.
+
+Worker runtime manifest: index.ts modified; provider-entitlement.ts, provider-entitlement-store.ts and provider-entitlement-sync.ts added. All under apps/worker/src. Tests: provider-entitlement.test.ts, provider-entitlement-store.test.ts, provider-entitlement-sync.test.ts, worker-scheduling.test.ts, auto-trial.test.ts, auto-trial-db.test.ts. Reseller regressions are part of auto-trial.test.ts. Committed migration fixture supabase/migrations/202610260001_provider_entitlement_sync.sql is validated as a regular blob and mounted read-only with the tests, from the same exact revision. Worker agent confirmed this final manifest. Store integration test is opt-in through PROVIDER_SYNC_TEST_DATABASE_URL; absent explicit setting skips database integration.
+
+Web runtime manifest: apps/ops-web/app/platform/session.tsx, personal-provider.ts, direct-playback-deadline.ts, catalog.tsx, detail.tsx; apps/ops-web/app/canli-tv/page.tsx; apps/ops-web/app/account/components.tsx. No new web paths.
+
+Worker builder reuses existing bounded web helpers and safe command classifications. It validates exact commits, running source identity, full runtime scope, regular candidate runtime/test/fixture blobs, successful baseline/image absence for every new path, and rejects baseline/image symlink ancestors. Candidate checks preserve config, source readback, labels and pinned image ancestry. Build is no-cache, network disabled, 8 GiB free-space gated, memory 1280 MiB / total memory 1536 MiB, with actual v1/v2 cgroup checks before compilation and regression tests. Tests are network disabled and bounded with read-only mounts. New web adapter inherits existing bounded builder; new worker release protects the current web image; new web release requires explicit protected newly deployed worker tag and ID.
+
+Validation: executed each `test-*.py` individually with Python, because unittest discover silently ignores hyphenated test module names. Seven files passed: 11 + 4 + 8 + 4 + 5 + 10 + 22 = 64 tests. New negatives cover extra runtime scope, Git errors, image absence errors, existing new paths, symlink ancestors, candidate nonregular/missing files, base source drift, candidate source/config/ancestry/identity drift and missing protected-worker pins. `git diff --check -- coolify/releases/2026-10-26-edge-recovery` passed.
+
+No Docker, network, host build, migration application, production mutation or cleanup was performed. Parent owns actual SQL integration against disposable PostgreSQL, production migration/deployment, exact runtime final commits and frozen candidate revisions. Candidate network-none suite does not prove live PostgreSQL behavior. Keep sibling helper modules together on deployment host. No schema runner was added.
