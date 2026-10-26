@@ -28,7 +28,7 @@ CONFIG = b'const nextConfig: NextConfig = {};'
 
 
 class ShowcaseTests(unittest.TestCase):
-    def preflight(self, *, entry=b'', image_error=False, git_error=False, candidate=None, changed=None, original=b'old', updated=b'new', image=b'old'):
+    def preflight(self, *, entry=b'', image_error=False, git_error=False, candidate=None, candidate_path=NEW, changed=None, original=b'old', updated=b'new', image=b'old'):
         calls = []
         def command(*args, **kwargs):
             calls.append(args)
@@ -39,7 +39,7 @@ class ShowcaseTests(unittest.TestCase):
             if 'ls-tree' in args:
                 if git_error:
                     raise b.GateError('git_failed')
-                return entry if b.BASE_REVISION in args else (candidate if candidate is not None else b'100644 blob ' + b'c'*40 + b'\t' + NEW.encode() + b'\0')
+                return entry if b.BASE_REVISION in args else (candidate if candidate is not None and args[-1] == candidate_path else b'100644 blob ' + b'c'*40 + b'\t' + args[-1].encode() + b'\0')
             if 'inspect' in args:
                 return json.dumps([{'Image': b.SOURCE_ID, 'State': {'Running': True}, 'Config': {'Image': b.SOURCE_TAG, 'Labels': {'com.docker.compose.project': b.UUID}, 'Env': [k+'=test' for k in b.PUBLIC_WEB_KEYS]}}]).encode()
             if image_error:
@@ -79,6 +79,13 @@ class ShowcaseTests(unittest.TestCase):
             entry = mode + b'c'*40 + b'\t' + NEW.encode() + b'\0' if mode else b''
             with self.subTest(mode=mode), self.assertRaisesRegex(b.GateError, 'not_regular_blob'):
                 self.preflight(candidate=entry)
+
+    def test_existing_candidate_requires_regular_blob(self):
+        existing = b.PATHS[0]
+        for mode in (b'120000 blob ', b'040000 tree ', b'', b'100600 blob '):
+            entry = mode + b'c'*40 + b'\t' + existing.encode() + b'\0' if mode else b''
+            with self.subTest(mode=mode), self.assertRaisesRegex(b.GateError, 'not_regular_blob:' + existing):
+                self.preflight(candidate=entry, candidate_path=existing)
 
     def test_failed_image_invocation_rejected(self):
         with self.assertRaisesRegex(b.GateError, 'docker_failed'):

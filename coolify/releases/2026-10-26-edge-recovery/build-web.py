@@ -100,6 +100,7 @@ def preflight(repo: Path, revision: str) -> tuple[dict, dict, dict, bytes]:
         raise GateError("web_runtime_overlay_scope_differs")
     updated = {}
     for path in PATHS:
+        require_regular_blob(repo, revision, path)
         if path in NEW_PATHS:
             if git_entry(repo, BASE_REVISION, path):
                 raise GateError("web_new_path_exists_in_baseline:" + path)
@@ -110,7 +111,6 @@ def preflight(repo: Path, revision: str) -> tuple[dict, dict, dict, bytes]:
                 if entry and not entry.startswith(b"040000 tree "):
                     raise GateError("web_new_path_baseline_ancestor_not_tree:" + str(ancestor))
             require_image_absent(path)
-            require_regular_blob(repo, revision, path)
             updated[path] = core.git_file(repo, revision, path)
             continue
         original = core.git_file(repo, BASE_REVISION, path)
