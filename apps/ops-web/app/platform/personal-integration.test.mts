@@ -55,3 +55,24 @@ test('late bootstrap cannot publish an older line or revive a cleared UI identit
  pending[0](bootstrap);await firstRejected;assert.deepEqual(published,['b']);
  const third=loader(new AbortController().signal);active=false;pending[2](bootstrap);await assert.rejects(()=>third);assert.deepEqual(published,['b']);
 });
+test('failed optimistic completion preserves later hydrated confirmation',()=>{
+ const {createWatchedState,updateWatchedState,watchedIds}=integration;
+ let state=createWatchedState([]);
+ state=updateWatchedState(state,{type:'begin',id:'ep',attempt:1});
+ assert.equal(watchedIds(state).has('ep'),true);
+ state=updateWatchedState(state,{type:'hydrate',ids:['ep']});
+ state=updateWatchedState(state,{type:'failure',id:'ep',attempt:1});
+ assert.equal(watchedIds(state).has('ep'),true);
+ assert.equal(state.optimistic.has('ep'),false);
+ let unconfirmed=updateWatchedState(createWatchedState([]),{type:'begin',id:'ep',attempt:1});
+ unconfirmed=updateWatchedState(unconfirmed,{type:'failure',id:'ep',attempt:1});
+ assert.equal(watchedIds(unconfirmed).has('ep'),false);
+ let saved=updateWatchedState(createWatchedState([]),{type:'begin',id:'ep',attempt:1});
+ saved=updateWatchedState(saved,{type:'success',id:'ep',attempt:1});
+ saved=updateWatchedState(saved,{type:'hydrate',ids:[]});
+ assert.equal(watchedIds(saved).has('ep'),true);
+ let newer=updateWatchedState(createWatchedState([]),{type:'begin',id:'ep',attempt:1});
+ newer=updateWatchedState(newer,{type:'begin',id:'ep',attempt:2});
+ newer=updateWatchedState(newer,{type:'failure',id:'ep',attempt:1});
+ assert.equal(watchedIds(newer).has('ep'),true);
+});

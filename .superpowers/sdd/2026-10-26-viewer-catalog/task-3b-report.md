@@ -55,3 +55,15 @@ TDD: new helper tests initially failed because the helper module was absent; det
 `node --test apps/ops-web/app/platform/direct-playback-deadline.test.mts` — 5/5 pass under native Node TypeScript stripping. An earlier attempt through TSX produced import-shape failures before execution; root identified the existing test runner convention and the correct native command passes without source edits. Total focused evidence: 27 integration/adapter tests plus 5 existing deadline tests pass.
 
 No Next build/cache, browser, provider/production request or push. Root owns browser/end-to-end verification. Commit contains only the owned files listed above and this report; commit hash supplied in task completion message.
+
+## Review fix round 1 — watched hydration/rollback ordering
+
+Addressed review P2 at the watched PUT rollback. Replaced the captured `previouslyWatched` flag with separate confirmed and optimistic state. Hydration and successful PUTs add confirmation; failure removes only that request's optimistic addition. Attempt IDs also prevent an older failed request from clearing a newer pending completion. The displayed watched IDs are the union of confirmed and optimistic IDs. Existing server-confirmed initial watched state remains confirmed.
+
+TDD: added the required completion → hydration containing episode → failed PUT regression; it failed before the new state helper existed. After wiring that same helper into Detail hydration, completion and PUT success/failure, the regression passes. It additionally verifies unconfirmed failures roll back, successful PUT confirmation survives stale empty hydration, and an earlier failed request cannot remove a later optimistic request.
+
+- `node_modules/.bin/tsx --test apps/ops-web/app/platform/personal-integration.test.mts apps/ops-web/app/platform/personal-provider.test.mts` — 28/28 pass (9 integration/helper +19 adapter).
+- `node_modules/.bin/tsc --noEmit --incremental false -p apps/ops-web/tsconfig.json` — exit 0.
+- `git diff --check` — clean.
+
+Only owned Detail/helper/test/report files changed. No build, provider/production/browser request, subagent or push.

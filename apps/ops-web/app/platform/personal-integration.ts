@@ -51,3 +51,19 @@ export function createScopedBootstrapLoader(load: (signal: AbortSignal) => Promi
   return value;
  };
 }
+
+export type WatchedState = { confirmed: Set<string>; optimistic: Map<string, number> };
+type WatchedAction = { type: 'hydrate'; ids: Iterable<string> } | { type: 'begin' | 'success' | 'failure'; id: string; attempt: number };
+export function createWatchedState(ids: Iterable<string>): WatchedState { return { confirmed: new Set(ids), optimistic: new Map() }; }
+export function watchedIds(state: WatchedState): Set<string> { return new Set([...state.confirmed, ...state.optimistic.keys()]); }
+/** A failed write removes only its own optimistic addition, never server confirmation. */
+export function updateWatchedState(state: WatchedState, action: WatchedAction): WatchedState {
+ const confirmed = new Set(state.confirmed); const optimistic = new Map(state.optimistic);
+ if (action.type === 'hydrate') for (const id of action.ids) confirmed.add(id);
+ else if (action.type === 'begin') optimistic.set(action.id, action.attempt);
+ else {
+  if (action.type === 'success') confirmed.add(action.id);
+  if (optimistic.get(action.id) === action.attempt) optimistic.delete(action.id);
+ }
+ return { confirmed, optimistic };
+}

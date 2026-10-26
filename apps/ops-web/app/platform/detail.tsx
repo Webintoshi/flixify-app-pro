@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { apiRequest } from "../../lib/api";
 import { usePlatform } from "./session";
-import { hydratePersonalWatched, requestPersonalPlayback } from "./personal-integration";
+import { hydratePersonalWatched, requestPersonalPlayback, createWatchedState, updateWatchedState, watchedIds } from "./personal-integration";
 import type { PersonalRef } from "./personal-provider";
 import { Artwork, FavoriteButton } from "./artwork";
 import { firstUnwatchedEpisode, nextPlayableEpisode } from "./episode-navigation";
@@ -323,7 +323,9 @@ export function Detail({ item, onClose }: { item: MediaItem; onClose: () => void
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [progressError, setProgressError] = useState("");
-  const [watched, setWatched] = useState(() => new Set(item.seasons?.flatMap(value => value.episodes).filter(value => value.watched).map(value => value.id) ?? []));
+  const [watchedState, setWatchedState] = useState(() => createWatchedState(item.seasons?.flatMap(value => value.episodes).filter(value => value.watched).map(value => value.id) ?? []));
+  const watched = watchedIds(watchedState);
+  const watchedAttempt = useRef(0);
   const [season, setSeason] = useState(() => firstUnwatchedEpisode(item.seasons ?? [], watched)?.seasonNumber ?? item.seasons?.[0]?.seasonNumber ?? 1);
   const [autoAdvance, setAutoAdvance] = useState<{ episode: Episode | null; seconds: number } | null>(null);
   const request = useRef(0);
@@ -333,7 +335,7 @@ export function Detail({ item, onClose }: { item: MediaItem; onClose: () => void
   useEffect(() => {
     if(providerMode !== "personal" || !item.personalRef) return;
     let cancelled = false;
-    apiRequest<{watched:PersonalRef[]}>("/me/personal-library", {signal:AbortSignal.timeout(15000)}).then(library=> { if(!cancelled) setWatched(previous => new Set([...hydratePersonalWatched(library.watched,item.seasons?.flatMap(season=>season.episodes) ?? []), ...previous])); }).catch(()=> { if(!cancelled) setProgressError("İzlendi bilgisi yüklenemedi."); });
+    apiRequest<{watched:PersonalRef[]}>("/me/personal-library", {signal:AbortSignal.timeout(15000)}).then(library=> { if(!cancelled) setWatchedState(previous => updateWatchedState(previous, {type:"hydrate", ids:hydratePersonalWatched(library.watched,item.seasons?.flatMap(season=>season.episodes) ?? [])})); }).catch(()=> { if(!cancelled) setProgressError("İzlendi bilgisi yüklenemedi."); });
     return ()=> {cancelled = true;};
   }, [item, providerMode, providerScope]);
   const play = async (episode?: Episode, preserveResume = false) => {
@@ -355,28 +357,30 @@ export function Detail({ item, onClose }: { item: MediaItem; onClose: () => void
     catch (error) { if (version === request.current) setError(providerMode === "personal" ? error instanceof Error && error.message === "Bu içerik tarayıcıda oynatılamıyor. Başka bir içerik seçebilirsin." ? error.message : "Bu içerik şu anda tarayıcıda açılamıyor. Yeniden dene veya başka bir içerik seç." : playbackErrorMessage(error, item.kind)); }
     finally { if (version === request.current) setBusy(false); }
   };
-  const persistWatched = async (episode: Episode, previouslyWatched: boolean) => {
+  const persistWatched = async (episode: Episode, completionAttempt: number) => {
     for (let attempt = 0; attempt < (providerMode === "personal" ? 1 : 2); attempt++) {
       try {
         if(providerMode === "personal") {
           if(!episode.personalRef) throw new Error("Unavailable episode");
           await apiRequest("/me/personal-library/watched",{method:"PUT",body:{ref:episode.personalRef}});
         } else await apiRequest<{ ok: boolean }>(`/me/library/series/${encodeURIComponent(item.id)}/episodes/${encodeURIComponent(episode.id)}/watched`, { method: "PUT" });
+        setWatchedState(previous => updateWatchedState(previous, {type:"success", id:episode.id, attempt:completionAttempt}));
         setProgressError("");
         return;
       } catch {
         if (attempt === 0 && providerMode !== "personal") await new Promise(resolve => setTimeout(resolve, 600));
       }
     }
-    if (!previouslyWatched) setWatched(previous => {const next = new Set(previous); next.delete(episode.id); return next;});
+    setWatchedState(previous => updateWatchedState(previous, {type:"failure", id:episode.id, attempt:completionAttempt}));
     setProgressError("İzlendi bilgisi kaydedilemedi. İnternet bağlantın geldiğinde bölümü yeniden açabilirsin.");
   };
   const finishEpisode = () => {
     const completed = activeEpisode.current;
     if (!completed) return;
     activeEpisode.current = null;
-    setWatched(previous => new Set(previous).add(completed.id));
-    void persistWatched(completed, watched.has(completed.id));
+    const completionAttempt = ++watchedAttempt.current;
+    setWatchedState(previous => updateWatchedState(previous, {type:"begin", id:completed.id, attempt:completionAttempt}));
+    void persistWatched(completed, completionAttempt);
     setAutoAdvance({ episode: nextPlayableEpisode(item.seasons ?? [], completed.id), seconds: 5 });
   };
   useEffect(() => {
