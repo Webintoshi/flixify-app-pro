@@ -1,4 +1,3 @@
-import { canUseClientIpPlayback } from "./client-playback-access.js";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -24,6 +23,7 @@ import {
   trialRequestInputSchema,
   vodPlaybackEventInputSchema
 } from "@flixify/contracts";
+import { canUseClientIpPlayback } from "./client-playback-access.js";
 import type {
   LiveChannel,
   LiveHealthStatus,

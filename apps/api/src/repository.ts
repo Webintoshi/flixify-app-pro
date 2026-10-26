@@ -21,12 +21,12 @@ import type {
   UserSummary,
   VodPlaybackKind
 } from "@flixify/contracts";
+import { getVerifiedTrialProviderExpiry } from "./client-playback-access.js";
 import { buildLiveVariantMetadata, dedupeMovieCatalogEntries } from "@flixify/contracts";
 import { buildPlaylistUrl, buildStreamUrl, parsePlaylistUrl, type PlaylistConfig } from "./iptv.js";
 import { filterStoredMovieCatalogRows, filterStoredSeriesCatalogRows } from "./vod-catalog-filter.js";
 import { query, withTransaction } from "./db.js";
 import { env } from "./env.js";
-import { getVerifiedTrialProviderExpiry } from "./client-playback-access.js";
 import { addPackageDuration, calculateRemainingDays } from "./time.js";
 
 type UserContextRow = QueryResultRow & {
