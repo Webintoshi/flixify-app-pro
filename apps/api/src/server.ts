@@ -1857,7 +1857,14 @@ export function buildServer() {
         ? buildPersonalVodSourceUrl(userContext.playbackBaseUrl, channel.stream_path,
             playbackCredentials.primary, userContext.sharedReferenceCredentials)
         : null;
-      const directTransport = personalDirectSourceUrl ? detectLiveTransport(personalDirectSourceUrl) : "unknown";
+      let canonicalDirectLiveUrl: URL | null = null;
+      try {
+        canonicalDirectLiveUrl = personalDirectSourceUrl ? new URL(personalDirectSourceUrl) : null;
+      } catch {
+        // Invalid provider URLs cannot be offered as browser direct playback.
+      }
+      const directExtension = canonicalDirectLiveUrl?.pathname.match(/\.(m3u8|ts|mp4|mkv)$/i)?.[1]?.toLowerCase();
+      const directTransport = directExtension === "m3u8" ? "hls" : directExtension;
       if (
         clientRuntime === "browser" &&
         rawQuery?.direct !== "0" &&

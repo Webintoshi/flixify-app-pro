@@ -7,3 +7,10 @@ export function usesHlsPlayback(transport: string | undefined, url: string): boo
     return false;
   }
 }
+
+/** File containers use the browser media engine; only TS needs MPEG-TS transmuxing. */
+export function selectLivePlaybackEngine(transport: string | undefined, url: string): "hls" | "mpegts" | "native" {
+  if (usesHlsPlayback(transport, url)) return "hls";
+  if (transport === "mp4" || transport === "mkv") return "native";
+  return "mpegts";
+}

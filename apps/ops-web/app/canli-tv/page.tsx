@@ -1,6 +1,6 @@
 "use client";
 
-import { usesHlsPlayback } from "../platform/playback-transport";
+import { selectLivePlaybackEngine } from "../platform/playback-transport";
 import { createDirectPlaybackDeadline } from "../platform/direct-playback-deadline";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -46,7 +46,7 @@ type LiveChannel = {
   groupTitle: string | null;
   logoUrl: string | null;
   playbackAllowed: boolean;
-  transport: "hls" | "ts" | "unknown";
+  transport: "hls" | "ts" | "mp4" | "mkv" | "unknown";
   healthStatus: "healthy" | "degraded" | "broken" | "unknown";
   variantGroupKey?: string | null;
 };
@@ -56,7 +56,7 @@ type CatalogResponse = { items: LiveChannel[]; total?: number; groups?: Array<{ 
 type PlaybackResponse = {
   channelId: string;
   url: string | null;
-  transport: "hls" | "ts" | "unknown";
+  transport: "hls" | "ts" | "mp4" | "mkv" | "unknown";
   deliveryMode?: string;
   expiresAt?: string | null;
   canPlay: boolean;
@@ -217,6 +217,7 @@ function LiveVideo({
     if (!currentMediaElement || !playback.url) return;
     const mediaElement: HTMLVideoElement = currentMediaElement;
     const playbackUrl = playback.url;
+    const playbackEngine = selectLivePlaybackEngine(playback.transport, playbackUrl);
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let cleanupCurrent: () => void = () => undefined;
@@ -241,7 +242,7 @@ function LiveVideo({
           clientRuntime: "browser",
           deliveryMode: "direct_provider",
           sourceTransport: playback.transport,
-          playerEngine: usesHlsPlayback(playback.transport, playbackUrl) ? "hls.js" : "mpegts.js"
+          playerEngine: playbackEngine === "hls" ? "hls.js" : playbackEngine === "native" ? "native" : "mpegts.js"
         }
       }).catch(() => undefined);
     };
@@ -339,7 +340,18 @@ function LiveVideo({
         setPlayerError(null);
         setConnectionState(attempt > 0 ? "reconnecting" : "connecting");
 
-        if (usesHlsPlayback(playback.transport, playbackUrl)) {
+        if (playbackEngine === "native") {
+          mediaElement.src = playbackUrl;
+          cleanupCurrent = resetMedia;
+          await mediaElement.play();
+          if (!cancelled) {
+            setConnectionState("live");
+            reportDirectEvent("playing");
+          }
+          return;
+        }
+
+        if (playbackEngine === "hls") {
           const canPlayNativeHls = Boolean(mediaElement.canPlayType("application/vnd.apple.mpegurl"));
           const { default: Hls } = await import("hls.js");
           if (cancelled) return;
