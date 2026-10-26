@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 UUID = "eupquokyj7qegufqvqkjmuyr"
-REVISION = "464e34863834d87fc90cebe360eeb784119eda56"
+REVISION = "5002a7a32d2a54c1b882f375c2bd43dc71d9c59c"
 BASE_REVISION = "51be56cfa2927c3f4a41a84e5a4f3acfaa4a0cea"
 BASE = {
     "api": (
@@ -32,8 +32,8 @@ BASE = {
     ),
 }
 TARGET = {
-    "api": "flixify-api:personal-viewer-464e348-20261026",
-    "ops-web": "flixify-ops-web:personal-viewer-464e348-20261026",
+    "api": "flixify-api:personal-viewer-5002a7a-20261026",
+    "ops-web": "flixify-ops-web:personal-viewer-5002a7a-20261026",
 }
 PINNED_API_SOURCES = {
     "apps/api/src/server.ts": "79ca80dc7996fd532dbd89984c89b0f18ada63ff050337d7d274a51e84714283",
