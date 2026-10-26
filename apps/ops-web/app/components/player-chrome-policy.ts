@@ -18,6 +18,8 @@ export function clampSeekTime(target: number, duration: number): number {
   return Math.min(Math.max(target, 0), playableDuration(duration) ?? 0);
 }
 
-export function shouldHidePlayerChrome(kind: "live" | "vod", idleMs: number, focused: boolean): boolean {
-  return kind === "live" && !focused && idleMs >= 2500;
+export const PLAYER_CHROME_IDLE_MS = 2000;
+
+export function shouldHidePlayerChrome(kind: "live" | "vod", idleMs: number, keyboardFocused: boolean): boolean {
+  return kind === "live" && !keyboardFocused && idleMs >= PLAYER_CHROME_IDLE_MS;
 }

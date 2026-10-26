@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { clampSeekTime, formatPlayerTime, playableDuration, shouldHidePlayerChrome } from "./player-chrome-policy";
+import { clampSeekTime, formatPlayerTime, playableDuration, shouldHidePlayerChrome, PLAYER_CHROME_IDLE_MS } from "./player-chrome-policy";
 import styles from "./player-chrome.module.css";
 
 type PlayerChromeProps = {
@@ -41,29 +41,47 @@ export function PlayerChrome({ videoRef, kind, title }: PlayerChromeProps) {
     if (!surface) return;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     let lastActivity = Date.now();
+    let keyboardInteraction = false;
     const scheduleHide = () => {
       clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
-        if (shouldHidePlayerChrome(kind, Date.now() - lastActivity, Boolean(chromeRef.current?.contains(document.activeElement)))) {
+        if (shouldHidePlayerChrome(kind, Date.now() - lastActivity, keyboardInteraction && Boolean(chromeRef.current?.contains(document.activeElement)))) {
           setChromeVisible(false);
         }
-      }, 2500);
+      }, PLAYER_CHROME_IDLE_MS);
     };
     const reveal = () => { lastActivity = Date.now(); setChromeVisible(true); scheduleHide(); };
     const onFocusOut = () => { lastActivity = Date.now(); scheduleHide(); };
-    surface.addEventListener("pointermove", reveal);
+    const onKeyboard = () => {
+      keyboardInteraction = true;
+      if (chromeRef.current?.contains(document.activeElement)) reveal();
+    };
+    const onPointer = () => {
+      keyboardInteraction = false;
+      if (chromeRef.current?.contains(document.activeElement)) { lastActivity = Date.now(); scheduleHide(); }
+    };
+    const onPointerMove = () => { keyboardInteraction = false; reveal(); };
+    surface.addEventListener("pointermove", onPointerMove);
     surface.addEventListener("pointerdown", reveal);
     surface.addEventListener("touchstart", reveal, { passive: true });
     surface.addEventListener("focusin", reveal);
     surface.addEventListener("focusout", onFocusOut);
+    document.addEventListener("keydown", onKeyboard, true);
+    document.addEventListener("pointerdown", onPointer, true);
+    document.addEventListener("touchstart", onPointer, { passive: true, capture: true });
+    document.addEventListener("fullscreenchange", reveal);
     scheduleHide();
     return () => {
       clearTimeout(idleTimer);
-      surface.removeEventListener("pointermove", reveal);
+      surface.removeEventListener("pointermove", onPointerMove);
       surface.removeEventListener("pointerdown", reveal);
       surface.removeEventListener("touchstart", reveal);
       surface.removeEventListener("focusin", reveal);
       surface.removeEventListener("focusout", onFocusOut);
+      document.removeEventListener("keydown", onKeyboard, true);
+      document.removeEventListener("pointerdown", onPointer, true);
+      document.removeEventListener("touchstart", onPointer, true);
+      document.removeEventListener("fullscreenchange", reveal);
     };
   }, [kind, videoRef]);
 

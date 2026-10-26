@@ -22,9 +22,9 @@ test("seeking clamps progress inside the available movie", () => {
   assert.equal(clampSeekTime(200, 120), 120);
 });
 
-test("live controls hide after 2.5 seconds of inactivity", () => {
-  assert.equal(shouldHidePlayerChrome("live", 2499, false), false);
-  assert.equal(shouldHidePlayerChrome("live", 2500, false), true);
+test("live controls hide after two seconds of inactivity", () => {
+  assert.equal(shouldHidePlayerChrome("live", 1999, false), false);
+  assert.equal(shouldHidePlayerChrome("live", 2000, false), true);
 });
 
 test("focused controls remain accessible and VOD controls remain visible", () => {
