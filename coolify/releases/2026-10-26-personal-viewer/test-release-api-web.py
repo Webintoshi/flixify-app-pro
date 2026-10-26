@@ -29,7 +29,7 @@ build_spec.loader.exec_module(build)
 
 def fixture(stage: str = "source"):
     tags = {
-        "db": "postgres:16",
+        "db": "postgres:16-alpine",
         "api": release.expected_images(stage)["api"],
         "worker": "flixify-worker:trial-20261013",
         "ops-web": release.expected_images(stage)["ops-web"],
@@ -42,6 +42,7 @@ def fixture(stage: str = "source"):
                               for name, config in raw["services"].items()}}
     containers = {name: {"tag": tag, "image_id": f"id:{tag}"}
                   for name, tag in tags.items()}
+    containers["db"]["image_id"] = "sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
     applications = {name: tags[name] for name in release.CHANGED}
     return raw, rendered, generated, containers, applications
 
@@ -54,6 +55,31 @@ class ReleasePlanTests(unittest.TestCase):
         self.ids = patch.object(release, "image_id", side_effect=lambda tag: f"id:{tag}")
         self.ids.start()
         self.addCleanup(self.ids.stop)
+
+    def test_known_db_digest_survives_downloaded_floating_tag_drift(self):
+        newer = "sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36"
+        for stage in ("source", "target"):
+            with self.subTest(stage=stage), patch.object(release, "image_id", side_effect=lambda tag: newer if tag == "postgres:16-alpine" else f"id:{tag}") as inspect:
+                release.validate_plan(*fixture(stage), stage)
+                self.assertNotIn(unittest.mock.call("postgres:16-alpine"), inspect.call_args_list)
+
+    def test_unknown_db_digest_rejected(self):
+        for stage in ("source", "target"):
+            values = fixture(stage)
+            values[3]["db"]["image_id"] = "sha256:unexpected"
+            with self.subTest(stage=stage), self.assertRaisesRegex(release.GateError, "running_image_differs:db"):
+                release.validate_plan(*values, stage)
+
+    def test_unknown_db_config_or_compose_tag_rejected(self):
+        for stage in ("source", "target"):
+            for change_compose in (False, True):
+                values = fixture(stage)
+                values[3]["db"]["tag"] = "postgres:other"
+                if change_compose:
+                    for document in values[:3]:
+                        document["services"]["db"]["image"] = "postgres:other"
+                with self.subTest(stage=stage, change_compose=change_compose), self.assertRaisesRegex(release.GateError, "running_image_differs:db"):
+                    release.validate_plan(*values, stage)
 
     def test_source_dry_run_accepts_exact_baseline(self):
         release.validate_plan(*fixture(), "source")

@@ -37,6 +37,10 @@ ENV = DIRECTORY / ".env"
 REVISION = "5002a7a32d2a54c1b882f375c2bd43dc71d9c59c"
 SERVICES = ("db", "api", "worker", "ops-web")
 CHANGED = ("api", "ops-web")
+# Existing healthy DB predates a local pull of the floating tag. Validate the
+# known running identity without following that tag to a newer installed image.
+PROTECTED_DB_TAG = "postgres:16-alpine"
+PROTECTED_DB_IMAGE_ID = "sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
 SOURCE = {
     "api": "flixify-api:playback-fix-39300d0-20261023",
     "ops-web": "flixify-ops-web:playback-fix-39300d0-20261023",
@@ -226,7 +230,10 @@ def validate_plan(raw: dict, rendered: dict, generated: dict,
             raise GateError(f"raw_rendered_image_differs:{name}")
         if name in CHANGED and (tag != images[name] or applications.get(name) != tag):
             raise GateError(f"unexpected_application_or_compose_image:{name}")
-        if stage == "source" or name not in CHANGED:
+        if name == "db":
+            if tag != PROTECTED_DB_TAG or containers[name]["tag"] != PROTECTED_DB_TAG or containers[name]["image_id"] != PROTECTED_DB_IMAGE_ID:
+                raise GateError("running_image_differs:db")
+        elif stage == "source" or name not in CHANGED:
             if containers[name]["tag"] != tag or containers[name]["image_id"] != image_id(tag):
                 raise GateError(f"running_image_differs:{name}")
     if stage == "target":

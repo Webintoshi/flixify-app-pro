@@ -108,3 +108,16 @@ kimlikleri tekrar doğrulanır. Public API `/health` ve web kök sayfası kontro
 sonrası, gerçek yetkili izleyici hesabıyla katalog, detay, canlı TV ve kişisel
 kütüphane izolasyonunun tarayıcıda doğrulanmasını root yürütür.
 Yedek, proxy/VPN, askıdaki host veya ticket işlemi bu yayının kapsamında değildir.
+
+### Önceden var olan veritabanı etiket farkı
+
+Çalışan sağlıklı Flixify DB'nin Compose ve container config etiketi
+`postgres:16-alpine`; çalışan imaj kimliği
+`sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea`
+olarak sabittir. Yerel floating etiket daha sonra indirilen
+`sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36`
+imajını gösterir. Yayın DB için yalnız bilinen config/Compose etiketi ve çalışan
+sabit kimliği kabul eder; indirilen etiketin yeni kimliğini takip etmez. Başka
+DB kimliği veya etiketi reddedilir. Bu fark DB yeniden oluşturularak veya etiket
+taşınarak giderilmez. Önce/sonra DB container ID, imaj ID, config etiketi ve
+Compose config hash eşitliği korunur; API/web/worker denetimleri değişmez.
