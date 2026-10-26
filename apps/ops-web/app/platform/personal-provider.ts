@@ -98,8 +98,10 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
   if (session && !force) return {b:session,g:generation};
   const g = generation; const sequence = ++bootstrapSequence; const controller = new AbortController(); controllers.add(controller);
   try {
-   const b = validatePersonalBootstrap(await options.loadBootstrap(controller.signal),now()); if (g !== generation || sequence !== bootstrapSequence || controller.signal.aborted) fail();
+   let b = validatePersonalBootstrap(await options.loadBootstrap(controller.signal),now()); if (g !== generation || sequence !== bootstrapSequence || controller.signal.aborted) fail();
    if (session && (session.accountId !== b.accountId || session.sourceVersion !== b.sourceVersion || session.providerOrigin !== b.providerOrigin || session.username !== b.username || session.password !== b.password)) clear();
+   // Keep active operations on the same identity; refreshed access may shorten or extend its deadline.
+   if (session) { session.expiresAt = b.expiresAt; b = session; }
    session = b; if (expiryTimer) clearTimeout(expiryTimer);
    const schedule = () => { if (session !== b) return; const remaining = Date.parse(b.expiresAt)-now(); if (remaining <= 0) clear(); else { expiryTimer = setTimeout(schedule,Math.min(remaining,2147483647)); (expiryTimer as unknown as {unref?:()=>void}).unref?.(); } }; schedule();
    return {b,g:generation};

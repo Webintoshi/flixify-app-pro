@@ -90,3 +90,36 @@ test('expired access stops provider requests even when a former catalog is cache
 test('reference versions reject control characters and whitespace changes',()=>{
  for(const sourceVersion of ['v1\n',' v1','v1\u0000']) assert.throws(()=>adapter.validatePersonalRef({...ref,sourceVersion}));
 });
+for (const operation of ['playback','catalog','detail','epg'] as const) {
+ test(`unchanged bootstrap refresh preserves overlapping ${operation}`,async()=>{
+  let release:()=>void=()=>{};let entered:()=>void=()=>{};const blocked=new Promise<void>(r=>entered=r);let hold=false;let held=false;let loads=0;
+  const blockedAction={playback:'get_live_streams',catalog:'get_vod_streams',detail:'get_series_info',epg:'get_short_epg'}[operation];
+  const client=createPersonalProviderClient({loadBootstrap:async()=>{loads++;return {...bootstrap};},fetch:async(url)=>{
+   const action=new URL(String(url)).searchParams.get('action');
+   if(hold && !held && action===blockedAction){held=true;entered();await new Promise<void>(r=>release=r);}
+   const data=action==='get_live_categories'||action==='get_series_categories'?[]:action==='get_vod_categories'?[{category_id:'1',category_name:'Aile'}]:action==='get_live_streams'?[{stream_id:7,name:'Channel'}]:action==='get_vod_streams'?[{stream_id:12,name:'Film',category_id:'1',container_extension:'mp4'}]:action==='get_series'?[{series_id:3,name:'Show'}]:action==='get_series_info'?{episodes:{'1':[{id:4,title:'Part',season:1,episode_num:1,container_extension:'mkv'}]}}:{epg_listings:[]};
+   return new Response(JSON.stringify(data));
+  }});
+  const liveRef={source:'personal',sourceVersion:'v1',kind:'live',id:'7'};
+  await client.catalog('live');hold=true;
+  const ongoing=operation==='playback'?client.playback(liveRef):operation==='catalog'?client.catalog('movie'):operation==='detail'?client.series({source:'personal',sourceVersion:'v1',kind:'series',id:'3'}):client.shortEpg(liveRef);
+  await blocked;await client.playback(liveRef);release();
+  const result=await ongoing;
+  if(operation==='epg') assert.equal((result as {status:string}).status,'empty');
+  else assert.ok(result);
+  assert.equal(loads,operation==='playback'?3:2);client.clear();
+ });
+}
+for (const shortened of [true,false]) {
+ test(`unchanged identity refresh applies ${shortened?'shorter':'longer'} expiry to pending metadata`,async()=>{
+  let now=Date.parse('2026-01-01T00:00:00Z');let expiry='2026-01-01T00:02:00Z';let release:()=>void=()=>{};let entered:()=>void=()=>{};const blocked=new Promise<void>(r=>entered=r);
+  const client=createPersonalProviderClient({now:()=>now,loadBootstrap:async()=>({...bootstrap,expiresAt:expiry}),fetch:async(url)=>{
+   const action=new URL(String(url)).searchParams.get('action');
+   if(action==='get_short_epg'){entered();await new Promise<void>(r=>release=r);return new Response('{"epg_listings":[]}');}
+   return new Response(JSON.stringify(action==='get_live_categories'?[]:[{stream_id:7,name:'Channel'}]));
+  }});
+  const liveRef={source:'personal',sourceVersion:'v1',kind:'live',id:'7'};await client.catalog('live');const ongoing=client.shortEpg(liveRef);await blocked;
+  expiry=shortened?'2026-01-01T00:01:00Z':'2026-01-01T00:04:00Z';const playback=await client.playback(liveRef);assert.equal(playback.expiresAt,expiry);
+  now=Date.parse('2026-01-01T00:03:00Z');release();assert.equal((await ongoing).status,shortened?'error':'empty');client.clear();
+ });
+}
