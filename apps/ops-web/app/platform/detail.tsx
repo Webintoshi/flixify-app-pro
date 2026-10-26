@@ -9,6 +9,7 @@ import { VodEpisodeDrawer } from "./vod-episode-drawer";
 import { Icon } from "./icons";
 import { clampSeekTime, formatPlayerTime, playableDuration } from "../components/player-chrome-policy";
 import { classifyVodPlayRejection, createDirectPlaybackWatchdog } from "./direct-playback-watchdog";
+import { usesHlsPlayback } from "./playback-transport";
 import { createDirectPlaybackDeadline } from "./direct-playback-deadline";
 import type { Episode, MediaItem } from "./types";
 import s from "./platform.module.css";
@@ -275,7 +276,7 @@ export function VodPlayer({ playback, title, resumeAt = 0, onProgress, onEnded, 
     video.addEventListener("loadedmetadata", restorePosition);
     video.addEventListener("timeupdate", reportProgress);
     video.addEventListener("ended", reportEnded);
-    if (playback.transport === "hls" || /\.m3u8(?:\?|$)/i.test(playback.url)) {
+    if (usesHlsPlayback(playback.transport, playback.url)) {
       const nativeHlsSupport = video.canPlayType("application/vnd.apple.mpegurl");
       if (shouldUseNativeHls(navigator.userAgent, nativeHlsSupport)) { video.src = playback.url; startPlayback(); }
       else void import("hls.js").then(({ default: Hls }) => {

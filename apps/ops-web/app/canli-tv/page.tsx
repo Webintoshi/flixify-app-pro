@@ -1,5 +1,6 @@
 "use client";
 
+import { usesHlsPlayback } from "../platform/playback-transport";
 import { createDirectPlaybackDeadline } from "../platform/direct-playback-deadline";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -240,7 +241,7 @@ function LiveVideo({
           clientRuntime: "browser",
           deliveryMode: "direct_provider",
           sourceTransport: playback.transport,
-          playerEngine: playback.transport === "hls" ? "hls.js" : "mpegts.js"
+          playerEngine: usesHlsPlayback(playback.transport, playbackUrl) ? "hls.js" : "mpegts.js"
         }
       }).catch(() => undefined);
     };
@@ -338,7 +339,7 @@ function LiveVideo({
         setPlayerError(null);
         setConnectionState(attempt > 0 ? "reconnecting" : "connecting");
 
-        if (playback.transport === "hls" || playbackUrl.toLowerCase().includes(".m3u8")) {
+        if (usesHlsPlayback(playback.transport, playbackUrl)) {
           const canPlayNativeHls = Boolean(mediaElement.canPlayType("application/vnd.apple.mpegurl"));
           const { default: Hls } = await import("hls.js");
           if (cancelled) return;
