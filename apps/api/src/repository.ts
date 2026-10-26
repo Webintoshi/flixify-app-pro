@@ -33,6 +33,11 @@ type UserContextRow = QueryResultRow & {
   id: string;
   status: "new" | "active" | "blocked";
   created_at: string;
+  trial_job_user_id?: string | null;
+  trial_provider_line_id?: string | null;
+  trial_provider_expires_at?: string | Date | null;
+  trial_provider_username?: string | null;
+  trial_provider_password?: string | null;
   last_login_at: string | null;
   kryptonite_code: string | null;
   code_suffix: string | null;
@@ -53,11 +58,6 @@ type UserContextRow = QueryResultRow & {
   ends_at: string | Date | null;
   subscription_end_reason: string | null;
   trial_provision_status?: "queued" | "reconcile" | "verified" | "completed" | "review" | null;
-  trial_job_user_id?: string | null;
-  trial_provider_line_id?: string | null;
-  trial_provider_expires_at?: string | Date | null;
-  trial_provider_username?: string | null;
-  trial_provider_password?: string | null;
   has_used_trial?: boolean | null;
   has_expired_subscription?: boolean | null;
 };
@@ -877,17 +877,17 @@ async function getUserContextRow(userId: string, includeDeleted = false): Promis
         settings.shared_source_reference_password as source_reference_password,
         cred.username as iptv_username,
         cred.password as iptv_password,
+        trial_job.user_id as trial_job_user_id,
+        trial_job.provider_line_id as trial_provider_line_id,
+        trial_job.provider_expires_at as trial_provider_expires_at,
+        trial_job.provider_username as trial_provider_username,
+        trial_job.provider_password as trial_provider_password,
         sub.package_id,
         sub.package_title,
         sub.package_duration,
         sub.ends_at,
         sub.end_reason as subscription_end_reason,
         trial_job.status as trial_provision_status,
-        trial_job.user_id as trial_job_user_id,
-        trial_job.provider_line_id as trial_provider_line_id,
-        trial_job.provider_expires_at as trial_provider_expires_at,
-        trial_job.provider_username as trial_provider_username,
-        trial_job.provider_password as trial_provider_password,
         coalesce(
           exists(
             select 1 from public.subscriptions s_tr
