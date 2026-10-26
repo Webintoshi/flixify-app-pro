@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   events: [] as string[],
   hasSharedJob: true,
-  trialFails: false
+  trialFails: false,
+  entitlementResolve: null as null | (() => void)
 }));
 
 vi.mock("./env.js", () => ({
@@ -45,6 +46,12 @@ vi.mock("./auto-trial.js", () => ({
   }
 }));
 
+vi.mock("./provider-entitlement.js", () => ({ createProviderEntitlementClient: () => ({}) }));
+vi.mock("./provider-entitlement-store.js", () => ({ createProviderEntitlementStore: () => ({}) }));
+vi.mock("./provider-entitlement-sync.js", () => ({
+  runProviderEntitlementSyncBatch: () => new Promise<void>(resolve => { state.entitlementResolve = resolve; })
+}));
+
 vi.mock("./reseller.js", () => ({ createResellerClient: () => ({}) }));
 
 vi.mock("./sync-job.js", () => ({
@@ -66,7 +73,14 @@ describe("worker scheduling", () => {
   });
 
   afterEach(() => {
+    state.entitlementResolve?.();
     vi.restoreAllMocks();
+  });
+
+  it("does not await provider entitlement network work before shared jobs", async () => {
+    await import("./index.js");
+    await vi.waitFor(() => expect(state.events).toContain("shared-sync"));
+    expect(state.entitlementResolve).toBeTypeOf("function");
   });
 
   it("processes a shared M3U job in the same cycle as an automatic trial", async () => {

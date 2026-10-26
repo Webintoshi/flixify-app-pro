@@ -14,6 +14,14 @@ import { createAutoTrialStore } from "./auto-trial-db.js";
 import { runAutoTrialProvisioning } from "./auto-trial.js";
 import { createResellerClient } from "./reseller.js";
 
+import { createProviderEntitlementClient } from "./provider-entitlement.js";
+import { createProviderEntitlementStore } from "./provider-entitlement-store.js";
+import { runProviderEntitlementSyncBatch } from "./provider-entitlement-sync.js";
+const entitlementStore = createProviderEntitlementStore(pool);
+const entitlementProvider = env.RESELLER_API_BASE_URL && env.RESELLER_API_KEY
+  ? createProviderEntitlementClient({url:env.RESELLER_API_BASE_URL,apiKey:env.RESELLER_API_KEY}) : null;
+let entitlementInFlight: Promise<void> | null = null;
+
 const autoTrialStore = createAutoTrialStore(pool);
 const autoTrialProvider = env.RESELLER_API_BASE_URL && env.RESELLER_API_KEY
   ? createResellerClient({ url: env.RESELLER_API_BASE_URL, apiKey: env.RESELLER_API_KEY })
@@ -301,6 +309,11 @@ async function tick() {
     return;
   }
 
+  if (entitlementProvider && !entitlementInFlight) {
+    entitlementInFlight = runProviderEntitlementSyncBatch(entitlementStore, entitlementProvider)
+      .catch(() => { console.error("[worker] Provider entitlement batch failed", { code: "SYNC_CONFLICT" }); })
+      .finally(() => { entitlementInFlight = null; });
+  }
   await expireSubscriptions();
   if (Date.now() - lastTrialQuotaSweepAt >= 60 * 60 * 1000) {
     await pool.query("delete from public.registration_trial_ip_quota where window_started_at < now() - interval '48 hours'");
@@ -364,6 +377,7 @@ process.on("SIGINT", async () => {
   if (interval) {
     clearInterval(interval);
   }
+  await entitlementInFlight;
   await pool.end();
   process.exit(0);
 });
@@ -372,6 +386,7 @@ process.on("SIGTERM", async () => {
   if (interval) {
     clearInterval(interval);
   }
+  await entitlementInFlight;
   await pool.end();
   process.exit(0);
 });
