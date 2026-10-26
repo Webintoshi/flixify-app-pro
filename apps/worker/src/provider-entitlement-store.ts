@@ -104,8 +104,8 @@ export function createProviderEntitlementStore(pool: Pool): EntitlementStore {
                     if (!packageId)
                         throw conflict();
                     for (const s of subscriptionRows.filter(s => s.status === 'active' && s.id !== subscriptionId)) {
-                        await c.query("update public.subscriptions set status='cancelled',end_reason='provider-replaced' where id=$1", [s.id]);
-                        await audit(s.id, 'provider-close-conflict', { status: s.status, endReason: s.end_reason }, { status: 'cancelled', endReason: 'provider-replaced' });
+                        await c.query("update public.subscriptions set status='cancelled',end_reason=case when end_reason='trial-3h' then end_reason else 'provider-replaced' end where id=$1", [s.id]);
+                        await audit(s.id, 'provider-close-conflict', { status: s.status, endReason: s.end_reason }, { status: 'cancelled', endReason: s.end_reason === 'trial-3h' ? 'trial-3h' : 'provider-replaced' });
                     }
                     if (!current) {
                         const created = await c.query(`insert into public.subscriptions(user_id,package_id,status,starts_at,ends_at,activated_by_admin_id,end_reason)
@@ -127,8 +127,8 @@ export function createProviderEntitlementStore(pool: Pool): EntitlementStore {
                     }) => r.subscription_id));
                     const reason = line.isTrial ? 'provider-trial' : !line.enabled || !line.adminEnabled ? 'provider-disabled' : 'provider-expired';
                     for (const s of subscriptionRows.filter(s => (ids.has(s.id) || !line.isTrial) && s.status === 'active')) {
-                        await c.query('update public.subscriptions set status=$2,end_reason=$3,ends_at=$4 where id=$1', [s.id, reason === 'provider-expired' ? 'expired' : 'cancelled', reason, ids.has(s.id) ? line.expiresAt : s.ends_at]);
-                        await audit(s.id, 'provider-close', { status: s.status, endsAt: s.ends_at }, { status: reason === 'provider-expired' ? 'expired' : 'cancelled', endReason: reason, endsAt: line.expiresAt });
+                        await c.query("update public.subscriptions set status=$2,end_reason=case when end_reason='trial-3h' then end_reason else $3 end,ends_at=$4 where id=$1", [s.id, reason === 'provider-expired' ? 'expired' : 'cancelled', reason, ids.has(s.id) ? line.expiresAt : s.ends_at]);
+                        await audit(s.id, 'provider-close', { status: s.status, endsAt: s.ends_at }, { status: reason === 'provider-expired' ? 'expired' : 'cancelled', endReason: s.end_reason === 'trial-3h' ? 'trial-3h' : reason, endsAt: ids.has(s.id) ? line.expiresAt : s.ends_at });
                     }
                 }
                 await c.query(`update public.provider_entitlement_sync set provider_line_id=$3,subscription_id=$4,last_success_at=now(),

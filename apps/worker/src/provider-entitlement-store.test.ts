@@ -58,6 +58,15 @@ describe.skipIf(!connectionString)('real PostgreSQL provider entitlement store',
             end_reason: string;
         }) => s.activated_by_admin_id === 'auto-trial').end_reason).toBe('trial-3h');
     });
+    it('retains active trial marker on paid upgrade and on disabled first paid observation', async () => {
+        for(const enabled of [true,false]) {
+            await pool.query('truncate public.provider_entitlement_sync,public.admin_audit_logs,public.subscriptions');
+            await pool.query("insert into public.subscriptions(user_id,package_id,status,starts_at,ends_at,activated_by_admin_id,end_reason) select $1,id,'active',now()-interval '1 hour',now()+interval '2 hours','auto-trial','trial-3h' from public.packages where slug='1-ay'",[userId]);
+            await store.apply(await claim(),line({enabled}));
+            expect((await pool.query("select exists(select 1 from public.subscriptions where user_id=$1 and end_reason='trial-3h') as has_used_trial",[userId])).rows[0].has_used_trial).toBe(true);
+            expect((await subscriptions()).find((s:{activated_by_admin_id:string})=>s.activated_by_admin_id==='auto-trial').end_reason).toBe('trial-3h');
+        }
+    });
     it('extends, shortens, expires, disables and re-enables the same managed record', async () => {
         await store.apply(await claim(), line());
         const id = (await subscriptions())[0].id;
