@@ -219,6 +219,11 @@ function LiveVideo({
     let activeMode: PlaybackMode = "direct";
     let suppressMediaEventsUntil = 0;
     let terminalAudioFailure = false;
+    let starting = false;
+    let engineVersion = 0;
+    let lastProgressAt = performance.now();
+    let healthyProgressSince: number | null = null;
+    let stallWatchdog: ReturnType<typeof setInterval> | null = null;
 
     let qualityFallbackStarted = false;
     let lastReportedEvent: "playing" | "stalled" | "failed" | null = null;
@@ -322,11 +327,15 @@ function LiveVideo({
     };
 
     async function start(attempt: number, mode: PlaybackMode = "direct") {
-      if (cancelled) return;
+      if (cancelled || starting) return;
+      starting = true;
+      const version = ++engineVersion;
+      const currentEngine = () => !cancelled && version === engineVersion;
+      activeAttempt = attempt;
       try {
         if (playback.personalRef && refreshPersonalPlayback) {
           const refreshed = await refreshPersonalPlayback();
-          if (cancelled) return;
+          if (!currentEngine()) return;
           deadline?.dispose();
           deadline = createDirectPlaybackDeadline(refreshed.expiresAt, expirePlayback);
           if (deadline.expired) return;
@@ -338,14 +347,17 @@ function LiveVideo({
         setActiveReconnectAttempt(attempt);
         setActivePlaybackMode(mode);
         lastProgressTime = 0;
+        lastProgressAt = performance.now();
+        healthyProgressSince = null;
         setPlayerError(null);
         setConnectionState(attempt > 0 ? "reconnecting" : "connecting");
 
         if (playbackEngine === "native") {
           mediaElement.src = playbackUrl;
           cleanupCurrent = resetMedia;
+          starting = false;
           await mediaElement.play();
-          if (!cancelled) {
+          if (currentEngine()) {
             setConnectionState("live");
             reportDirectEvent("playing");
           }
@@ -355,37 +367,39 @@ function LiveVideo({
         if (playbackEngine === "hls") {
           const canPlayNativeHls = Boolean(mediaElement.canPlayType("application/vnd.apple.mpegurl"));
           const { default: Hls } = await import("hls.js");
-          if (cancelled) return;
+          if (!currentEngine()) return;
           const hlsJsSupported = Hls.isSupported();
 
           if (shouldUseNativeHls(playback.deliveryMode, canPlayNativeHls, hlsJsSupported)) {
             mediaElement.src = playbackUrl;
             cleanupCurrent = resetMedia;
+            starting = false;
             await mediaElement.play();
-            if (!cancelled) setConnectionState("live");
+            if (currentEngine()) setConnectionState("live");
             return;
           }
 
           if (!hlsJsSupported) throw new Error("Bu tarayıcı HLS canlı yayını desteklemiyor.");
           const hls = new Hls(createHlsPlaybackConfig());
           hls.on(Hls.Events.ERROR, (_event, data) => {
-            if (!data.fatal || cancelled) return;
+            if (!data.fatal || !currentEngine()) return;
             if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
               hls.recoverMediaError();
               return;
             }
-            recoverTransport(attempt, mode);
+            recoverTransport(activeAttempt, mode);
           });
           hls.loadSource(playbackUrl);
           hls.attachMedia(mediaElement);
           cleanupCurrent = () => hls.destroy();
+          starting = false;
           await mediaElement.play().catch(() => undefined);
-          if (!cancelled) setConnectionState("live");
+          if (currentEngine()) setConnectionState("live");
           return;
         }
 
         const imported = await import("mpegts.js");
-        if (cancelled) return;
+        if (!currentEngine()) return;
         const mpegts = imported.default;
         if (!mpegts.getFeatureList().mseLivePlayback) throw new Error("Bu tarayıcı MPEG-TS canlı yayını desteklemiyor.");
         const sourceUrl = mode === "transcoded" && playback.deliveryMode !== "direct_provider"
@@ -404,7 +418,7 @@ function LiveVideo({
           () => player.destroy()
         ]);
         const switchPlaybackMode = (nextMode: PlaybackMode) => {
-          if (cancelled || switchingMode || mode === nextMode) return;
+          if (!currentEngine() || switchingMode || mode === nextMode) return;
           switchingMode = true;
           clearReconnect();
           setConnectionState("reconnecting");
@@ -413,7 +427,7 @@ function LiveVideo({
           void start(attempt, nextMode);
         };
         player.on(mpegts.Events.MEDIA_INFO, (mediaInfo) => {
-          if (cancelled) return;
+          if (!currentEngine()) return;
           const audioCodec = typeof mediaInfo?.audioCodec === "string" ? mediaInfo.audioCodec : null;
           const mediaSource = getMediaSourceCapabilities(window);
           if (
@@ -428,7 +442,7 @@ function LiveVideo({
           }
         });
         player.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
-          if (cancelled) return;
+          if (!currentEngine()) return;
           if (isUnsupportedAudioCodecError(errorType, errorDetail, errorInfo)) {
             const nextMode = nextAudioMode(playback.deliveryMode, mode);
             if (nextMode) switchPlaybackMode(nextMode);
@@ -437,21 +451,22 @@ function LiveVideo({
             else scheduleReconnect(attempt, mode);
             return;
           }
-          if (shouldReconnectNow()) recoverTransport(attempt, mode);
+          if (shouldReconnectNow()) recoverTransport(activeAttempt, mode);
         });
         player.load();
+        starting = false;
         try {
           await primeLivePlayback(mediaElement, () => player.play(), startup.signal);
         } catch (error) {
           if (startup.signal.aborted) return;
           throw error;
         }
-        if (!cancelled) {
+        if (currentEngine()) {
           setConnectionState("live");
           reportDirectEvent("playing");
         }
       } catch (error) {
-        if (!cancelled) {
+        if (currentEngine()) {
           const delay = getReconnectDelay(attempt);
           if (delay === null) {
             setPlayerError(playback.deliveryMode === "direct_provider"
@@ -461,7 +476,7 @@ function LiveVideo({
           }
           else recoverTransport(attempt, mode);
         }
-      }
+      } finally { if (version === engineVersion) starting = false; }
     }
 
     const handlePlaying = () => markHealthy();
@@ -470,6 +485,12 @@ function LiveVideo({
       const currentTime = mediaElement.currentTime;
       if (shouldCancelReconnectForProgress(lastProgressTime, currentTime)) {
         hasProgressed = true;
+        lastProgressAt = performance.now();
+        healthyProgressSince ??= lastProgressAt;
+        if (activeAttempt > 0 && lastProgressAt - healthyProgressSince >= 8_000) {
+          activeAttempt = 0;
+          setActiveReconnectAttempt(0);
+        }
         markHealthy();
       }
       lastProgressTime = currentTime;
@@ -495,15 +516,29 @@ function LiveVideo({
     mediaElement.addEventListener("error", handleMediaError);
     const expirePlayback = () => {
       cancelled = true;
+      if (stallWatchdog) clearInterval(stallWatchdog);
       clearReconnect(); cleanupCurrent(); resetMedia();
       setPlayerError("İzleme süren doldu.");
       if (playback.personalRef) onAccessExpired();
     };
     let deadline = playback.deliveryMode === "direct_provider" ? createDirectPlaybackDeadline(playback.expiresAt, expirePlayback) : null;
-    if (!deadline?.expired) void start(0);
+    if (!deadline?.expired) {
+      // Buffered ranges can remain ahead after a dead HLS/MSE connection stops producing frames.
+      stallWatchdog = setInterval(() => {
+        if (cancelled || terminalAudioFailure || starting) return;
+        if (mediaElement.paused && !mediaElement.ended) { lastProgressAt = performance.now(); healthyProgressSince = null; return; }
+        handleTimeUpdate();
+        if (performance.now() - lastProgressAt >= 8_000) {
+          healthyProgressSince = null;
+          recoverTransport(activeAttempt, activeMode);
+        }
+      }, 1_000);
+      void start(0);
+    }
 
     return () => {
       cancelled = true;
+      if (stallWatchdog) clearInterval(stallWatchdog);
       deadline?.dispose();
       if (reconnectTimer) clearTimeout(reconnectTimer);
       mediaElement.removeEventListener("playing", handlePlaying);
