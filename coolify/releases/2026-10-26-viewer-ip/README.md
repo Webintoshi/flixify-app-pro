@@ -34,6 +34,12 @@ Build canlı konteynerleri değiştirmez. Aday API testi salt okunur olarak
 `/app/coolify/releases/2026-10-26-viewer-ip/candidate-viewer-playback.test.ts`
 yoluna bağlanır, `npx --no-install vitest run --root /app` ile açık dosya filtresi
 ve kapalı ağ kullanılarak yürütülür. Göreli importlar bu dizilime bağlıdır.
+Aday testinde gerçek rota ve oynatma yöneticileri çalışır; dış ağ erişimi ve
+veritabanı yazımları taklit edilir. Kurulu FFmpeg/FFprobe araçlarının eski fallback
+yollarında ağ analizi başlatmasını önlemek için yalnız testin `env` dışa aktarımında
+iki binary yolu mevcut olmayan dosyalara ayarlanır. Ortam değişkenlerini tek başına
+ayarlamak araç keşfinin kurulu binary'ye dönmesini engellemez. Uygulama imajı,
+sürüm etiketi ve yayın kapsamı bu test izolasyonundan etkilenmez.
 Aday rota testleri LIVE için son canonical pathname uzantısını, çelişen query/dizin metnini ve desteklenmeyen dosya yolunu da doğrular. LIVE MP4/MKV tarayıcının native medya motorunu; TS MPEG-TS, HLS mevcut HLS seçimini kullanır.
 Derleme logları ve ortam değerleri yazdırılmaz. Webin yalnız mevcut public
 build ayarları bellekten kullanılır. Aday etiketi varsa üzerine yazılmaz;

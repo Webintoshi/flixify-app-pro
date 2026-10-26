@@ -9,6 +9,20 @@ vi.hoisted(() => {
   process.env.APP_DEMO_MODE = "false";
 });
 
+// Keep real route/manager behavior while preventing installed media tools from
+// spawning network analysis in the candidate image's legacy fallback paths.
+vi.mock("../../../apps/api/src/env.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../apps/api/src/env.js")>();
+  return {
+    ...actual,
+    env: {
+      ...actual.env,
+      FFMPEG_BINARY: "/nonexistent/flixify-test-ffmpeg",
+      FFPROBE_BINARY: "/nonexistent/flixify-test-ffprobe"
+    }
+  };
+});
+
 import * as live from "../../../apps/api/src/live.js";
 import * as vod from "../../../apps/api/src/vod.js";
 import * as repository from "../../../apps/api/src/repository.js";
