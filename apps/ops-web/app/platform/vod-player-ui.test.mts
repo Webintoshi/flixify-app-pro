@@ -12,10 +12,11 @@ test("VOD player only asks for a gesture when the browser blocks autoplay, while
   assert.match(source, /aria-label="Oynat"/);
 });
 
-test("browser VOD starts on the normal delivery without replacing every episode in the background", () => {
+test("browser VOD requests viewer delivery and never downgrades after a direct failure", () => {
   assert.doesNotMatch(source, /compatibilityProbe=1/);
   assert.doesNotMatch(source, /prepareCompatibleAudio/);
-  assert.match(source, /onDirectFailure=\{time => \{ void fallbackToProxy\(time\); \}\}/);
+  assert.match(source, /clientRuntime=browser&direct=1/);
+  assert.doesNotMatch(source, /direct=0|fallbackToProxy|createDirectPlaybackAttempt|onDirectFailure/);
 });
 
 test("a requested compatibility stream remains active even if direct video plays late", () => {
@@ -23,10 +24,10 @@ test("a requested compatibility stream remains active even if direct video plays
 });
 
 test("a resume position update does not reload an in-flight direct stream", () => {
-  assert.match(source, /\}, \[playback\.url, playback\.transport, playback\.deliveryMode, retry\]\);/);
+  assert.match(source, /\}, \[playback\.url, playback\.transport, playback\.deliveryMode, playback\.expiresAt, retry\]\);/);
 });
 
-test("manual play errors reach the same fallback path as autoplay errors", () => {
+test("manual play errors reach the same client error path as autoplay errors", () => {
   assert.match(source, /manualPlayFailureHandler\.current\(cause\)/);
 });
 

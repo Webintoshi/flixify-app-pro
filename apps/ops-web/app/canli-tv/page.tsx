@@ -1,5 +1,6 @@
 "use client";
 
+import { createDirectPlaybackDeadline } from "../platform/direct-playback-deadline";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "../../lib/api";
@@ -56,6 +57,7 @@ type PlaybackResponse = {
   url: string | null;
   transport: "hls" | "ts" | "unknown";
   deliveryMode?: string;
+  expiresAt?: string | null;
   canPlay: boolean;
   errorMessage: string | null;
 };
@@ -228,7 +230,7 @@ function LiveVideo({
     let lastReportedEvent: "playing" | "stalled" | "failed" | null = null;
 
     const reportDirectEvent = (event: "playing" | "stalled" | "failed") => {
-      if (playback.deliveryMode !== "direct_provider" || lastReportedEvent === event) return;
+      if (cancelled || playback.deliveryMode !== "direct_provider" || lastReportedEvent === event) return;
       lastReportedEvent = event;
       void apiRequest(`/me/live/${encodeURIComponent(playback.channelId)}/health`, {
         method: "POST",
@@ -257,7 +259,7 @@ function LiveVideo({
     };
 
     const markHealthy = () => {
-      if (terminalAudioFailure) return;
+      if (cancelled || terminalAudioFailure) return;
       clearReconnect();
       setPlayerError(null);
       setConnectionState("live");
@@ -326,6 +328,7 @@ function LiveVideo({
     };
 
     async function start(attempt: number, mode: PlaybackMode = "direct") {
+      if (cancelled) return;
       try {
         activeAttempt = attempt;
         activeMode = mode;
@@ -396,6 +399,7 @@ function LiveVideo({
           void start(attempt, nextMode);
         };
         player.on(mpegts.Events.MEDIA_INFO, (mediaInfo) => {
+          if (cancelled) return;
           const audioCodec = typeof mediaInfo?.audioCodec === "string" ? mediaInfo.audioCodec : null;
           const mediaSource = getMediaSourceCapabilities(window);
           if (
@@ -410,6 +414,7 @@ function LiveVideo({
           }
         });
         player.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+          if (cancelled) return;
           if (isUnsupportedAudioCodecError(errorType, errorDetail, errorInfo)) {
             const nextMode = nextAudioMode(playback.deliveryMode, mode);
             if (nextMode) switchPlaybackMode(nextMode);
@@ -447,6 +452,7 @@ function LiveVideo({
 
     const handlePlaying = () => markHealthy();
     const handleTimeUpdate = () => {
+      if (cancelled) return;
       const currentTime = mediaElement.currentTime;
       if (shouldCancelReconnectForProgress(lastProgressTime, currentTime)) {
         hasProgressed = true;
@@ -455,17 +461,17 @@ function LiveVideo({
       lastProgressTime = currentTime;
     };
     const handleWaiting = () => {
-      if (Date.now() < suppressMediaEventsUntil) return;
+      if (cancelled || Date.now() < suppressMediaEventsUntil) return;
       setConnectionState("reconnecting");
       if (shouldReconnectNow()) recoverTransport(activeAttempt, activeMode);
     };
     const handleStalled = () => {
-      if (Date.now() < suppressMediaEventsUntil) return;
+      if (cancelled || Date.now() < suppressMediaEventsUntil) return;
       setConnectionState("reconnecting");
       if (shouldReconnectNow()) recoverTransport(activeAttempt, activeMode);
     };
     const handleMediaError = () => {
-      if (Date.now() < suppressMediaEventsUntil) return;
+      if (cancelled || Date.now() < suppressMediaEventsUntil) return;
       recoverTransport(activeAttempt, activeMode);
     };
     mediaElement.addEventListener("playing", handlePlaying);
@@ -473,10 +479,16 @@ function LiveVideo({
     mediaElement.addEventListener("waiting", handleWaiting);
     mediaElement.addEventListener("stalled", handleStalled);
     mediaElement.addEventListener("error", handleMediaError);
-    void start(0);
+    const deadline = playback.deliveryMode === "direct_provider" ? createDirectPlaybackDeadline(playback.expiresAt, () => {
+      cancelled = true;
+      clearReconnect(); cleanupCurrent(); resetMedia();
+      setPlayerError("İzleme süren doldu.");
+    }) : null;
+    if (!deadline?.expired) void start(0);
 
     return () => {
       cancelled = true;
+      deadline?.dispose();
       if (reconnectTimer) clearTimeout(reconnectTimer);
       mediaElement.removeEventListener("playing", handlePlaying);
       mediaElement.removeEventListener("timeupdate", handleTimeUpdate);
