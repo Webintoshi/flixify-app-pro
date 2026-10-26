@@ -2505,15 +2505,22 @@ export function buildServer() {
         userContext.sharedReferenceCredentials
       );
 
-      const directTransport = guessVodTransportFromPath(record.stream_path);
+      let canonicalDirectUrl: URL | null = null;
+      try {
+        canonicalDirectUrl = personalDirectSourceUrl ? new URL(personalDirectSourceUrl) : null;
+      } catch {
+        // Invalid provider URLs cannot be offered as browser direct playback.
+      }
+      const directExtension = canonicalDirectUrl?.pathname.match(/\.(m3u8|mp4|mkv)$/i)?.[1]?.toLowerCase();
+      const directTransport = directExtension === "m3u8" ? "hls" : directExtension;
       if (
         clientRuntime === "browser" &&
         (rawQuery?.vodDirect === "1" || rawQuery?.direct === "1") &&
         rawQuery?.direct !== "0" &&
         canUseClientIpPlayback(userContext) &&
         (directTransport === "hls" || directTransport === "mp4" || directTransport === "mkv") &&
-        isHttpsVodSourceUrl(personalDirectSourceUrl) &&
-        /\.(?:m3u8|mp4|mkv)$/i.test(new URL(personalDirectSourceUrl).pathname) &&
+        canonicalDirectUrl?.protocol === "https:" &&
+        personalDirectSourceUrl !== null &&
         hasCurrentPlaybackAccess(userContext)
       ) {
         return {

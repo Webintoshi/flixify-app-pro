@@ -64,6 +64,22 @@ describe("viewer IP browser playback", () => {
       expect(repository.updateLiveChannelHealth).not.toHaveBeenCalled();
     });
   }
+  for (const [suffix, transport] of [
+    ["1.mkv?subtitle=.m3u8", "mkv"],
+    ["archive.mp4/1.mkv", "mkv"],
+    ["archive.m3u8/1.mp4?subtitle=.mkv", "mp4"],
+    ["archive.mkv/1.m3u8?subtitle=.mp4", "hls"]
+  ]) {
+    it(`derives transport from the final pathname extension for ${suffix}`, async () => {
+      vi.mocked(repository.getEpisodeForPlayback).mockResolvedValue({ id: "1", snapshot_version: 1,
+        stream_path: `series/__IPTV_USERNAME__/__IPTV_PASSWORD__/${suffix}` } as never);
+      const response = await request("/me/vod/episode/1/playback?clientRuntime=browser&direct=1");
+      expect(response.json()).toMatchObject({ deliveryMode: "direct_provider", transport,
+        url: `https://provider.example.test/series/personal/secret/${suffix}` });
+      expect(vod.probeVodStream).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+    });
+  }
   for (const variant of ["shared", "missing", "overlong", "malformed", "expired", "currentExpired", "missingDeadline", "http", "unsupported"]) {
     it(`does not issue direct playback for ${variant}`, async () => {
       if (variant === "shared") context.iptvCredentials = context.sharedReferenceCredentials;
