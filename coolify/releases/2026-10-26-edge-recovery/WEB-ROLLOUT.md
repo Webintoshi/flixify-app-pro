@@ -33,6 +33,14 @@ python3 coolify/releases/2026-10-26-edge-recovery/test-web-builder.py
 
 Buildx resource flags require the daemon per-step resource capability; unsupported flags or failed cgroup verification stop the operation. Caps apply to compilation, not the Docker daemon itself. No swap or other host service settings are changed. The temporary settings follow the [Next.js 15 memory guide](https://nextjs.org/docs/15/app/guides/memory-usage); resource semantics follow the [Docker Buildx reference](https://docs.docker.com/reference/cli/docker/buildx/build/#set-cpu-and-memory-limits-for-build-containers---resource).
 
+### Storage after each candidate
+
+Check real filesystem free space after building. Disabling `.next/cache` does not remove BuildKit's imported source snapshots. The first recovery build added12MB to the image but reduced free disk to1.9GiB. After a verified, release-specific cache cleanup, free space returned to about14GiB. Keep all live and rollback images.
+
+For targeted cleanup, read `docker buildx du --format=json` as JSON **lines**. Starting at the verified cache record for this build's final RUN, traverse `Parents` (which may be null). Select only reachable records created inside this build's captured UTC window with `Reclaimable=true`. Exclude older and active records. Preview an anchored exact-ID regex union and require its returned ID set to equal the selected set before using the same filter with `docker buildx prune --all --force`. Never substitute a broad `parents=` selector, image prune or volume prune. Here `--all` allows only the explicitly matched shared cache records. Do not add `inuse=false`: that equality matches no records in BuildKit. Recheck image identities, container health and actual free disk afterward.
+
+Observed: the recovery build selected390 new records/excluded5 older and reported14.66GB; quiet build selected392/excluded5 and reported14.67GB. Both used an exact previewed ID union, retained every image/volume, and left current web/worker running. A new build must derive its own records and window; do not reuse these counts or historic IDs as selectors.
+
 ## Quiet player badge follow-up
 
 Application revision `f8737c27d1d161d5268e8003bf53ef0a7a91147d` removes only the transient player badge. Use `build-quiet-web.py` and `release-quiet-web.py`; they pin the observed current web `sha256:1a1e54ab741b5564462ed62645a7590617420ea5005b68595676f6e63df52552` / `edge-recovery-2a7c60e07826-20261026`, compare against base revision `2a7c60e07826fc3dd81606f8eb5534641a931bb7`, and overlay only `canli-tv/page.tsx`.
