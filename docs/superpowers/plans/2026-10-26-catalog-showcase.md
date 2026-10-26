@@ -60,8 +60,8 @@
 
 **Files:** Add a thin showcase builder/release adapter beside `coolify/releases/2026-10-26-edge-recovery/`; append existing verification report.
 
-- [ ] Derive the exact runtime manifest and commit; pin running source3690cd1 and protected worker9b5d plus API/actual DB.
-- [ ] Run focused guard tests and source preflight. Build using existing1280MiB RAM/1536MiB total cgroup limits,8GiB free-space gate, restored Next config and no webpack cache.
-- [ ] Apply/recreate only web with preservation guards. Verify exact new container HTTP and public page health, without media playback.
-- [ ] Clean only this build's newly created reclaimable ancestor cache IDs after exact preview matching; retain every image/volume; verify actual disk/containers.
-- [ ] Record final immutable IDs/verification/limitations and push. Explain daily common selection and one optional page reload to the user.
+- [x] Derive the exact runtime manifest and commit; pin running source3690cd1 and protected worker9b5d plus API/actual DB.
+- [x] Run focused guard tests and source preflight. Build using existing1280MiB RAM/1536MiB total cgroup limits,8GiB free-space gate, restored Next config and no webpack cache.
+- [x] Apply/recreate only web with preservation guards. Verify exact new container HTTP and public page health, without media playback.
+- [x] Clean only this build's newly created reclaimable ancestor cache IDs after exact preview matching; retain every image/volume; verify actual disk/containers.
+- [x] Record final immutable IDs/verification/limitations and push. Explain daily common selection and one optional page reload to the user.
