@@ -1,17 +1,25 @@
+type DeadlineTimer = ReturnType<typeof setTimeout> | number;
+
 type DeadlineEnvironment = {
   now: () => number;
   events: Pick<EventTarget, "addEventListener" | "removeEventListener">;
   visibility: Pick<EventTarget, "addEventListener" | "removeEventListener">;
-  schedule: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
-  clear: (timer: ReturnType<typeof setTimeout>) => void;
+  schedule: (callback: () => void, delay: number) => DeadlineTimer;
+  clear: (timer: DeadlineTimer) => void;
 };
 
 /** An absolute access cutoff, independent of media progress or background timer delays. */
 export function createDirectPlaybackDeadline(expiresAt: string | null | undefined, onExpire: () => void, environment?: DeadlineEnvironment) {
   let disposed = false;
   let expired = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const env = environment ?? { now: Date.now, events: window, visibility: document, schedule: setTimeout, clear: clearTimeout };
+  let timer: DeadlineTimer | undefined;
+  const env: DeadlineEnvironment = environment ?? {
+    now: Date.now,
+    events: window,
+    visibility: document,
+    schedule: (callback, delay) => window.setTimeout(callback, delay),
+    clear: timer => window.clearTimeout(timer)
+  };
   const cutoff = expiresAt == null ? null : Date.parse(expiresAt);
   const dispose = () => {
     disposed = true;
