@@ -60,6 +60,7 @@ def safe_failure_summary(returncode: int, stdout: bytes, stderr: bytes) -> str:
     known = (
         ("disk_full", rb"no space left on device|enospc"),
         ("memory_exhausted", rb"heap out of memory|out of memory|cannot allocate memory|enomem"),
+        ("build_cgroup_not_bounded", rb"build_cgroup_(?:unavailable|unbounded|limit_exceeds_cap)|exec.meta.linux.resources"),
         ("process_killed", rb"(?:^|\s)killed(?:\s|$)|signal: (?:sig)?kill|exit code: 137"),
         ("base_image_resolution", rb"pull access denied|failed to resolve source metadata|manifest unknown|cannot pull image by digest"),
         ("invalid_image_reference", rb"invalid reference format|invalid repository name"),
