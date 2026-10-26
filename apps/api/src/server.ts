@@ -24,6 +24,7 @@ import {
   vodPlaybackEventInputSchema
 } from "@flixify/contracts";
 import { canUseClientIpPlayback } from "./client-playback-access.js";
+import { registerPersonalLibrary } from "./personal-library.js";
 import { derivePersonalProviderSession } from "./personal-provider-session.js";
 import type {
   LiveChannel,
@@ -1635,6 +1636,8 @@ export function buildServer() {
       return sendUserRouteError(request, reply, error);
     }
   });
+
+  registerPersonalLibrary(app, { authenticate: authenticateUser, context: (id) => getUserContext(id), secret: env.APP_JWT_SECRET, demo: isDemoMode, classify: classifyUserRouteError });
 
   app.get("/me/provider-session", async (request, reply) => {
     reply.header("cache-control", "private, no-store, max-age=0");
