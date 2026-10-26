@@ -11,6 +11,7 @@ import { AdultMovieToggle } from "./adult-movie-toggle";
 import { emptyCatalogCopy } from "./catalog-empty";
 import { Icon } from "./icons";
 import { usePlatform } from "./session";
+import { pagePersonalCatalog, sessionIdentity, resolvePersonalDetail } from "./personal-integration";
 import { itemKey, type Catalog, type Kind, type MediaItem } from "./types";
 import s from "./platform.module.css";
 import seriesStyles from "./series-catalog.module.css";
@@ -92,7 +93,7 @@ function MediaRail({ label, row, href, open, className }: { label: string; row: 
   return <section className={`${s.mediaSection} ${className ?? ""}`}><div className={s.sectionHeading}><h2>{label}</h2><div className={s.railActions}>{href && <Link href={href}>Tümünü Gör <Icon name="arrow"/></Link>}<button type="button" aria-label={`${label} önceki içerikler`} disabled={position.start} onClick={() => rail.current?.scrollBy({ left: -rail.current.clientWidth * .8, behavior: "smooth" })}>‹</button><button type="button" aria-label={`${label} sonraki içerikler`} disabled={position.end} onClick={() => rail.current?.scrollBy({ left: rail.current.clientWidth * .8, behavior: "smooth" })}>›</button></div></div><div ref={rail} className={s.horizontalRail} onScroll={() => { const element = rail.current; if (element) setPosition({ start: element.scrollLeft <= 2, end: element.scrollLeft + element.clientWidth >= element.scrollWidth - 2 }); }}>{row.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div></section>;
 }
 export default function CatalogPage({ kind, overview = false, favoritesOnly = false }: { kind: Kind; overview?: boolean; favoritesOnly?: boolean }) {
-  const { session, favorites, favoritesReady, favoritesLoading, favoritesError, invalidateFavorites, reload: reloadFavorites } = usePlatform();
+  const { session, personalProvider, providerMode, providerError, providerScope, favorites, favoritesReady, favoritesLoading, favoritesError, invalidateFavorites, reload: reloadFavorites } = usePlatform();
   const params = useSearchParams();
   const router = useRouter();
   const [query, setQuery] = useState(params.get("q") ?? "");
@@ -116,7 +117,8 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const [detailAccount, setDetailAccount] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
   const openedHere = useRef(false);
-  const account = session?.kryptoniteCode ?? session?.accessToken ?? "";
+  const account = `${sessionIdentity(session)}:${providerMode}:${providerScope}`;
+  const loadCatalog = (kind: Kind, page: number, search: string, group: string, account: string, revision = 0) => personalProvider && providerMode === "personal" ? personalProvider.catalog(kind).then(items=>pagePersonalCatalog(items,page,search,group)) : providerMode === "legacy" ? getCatalog(kind,page,search,group,account,revision) : Promise.reject(new Error("Provider loading"));
   const hasSession = Boolean(session);
   const currentMovieRevision = movieRevision.account === account ? movieRevision.revision : 0;
   const selectedId = params.get("item");
@@ -143,11 +145,12 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     document.addEventListener("visibilitychange", onVisible);
     return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", onVisible); };
   }, [accessAccount, account]);
+  useEffect(() => { setGroup(""); }, [account, kind]);
   useEffect(() => { setPage(1); setHeroIndex(0); setCatalog(previous => ({ ...previous, items: [], total: 0 })); setDetail(null); }, [account, kind, group, search]);
   useEffect(() => {
-    if (!session || favoritesOnly) { setLoading(false); return; }
+    if (!session || providerMode === "loading" || favoritesOnly) { setLoading(false); return; }
     let cancelled = false; setLoading(true); setError("");
-    getCatalog(kind, page, search, group, account, currentMovieRevision).then(data => {
+    loadCatalog(kind, page, search, group, account, currentMovieRevision).then(data => {
       if (cancelled) return;
       setCatalog(previous => ({ ...data, items: page === 1 || catalogAccount !== account ? data.items : Array.from(new Map([...previous.items, ...data.items].map(i => [itemKey(i), i])).values()) }));
       if (!group && data.groups?.length) setCategoryGroups({ account, kind, groups: data.groups });
@@ -156,17 +159,20 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     return () => { cancelled = true; };
   }, [session, account, kind, page, search, group, favoritesOnly, reload, currentMovieRevision]);
   useEffect(() => {
-    if (!overview || !session) return;
+    if (!overview || !session || providerMode === "loading") return;
     let cancelled = false;
-    Promise.all((["series", "live"] as Kind[]).map(async rowKind => ({ kind: rowKind, data: await getCatalog(rowKind, 1, search, "", account) }))).then(rows => { if (!cancelled) { setOtherRows(rows); setOtherRowsAccount(account); } }).catch(() => { if (!cancelled) setError("Bazı içerikler yüklenemedi. Tekrar deneyebilirsin."); });
+    Promise.all((["series", "live"] as Kind[]).map(async rowKind => ({ kind: rowKind, data: await loadCatalog(rowKind, 1, search, "", account) }))).then(rows => { if (!cancelled) { setOtherRows(rows); setOtherRowsAccount(account); } }).catch(() => { if (!cancelled) setError("Bazı içerikler yüklenemedi. Tekrar deneyebilirsin."); });
     return () => { cancelled = true; };
   }, [overview, session, account, search, reload, currentMovieRevision]);
   useEffect(() => {
     if (!selectedId || !["movie", "series"].includes(selectedKind ?? "")) { setDetail(null); return; }
-    let cancelled = false; setDetail(null); setDetailLoading(true);
-    apiRequest<MediaItem>(`/me/library/${selectedKind}/${encodeURIComponent(selectedId)}`).then(item => { if (!cancelled) { setDetail(item); setDetailAccount(account); } }).catch(() => { if (!cancelled) setError("İçerik detayı açılamadı. Tekrar deneyebilirsin."); }).finally(() => { if (!cancelled) setDetailLoading(false); });
+    let cancelled = false; setDetail(null); setDetailLoading(true); setError("");
+    const loadDetail = providerMode === "personal" && personalProvider
+      ? resolvePersonalDetail(personalProvider, selectedId, selectedKind as Kind)
+      : providerMode === "legacy" ? apiRequest<MediaItem>(`/me/library/${selectedKind}/${encodeURIComponent(selectedId)}`) : Promise.reject(new Error("Provider loading"));
+    loadDetail.then(item => { if (!cancelled) { setDetail(item); setDetailAccount(account); } }).catch(() => { if (!cancelled) setError("İçerik detayı açılamadı. Tekrar deneyebilirsin."); }).finally(() => { if (!cancelled) setDetailLoading(false); });
     return () => { cancelled = true; };
-  }, [selectedId, selectedKind, account]);
+  }, [selectedId, selectedKind, account, personalProvider, providerMode]);
   const open = (item: MediaItem) => {
     if (item.kind === "live") { router.push(`/canli-tv?channel=${encodeURIComponent(item.id)}`); return; }
     openedHere.current = true;
@@ -238,13 +244,13 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
       <div className={s.filters}><label className={s.search}><Icon name="search"/><input id="catalog-search" aria-label={`${title} içinde ara`} placeholder={favoritesOnly ? "Favorilerinde ara…" : "İçerik ara…"} value={query} onChange={e => setQuery(e.target.value)}/>{query && <button onClick={() => setQuery("")} aria-label="Aramayı temizle"><Icon name="close"/></button>}</label></div>
     </div>
     {hasCategories && <div className={`${s.genreStrip} ${seriesCatalog ? seriesStyles.categories : ""}`} role="group" aria-label={kind === "movie" ? "Film kategorileri" : "Dizi kategorileri"}><button type="button" aria-pressed={!group} onClick={() => setGroup("")}>Tümü</button>{(categoryGroups.account === account && categoryGroups.kind === kind ? categoryGroups.groups : shownCatalog.groups ?? []).map(category => <button type="button" key={category.title} aria-pressed={group === category.title} onClick={() => setGroup(category.title)}>{category.title}</button>)}</div>}
-    {kind === "movie" && !overview && !favoritesOnly && account && <AdultMovieToggle key={account} account={account} onChanged={updateAdultPreference}/>}
+    {kind === "movie" && !overview && !favoritesOnly && account && providerMode === "legacy" && <AdultMovieToggle key={account} account={account} onChanged={updateAdultPreference}/>}
     {favoritesOnly && <div className={s.chips}>{(["all","live","movie","series"] as const).map(value => <button key={value} className={filter === value ? s.selectedChip : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>{({all:"Tümü",live:"Canlı TV",movie:"Filmler",series:"Diziler"})[value]}</button>)}</div>}
-    {error && <div className={s.inlineError} role="alert">{error}<button onClick={() => setReload(v => v+1)}>Tekrar Dene</button></div>}
+    {(error || providerError) && <div className={s.inlineError} role="alert">{providerError || error}<button onClick={() => { setReload(v => v+1); if(providerMode === "loading") reloadFavorites(); }}>Tekrar Dene</button></div>}
     {favoritesOnly && favoritesError && <div className={s.inlineError} role="alert">{favoritesError}<button disabled={favoritesLoading} onClick={reloadFavorites}>{favoritesLoading ? "Yükleniyor…" : "Tekrar Dene"}</button></div>}
     {favoritesOnly && !favoritesReady ? (favoritesError && !favoritesLoading ? null : <Skeletons/>) : (loading && !items.length) ? <Skeletons/> : !items.length ? (favoritesOnly && favoritesError ? null : <div className={s.empty}><Icon name={favoritesOnly ? "heart" : "search"}/><h2>{emptyCopy?.heading ?? (favoritesOnly && !search ? "Henüz favori eklemediniz" : "İçerik bulunamadı")}</h2><p>{emptyCopy?.body ?? (favoritesOnly && !search ? "Beğendiğin içeriklerin kalbine dokun; hepsi burada bir araya gelsin." : "Başka bir arama veya kategori deneyebilirsin.")}</p>{favoritesOnly && <Link className={s.primary} href="/filmler">Filmlere Git</Link>}</div>) : favoritesOnly ? (["live","movie","series"] as Kind[]).map(rowKind => { const row = items.filter(item => item.kind === rowKind); return row.length ? <MediaRail key={rowKind} label={({live:"Canlı TV",movie:"Filmler",series:"Diziler"})[rowKind]} row={row} open={open}/> : null; }) : overview ? <><MediaRail label="Filmler" row={items.slice(0,12)} href="/filmler" open={open}/>{currentOtherRows.map(row => <MediaRail key={row.kind} label={row.kind === "series" ? "Diziler" : "Canlı TV"} row={row.data.items.slice(0,12)} href={row.kind === "series" ? "/diziler" : "/canli-tv"} open={open}/>)}</> : seriesRows ? <><MediaRail label="Diziler" row={seriesRows.firstRow} className={seriesStyles.firstRail} open={open}/>{seriesRows.categories.map(([label, row]) => <MediaRail key={label} label={label} row={row} className={seriesStyles.categoryRail} open={open}/>)}{seriesRows.other.length > 0 && <MediaRail label="Diğer Diziler" row={seriesRows.other} className={seriesStyles.categoryRail} open={open}/>}</> : !group && !search ? <><MediaRail label={kind === "movie" ? "Filmler" : "Diziler"} row={items} open={open}/>{categoryRows.map(([label, row]) => <MediaRail key={label} label={label} row={row} open={open}/>)}</> : <div className={s.grid}>{items.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div>}
     {!favoritesOnly && !overview && items.length < shownCatalog.total && <button className={s.more} disabled={loading} onClick={() => setPage(p => p+1)}>{loading ? "Yükleniyor…" : "Daha Fazla Göster"}</button>}
     </div>
-    {detailLoading && <div className={s.toast} role="status">İçerik hazırlanıyor…</div>}{detail && detailAccount === account && <Detail key={detail.id} item={detail} onClose={close}/>}
+    {detailLoading && <div className={s.toast} role="status">İçerik hazırlanıyor…</div>}{detail && detailAccount === account && providerMode !== "loading" && <Detail key={detail.id} item={detail} onClose={close}/>}
   </main>;
 }

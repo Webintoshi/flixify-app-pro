@@ -1,6 +1,8 @@
+import type { PersonalRef } from "./personal-provider";
 export type Kind = "live" | "movie" | "series";
-export type Episode = { id: string; title: string; seasonNumber: number; episodeNumber: number; playbackAllowed: boolean; watched?: boolean };
+export type Episode = { personalRef?: PersonalRef; id: string; title: string; seasonNumber: number; episodeNumber: number; playbackAllowed: boolean; watched?: boolean };
 export type MediaItem = {
+  personalRef?: PersonalRef;
   id: string; title: string; kind: Kind; posterUrl?: string | null; logoUrl?: string | null;
   groupTitle?: string | null; playbackAllowed?: boolean; available?: boolean; lookupFailed?: boolean;
   seasons?: { seasonNumber: number; title: string; episodes: Episode[] }[];

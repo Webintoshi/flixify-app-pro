@@ -1,15 +1,26 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { apiRequest } from "../../lib/api";
+import { createPersonalProviderClient, validatePersonalBootstrap, type PersonalProviderBootstrap, type PersonalRef } from "./personal-provider";
+import { sessionIdentity, hydratePersonalFavorites, createScopedBootstrapLoader } from "./personal-integration";
+import { createDirectPlaybackDeadline } from "./direct-playback-deadline";
 import { itemKey, sessionKey, type MediaItem, type Session } from "./types";
 
-type Value = { session: Session | null; ready: boolean; favorites: MediaItem[]; favoritesReady: boolean; favoritesLoading: boolean; favoritesError: string; error: string; pending: Set<string>; toggle: (item: MediaItem) => Promise<void>; reload: () => void; invalidateFavorites: () => void; dismissError: () => void; saveSession: (s: Session) => void; logout: () => void };
+type Value = { personalProvider: ReturnType<typeof createPersonalProviderClient> | null; providerMode: "loading" | "personal" | "legacy"; providerError: string; providerScope: string; session: Session | null; ready: boolean; favorites: MediaItem[]; favoritesReady: boolean; favoritesLoading: boolean; favoritesError: string; error: string; pending: Set<string>; toggle: (item: MediaItem) => Promise<void>; reload: () => void; invalidateFavorites: () => void; dismissError: () => void; saveSession: (s: Session) => void; logout: () => void };
 const Context = createContext<Value | null>(null);
 export function readSession(): Session | null {
   try { const s = JSON.parse(localStorage.getItem(sessionKey) ?? "null"); return typeof s?.accessToken === "string" ? s : null; } catch { return null; }
 }
 export function PlatformProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  const [personalProvider, setPersonalProvider] = useState<ReturnType<typeof createPersonalProviderClient> | null>(null);
+  const providerRef = useRef<ReturnType<typeof createPersonalProviderClient> | null>(null);
+  const identityRef = useRef("");
+  const sourceRef = useRef("");
+  const [providerMode, setProviderMode] = useState<"loading" | "personal" | "legacy">("loading");
+  const [providerError, setProviderError] = useState("");
+  const [providerScope, setProviderScope] = useState("");
+  const [providerRetry, setProviderRetry] = useState(0);
   const [ready, setReady] = useState(false);
   const [favorites, setFavorites] = useState<MediaItem[]>([]);
   const [favoritesReady, setFavoritesReady] = useState(false);
@@ -21,7 +32,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
   const pendingRef = useRef(new Set<string>());
   const generation = useRef(0);
   const saveSession = useCallback((s: Session) => { localStorage.setItem(sessionKey, JSON.stringify(s)); window.dispatchEvent(new Event("flixify-session")); }, []);
-  const logout = useCallback(() => { localStorage.removeItem(sessionKey); sessionStorage.removeItem("flixify-search-intent"); window.dispatchEvent(new Event("flixify-session")); }, []);
+  const logout = useCallback(() => { providerRef.current?.clear(); providerRef.current = null; localStorage.removeItem(sessionKey); sessionStorage.removeItem("flixify-search-intent"); window.dispatchEvent(new Event("flixify-session")); }, []);
   useEffect(() => {
     let lastStored: string | null | undefined;
     const sync = () => {
@@ -29,7 +40,13 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       try { stored = localStorage.getItem(sessionKey); } catch { /* Restricted storage: remain signed out. */ }
       if (stored === lastStored) return;
       lastStored = stored;
-      generation.current++; setSession(readSession()); setFavorites([]); setFavoritesReady(false); setFavoritesLoading(false); setFavoritesError(""); setReady(true); setError("");
+      const next = readSession(); const identity = sessionIdentity(next);
+      setSession(next); setReady(true);
+      if (identity === identityRef.current) return;
+      identityRef.current = identity; sourceRef.current = "";
+      providerRef.current?.clear(); providerRef.current = null; setPersonalProvider(null); setProviderMode(next ? "loading" : "legacy"); setProviderScope(""); setProviderError("");
+      pendingRef.current.clear(); setPending(new Set());
+      generation.current++; setFavorites([]); setFavoritesReady(false); setFavoritesLoading(false); setFavoritesError(""); setReady(true); setError("");
     };
     sync();
     const onStorage = (e: StorageEvent) => { if (e.key === sessionKey || e.key === null) sync(); };
@@ -37,16 +54,57 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     window.addEventListener("storage", onStorage); window.addEventListener("flixify-session", sync);
     window.addEventListener("pageshow", sync); window.addEventListener("focus", sync); document.addEventListener("visibilitychange", onVisible);
     return () => {
-      generation.current++;
+      generation.current++; providerRef.current?.clear(); providerRef.current = null;
       window.removeEventListener("storage", onStorage); window.removeEventListener("flixify-session", sync);
       window.removeEventListener("pageshow", sync); window.removeEventListener("focus", sync); document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
+  const identity = sessionIdentity(session);
+  useEffect(() => {
+    if (!identity) return;
+    const controller = new AbortController(); let disposed = false; let deadline: ReturnType<typeof createDirectPlaybackDeadline> | undefined;
+    const g = generation.current;
+    const publish = (bootstrap: PersonalProviderBootstrap) => {
+      if (disposed || identityRef.current !== identity) throw new Error("Session changed");
+      if(sourceRef.current && sourceRef.current !== bootstrap.sourceVersion) {
+        generation.current++; loadingGeneration.current = null; pendingRef.current.clear(); setPending(new Set()); setFavorites([]); setFavoritesReady(false); setFavoritesError("");
+      }
+      sourceRef.current = bootstrap.sourceVersion;
+      setProviderScope(bootstrap.sourceVersion);
+      deadline?.dispose();
+      deadline = createDirectPlaybackDeadline(bootstrap.expiresAt, () => { generation.current++; loadingGeneration.current = null; pendingRef.current.clear(); setPending(new Set()); providerRef.current?.clear(); setPersonalProvider(null); setProviderMode("loading"); setProviderScope(""); setProviderError("İzleme süren doldu."); setFavorites([]); setFavoritesReady(false); });
+      return bootstrap;
+    };
+    apiRequest<PersonalProviderBootstrap>("/me/provider-session", {signal:AbortSignal.any([controller.signal, AbortSignal.timeout(15000)])}).then(value => {
+      if (disposed || g !== generation.current) return;
+      let initial: PersonalProviderBootstrap | null = publish(validatePersonalBootstrap(value));
+      const loadBootstrap = createScopedBootstrapLoader(async signal => {
+        if (initial) { const value = initial; initial = null; return value; }
+        return apiRequest("/me/provider-session", {signal:AbortSignal.any([signal, AbortSignal.timeout(15000)])});
+      }, publish, () => !disposed && identityRef.current === identity);
+      const client = createPersonalProviderClient({loadBootstrap});
+      providerRef.current = client; setPersonalProvider(client); setProviderMode("personal"); setProviderError("");
+    }).catch(cause => {
+      if (disposed || g !== generation.current) return;
+      // This endpoint's fixed ineligible response is the only permitted legacy fallback.
+      if (cause instanceof Error && cause.message === "Kisisel yayin erisimi kullanilamiyor.") setProviderMode("legacy");
+      else setProviderError("Kişisel yayın erişimi doğrulanamadı. Tekrar deneyebilirsin.");
+    });
+    return () => { disposed = true; controller.abort(); deadline?.dispose(); providerRef.current?.clear(); };
+  }, [identity, providerRetry]);
   const reload = useCallback(() => {
-    if (!session || pendingRef.current.size || loadingGeneration.current === generation.current) return;
+    if (providerMode === "loading") { setProviderRetry(value => value+1); return; }
+    if (!identity || pendingRef.current.size || loadingGeneration.current === generation.current) return;
     const g = generation.current;
     loadingGeneration.current = g; setFavoritesLoading(true);
-    apiRequest<{ items: MediaItem[]; partial?: boolean }>("/me/favorites", { signal: AbortSignal.timeout(60000) }).then(r => {
+    const load = personalProvider && providerMode === "personal"
+      ? apiRequest<{favorites:PersonalRef[]}>("/me/personal-library", {signal:AbortSignal.timeout(15000)}).then(async library => {
+        const kinds = Array.from(new Set(library.favorites.filter(ref=>ref.kind !== "episode").map(ref=>ref.kind as MediaItem["kind"])));
+        const rows = await Promise.all(kinds.map(kind=>personalProvider.catalog(kind)));
+        return {items:hydratePersonalFavorites(library.favorites,rows.flat()),partial:false};
+      })
+      : apiRequest<{items:MediaItem[];partial?:boolean}>("/me/favorites", {signal:AbortSignal.timeout(60000)});
+    load.then(r => {
       if (g === generation.current && !pendingRef.current.size) {
         setFavorites(r.items); setFavoritesReady(true);
         setFavoritesError(r.partial ? "Bazı favorilerin kaynağı şu anda doğrulanamıyor. Diğer favorilerini kullanabilirsin." : "");
@@ -57,7 +115,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       if (loadingGeneration.current === g) loadingGeneration.current = null;
       if (g === generation.current) setFavoritesLoading(false);
     });
-  }, [session]);
+  }, [identity, personalProvider, providerMode, providerScope]);
   const invalidateFavorites = useCallback(() => {
     generation.current++;
     loadingGeneration.current = null;
@@ -65,8 +123,8 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     setFavoritesReady(false);
     setFavoritesError("");
     reload();
-  }, [reload]);
-  useEffect(() => { reload(); window.addEventListener("focus", reload); return () => window.removeEventListener("focus", reload); }, [reload]);
+  }, [reload, providerMode]);
+  useEffect(() => { if(providerMode === "loading") return; reload(); window.addEventListener("focus", reload); return () => window.removeEventListener("focus", reload); }, [reload, providerMode]);
   const toggle = async (item: MediaItem) => {
     const key = itemKey(item);
     if (!session || pendingRef.current.has(key) || !favoritesReady) return;
@@ -74,10 +132,16 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     const g = generation.current;
     pendingRef.current.add(key); setPending(new Set(pendingRef.current)); setError("");
     setFavorites(list => existing ? list.filter(f => itemKey(f) !== key) : [{ ...item, available: true }, ...list]);
-    try { await apiRequest(`/me/favorites/${item.kind}/${encodeURIComponent(item.id)}`, { method: existing ? "DELETE" : "PUT" }); }
+    try {
+      if (providerMode === "personal") {
+        if (!item.personalRef) throw new Error("Unavailable reference");
+        await apiRequest("/me/personal-library/favorites", {method:existing ? "DELETE" : "PUT",body:{ref:item.personalRef}});
+      } else if(providerMode === "legacy") await apiRequest(`/me/favorites/${item.kind}/${encodeURIComponent(item.id)}`, { method: existing ? "DELETE" : "PUT" });
+      else throw new Error("Unavailable session");
+    }
     catch { if (g === generation.current) { setFavorites(list => existing ? [existing, ...list.filter(f => itemKey(f) !== key)] : list.filter(f => itemKey(f) !== key)); setError("Favori değişikliği kaydedilemedi. Lütfen tekrar dene."); } }
-    finally { pendingRef.current.delete(key); setPending(new Set(pendingRef.current)); }
+    finally { if(g === generation.current) {pendingRef.current.delete(key); setPending(new Set(pendingRef.current));} }
   };
-  return <Context.Provider value={{ session, ready, favorites, favoritesReady, favoritesLoading, favoritesError, error, pending, toggle, reload, invalidateFavorites, dismissError: () => setError(""), saveSession, logout }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ personalProvider, providerMode, providerError, providerScope, session, ready, favorites, favoritesReady, favoritesLoading, favoritesError, error, pending, toggle, reload, invalidateFavorites, dismissError: () => setError(""), saveSession, logout }}>{children}</Context.Provider>;
 }
 export function usePlatform() { const value = useContext(Context); if (!value) throw new Error("PlatformProvider missing"); return value; }

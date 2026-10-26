@@ -1,6 +1,9 @@
 "use client";
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { apiRequest } from "../../lib/api";
+import { usePlatform } from "./session";
+import { hydratePersonalWatched, requestPersonalPlayback } from "./personal-integration";
+import type { PersonalRef } from "./personal-provider";
 import { Artwork, FavoriteButton } from "./artwork";
 import { firstUnwatchedEpisode, nextPlayableEpisode } from "./episode-navigation";
 import { episodeDisplayTitle } from "./episode-presentation";
@@ -201,7 +204,7 @@ function VodControls({ videoRef, title, seriesTitle, currentEpisode, seasons, po
   </div>;
 }
 
-export function VodPlayer({ playback, title, resumeAt = 0, onProgress, onEnded, endPrompt, seriesTitle, currentEpisode, seasons, posterUrl, watchedIds, nextEpisode, onBack, onSelectEpisode, onNextEpisode }: { playback: Playback; title: string; resumeAt?: number; onProgress?: (time: number) => void; onEnded?: () => void; endPrompt?: EndPrompt | null; seriesTitle?: string; currentEpisode?: Episode | null; seasons?: MediaItem["seasons"]; posterUrl?: string | null; watchedIds?: ReadonlySet<string>; nextEpisode?: Episode | null; onBack?: () => void; onSelectEpisode?: (episode: Episode) => void; onNextEpisode?: () => void }) {
+export function VodPlayer({ onRetry, playback, title, resumeAt = 0, onProgress, onEnded, endPrompt, seriesTitle, currentEpisode, seasons, posterUrl, watchedIds, nextEpisode, onBack, onSelectEpisode, onNextEpisode }: { onRetry?: () => void; playback: Playback; title: string; resumeAt?: number; onProgress?: (time: number) => void; onEnded?: () => void; endPrompt?: EndPrompt | null; seriesTitle?: string; currentEpisode?: Episode | null; seasons?: MediaItem["seasons"]; posterUrl?: string | null; watchedIds?: ReadonlySet<string>; nextEpisode?: Episode | null; onBack?: () => void; onSelectEpisode?: (episode: Episode) => void; onNextEpisode?: () => void }) {
   const ref = useRef<HTMLVideoElement>(null);
   const gestureAttemptHandler = useRef<() => void>(() => {});
   const manualPlayFailureHandler = useRef<(cause: unknown) => void>(() => {});
@@ -310,9 +313,10 @@ export function VodPlayer({ playback, title, resumeAt = 0, onProgress, onEnded, 
     } else { video.src = playback.url; startPlayback(); }
     return () => { cancelled = true; deadline?.dispose(); gestureAttemptHandler.current = () => {}; manualPlayFailureHandler.current = () => {}; watchdog?.dispose(); cleanup(); video.removeEventListener("error", handleVideoError); video.removeEventListener("loadstart", loadStarted); video.removeEventListener("waiting", waitForStream); video.removeEventListener("stalled", waitForStream); video.removeEventListener("progress", noteMediaProgress); video.removeEventListener("loadedmetadata", noteMediaProgress); video.removeEventListener("canplay", markPlayable); video.removeEventListener("playing", markPlaying); video.removeEventListener("loadedmetadata", restorePosition); video.removeEventListener("timeupdate", reportProgress); video.removeEventListener("ended", reportEnded); video.pause(); video.removeAttribute("src"); video.load(); };
   }, [playback.url, playback.transport, playback.deliveryMode, playback.expiresAt, retry]);
-  return <div className={`${s.vodPlayer} ${player.cinema}`}><video ref={ref} autoPlay playsInline preload="metadata" aria-label={title}/><VodControls videoRef={ref} title={title} seriesTitle={seriesTitle} currentEpisode={currentEpisode} seasons={seasons} posterUrl={posterUrl} watchedIds={watchedIds} nextEpisode={nextEpisode} onBack={onBack} onSelectEpisode={onSelectEpisode} onNextEpisode={onNextEpisode}/>{needsPlayGesture && !error && !endPrompt && <div style={{ position: "absolute", inset: 0, zIndex: 3, display: "grid", placeItems: "center", pointerEvents: "none" }}><button className={s.primary} style={{ width: 72, height: 72, padding: 0, borderRadius: "50%", pointerEvents: "auto" }} aria-label="Oynat" onClick={() => { const video = ref.current; if (!video) return; gestureAttemptHandler.current(); void video.play().catch(cause => manualPlayFailureHandler.current(cause)); }}><Icon name="play" filled/></button></div>}{error && <div className={s.playerError} role="alert"><p>{error}</p><button className={s.primary} onClick={() => setRetry(v => v+1)}>Tekrar Dene</button></div>}{endPrompt && <div className={s.nextEpisodePrompt} role="status"><span>{endPrompt.onPlay ? "Sıradaki bölüm" : "Tamamlandı"}</span><h3>{endPrompt.title}</h3>{endPrompt.onPlay && <p>{endPrompt.seconds} saniye içinde otomatik başlayacak.</p>}<div>{endPrompt.onPlay && <button className={s.primary} onClick={endPrompt.onPlay}>Şimdi Oynat</button>}<button className={s.secondary} onClick={endPrompt.onCancel}>{endPrompt.onPlay ? "İptal" : "Kapat"}</button></div></div>}</div>;
+  return <div className={`${s.vodPlayer} ${player.cinema}`}><video ref={ref} autoPlay playsInline preload="metadata" aria-label={title}/><VodControls videoRef={ref} title={title} seriesTitle={seriesTitle} currentEpisode={currentEpisode} seasons={seasons} posterUrl={posterUrl} watchedIds={watchedIds} nextEpisode={nextEpisode} onBack={onBack} onSelectEpisode={onSelectEpisode} onNextEpisode={onNextEpisode}/>{needsPlayGesture && !error && !endPrompt && <div style={{ position: "absolute", inset: 0, zIndex: 3, display: "grid", placeItems: "center", pointerEvents: "none" }}><button className={s.primary} style={{ width: 72, height: 72, padding: 0, borderRadius: "50%", pointerEvents: "auto" }} aria-label="Oynat" onClick={() => { const video = ref.current; if (!video) return; gestureAttemptHandler.current(); void video.play().catch(cause => manualPlayFailureHandler.current(cause)); }}><Icon name="play" filled/></button></div>}{error && <div className={s.playerError} role="alert"><p>{error}</p><button className={s.primary} onClick={() => onRetry ? onRetry() : setRetry(v => v+1)}>Tekrar Dene</button></div>}{endPrompt && <div className={s.nextEpisodePrompt} role="status"><span>{endPrompt.onPlay ? "Sıradaki bölüm" : "Tamamlandı"}</span><h3>{endPrompt.title}</h3>{endPrompt.onPlay && <p>{endPrompt.seconds} saniye içinde otomatik başlayacak.</p>}<div>{endPrompt.onPlay && <button className={s.primary} onClick={endPrompt.onPlay}>Şimdi Oynat</button>}<button className={s.secondary} onClick={endPrompt.onCancel}>{endPrompt.onPlay ? "İptal" : "Kapat"}</button></div></div>}</div>;
 }
 export function Detail({ item, onClose }: { item: MediaItem; onClose: () => void }) {
+  const {personalProvider, providerMode, providerScope} = usePlatform();
   const ref = useRef<HTMLDialogElement>(null);
   const [playback, setPlayback] = useState<Playback | null>(null);
   const [title, setTitle] = useState(item.title);
@@ -326,28 +330,45 @@ export function Detail({ item, onClose }: { item: MediaItem; onClose: () => void
   const activeEpisode = useRef<Episode | null>(null);
   const resumeAt = useRef(0);
   useEffect(() => { ref.current?.showModal(); const previous = document.body.style.overflow; document.body.style.overflow = "hidden"; return () => { request.current++; document.body.style.overflow = previous; }; }, []);
-  const play = async (episode?: Episode) => {
+  useEffect(() => {
+    if(providerMode !== "personal" || !item.personalRef) return;
+    let cancelled = false;
+    apiRequest<{watched:PersonalRef[]}>("/me/personal-library", {signal:AbortSignal.timeout(15000)}).then(library=> { if(!cancelled) setWatched(previous => new Set([...hydratePersonalWatched(library.watched,item.seasons?.flatMap(season=>season.episodes) ?? []), ...previous])); }).catch(()=> { if(!cancelled) setProgressError("İzlendi bilgisi yüklenemedi."); });
+    return ()=> {cancelled = true;};
+  }, [item, providerMode, providerScope]);
+  const play = async (episode?: Episode, preserveResume = false) => {
     const selection = { kind: episode ? "episode" as const : "movie" as const, id: episode?.id ?? item.id };
 
     activeEpisode.current = episode ?? null;
     setAutoAdvance(null);
     if (episode) setSeason(episode.seasonNumber);
-    resumeAt.current = 0;
+    if (!preserveResume) resumeAt.current = 0;
     const version = ++request.current; setBusy(true); setError(""); setPlayback(null);
-    try { const data = await apiRequest<Playback>(`/me/vod/${selection.kind}/${encodeURIComponent(selection.id)}/playback?clientRuntime=browser&direct=1`); if (version !== request.current) return; if (!data.canPlay || !data.url) throw new Error(data.errorMessage ?? "İçerik şu anda kullanılamıyor."); if (new URL(data.url, location.origin).protocol !== "https:" && location.protocol === "https:") throw new Error("Güvenli oynatma adresi hazırlanamadı."); setTitle(episode?.title ?? item.title); setPlayback(data); }
-    catch (error) { if (version === request.current) setError(playbackErrorMessage(error, item.kind)); }
+    try {
+      let data: Playback;
+      if(providerMode === "personal") {
+        const personalRef = episode?.personalRef ?? (!episode ? item.personalRef : undefined);
+        if(!personalProvider || !personalRef || personalRef.sourceVersion !== providerScope) throw new Error("İçerik şu anda kullanılamıyor.");
+        data = await requestPersonalPlayback(personalProvider, personalRef);
+      } else if(providerMode === "legacy" && !item.personalRef) data = await apiRequest<Playback>(`/me/vod/${selection.kind}/${encodeURIComponent(selection.id)}/playback?clientRuntime=browser&direct=1`);
+      else throw new Error("İçerik şu anda kullanılamıyor."); if (version !== request.current) return; if (!data.canPlay || !data.url) throw new Error(data.errorMessage ?? "İçerik şu anda kullanılamıyor."); if (new URL(data.url, location.origin).protocol !== "https:" && location.protocol === "https:") throw new Error("Güvenli oynatma adresi hazırlanamadı."); setTitle(episode?.title ?? item.title); setPlayback(data); }
+    catch (error) { if (version === request.current) setError(providerMode === "personal" ? error instanceof Error && error.message === "Bu içerik tarayıcıda oynatılamıyor. Başka bir içerik seçebilirsin." ? error.message : "Bu içerik şu anda tarayıcıda açılamıyor. Yeniden dene veya başka bir içerik seç." : playbackErrorMessage(error, item.kind)); }
     finally { if (version === request.current) setBusy(false); }
   };
-  const persistWatched = async (episode: Episode) => {
-    for (let attempt = 0; attempt < 2; attempt++) {
+  const persistWatched = async (episode: Episode, previouslyWatched: boolean) => {
+    for (let attempt = 0; attempt < (providerMode === "personal" ? 1 : 2); attempt++) {
       try {
-        await apiRequest<{ ok: boolean }>(`/me/library/series/${encodeURIComponent(item.id)}/episodes/${encodeURIComponent(episode.id)}/watched`, { method: "PUT" });
+        if(providerMode === "personal") {
+          if(!episode.personalRef) throw new Error("Unavailable episode");
+          await apiRequest("/me/personal-library/watched",{method:"PUT",body:{ref:episode.personalRef}});
+        } else await apiRequest<{ ok: boolean }>(`/me/library/series/${encodeURIComponent(item.id)}/episodes/${encodeURIComponent(episode.id)}/watched`, { method: "PUT" });
         setProgressError("");
         return;
       } catch {
-        if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 600));
+        if (attempt === 0 && providerMode !== "personal") await new Promise(resolve => setTimeout(resolve, 600));
       }
     }
+    if (!previouslyWatched) setWatched(previous => {const next = new Set(previous); next.delete(episode.id); return next;});
     setProgressError("İzlendi bilgisi kaydedilemedi. İnternet bağlantın geldiğinde bölümü yeniden açabilirsin.");
   };
   const finishEpisode = () => {
@@ -355,7 +376,7 @@ export function Detail({ item, onClose }: { item: MediaItem; onClose: () => void
     if (!completed) return;
     activeEpisode.current = null;
     setWatched(previous => new Set(previous).add(completed.id));
-    void persistWatched(completed);
+    void persistWatched(completed, watched.has(completed.id));
     setAutoAdvance({ episode: nextPlayableEpisode(item.seasons ?? [], completed.id), seconds: 5 });
   };
   useEffect(() => {
@@ -373,7 +394,7 @@ export function Detail({ item, onClose }: { item: MediaItem; onClose: () => void
   const returnToDetail = () => { request.current++; activeEpisode.current = null; setAutoAdvance(null); setPlayback(null); setBusy(false); };
   return <dialog ref={ref} className={`${s.detail} ${item.kind === "series" ? s.seriesDialog : ""} ${playback ? player.playerDialog : ""}`} aria-label={`${item.title} ayrıntıları`} onCancel={onClose} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
     <article>{!playback && <button autoFocus className={s.close} onClick={onClose} aria-label="Detayı kapat"><Icon name="close"/></button>}
-      {playback ? <VodPlayer playback={playback} title={title} resumeAt={resumeAt.current} seriesTitle={item.kind === "series" ? item.title : undefined} currentEpisode={activeEpisode.current} seasons={item.kind === "series" ? item.seasons : undefined} posterUrl={item.kind === "series" ? item.posterUrl ?? item.logoUrl : undefined} watchedIds={item.kind === "series" ? watched : undefined} nextEpisode={upcomingEpisode} onBack={returnToDetail} onSelectEpisode={item.kind === "series" ? episode => { void play(episode); } : undefined} onNextEpisode={upcomingEpisode ? () => { void play(upcomingEpisode); } : undefined} onProgress={time => { if (playback.deliveryMode === "direct_provider") resumeAt.current = time; }} onEnded={finishEpisode} endPrompt={autoAdvance ? { title: autoAdvance.episode ? `${autoAdvance.episode.seasonNumber}. Sezon · ${autoAdvance.episode.episodeNumber}. Bölüm — ${episodeDisplayTitle(autoAdvance.episode, item.title)}` : "Dizinin tüm bölümlerini tamamladın.", seconds: autoAdvance.seconds, onPlay: autoAdvance.episode ? () => { const next = autoAdvance.episode!; setAutoAdvance(null); void play(next); } : undefined, onCancel: () => setAutoAdvance(null) } : null}/> : item.kind === "series" ? <SeriesDetailView item={item} season={season} onSeasonChange={setSeason} watched={watched} busy={busy} error={error} progressError={progressError} onPlay={episode => { void play(episode); }}/> : <div className={s.detailHero}><Artwork item={item} hero/><div className={s.detailHeading}><span>Film</span><h1>{item.title}</h1><p>{item.groupTitle}</p></div></div>}
+      {playback ? <VodPlayer onRetry={providerMode === "personal" ? () => { void play(activeEpisode.current ?? undefined, true); } : undefined} playback={playback} title={title} resumeAt={resumeAt.current} seriesTitle={item.kind === "series" ? item.title : undefined} currentEpisode={activeEpisode.current} seasons={item.kind === "series" ? item.seasons : undefined} posterUrl={item.kind === "series" ? item.posterUrl ?? item.logoUrl : undefined} watchedIds={item.kind === "series" ? watched : undefined} nextEpisode={upcomingEpisode} onBack={returnToDetail} onSelectEpisode={item.kind === "series" ? episode => { void play(episode); } : undefined} onNextEpisode={upcomingEpisode ? () => { void play(upcomingEpisode); } : undefined} onProgress={time => { if (playback.deliveryMode === "direct_provider") resumeAt.current = time; }} onEnded={finishEpisode} endPrompt={autoAdvance ? { title: autoAdvance.episode ? `${autoAdvance.episode.seasonNumber}. Sezon · ${autoAdvance.episode.episodeNumber}. Bölüm — ${episodeDisplayTitle(autoAdvance.episode, item.title)}` : "Dizinin tüm bölümlerini tamamladın.", seconds: autoAdvance.seconds, onPlay: autoAdvance.episode ? () => { const next = autoAdvance.episode!; setAutoAdvance(null); void play(next); } : undefined, onCancel: () => setAutoAdvance(null) } : null}/> : item.kind === "series" ? <SeriesDetailView item={item} season={season} onSeasonChange={setSeason} watched={watched} busy={busy} error={error} progressError={progressError} onPlay={episode => { void play(episode); }}/> : <div className={s.detailHero}><Artwork item={item} hero/><div className={s.detailHeading}><span>Film</span><h1>{item.title}</h1><p>{item.groupTitle}</p></div></div>}
       {item.kind !== "series" && <div className={`${s.detailContent} ${playback ? player.hiddenDetail : ""}`}><div className={s.detailActions}><button className={s.primary} disabled={busy || item.playbackAllowed === false} onClick={() => void play()}><Icon name="play" filled/>{busy ? "Hazırlanıyor…" : "Oynat"}</button><FavoriteButton item={item}/></div>
         {item.playbackAllowed === false && <p>Bu içerik şu anda hesabında oynatmaya açık değil.</p>}{error && <p className={s.error} role="alert">{error}</p>}{progressError && <p className={s.error} role="alert">{progressError}</p>}
       </div>}
