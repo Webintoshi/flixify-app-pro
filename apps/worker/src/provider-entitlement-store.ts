@@ -125,6 +125,9 @@ export function createProviderEntitlementStore(pool: Pool): EntitlementStore {
                     const ids = new Set(managed.rows.map((r: {
                         subscription_id: string | null;
                     }) => r.subscription_id));
+                    // A same-line version transfer is held in memory until the final CAS update.
+                    // Include that ownership now so closure and exact expiry apply in this transaction.
+                    if (subscriptionId) ids.add(subscriptionId);
                     const reason = line.isTrial ? 'provider-trial' : !line.enabled || !line.adminEnabled ? 'provider-disabled' : 'provider-expired';
                     for (const s of subscriptionRows.filter(s => (ids.has(s.id) || !line.isTrial) && s.status === 'active')) {
                         await c.query("update public.subscriptions set status=$2,end_reason=case when end_reason='trial-3h' then end_reason else $3 end,ends_at=$4 where id=$1", [s.id, reason === 'provider-expired' ? 'expired' : 'cancelled', reason, ids.has(s.id) ? line.expiresAt : s.ends_at]);

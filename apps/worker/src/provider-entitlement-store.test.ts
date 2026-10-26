@@ -131,6 +131,25 @@ describe.skipIf(!connectionString)('real PostgreSQL provider entitlement store',
         expect(await subscriptions()).toHaveLength(1);
         expect((await subscriptions())[0]).toMatchObject({ id, status: 'cancelled', end_reason: 'admin-fraud' });
     });
+    it.each([
+        { label: 'trial', observation: { isTrial: true }, status: 'cancelled', reason: 'provider-trial' },
+        { label: 'disabled', observation: { enabled: false }, status: 'cancelled', reason: 'provider-disabled' },
+        { label: 'expired', observation: { expiresAt: '2020-01-01T00:00:00.000Z' }, status: 'expired', reason: 'provider-expired' }
+    ])('closes transferred paid ownership immediately on $label observation', async ({ observation, status, reason }) => {
+        await store.apply(await claim(), line());
+        const id = (await subscriptions())[0].id;
+        await pool.query("update public.user_iptv_credentials set updated_at=updated_at+interval '1 microsecond'");
+        const job = await claim();
+        const observed = line({ expiresAt: new Date(Date.now() + 3600000).toISOString(), ...observation });
+        await store.apply(job, observed);
+        const rows = await subscriptions();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ id, status, end_reason: reason });
+        expect(new Date(rows[0].ends_at).toISOString()).toBe(observed.expiresAt);
+        const mappings = (await pool.query('select id,provider_line_id,subscription_id from public.provider_entitlement_sync order by created_at,id')).rows;
+        expect(mappings.find((row: { id: string }) => row.id === job.id)).toMatchObject({ provider_line_id: observed.lineId, subscription_id: id });
+        expect(mappings.filter((row: { subscription_id: string | null }) => row.subscription_id === id)).toHaveLength(1);
+    });
     it('closes conflicting active history and verifies RLS and unique line constraints', async () => {
         await pool.query("insert into public.subscriptions(user_id,package_id,status,starts_at,ends_at,activated_by_admin_id) select $1,id,'active',now(),now()+interval '1 month','admin' from public.packages where slug='1-ay'", [userId]);
         await store.apply(await claim(), line());
