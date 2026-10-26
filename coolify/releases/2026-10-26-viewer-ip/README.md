@@ -2,14 +2,14 @@
 
 Bu klasör yalnız aktif Coolify hizmeti `eupquokyj7qegufqvqkjmuyr` (id 1) için
 API/web adaylarını hazırlar ve korumalı yayını yürütür. Uygulama sürümü
-`74907d62d9bea36dd0ee1d4ab8fed4aaae53d269`, yama temeli
+`e970f8eb7305e3d8a11e43ecef22304fcd531c33`, yama temeli
 `51be56cfa2927c3f4a41a84e5a4f3acfaa4a0cea` olarak sabittir. Yayın betiklerini
 ekleyen commitin uygulama imajındaki revision etiketiyle aynı olması gerekmez.
 
 Kaynak imajlar `flixify-api:playback-fix-39300d0-20261023` ve
 `flixify-ops-web:playback-fix-39300d0-20261023`; hedefler
-`flixify-api:viewer-ip-74907d6-20261026` ve
-`flixify-ops-web:viewer-ip-74907d6-20261026`. İmaj SHA256 kimlikleri ve iki
+`flixify-api:viewer-ip-e970f8e-20261026` ve
+`flixify-ops-web:viewer-ip-e970f8e-20261026`. İmaj SHA256 kimlikleri ve iki
 API kaynak SHA256 değeri betiklerde sabittir. Etiket başka imaja taşınırsa durur.
 
 `server.ts` ve `repository.ts` canlıya özgü katalog/yetişkin içerik kuralları
