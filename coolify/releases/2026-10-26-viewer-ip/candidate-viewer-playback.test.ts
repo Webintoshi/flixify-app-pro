@@ -42,6 +42,26 @@ describe("viewer IP browser playback", () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   afterAll(async () => { await app.close(); });
   const request = (path: string) => app.inject({ method: "GET", url: path, headers: { authorization } });
+  for (const [suffix, transport] of [
+    ["1.ts?subtitle=.m3u8", "ts"], ["archive.m3u8/1.mp4?subtitle=.mkv", "mp4"],
+    ["archive.mp4/1.mkv?subtitle=.m3u8", "mkv"], ["archive.ts/1.m3u8?subtitle=.mp4", "hls"]
+  ]) {
+    it(`derives live transport from canonical final pathname for ${suffix}`, async () => {
+      vi.mocked(repository.getLiveChannelForPlayback).mockResolvedValue({ id: "1", snapshot_version: 1,
+        stream_path: `live/__IPTV_USERNAME__/__IPTV_PASSWORD__/${suffix}`, transport: "unknown" } as never);
+      const response = await request("/me/live/1/playback?clientRuntime=browser");
+      expect(response.json()).toMatchObject({ deliveryMode: "direct_provider", transport,
+        url: `https://provider.example.test/live/personal/secret/${suffix}` });
+      expect(live.probeLiveStream).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+    });
+  }
+  it("rejects misleading live query and directory extensions on an unsupported final path", async () => {
+    vi.mocked(repository.getLiveChannelForPlayback).mockResolvedValue({ id: "1", snapshot_version: 1,
+      stream_path: "live/__IPTV_USERNAME__/__IPTV_PASSWORD__/folder.mp4/1.avi?subtitle=.m3u8", transport: "unknown" } as never);
+    const response = await request("/me/live/1/playback?clientRuntime=browser");
+    expect(response.json().deliveryMode).not.toBe("direct_provider");
+  });
   for (const trial of [true, false]) {
     for (const extension of ["mp4", "mkv", "m3u8"]) {
       it(`returns exact personal ${extension} for ${trial ? "trial" : "paid"} without server probe`, async () => {

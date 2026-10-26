@@ -2,14 +2,14 @@
 
 Bu klasör yalnız aktif Coolify hizmeti `eupquokyj7qegufqvqkjmuyr` (id 1) için
 API/web adaylarını hazırlar ve korumalı yayını yürütür. Uygulama sürümü
-`e1092086e06f8322dc46cfa405010e6cb3fa51e4`, yama temeli
+`74907d62d9bea36dd0ee1d4ab8fed4aaae53d269`, yama temeli
 `51be56cfa2927c3f4a41a84e5a4f3acfaa4a0cea` olarak sabittir. Yayın betiklerini
 ekleyen commitin uygulama imajındaki revision etiketiyle aynı olması gerekmez.
 
 Kaynak imajlar `flixify-api:playback-fix-39300d0-20261023` ve
 `flixify-ops-web:playback-fix-39300d0-20261023`; hedefler
-`flixify-api:viewer-ip-e109208-20261026` ve
-`flixify-ops-web:viewer-ip-e109208-20261026`. İmaj SHA256 kimlikleri ve iki
+`flixify-api:viewer-ip-74907d6-20261026` ve
+`flixify-ops-web:viewer-ip-74907d6-20261026`. İmaj SHA256 kimlikleri ve iki
 API kaynak SHA256 değeri betiklerde sabittir. Etiket başka imaja taşınırsa durur.
 
 `server.ts` ve `repository.ts` canlıya özgü katalog/yetişkin içerik kuralları
@@ -34,6 +34,7 @@ Build canlı konteynerleri değiştirmez. Aday API testi salt okunur olarak
 `/app/coolify/releases/2026-10-26-viewer-ip/candidate-viewer-playback.test.ts`
 yoluna bağlanır, `npx --no-install vitest run --root /app` ile açık dosya filtresi
 ve kapalı ağ kullanılarak yürütülür. Göreli importlar bu dizilime bağlıdır.
+Aday rota testleri LIVE için son canonical pathname uzantısını, çelişen query/dizin metnini ve desteklenmeyen dosya yolunu da doğrular. LIVE MP4/MKV tarayıcının native medya motorunu; TS MPEG-TS, HLS mevcut HLS seçimini kullanır.
 Derleme logları ve ortam değerleri yazdırılmaz. Webin yalnız mevcut public
 build ayarları bellekten kullanılır. Aday etiketi varsa üzerine yazılmaz;
 yarım derleme için `--only api` veya `--only ops-web` kullanılabilir. Mevcut API

@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 UUID = "eupquokyj7qegufqvqkjmuyr"
-REVISION = "e1092086e06f8322dc46cfa405010e6cb3fa51e4"
+REVISION = "74907d62d9bea36dd0ee1d4ab8fed4aaae53d269"
 BASE_REVISION = "51be56cfa2927c3f4a41a84e5a4f3acfaa4a0cea"
 BASE = {
     "api": (
@@ -31,8 +31,8 @@ BASE = {
     ),
 }
 TARGET = {
-    "api": "flixify-api:viewer-ip-e109208-20261026",
-    "ops-web": "flixify-ops-web:viewer-ip-e109208-20261026",
+    "api": "flixify-api:viewer-ip-74907d6-20261026",
+    "ops-web": "flixify-ops-web:viewer-ip-74907d6-20261026",
 }
 PINNED_API_SOURCES = {
     "apps/api/src/server.ts": "79ca80dc7996fd532dbd89984c89b0f18ada63ff050337d7d274a51e84714283",
@@ -45,7 +45,7 @@ OVERLAYS = {
 }
 API_SERVER = "apps/api/src/server.ts"
 CANDIDATE_API_TEST = "coolify/releases/2026-10-26-viewer-ip/candidate-viewer-playback.test.ts"
-CANDIDATE_API_TEST_SHA256 = "565a30d5f6f369740024d2c813dfcdc64fe39f7e638b100ba5f4c6f2403fe2af"
+CANDIDATE_API_TEST_SHA256 = "7654e89b5f0eab51477b0fd0afb4f343d9184384fdfbd71f92f12dd435bdf0d7"
 PUBLIC_WEB_KEYS = (
     "NEXT_PUBLIC_API_BASE_URL",
     "NEXT_PUBLIC_SUPABASE_URL",
