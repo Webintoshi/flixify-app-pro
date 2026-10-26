@@ -103,7 +103,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
         if (cause instanceof Error && cause.message === "Kisisel yayin erisimi kullanilamiyor.") revoke();
       }).finally(()=>{refreshing=false;});
     };
-    const revoke = () => { deadline?.dispose(); if (providerRef.current) { generation.current++; loadingGeneration.current = null; pendingRef.current.clear(); setPending(new Set()); setFavorites([]); setFavoritesReady(false); } providerRef.current?.clear(); providerRef.current = null; setPersonalProvider(null); setProviderExpiresAt(null); setProviderScope(""); setProviderMode("legacy"); setProviderRevision(value=>value+1); };
+    const revoke = () => { deadline?.dispose(); if (providerRef.current) { generation.current++; loadingGeneration.current = null; pendingRef.current.clear(); setPending(new Set()); setFavorites([]); setFavoritesReady(false); } providerRef.current?.clear(); providerRef.current = null; setPersonalProvider(null); setProviderExpiresAt(sourceRef.current ? null : undefined); setProviderScope(""); setProviderMode("legacy"); setProviderRevision(value=>value+1); };
     const refreshProviderAfterInitial = () => {
       if (bootstrapRef.current) return;
       setProviderRetry(value=>value+1);

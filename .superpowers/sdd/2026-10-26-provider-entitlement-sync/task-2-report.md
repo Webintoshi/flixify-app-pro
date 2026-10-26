@@ -39,3 +39,12 @@ Existing source-text test expectations were updated to require expiry removal fr
 ## Limits
 
 No production deployment or real upstream playback was performed. Rendered players use mocked browser media and engines. API/worker behavior is covered by the separate task owners.
+
+## Scoped review corrections
+
+Addressed both P2 findings from `task-2-review.md` in a narrow follow-up touching only `session.tsx`, `account/components.tsx`, the session lifecycle test and this report.
+
+- Initial fixed ineligible fallback now leaves verified expiry `undefined` when no valid personal source has ever been published for the identity. Prior personal revocation still publishes `null`. Rendered VOD regression mounts a valid HTTPS base-path legacy direct record under initial ineligibility and confirms the record expiry survives and its video receives the media URL. Existing active personal denial regression continues to pass.
+- Account loads now create a new 15-second controller per attempt, coalesce initial and background loads, clear request timers, abort outstanding controllers on cleanup and retain the existing token/publication guard. A timed-out initial request no longer poisons later polling.
+
+Test-first evidence: both new rendered regressions failed before the runtime fixes (`expected null to be undefined`; `expected undefined to be true` after timed-out initial request then scheduled recovery). Both passed after the fixes. Final focused suite: **5 files, 54 tests passed**. TypeScript and diff checks passed. No production/network/media calls were made; media URL assignment is a mocked DOM operation.

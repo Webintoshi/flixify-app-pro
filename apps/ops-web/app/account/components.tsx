@@ -49,14 +49,28 @@ export function useAccountResource<T>(path:string) {
   useEffect(()=>{
     const token=readSession()?.accessToken;
     const valid=()=>current && token===readSession()?.accessToken;
-    let current=true;const controller=new AbortController();
-    const timer=setTimeout(()=>controller.abort(),15000);
-    setState({data:null,loading:true,error:false});
-    apiRequest<T>(path,{signal:controller.signal}).then(data=>{if(valid())setState({data,loading:false,error:false});}).catch(()=>{if(valid())setState({data:null,loading:false,error:true});}).finally(()=>clearTimeout(timer));
+    let current=true;
+    const controllers=new Set<AbortController>();
     let running=false;
-    const background=()=>{if(running || !current)return;running=true;void apiRequest<T>(path,{signal:controller.signal}).then(data=>{if(valid())setState({data,loading:false,error:false});}).catch(()=>{}).finally(()=>{running=false;});};
+    const load=async(initial=false)=>{
+      if(running || !current)return;
+      running=true;
+      const controller=new AbortController();controllers.add(controller);
+      const timer=setTimeout(()=>controller.abort(),15000);
+      controller.signal.addEventListener("abort",()=>clearTimeout(timer),{once:true});
+      try {
+        const data=await apiRequest<T>(path,{signal:controller.signal});
+        if(valid() && !controller.signal.aborted)setState({data,loading:false,error:false});
+      } catch {
+        if(initial && valid())setState({data:null,loading:false,error:true});
+      } finally {
+        clearTimeout(timer);controllers.delete(controller);running=false;
+      }
+    };
+    setState({data:null,loading:true,error:false});void load(true);
+    const background=()=>{void load();};
     const interval=window.setInterval(background,60000);window.addEventListener('focus',background);window.addEventListener('flixify-session',reload);
-    return ()=>{current=false;clearTimeout(timer);window.clearInterval(interval);window.removeEventListener('focus',background);window.removeEventListener('flixify-session',reload);controller.abort();};
+    return ()=>{current=false;window.clearInterval(interval);window.removeEventListener('focus',background);window.removeEventListener('flixify-session',reload);for(const controller of controllers)controller.abort();};
   },[path,version]);
   return {...state,reload,refresh};
 }

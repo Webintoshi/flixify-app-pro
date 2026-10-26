@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformProvider, usePlatform } from "./session";
+import { VodPlayer } from "./detail";
 import { useAccountResource } from "../account/components";
 import { AccessBoundary } from "./onboarding";
 import { sessionKey, type Session } from "./types";
@@ -262,6 +263,38 @@ describe("personal provider session recovery", () => {
     const impl=vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation(async(input,init)=>new URL(String(input)).pathname==="/me" ? Promise.reject(new Error("offline")):impl(input,init));
     await focus();expect(resource!.data?.user.hasActiveSubscription).toBe(true);expect(resource!.loading).toBe(false);
+  });
+
+  it("preserves never-personal legacy direct playback after bootstrap ineligibility", async () => {
+    const prototype=window.HTMLElement.prototype;
+    const tracks=Object.assign([], {addEventListener:()=>{},removeEventListener:()=>{}});
+    Object.defineProperties(prototype, {
+      textTracks:{configurable:true,value:tracks}, pause:{configurable:true,value:()=>{}},
+      load:{configurable:true,value:()=>{}}, play:{configurable:true,value:()=>Promise.resolve()},
+      canPlayType:{configurable:true,value:()=>""},volume:{configurable:true,value:1}
+    });
+    const record={url:"https://provider.test/base/movie/test.mp4",canPlay:true,transport:"mp4",deliveryMode:"direct_provider",expiresAt:expiry};
+    function LegacyPlayer() { const ctx=usePlatform();platform=ctx;return ctx.providerMode==="legacy" ? <VodPlayer playback={record} title="Legacy film"/> : null; }
+    await settle(()=>root.render(<PlatformProvider><LegacyPlayer/></PlatformProvider>));
+    expect(platform.providerMode).toBe("legacy");expect(platform.providerExpiresAt).toBeUndefined();
+    expect(container.textContent).not.toContain("İzleme süren doldu.");
+    expect((container.querySelector("video") as HTMLVideoElement).src).toBe(record.url);
+  });
+  it("recovers settings on the next poll after the initial request times out", async () => {
+    vi.useFakeTimers({toFake:["setTimeout","clearTimeout","setInterval","clearInterval"]});
+    let resource: ReturnType<typeof useAccountResource<{user:{hasActiveSubscription:boolean}}>>;
+    let requests=0;
+    vi.mocked(fetch).mockImplementation(async(_input,init)=>{
+      requests++; const signal=init?.signal;
+      if(signal?.aborted)throw new Error("aborted");
+      if(requests===1)return new Promise<Response>((_resolve,reject)=>signal?.addEventListener("abort",()=>reject(new Error("timeout")),{once:true}));
+      return json({user:account(true)});
+    });
+    function Settings() { resource=useAccountResource("/me");return <output>{String(resource.data?.user.hasActiveSubscription)}</output>; }
+    await settle(()=>root.render(<Settings/>));
+    await act(async()=>{await vi.advanceTimersByTimeAsync(15000);});expect(resource!.error).toBe(true);
+    await act(async()=>{await vi.advanceTimersByTimeAsync(45000);});
+    expect(resource!.data?.user.hasActiveSubscription).toBe(true);expect(resource!.loading).toBe(false);expect(resource!.error).toBe(false);
   });
 
 });
