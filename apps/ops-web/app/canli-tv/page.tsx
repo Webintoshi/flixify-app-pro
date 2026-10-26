@@ -1,5 +1,7 @@
 "use client";
 
+import { mapPersonalLive, liveTransport, selectedProgrammes, createLiveRequestScope } from "./personal-live";
+import type { PersonalRef, PersonalEpgResult } from "../platform/personal-provider";
 import { selectLivePlaybackEngine } from "../platform/playback-transport";
 import { createDirectPlaybackDeadline } from "../platform/direct-playback-deadline";
 import Link from "next/link";
@@ -42,6 +44,7 @@ type Session = { accessToken: string; kryptoniteCode?: string | null; user?: { k
 
 type LiveChannel = {
   id: string;
+  personalRef?: PersonalRef;
   title: string;
   groupTitle: string | null;
   logoUrl: string | null;
@@ -54,6 +57,7 @@ type LiveChannel = {
 type CatalogResponse = { items: LiveChannel[]; total?: number; groups?: Array<{ title: string; count: number }> };
 
 type PlaybackResponse = {
+  personalRef?: PersonalRef;
   channelId: string;
   url: string | null;
   transport: "hls" | "ts" | "mp4" | "mkv" | "unknown";
@@ -65,7 +69,6 @@ type PlaybackResponse = {
 
 type AppIconName = "home" | "tv" | "movies" | "heart" | "clock" | "settings" | "search" | "close";
 
-const sessionStorageKey = "flixify-public-session";
 const catalogPageSize = 200;
 const initialRenderLimit = 36;
 const liveCatalogCache = createCatalogMemoryCache<CatalogSnapshot<LiveChannel>>();
@@ -80,21 +83,6 @@ function AppIcon({ name }: { name: AppIconName }) {
   if (name === "settings") return <svg {...common}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.8 1.8 0 0 0 .4 2l.1.1-2.8 2.8-.1-.1a1.8 1.8 0 0 0-2-.4 1.8 1.8 0 0 0-1.1 1.7V21h-4v-.1A1.8 1.8 0 0 0 8.8 19a1.8 1.8 0 0 0-2 .4l-.1.1-2.8-2.8.1-.1a1.8 1.8 0 0 0 .4-2A1.8 1.8 0 0 0 2.7 13H2V9h.7a1.8 1.8 0 0 0 1.7-1.1 1.8 1.8 0 0 0-.4-2l-.1-.1L6.7 3l.1.1a1.8 1.8 0 0 0 2 .4A1.8 1.8 0 0 0 9.9 2H14v.1A1.8 1.8 0 0 0 15.1 4a1.8 1.8 0 0 0 2-.4l.1-.1L20 6.3l-.1.1a1.8 1.8 0 0 0-.4 2A1.8 1.8 0 0 0 21.2 9h.8v4h-.8a1.8 1.8 0 0 0-1.8 2Z"/></svg>;
   if (name === "search") return <svg {...common}><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4 4"/></svg>;
   return <svg {...common}><path d="m6 6 12 12M18 6 6 18"/></svg>;
-}
-
-function readSession(): Session | null {
-  try {
-    const raw = window.localStorage.getItem(sessionStorageKey);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<Session>;
-    return typeof parsed.accessToken === "string" && parsed.accessToken ? {
-      accessToken: parsed.accessToken,
-      kryptoniteCode: parsed.kryptoniteCode,
-      user: parsed.user
-    } : null;
-  } catch {
-    return null;
-  }
 }
 
 function errorMessage(error: unknown) {
@@ -173,13 +161,17 @@ function LiveVideo({
   title,
   accessToken,
   onPlaybackChange,
-  onNeedLowerQuality
+  onNeedLowerQuality,
+  refreshPersonalPlayback,
+  onAccessExpired
 }: {
   playback: PlaybackResponse;
   title: string;
   accessToken: string;
   onPlaybackChange: (nextPlayback: PlaybackResponse) => void;
   onNeedLowerQuality: () => boolean;
+  refreshPersonalPlayback?: () => Promise<PlaybackResponse>;
+  onAccessExpired: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const lowerQualityRef = useRef(onNeedLowerQuality);
@@ -191,7 +183,7 @@ function LiveVideo({
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
-    if (!playback.url) return;
+    if (!playback.url || playback.personalRef) return;
     const releaseUrl = buildLiveReleaseUrl(playback.url);
     if (!releaseUrl) return;
     const release = createLivePlaybackRelease(
@@ -216,8 +208,8 @@ function LiveVideo({
     const currentMediaElement = videoRef.current;
     if (!currentMediaElement || !playback.url) return;
     const mediaElement: HTMLVideoElement = currentMediaElement;
-    const playbackUrl = playback.url;
-    const playbackEngine = selectLivePlaybackEngine(playback.transport, playbackUrl);
+    let playbackUrl = playback.url;
+    let playbackEngine = selectLivePlaybackEngine(playback.transport, playbackUrl);
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let cleanupCurrent: () => void = () => undefined;
@@ -232,7 +224,7 @@ function LiveVideo({
     let lastReportedEvent: "playing" | "stalled" | "failed" | null = null;
 
     const reportDirectEvent = (event: "playing" | "stalled" | "failed") => {
-      if (cancelled || playback.deliveryMode !== "direct_provider" || lastReportedEvent === event) return;
+      if (cancelled || playback.personalRef || playback.deliveryMode !== "direct_provider" || lastReportedEvent === event) return;
       lastReportedEvent = event;
       void apiRequest(`/me/live/${encodeURIComponent(playback.channelId)}/health`, {
         method: "POST",
@@ -309,7 +301,7 @@ function LiveVideo({
     };
 
     const tryLowerQuality = () => {
-      if (cancelled || qualityFallbackStarted || playback.deliveryMode !== "direct_provider") return false;
+      if (playback.personalRef || cancelled || qualityFallbackStarted || playback.deliveryMode !== "direct_provider") return false;
       if (!lowerQualityRef.current()) return false;
       qualityFallbackStarted = true;
       terminalAudioFailure = true;
@@ -332,6 +324,15 @@ function LiveVideo({
     async function start(attempt: number, mode: PlaybackMode = "direct") {
       if (cancelled) return;
       try {
+        if (playback.personalRef && refreshPersonalPlayback) {
+          const refreshed = await refreshPersonalPlayback();
+          if (cancelled) return;
+          deadline?.dispose();
+          deadline = createDirectPlaybackDeadline(refreshed.expiresAt, expirePlayback);
+          if (deadline.expired) return;
+          playbackUrl = refreshed.url!;
+          playbackEngine = selectLivePlaybackEngine(refreshed.transport, playbackUrl);
+        }
         activeAttempt = attempt;
         activeMode = mode;
         setActiveReconnectAttempt(attempt);
@@ -492,11 +493,13 @@ function LiveVideo({
     mediaElement.addEventListener("waiting", handleWaiting);
     mediaElement.addEventListener("stalled", handleStalled);
     mediaElement.addEventListener("error", handleMediaError);
-    const deadline = playback.deliveryMode === "direct_provider" ? createDirectPlaybackDeadline(playback.expiresAt, () => {
+    const expirePlayback = () => {
       cancelled = true;
       clearReconnect(); cleanupCurrent(); resetMedia();
       setPlayerError("İzleme süren doldu.");
-    }) : null;
+      if (playback.personalRef) onAccessExpired();
+    };
+    let deadline = playback.deliveryMode === "direct_provider" ? createDirectPlaybackDeadline(playback.expiresAt, expirePlayback) : null;
     if (!deadline?.expired) void start(0);
 
     return () => {
@@ -538,7 +541,7 @@ function LiveVideo({
 
 export default function LiveTvPage() {
   const searchParams = useSearchParams();
-  const { favorites } = usePlatform();
+  const { favorites, session: platformSession, personalProvider, providerMode, providerScope } = usePlatform();
   const openedChannel = useRef<string | null>(null);
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [channels, setChannels] = useState<LiveChannel[]>([]);
@@ -557,6 +560,39 @@ export default function LiveTvPage() {
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestVersionRef = useRef(0);
+  const identityRef = useRef({ personalProvider, providerMode, token: platformSession?.accessToken, scope: providerScope });
+  identityRef.current = { personalProvider, providerMode, token: platformSession?.accessToken, scope: providerScope };
+  const epgScope = useRef(createLiveRequestScope());
+  const [epg, setEpg] = useState<PersonalEpgResult | null>(null);
+  const [epgRevision, setEpgRevision] = useState(0);
+  useEffect(() => { setSession(platformSession); }, [platformSession]);
+  useEffect(() => {
+    requestVersionRef.current += 1;
+    setChannels([]); setSelectedChannel(null); setPlayback(null); setPlaying(false); setError(null);
+    openedChannel.current = null; setRecentIds([]);
+    return () => { requestVersionRef.current += 1; };
+  }, [personalProvider, providerMode, providerScope, platformSession?.accessToken]);
+  useEffect(() => {
+    const generation = epgScope.current.begin();
+    setEpg(null);
+    if (providerMode !== "personal" || !personalProvider || !selectedChannel?.personalRef) return;
+    const ref = selectedChannel.personalRef;
+    let expired = false;
+    const refresh = async () => {
+      try {
+        const result = await personalProvider.shortEpg(ref);
+        if (!expired && epgScope.current.current(generation)) setEpg(result);
+      } catch {
+        if (!expired && epgScope.current.current(generation)) setEpg({status:"error", programmes:[], error:"Program bilgisi alınamadı"});
+      }
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 60000);
+    const deadline = playback?.expiresAt ? createDirectPlaybackDeadline(playback.expiresAt, () => {
+      expired = true; clearInterval(timer); epgScope.current.clear(); setEpg(null);
+    }) : null;
+    return () => { expired = true; clearInterval(timer); deadline?.dispose(); epgScope.current.clear(); };
+  }, [personalProvider, providerMode, selectedChannel, providerScope, platformSession?.accessToken, epgRevision, playback?.expiresAt]);
 
   const recentKey = useMemo(() => {
     if (!session) return null;
@@ -569,14 +605,26 @@ export default function LiveTvPage() {
     catch { setRecentIds([]); }
   }, [recentKey]);
 
-  useEffect(() => setSession(readSession()), []);
+
 
   useEffect(() => {
+    if (providerMode === "loading") { setLoading(true); return; }
     if (!session) {
       setLoading(false);
       return;
     }
     const controller = new AbortController();
+    if (providerMode === "personal") {
+      setLoading(true); setCatalogSyncing(false);
+      if (!personalProvider) { setLoading(false); return; }
+      void personalProvider.catalog("live").then(items => {
+        if (controller.signal.aborted) return;
+        const mapped = items.map(mapPersonalLive);
+        setChannels(mapped); setCatalogTotal(mapped.length); setCatalogLoaded(mapped.length);
+      }).catch(() => { if (!controller.signal.aborted) setError("Kanal listesi alınamadı."); })
+        .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+      return () => controller.abort();
+    }
     const cached = liveCatalogCache.get(session.accessToken, "live");
     setCatalogLoaded(cached?.snapshot.items.length ?? 0);
     setLoading(!cached);
@@ -618,7 +666,7 @@ export default function LiveTvPage() {
     });
 
     return () => controller.abort();
-  }, [session]);
+  }, [session, personalProvider, providerMode, providerScope]);
 
   const enrichedChannels = useMemo(
     () => channels.map((channel) => ({ channel, ...classifyChannel(channel) })),
@@ -673,9 +721,11 @@ export default function LiveTvPage() {
   useEffect(() => setRenderLimit(initialRenderLimit), [directoryTab, search, selectedCategory, selectedCountry]);
 
   async function playChannel(channel: LiveChannel) {
-    if (!session || !channel.playbackAllowed) return;
+    if (!session || !channel.playbackAllowed || providerMode === "loading") return;
+    if (providerMode === "personal" && (!personalProvider || !channel.personalRef)) return;
+    const identity = identityRef.current;
     if (selectedChannel?.id === channel.id && playback) return;
-    const previousReleaseUrl = playback?.url ? buildLiveReleaseUrl(playback.url) : null;
+    const previousReleaseUrl = !playback?.personalRef && playback?.url ? buildLiveReleaseUrl(playback.url) : null;
     const requestVersion = ++requestVersionRef.current;
     setSelectedChannel(channel);
     setPlayback(null);
@@ -698,11 +748,14 @@ export default function LiveTvPage() {
         if (requestVersion !== requestVersionRef.current) return;
       }
       const playbackQuery = getBrowserLivePlaybackQuery(channel.title);
-      const response = await apiRequest<PlaybackResponse>(
+      const response: PlaybackResponse = channel.personalRef && personalProvider
+        ? { ...await personalProvider.playback(channel.personalRef), channelId:channel.id, personalRef:channel.personalRef, transport:channel.transport, canPlay:true, deliveryMode:"direct_provider", errorMessage:null }
+        : await apiRequest<PlaybackResponse>(
         `/me/live/${encodeURIComponent(channel.id)}/playback?${playbackQuery}`,
         { accessToken: session.accessToken }
       );
-      if (requestVersion !== requestVersionRef.current) return;
+      if (requestVersion !== requestVersionRef.current || identity !== identityRef.current && (identity.personalProvider !== identityRef.current.personalProvider || identity.token !== identityRef.current.token || identity.providerMode !== identityRef.current.providerMode || identity.scope !== identityRef.current.scope)) return;
+      if (response.personalRef && response.url) response.transport = liveTransport(response.url);
       if (!response.canPlay || !response.url) throw new Error(response.errorMessage ?? "Canlı yayın başlatılamıyor.");
       if (!response.url.startsWith("https://")) throw new Error("Güvenli HTTPS yayın adresi hazırlanamadı.");
       setPlayback(response);
@@ -714,7 +767,7 @@ export default function LiveTvPage() {
         return next;
       });
     } catch (nextError) {
-      if (requestVersion === requestVersionRef.current) setError(friendlyPlaybackError(nextError));
+      if (requestVersion === requestVersionRef.current) setError(channel.personalRef ? "Canlı yayın başlatılamadı. Tekrar deneyin." : friendlyPlaybackError(nextError));
     } finally {
       if (requestVersion === requestVersionRef.current) setPlaying(false);
     }
@@ -763,7 +816,12 @@ export default function LiveTvPage() {
 
         <section className={styles.playerColumn} aria-live="polite">
           <div className={styles.playerStage}>
-            {playback && selectedChannel && session ? <LiveVideo playback={playback} title={selectedChannel.title} accessToken={session.accessToken} onPlaybackChange={setPlayback} onNeedLowerQuality={() => {
+            {playback && selectedChannel && session ? <LiveVideo playback={playback} title={selectedChannel.title} accessToken={session.accessToken} onAccessExpired={() => { requestVersionRef.current++; setChannels([]); setSelectedChannel(null); setPlayback(null); setEpg(null); epgScope.current.clear(); setError("İzleme süren doldu."); }} refreshPersonalPlayback={selectedChannel.personalRef && personalProvider ? async () => {
+              const identity = identityRef.current;
+              const result = await personalProvider.playback(selectedChannel.personalRef!);
+              if (identity.personalProvider !== identityRef.current.personalProvider || identity.token !== identityRef.current.token || identity.providerMode !== identityRef.current.providerMode || identity.scope !== identityRef.current.scope) throw new Error("Oturum değişti");
+              return {...result, channelId:selectedChannel.id, personalRef:selectedChannel.personalRef, transport:liveTransport(result.url), canPlay:true, deliveryMode:"direct_provider", errorMessage:null};
+            } : undefined} onPlaybackChange={setPlayback} onNeedLowerQuality={() => {
               const lower = findLowerBandwidthVariant(channels, selectedChannel);
               if (!lower) return false;
               void playChannel(lower);
@@ -790,6 +848,10 @@ export default function LiveTvPage() {
               <div className={styles.emptyProgramme}><span>Şu Anda</span><strong>Canlı yayın seçilmedi</strong><small>Sağdaki listeden izlemek istediğiniz kanala dokunun.</small></div>
             )}
           </div>
+          {selectedChannel?.personalRef ? <section className={styles.epg} aria-label="Yayın akışı">
+            <h2>Yayın Akışı</h2>
+            {!epg ? <p>Program bilgisi yükleniyor…</p> : epg.status === "error" ? <p role="alert">{epg.error} <button type="button" onClick={() => setEpgRevision(value => value + 1)}>Tekrar Dene</button></p> : selectedProgrammes(epg.programmes).length ? selectedProgrammes(epg.programmes).map((programme, index) => <article key={`${programme.start}-${index}`}><time>{new Date(programme.start).toLocaleTimeString("tr-TR", {hour:"2-digit",minute:"2-digit",timeZone:"Europe/Istanbul"})} – {new Date(programme.end).toLocaleTimeString("tr-TR", {hour:"2-digit",minute:"2-digit",timeZone:"Europe/Istanbul"})}</time><strong>{programme.start <= Date.now() ? "Şu Anda · " : "Sıradaki · "}{programme.title}</strong>{programme.description ? <p>{programme.description}</p> : null}</article>) : <p>Bu kanal için program bilgisi bulunmuyor.</p>}
+          </section> : null}
         </section>
 
         <aside className={styles.channelRail}>

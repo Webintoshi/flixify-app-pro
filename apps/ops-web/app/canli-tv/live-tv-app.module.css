@@ -309,3 +309,9 @@
   .filterDropdowns select { font-size: 12px; }
   .rowLive { min-width: 7px; }
 }
+
+.epg { margin-top: 16px; padding: 20px; background: #15171c; border: 1px solid #292c33; border-radius: 12px; color: #f4f4f5; }
+.epg h2 { margin: 0 0 14px; font-size: 16px; }
+.epg article { display: grid; gap: 6px; padding: 12px 0; border-top: 1px solid #292c33; }
+.epg time, .epg p { color: #a7abb5; font-size: 13px; line-height: 1.5; margin: 0; }
+.epg button { color: inherit; background: transparent; border: 1px solid #555; border-radius: 6px; padding: 5px 9px; }
