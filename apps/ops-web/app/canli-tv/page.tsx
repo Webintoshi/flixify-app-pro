@@ -560,9 +560,6 @@ function LiveVideo({
         aria-label={`${title} canlı yayın`}
       />
       {!playerError ? <PlayerChrome videoRef={videoRef} kind="live" title={title} /> : null}
-      {connectionState !== "live" && !playerError ? (
-        <div className={styles.connectionBadge}><span className={styles.loaderSmall} /> Yayın dengeleniyor…</div>
-      ) : null}
       {playerError ? (
         <div className={styles.playerMessage}>
           <strong>Yayın kesildi</strong>

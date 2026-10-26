@@ -79,7 +79,9 @@ describe("live stream stall recovery", () => {
   it("restarts the same authorized HLS channel after a buffered stall with no further media events", async () => {
     await mount();
     await settle(() => video().dispatchEvent(new Event("stalled")));
-    await tick(13_000);
+    await tick(9_000);
+    expect(container.textContent).not.toMatch(/Yayın (?:dengeleniyor|yenileniyor)/i);
+    await tick(4_000);
     expect(state.engines).toHaveLength(2);
     expect(state.engines[0].destroyed).toBe(true);
     expect(state.engines[1].source).toBe(url);
