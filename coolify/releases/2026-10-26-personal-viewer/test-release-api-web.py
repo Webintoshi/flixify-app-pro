@@ -256,6 +256,15 @@ class ApiOverlayTests(unittest.TestCase):
         pin.start()
         self.addCleanup(pin.stop)
 
+    def test_exact_final_runtime_manifest_and_new_module_absence(self):
+        changed = set(build.command("git", "-C", str(self.repo), "diff", "--name-only", build.BASE_REVISION, build.REVISION, "--", "apps/api/src", "apps/ops-web/app").decode().splitlines())
+        self.assertEqual({path for path in changed if ".test." not in path}, {path for paths in build.OVERLAYS.values() for path in paths})
+        for path in build.NEW_FILES:
+            with self.subTest(path=path):
+                self.assertTrue(build.git_file(self.repo, build.REVISION, path))
+                with self.assertRaises(build.GateError):
+                    build.git_file(self.repo, build.BASE_REVISION, path)
+
     def test_each_live_source_hash_rejects_unknown_bytes(self):
         for path in build.PINNED_API_SOURCES:
             with self.subTest(path=path), self.assertRaises(build.GateError):

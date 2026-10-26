@@ -2,14 +2,14 @@
 
 Bu klasör yalnız aktif Coolify hizmeti `eupquokyj7qegufqvqkjmuyr` (id 1) için
 API/web adaylarını hazırlar ve korumalı yayını yürütür. Uygulama sürümü
-`PENDING_FINAL_APP_REVISION`, yama temeli
+`464e34863834d87fc90cebe360eeb784119eda56`, yama temeli
 `51be56cfa2927c3f4a41a84e5a4f3acfaa4a0cea` olarak sabittir. Yayın betiklerini
 ekleyen commitin uygulama imajındaki revision etiketiyle aynı olması gerekmez.
 
 Kaynak imajlar `flixify-api:playback-fix-39300d0-20261023` ve
 `flixify-ops-web:playback-fix-39300d0-20261023`; hedefler
-`flixify-api:personal-viewer-PENDING-20261026` ve
-`flixify-ops-web:personal-viewer-PENDING-20261026`. İmaj SHA256 kimlikleri ve iki
+`flixify-api:personal-viewer-464e348-20261026` ve
+`flixify-ops-web:personal-viewer-464e348-20261026`. İmaj SHA256 kimlikleri ve iki
 API kaynak SHA256 değeri betiklerde sabittir. Etiket başka imaja taşınırsa durur.
 
 `server.ts` ve `repository.ts` canlıya özgü katalog/yetişkin içerik kuralları
@@ -82,10 +82,11 @@ Recreate revalidates candidate revision labels before mutation, retains accepted
 
 ## Birleşik yayın kapıları
 
-Son uygulama commitinin Task3b incelemesi bekleniyor. `PENDING_FINAL_APP_REVISION`
-her iki betikte tam 40 haneli commit ile ve hedef etiketler bu commitin ilk yedi
-hanesiyle değiştirilmeden build/apply/recreate/rollback dahil CLI işlemleri durur.
-Test fixture SHA256 değerleri son committeki kaynakla tekrar doğrulanmalıdır.
+Son uygulama commiti `464e34863834d87fc90cebe360eeb784119eda56` Task3b ve
+sonraki düzeltme incelemelerinden geçti. Her iki betik aynı tam commit ve
+`personal-viewer-464e348-20261026` etiketleriyle sabittir. CLI tam commit ve
+etiket tutarlılığını doğrular; geçersiz/bekleyen pin ile durur. Test fixture
+SHA256 değerleri bu tam committeki kaynakla doğrulanmıştır.
 Önceki viewer-ip adayları yayınlanmadı; kaynak imajlar hâlâ 23 Ekim playback-fix
 imajlarıdır. Mevcut aday etiketleri üzerine yazılmaz.
 
