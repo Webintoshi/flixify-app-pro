@@ -149,3 +149,15 @@ test('cancelling selected EPG aborts its fetch and preserves the shared live cat
  assert.deepEqual(await ongoing,{status:'error',programmes:[],error:'Program bilgisi alınamadı'});
  assert.equal((await client.catalog('live')).length,1);assert.equal(catalogRequests,2);client.clear();
 });
+test('forced metadata refresh coalesces, preserves catalog cache and retries after transient failure',async()=>{
+ let loads=0, calls=0, outage=false; let current={...bootstrap};
+ const client=createPersonalProviderClient({loadBootstrap:async()=>{loads++; if(outage)throw new Error('offline');return current;},fetch:async()=>{calls++;return new Response(JSON.stringify([]));}});
+ await client.catalog('live'); assert.equal(loads,1); assert.equal(calls,2);
+ current={...current,expiresAt:'2031-01-01T00:00:00Z'};
+ const [a,b]=await Promise.all([client.refreshMetadata(),client.refreshMetadata()]);
+ assert.equal(loads,2);assert.equal(a.expiresAt,current.expiresAt);assert.equal(a,b);
+ await client.catalog('live');assert.equal(calls,2);
+ outage=true;await assert.rejects(client.refreshMetadata());
+ await client.catalog('live');assert.equal(calls,2);
+ client.clear();
+});

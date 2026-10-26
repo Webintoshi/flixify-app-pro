@@ -89,9 +89,10 @@ export function normalizeEpg(raw: unknown): PersonalProgramme[] {
 
 export function createPersonalProviderClient(options: { loadBootstrap: (signal: AbortSignal) => Promise<unknown>; fetch?: typeof fetch; now?: ()=>number }) {
  const fetcher = options.fetch ?? globalThis.fetch; const now = options.now ?? Date.now;
+ let pendingRefresh: Promise<{b:PersonalProviderBootstrap;g:number}> | undefined;
  let generation = 0; let bootstrapSequence = 0; let pendingBootstrap: Promise<{b:PersonalProviderBootstrap;g:number}> | undefined; let session: PersonalProviderBootstrap | undefined; let expiryTimer: ReturnType<typeof setTimeout> | undefined;
  const controllers = new Set<AbortController>(); const cache = new Map<Kind, PersonalMediaItem[]>();
- function clear() { generation++; bootstrapSequence++; pendingBootstrap = undefined; session = undefined; cache.clear(); if (expiryTimer) clearTimeout(expiryTimer); expiryTimer = undefined; for (const c of controllers) c.abort(); controllers.clear(); }
+ function clear() { pendingRefresh = undefined; generation++; bootstrapSequence++; pendingBootstrap = undefined; session = undefined; cache.clear(); if (expiryTimer) clearTimeout(expiryTimer); expiryTimer = undefined; for (const c of controllers) c.abort(); controllers.clear(); }
  function active(g: number, b: PersonalProviderBootstrap) { if (g !== generation || !session || session !== b) fail(); if (Date.parse(b.expiresAt) <= now()) { clear(); fail(); } }
  async function bootstrapRaw(force = false) {
   if (session && Date.parse(session.expiresAt) <= now()) clear();
@@ -144,6 +145,7 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
  }
  return {
   clear,
+  refreshMetadata() { if (pendingRefresh) return pendingRefresh.then(({b})=>b); const promise = bootstrap(true); pendingRefresh = promise; void promise.then(()=>{if(pendingRefresh===promise)pendingRefresh=undefined;},()=>{if(pendingRefresh===promise)pendingRefresh=undefined;}); return promise.then(({b})=>b); },
   async catalog(kind: Kind) { const {b,g} = await bootstrap();return catalogFor(kind,b,g); },
   async series(value: unknown) {const ref=validatePersonalRef(value);const {b,g}=await bootstrap();return seriesFor(ref,b,g);},
   async shortEpg(value: unknown, signal?: AbortSignal): Promise<PersonalEpgResult> {

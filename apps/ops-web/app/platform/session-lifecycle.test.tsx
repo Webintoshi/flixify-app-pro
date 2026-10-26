@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformProvider, usePlatform } from "./session";
+import { useAccountResource } from "../account/components";
 import { AccessBoundary } from "./onboarding";
 import { sessionKey, type Session } from "./types";
 
@@ -185,7 +186,7 @@ describe("personal provider session recovery", () => {
     await focus();
     expect(platform.personalProvider).toBe(client);
     expect(catalogSignal.aborted).toBe(false);
-    expect(bootstrapRequests).toHaveLength(1);
+    expect(bootstrapRequests).toHaveLength(2);
     await settle(() => pending.resolve(json([])));
     await catalog;
   });
@@ -224,6 +225,43 @@ describe("personal provider session recovery", () => {
     await mount(true);
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(platform.providerMode).toBe("legacy");
-    expect(bootstrapRequests.length).toBeLessThanOrEqual(2);
+    expect(bootstrapRequests.length).toBeLessThanOrEqual(3);
   });
+  it("refreshes expiry on focus while preserving client and cached catalog, then preserves valid access through outage", async () => {
+    allowed = true; await mount();
+    const client = platform.personalProvider;
+    await settle(async () => { await client!.catalog("live"); });
+    const extended = new Date(Date.now()+7200000).toISOString();
+    loadBootstrap = async () => json({...bootstrap(), expiresAt:extended});
+    await focus();
+    expect(platform.providerExpiresAt).toBe(extended);
+    expect(platform.personalProvider).toBe(client);
+    loadBootstrap = async () => { throw new Error("offline"); };
+    await focus();
+    expect(platform.personalProvider).toBe(client);
+    expect(platform.providerExpiresAt).toBe(extended);
+  });
+  it("revokes only on fixed authoritative denial and polls inactive accounts", async () => {
+    vi.useFakeTimers({toFake:["setTimeout","clearTimeout","setInterval","clearInterval"]});
+    await mount(); allowed = true;
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(platform.providerMode).toBe("personal");
+    allowed = false; loadBootstrap = async () => denied(); await focus();
+    expect(platform.providerExpiresAt).toBeNull();
+    expect(platform.personalProvider).toBeNull();
+  });
+
+  it("refreshes settings in the background without clearing confirmed account data", async () => {
+    vi.useFakeTimers({toFake:["setTimeout","clearTimeout","setInterval","clearInterval"]});
+    let resource: ReturnType<typeof useAccountResource<{user:{hasActiveSubscription:boolean}}>>;
+    function Settings() { resource=useAccountResource("/me");return <output>{String(resource.data?.user.hasActiveSubscription)}</output>; }
+    await settle(()=>root.render(<Settings/>));
+    expect(resource!.data?.user.hasActiveSubscription).toBe(false);
+    active=true;await act(async()=>{await vi.advanceTimersByTimeAsync(60000);});
+    expect(resource!.loading).toBe(false);expect(resource!.data?.user.hasActiveSubscription).toBe(true);
+    const impl=vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async(input,init)=>new URL(String(input)).pathname==="/me" ? Promise.reject(new Error("offline")):impl(input,init));
+    await focus();expect(resource!.data?.user.hasActiveSubscription).toBe(true);expect(resource!.loading).toBe(false);
+  });
+
 });

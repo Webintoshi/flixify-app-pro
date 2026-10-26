@@ -94,3 +94,12 @@ test('default browser environment preserves Window receiver for scheduling and c
     }
   }
 });
+
+test('metadata extension and shortening update the existing absolute timer', () => {
+  const state = setup(new Date(2000).toISOString());
+  state.watcher.update(new Date(4000).toISOString());
+  state.time(2500); state.events.dispatchEvent(new Event('focus'));
+  assert.equal(state.stopped(), 0);
+  state.watcher.update(new Date(2500).toISOString());
+  assert.equal(state.stopped(), 1);
+});

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { apiRequest } from "../../lib/api";
-import { usePlatform } from "./session";
+import { usePlatform, useProviderExpiry } from "./session";
 import { hydratePersonalWatched, requestPersonalPlayback, createWatchedState, updateWatchedState, watchedIds } from "./personal-integration";
 import type { PersonalRef } from "./personal-provider";
 import { Artwork, FavoriteButton } from "./artwork";
@@ -205,6 +205,10 @@ function VodControls({ videoRef, title, seriesTitle, currentEpisode, seasons, po
 }
 
 export function VodPlayer({ onRetry, playback, title, resumeAt = 0, onProgress, onEnded, endPrompt, seriesTitle, currentEpisode, seasons, posterUrl, watchedIds, nextEpisode, onBack, onSelectEpisode, onNextEpisode }: { onRetry?: () => void; playback: Playback; title: string; resumeAt?: number; onProgress?: (time: number) => void; onEnded?: () => void; endPrompt?: EndPrompt | null; seriesTitle?: string; currentEpisode?: Episode | null; seasons?: MediaItem["seasons"]; posterUrl?: string | null; watchedIds?: ReadonlySet<string>; nextEpisode?: Episode | null; onBack?: () => void; onSelectEpisode?: (episode: Episode) => void; onNextEpisode?: () => void }) {
+  const verifiedExpiry = useProviderExpiry();
+  const deadlineRef = useRef<ReturnType<typeof createDirectPlaybackDeadline> | null>(null);
+  const effectiveExpiry = verifiedExpiry === undefined ? playback.expiresAt : verifiedExpiry === null ? "1970-01-01T00:00:00Z" : verifiedExpiry;
+  useEffect(() => { deadlineRef.current?.update(effectiveExpiry); }, [effectiveExpiry]);
   const ref = useRef<HTMLVideoElement>(null);
   const gestureAttemptHandler = useRef<() => void>(() => {});
   const manualPlayFailureHandler = useRef<(cause: unknown) => void>(() => {});
@@ -233,12 +237,13 @@ export function VodPlayer({ onRetry, playback, title, resumeAt = 0, onProgress, 
       setError("Bu içerik tarayıcıda açılamadı. Yeniden deneyebilirsin.");
     };
     if (playback.deliveryMode === "direct_provider") watchdog = createDirectPlaybackWatchdog(fail);
-    const deadline = playback.deliveryMode === "direct_provider" ? createDirectPlaybackDeadline(playback.expiresAt, () => {
+    const deadline = playback.deliveryMode === "direct_provider" ? createDirectPlaybackDeadline(effectiveExpiry, () => {
       cancelled = true;
       watchdog?.dispose(); cleanup();
       video.pause(); video.removeAttribute("src"); video.load();
       setError("İzleme süren doldu.");
     }) : null;
+    deadlineRef.current = deadline;
     if (deadline?.expired) return () => deadline.dispose();
     gestureAttemptHandler.current = () => watchdog?.gestureAttempt();
     const loadStarted = () => watchdog?.loading();
@@ -312,7 +317,7 @@ export function VodPlayer({ onRetry, playback, title, resumeAt = 0, onProgress, 
       }).catch(fail);
     } else { video.src = playback.url; startPlayback(); }
     return () => { cancelled = true; deadline?.dispose(); gestureAttemptHandler.current = () => {}; manualPlayFailureHandler.current = () => {}; watchdog?.dispose(); cleanup(); video.removeEventListener("error", handleVideoError); video.removeEventListener("loadstart", loadStarted); video.removeEventListener("waiting", waitForStream); video.removeEventListener("stalled", waitForStream); video.removeEventListener("progress", noteMediaProgress); video.removeEventListener("loadedmetadata", noteMediaProgress); video.removeEventListener("canplay", markPlayable); video.removeEventListener("playing", markPlaying); video.removeEventListener("loadedmetadata", restorePosition); video.removeEventListener("timeupdate", reportProgress); video.removeEventListener("ended", reportEnded); video.pause(); video.removeAttribute("src"); video.load(); };
-  }, [playback.url, playback.transport, playback.deliveryMode, playback.expiresAt, retry]);
+  }, [playback.url, playback.transport, playback.deliveryMode, retry]);
   return <div className={`${s.vodPlayer} ${player.cinema}`}><video ref={ref} autoPlay playsInline preload="metadata" aria-label={title}/><VodControls videoRef={ref} title={title} seriesTitle={seriesTitle} currentEpisode={currentEpisode} seasons={seasons} posterUrl={posterUrl} watchedIds={watchedIds} nextEpisode={nextEpisode} onBack={onBack} onSelectEpisode={onSelectEpisode} onNextEpisode={onNextEpisode}/>{needsPlayGesture && !error && !endPrompt && <div style={{ position: "absolute", inset: 0, zIndex: 3, display: "grid", placeItems: "center", pointerEvents: "none" }}><button className={s.primary} style={{ width: 72, height: 72, padding: 0, borderRadius: "50%", pointerEvents: "auto" }} aria-label="Oynat" onClick={() => { const video = ref.current; if (!video) return; gestureAttemptHandler.current(); void video.play().catch(cause => manualPlayFailureHandler.current(cause)); }}><Icon name="play" filled/></button></div>}{error && <div className={s.playerError} role="alert"><p>{error}</p><button className={s.primary} onClick={() => onRetry ? onRetry() : setRetry(v => v+1)}>Tekrar Dene</button></div>}{endPrompt && <div className={s.nextEpisodePrompt} role="status"><span>{endPrompt.onPlay ? "Sıradaki bölüm" : "Tamamlandı"}</span><h3>{endPrompt.title}</h3>{endPrompt.onPlay && <p>{endPrompt.seconds} saniye içinde otomatik başlayacak.</p>}<div>{endPrompt.onPlay && <button className={s.primary} onClick={endPrompt.onPlay}>Şimdi Oynat</button>}<button className={s.secondary} onClick={endPrompt.onCancel}>{endPrompt.onPlay ? "İptal" : "Kapat"}</button></div></div>}</div>;
 }
 export function Detail({ item, onClose }: { item: MediaItem; onClose: () => void }) {

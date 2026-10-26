@@ -35,7 +35,7 @@ import {
 } from "./live-playback-policy";
 import styles from "./live-tv-app.module.css";
 import { FavoriteButton } from "../platform/artwork";
-import { usePlatform } from "../platform/session";
+import { usePlatform, useProviderExpiry } from "../platform/session";
 import { parseRecentChannelIds, recentStorageKey, rememberRecentChannel } from "./live-recent";
 import { PlayerChrome } from "../components/player-chrome";
 import { useSearchParams } from "next/navigation";
@@ -173,6 +173,11 @@ function LiveVideo({
   refreshPersonalPlayback?: () => Promise<PlaybackResponse>;
   onAccessExpired: () => void;
 }) {
+  const verifiedExpiry = useProviderExpiry();
+  const deadlineRef = useRef<ReturnType<typeof createDirectPlaybackDeadline> | null>(null);
+  const effectiveExpiry = verifiedExpiry === undefined ? playback.expiresAt : verifiedExpiry === null ? "1970-01-01T00:00:00Z" : verifiedExpiry;
+  const expiryRef = useRef(effectiveExpiry); expiryRef.current = effectiveExpiry;
+  useEffect(() => { deadlineRef.current?.update(effectiveExpiry); }, [effectiveExpiry]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const lowerQualityRef = useRef(onNeedLowerQuality);
   lowerQualityRef.current = onNeedLowerQuality;
@@ -337,7 +342,7 @@ function LiveVideo({
           const refreshed = await refreshPersonalPlayback();
           if (!currentEngine()) return;
           deadline?.dispose();
-          deadline = createDirectPlaybackDeadline(refreshed.expiresAt, expirePlayback);
+          deadline = deadlineRef.current = createDirectPlaybackDeadline(expiryRef.current === undefined ? refreshed.expiresAt : expiryRef.current, expirePlayback);
           if (deadline.expired) return;
           playbackUrl = refreshed.url!;
           playbackEngine = selectLivePlaybackEngine(refreshed.transport, playbackUrl);
@@ -521,7 +526,8 @@ function LiveVideo({
       setPlayerError("İzleme süren doldu.");
       if (playback.personalRef) onAccessExpired();
     };
-    let deadline = playback.deliveryMode === "direct_provider" ? createDirectPlaybackDeadline(playback.expiresAt, expirePlayback) : null;
+    let deadline = playback.deliveryMode === "direct_provider" ? createDirectPlaybackDeadline(effectiveExpiry, expirePlayback) : null;
+    deadlineRef.current = deadline;
     if (!deadline?.expired) {
       // Buffered ranges can remain ahead after a dead HLS/MSE connection stops producing frames.
       stallWatchdog = setInterval(() => {
@@ -573,7 +579,7 @@ function LiveVideo({
 
 export default function LiveTvPage() {
   const searchParams = useSearchParams();
-  const { favorites, session: platformSession, personalProvider, providerMode, providerScope } = usePlatform();
+  const { favorites, session: platformSession, personalProvider, providerMode, providerScope, providerExpiresAt } = usePlatform();
   const openedChannel = useRef<string | null>(null);
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [channels, setChannels] = useState<LiveChannel[]>([]);
@@ -621,11 +627,12 @@ export default function LiveTvPage() {
     };
     void refresh();
     const timer = setInterval(() => void refresh(), 60000);
-    const deadline = playback?.expiresAt ? createDirectPlaybackDeadline(playback.expiresAt, () => {
+    const epgExpiresAt = providerExpiresAt === undefined ? playback?.expiresAt : providerExpiresAt === null ? "1970-01-01T00:00:00Z" : providerExpiresAt;
+    const deadline = epgExpiresAt ? createDirectPlaybackDeadline(epgExpiresAt, () => {
       expired = true; controller.abort(); clearInterval(timer); epgScope.current.clear(); setEpg(null);
     }) : null;
     return () => { expired = true; controller.abort(); clearInterval(timer); deadline?.dispose(); epgScope.current.clear(); };
-  }, [personalProvider, providerMode, selectedChannel, providerScope, platformSession?.accessToken, epgRevision, playback?.expiresAt]);
+  }, [personalProvider, providerMode, selectedChannel, providerScope, platformSession?.accessToken, epgRevision, playback?.expiresAt, providerExpiresAt]);
 
   const recentKey = useMemo(() => {
     if (!session) return null;

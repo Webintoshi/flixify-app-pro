@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LiveTvPage from "./page";
 
 const state = vi.hoisted(() => ({ platform: {} as any, engines: [] as any[] }));
-vi.mock("../platform/session", () => ({ usePlatform: () => state.platform }));
+vi.mock("../platform/session", () => ({ usePlatform: () => state.platform, useProviderExpiry: () => state.platform.providerExpiresAt }));
 vi.mock("../platform/artwork", () => ({ FavoriteButton: () => null }));
 vi.mock("../components/player-chrome", () => ({ PlayerChrome: () => null }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams("channel=channel-a") }));
@@ -72,6 +72,7 @@ describe("live stream stall recovery", () => {
   afterEach(async () => { await settle(() => root.unmount()); vi.useRealTimers(); vi.unstubAllGlobals(); });
   async function mount() {
     await settle(() => root.render(<LiveTvPage/>));
+    await settle();
     expect(state.engines).toHaveLength(1);
     await progress();
   }
@@ -102,6 +103,29 @@ describe("live stream stall recovery", () => {
     await tick(15_000);
     expect(state.engines).toHaveLength(1);
     expect(container.querySelector("video")).toBeNull();
+  });
+
+  it("extends and shortens a running engine deadline without replacing the engine", async () => {
+    expiresAt = new Date(Date.now()+10000).toISOString(); await mount();
+    const engine = state.engines[0];
+    state.platform = {...state.platform, providerExpiresAt:new Date(Date.now()+30000).toISOString()};
+    await settle(()=>root.render(<LiveTvPage/>));
+    await tick(11000); await progress();
+    expect(state.engines).toHaveLength(1); expect(engine.destroyed).toBe(false);
+    expect(container.querySelector("video")).not.toBeNull();
+    state.platform = {...state.platform, providerExpiresAt:new Date(Date.now()).toISOString()};
+    await settle(()=>root.render(<LiveTvPage/>));
+    expect(engine.destroyed).toBe(true); expect(container.querySelector("video")).toBeNull();
+  });
+
+  it("uses the latest extended cutoff when a later stall recreates its deadline", async () => {
+    expiresAt=new Date(Date.now()+10000).toISOString();await mount();
+    state.platform={...state.platform,providerExpiresAt:new Date(Date.now()+60000).toISOString()};
+    await settle(()=>root.render(<LiveTvPage/>));
+    await settle(()=>video().dispatchEvent(new Event("stalled")));
+    await tick(13000);
+    expect(state.engines).toHaveLength(2);expect(state.engines[1].destroyed).toBe(false);
+    expect(container.querySelector("video")).not.toBeNull();
   });
 
   it("cancels recovery when the account signs out", async () => {

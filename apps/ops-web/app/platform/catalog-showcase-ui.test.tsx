@@ -114,3 +114,15 @@ it("appends adversarial legacy page two without replacing the primary or reorder
   expect(titles()).toHaveLength(96);
   expect(new Set(titles()).size).toBe(96);
 });
+it("recovers the mounted production access gate on polling and preserves pagination on extension and outage", async () => {
+  state.api.mockResolvedValue({user:{status:"active",hasAssignedLink:true,hasActiveSubscription:false,activePackage:null}});
+  await render(); expect(titles()).toEqual([]);
+  state.api.mockResolvedValue({user:{status:"active",hasAssignedLink:true,hasActiveSubscription:true,activePackage:{endsAt:"2099-01-01"}}});
+  await act(async()=>{await vi.advanceTimersByTimeAsync(60000);});
+  expect(titles()).toHaveLength(48); await click("Daha Fazla Göster");
+  const before=titles(); state.api.mockResolvedValue({user:{status:"active",hasAssignedLink:true,hasActiveSubscription:true,activePackage:{endsAt:"2099-02-01"}}});
+  await settle(()=>window.dispatchEvent(new Event("focus")));
+  expect(titles()).toEqual(before);expect(state.platform.personalProvider.catalog).toHaveBeenCalledTimes(1);
+  state.api.mockRejectedValue(new Error("offline"));await settle(()=>window.dispatchEvent(new Event("focus")));
+  expect(titles()).toEqual(before);
+});

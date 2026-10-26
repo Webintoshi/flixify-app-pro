@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { apiRequest } from '../../lib/api';
 import { copyText } from '../../lib/account-model';
 import s from './account.module.css';
+import { readSession } from '../platform/session';
 const accountGroups = [
   { label: 'Üyelik', links: [['/ayarlar', 'Hesabım'], ['/paketler', 'Paketler'], ['/odeme-bildirimi', 'Ödeme Bildirimi']] },
   { label: 'Hesap', links: [['/davet', 'Arkadaşını Davet Et']] },
@@ -36,19 +37,26 @@ export function useAccountResource<T>(path:string) {
   const [version,setVersion]=useState(0);
   const reload=useCallback(()=>setVersion(v=>v+1),[]);
   const refresh=useCallback(async(signal?:AbortSignal)=>{
+    const token=readSession()?.accessToken;
     try {
       const data=await apiRequest<T>(path,{signal});
+      if(token!==readSession()?.accessToken)return;
       setState(previous=>({...previous,data,loading:false,error:false}));
     } catch {
       // Keep the last confirmed account state during background refresh failures.
     }
   },[path]);
   useEffect(()=>{
+    const token=readSession()?.accessToken;
+    const valid=()=>current && token===readSession()?.accessToken;
     let current=true;const controller=new AbortController();
     const timer=setTimeout(()=>controller.abort(),15000);
     setState({data:null,loading:true,error:false});
-    apiRequest<T>(path,{signal:controller.signal}).then(data=>{if(current)setState({data,loading:false,error:false});}).catch(()=>{if(current)setState({data:null,loading:false,error:true});}).finally(()=>clearTimeout(timer));
-    return ()=>{current=false;clearTimeout(timer);controller.abort();};
+    apiRequest<T>(path,{signal:controller.signal}).then(data=>{if(valid())setState({data,loading:false,error:false});}).catch(()=>{if(valid())setState({data:null,loading:false,error:true});}).finally(()=>clearTimeout(timer));
+    let running=false;
+    const background=()=>{if(running || !current)return;running=true;void apiRequest<T>(path,{signal:controller.signal}).then(data=>{if(valid())setState({data,loading:false,error:false});}).catch(()=>{}).finally(()=>{running=false;});};
+    const interval=window.setInterval(background,60000);window.addEventListener('focus',background);window.addEventListener('flixify-session',reload);
+    return ()=>{current=false;clearTimeout(timer);window.clearInterval(interval);window.removeEventListener('focus',background);window.removeEventListener('flixify-session',reload);controller.abort();};
   },[path,version]);
   return {...state,reload,refresh};
 }

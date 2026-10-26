@@ -20,7 +20,7 @@ export function createDirectPlaybackDeadline(expiresAt: string | null | undefine
     schedule: (callback, delay) => window.setTimeout(callback, delay),
     clear: timer => window.clearTimeout(timer)
   };
-  const cutoff = expiresAt == null ? null : Date.parse(expiresAt);
+  let cutoff = expiresAt == null ? null : Date.parse(expiresAt);
   const dispose = () => {
     disposed = true;
     if (timer !== undefined) env.clear(timer);
@@ -30,9 +30,10 @@ export function createDirectPlaybackDeadline(expiresAt: string | null | undefine
     env.visibility.removeEventListener("visibilitychange", check);
   };
   function check() {
-    if (disposed || cutoff === null) return;
+    if (disposed) return;
     if (timer !== undefined) env.clear(timer);
     timer = undefined;
+    if (cutoff === null) return;
     const remaining = cutoff - env.now();
     if (!Number.isFinite(remaining) || remaining <= 0) {
       expired = true;
@@ -40,11 +41,9 @@ export function createDirectPlaybackDeadline(expiresAt: string | null | undefine
       onExpire();
     } else timer = env.schedule(check, Math.min(remaining, 2_147_483_647));
   }
-  if (cutoff !== null) {
-    env.events.addEventListener("focus", check);
-    env.events.addEventListener("pageshow", check);
-    env.visibility.addEventListener("visibilitychange", check);
-    check();
-  }
-  return { dispose, get expired() { return expired; } };
+  env.events.addEventListener("focus", check);
+  env.events.addEventListener("pageshow", check);
+  env.visibility.addEventListener("visibilitychange", check);
+  check();
+  return { dispose, update(value: string | null | undefined) { if (disposed) return; cutoff = value == null ? null : Date.parse(value); check(); }, get expired() { return expired; } };
 }

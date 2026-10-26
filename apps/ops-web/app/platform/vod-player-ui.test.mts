@@ -24,7 +24,7 @@ test("a requested compatibility stream remains active even if direct video plays
 });
 
 test("a resume position update does not reload an in-flight direct stream", () => {
-  assert.match(source, /\}, \[playback\.url, playback\.transport, playback\.deliveryMode, playback\.expiresAt, retry\]\);/);
+  assert.match(source, /\}, \[playback\.url, playback\.transport, playback\.deliveryMode, retry\]\);/);
 });
 
 test("manual play errors reach the same client error path as autoplay errors", () => {

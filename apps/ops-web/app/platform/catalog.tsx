@@ -172,12 +172,14 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   useEffect(() => {
     if (!hasSession) { setAccessAccount(null); return; }
     let cancelled = false;
-    apiRequest<{ user: AccountUser }>("/me").then(data => {
+    const refresh = () => { if (running) return; running = true; void apiRequest<{ user: AccountUser }>("/me").then(data => {
       if (!cancelled && data.user && typeof data.user.hasAssignedLink === "boolean") {
         setAccessAccount({ account, user: data.user });
       }
-    }).catch(() => { if (!cancelled) setAccessAccount(null); });
-    return () => { cancelled = true; };
+    }).catch(() => {}).finally(() => { running = false; }); };
+    let running = false; refresh();
+    const timer = window.setInterval(refresh, 60_000); window.addEventListener("focus", refresh);
+    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("focus", refresh); };
   }, [account, hasSession, reload]);
   useEffect(() => {
     if (accessAccount?.account !== account) return;
