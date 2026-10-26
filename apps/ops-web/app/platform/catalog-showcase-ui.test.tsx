@@ -3,10 +3,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import CatalogPage from "./catalog";
+import { orderShowcaseCatalog } from "./catalog-showcase";
 import type { MediaItem } from "./types";
-const state = vi.hoisted(() => ({ platform: {} as any, params: new URLSearchParams() }));
+const state = vi.hoisted(() => ({ platform: {} as any, params: new URLSearchParams(), api: vi.fn() }));
 vi.mock("./session", () => ({ usePlatform: () => state.platform }));
-vi.mock("../../lib/api", () => ({ apiRequest: async () => ({ user: { status: "active", hasAssignedLink: true, hasActiveSubscription: true, activePackage: { endsAt: "2099-01-01" } } }) }));
+vi.mock("../../lib/api", () => ({ apiRequest: (path: string) => state.api(path) }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => state.params, useRouter: () => ({ push: vi.fn(), back: vi.fn(), replace: vi.fn() }) }));
 vi.mock("next/link", () => ({ default: (props: any) => <a {...props}/> }));
 vi.mock("./artwork", () => ({ Artwork: () => null, FavoriteButton: () => null }));
@@ -22,6 +23,7 @@ beforeEach(() => {
   vi.stubGlobal("window", dom.window); vi.stubGlobal("document", dom.window.document); vi.stubGlobal("Event", dom.window.Event); vi.stubGlobal("React", React); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-26T12:00:00Z"));
+  state.api.mockReset().mockResolvedValue({ user: { status: "active", hasAssignedLink: true, hasActiveSubscription: true, activePackage: { endsAt: "2099-01-01" } } });
   state.params = new URLSearchParams();
   state.platform = { session: { accessToken: "a" }, providerMode: "personal", providerScope: "v1", personalProvider: { catalog: vi.fn(async (kind: string) => items(kind)), detail: vi.fn() }, favorites: [], favoritesReady: true, invalidateFavorites: vi.fn(), reload: vi.fn() };
   container = document.getElementById("root")!; root = createRoot(container);
@@ -68,4 +70,47 @@ it("defers day rollover while a detail URL is open", async () => {
 });
 it("hides the previous kind immediately while the new catalog is pending", async () => {
   await render(); state.platform.personalProvider.catalog.mockImplementation(() => new Promise(() => {})); await render({ kind: "series" }); expect(titles()).toEqual([]);
+});
+
+it("re-presents loaded legacy overview after midnight without reacquiring any catalog", async () => {
+  state.platform = { ...state.platform, providerMode: "legacy", providerScope: "legacy-midnight", personalProvider: null };
+  const catalogCalls: string[] = [];
+  state.api.mockImplementation(async (path: string) => {
+    if (!path.startsWith("/me/catalog/")) return { user: { status: "active", hasAssignedLink: true, hasActiveSubscription: true, activePackage: { endsAt: "2099-01-01" } } };
+    catalogCalls.push(path);
+    const kind = path.includes("/movies?") ? "movie" : path.includes("/series?") ? "series" : "live";
+    return { items: items(kind).slice(0, 48), total: 120 };
+  });
+  await render({ overview: true });
+  const liveTitles = () => [...container.querySelectorAll("section")].find(section => section.querySelector("h2")?.textContent === "Canlı TV")!.textContent;
+  const beforeLive = liveTitles();
+  const before = titles();
+  const heroes = () => [...container.querySelectorAll('[aria-label="Öne çıkan içerikler"] button')].map(button => button.getAttribute("aria-label"));
+  const beforeHeroes = heroes();
+  expect(catalogCalls).toHaveLength(3);
+  vi.setSystemTime(new Date("2026-10-27T12:00:00Z"));
+  await settle(() => window.dispatchEvent(new Event("focus")));
+  expect(catalogCalls).toHaveLength(3);
+  expect(liveTitles()).toEqual(beforeLive);
+  expect(titles()).not.toEqual(before);
+  expect(heroes()).not.toEqual(beforeHeroes);
+});
+it("appends adversarial legacy page two without replacing the primary or reordering existing selections", async () => {
+  state.platform = { ...state.platform, providerMode: "legacy", providerScope: "legacy-pagination", personalProvider: null };
+  const pool = items();
+  const ranked = orderShowcaseCatalog(pool, "movie", "2026-10-26");
+  const firstPage = ranked.slice(-48), secondPage = ranked.slice(0, 48);
+  expect(orderShowcaseCatalog([...firstPage, ...secondPage], "movie", "2026-10-26")[0]).toBe(secondPage[0]);
+  state.api.mockImplementation(async (path: string) => path.startsWith("/me/catalog/")
+    ? { items: path.includes("page=2&") ? secondPage : firstPage, total: 96 }
+    : { user: { status: "active", hasAssignedLink: true, hasActiveSubscription: true, activePackage: { endsAt: "2099-01-01" } } });
+  await render();
+  const first = titles();
+  const primary = () => [...container.querySelectorAll("section")].find(section => section.querySelector("h2")?.textContent === "Günün Seçkisi")!.querySelectorAll("strong");
+  const beforePrimary = [...primary()].map(node => node.textContent);
+  await click("Daha Fazla Göster");
+  expect([...primary()].map(node => node.textContent)).toEqual(beforePrimary);
+  expect(titles().filter(title => first.includes(title))).toEqual(first);
+  expect(titles()).toHaveLength(96);
+  expect(new Set(titles()).size).toBe(96);
 });

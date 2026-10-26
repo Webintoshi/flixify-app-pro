@@ -124,6 +124,8 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const personalSnapshot = useMemo(() => ({ raw: new Map<Kind, Promise<MediaItem[]>>(), daily: new Map<string, MediaItem[]>() }), [account, personalProvider]);
   const [catalogSnapshot, setCatalogSnapshot] = useState<typeof personalSnapshot | null>(null);
   const [rowsSnapshot, setRowsSnapshot] = useState<typeof personalSnapshot | null>(null);
+  // Legacy day changes only re-present loaded rows; personal paging needs a new cached daily slice.
+  const acquisitionDay = providerMode === "personal" ? day : "";
   const loadCatalog = useCallback((kind: Kind, page: number, search: string, group: string, account: string, revision = 0): Promise<Catalog> => {
     if (personalProvider && providerMode === "personal") {
       const snapshot = personalSnapshot;
@@ -137,10 +139,10 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
       return raw.then(items => {
         const original = pagePersonalCatalog(items, page, search, group);
         if (kind === "live" || search || group) return original;
-        const key = `${kind}:${day}`;
+        const key = `${kind}:${acquisitionDay}`;
         let ordered = snapshot.daily.get(key);
         if (!ordered) {
-          ordered = orderShowcaseCatalog(items, kind, day);
+          ordered = orderShowcaseCatalog(items, kind, acquisitionDay);
           if (snapshot.daily.size >= 6) snapshot.daily.delete(snapshot.daily.keys().next().value!);
           snapshot.daily.set(key, ordered);
         }
@@ -148,13 +150,13 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
       });
     }
     return providerMode === "legacy" ? getCatalog(kind, page, search, group, account, revision) : Promise.reject(new Error("Provider loading"));
-  }, [personalProvider, providerMode, day, personalSnapshot]);
+  }, [personalProvider, providerMode, acquisitionDay, personalSnapshot]);
   const hasSession = Boolean(session);
   const currentMovieRevision = movieRevision.account === account ? movieRevision.revision : 0;
   const selectedId = params.get("item");
   const selectedKind = params.get("kind");
-  const catalogOwner = JSON.stringify([account, kind, search, group, day]);
-  const rowsOwner = JSON.stringify([account, search, day]);
+  const catalogOwner = JSON.stringify([account, kind, search, group, acquisitionDay]);
+  const rowsOwner = JSON.stringify([account, search, acquisitionDay]);
   useEffect(() => {
     const refresh = () => {
       if (document.visibilityState !== "hidden" && page === 1 && !query && !search && !group && !selectedId && !detail) setDay(showcaseDayKey());
@@ -265,7 +267,8 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   // Include the full combined pool so excluded hero aliases seed both row selectors.
   const overviewRails = useMemo(() => ({ movie: buildShowcaseRails(dailyPool, "movie", heroExclusions).primary, series: buildShowcaseRails(dailyPool, "series", heroExclusions).primary }), [dailyPool, heroExclusions]);
   const seriesCatalog = kind === "series" && !overview && !favoritesOnly;
-  const discoveryRows = useMemo(() => !favoritesOnly && !overview && !group && !search && kind !== "live" ? buildShowcaseRails(providerMode === "legacy" ? orderShowcaseCatalog(items, kind, day) : items, kind) : null, [favoritesOnly, overview, group, search, kind, items, providerMode, day]);
+  // Preserve the legacy provider prefix as pages append; only complete personal pools are daily-ranked.
+  const discoveryRows = useMemo(() => !favoritesOnly && !overview && !group && !search && kind !== "live" ? buildShowcaseRails(items, kind) : null, [favoritesOnly, overview, group, search, kind, items]);
   if (accessCopy) return <main className={`${s.catalog} ${kind === "series" && !overview && !favoritesOnly ? seriesStyles.seriesPage : ""}`}>
     <div className={s.catalogContent} data-catalog-results>
       <div className={s.catalogToolbar}><div className={s.catalogHeading}><h1>{title}</h1></div></div>
