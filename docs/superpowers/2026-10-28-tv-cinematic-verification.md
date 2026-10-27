@@ -39,3 +39,15 @@ Real native gallery passed with1920×1080/density320/font1.0,1280×720/density32
 ## Signed artifact
 
 Frozen Android source: 92133e02715f2cf6b6a835b76686684d6499a462. assembleRelease40s successful after freeze; no subsequent app runtime/source changes. APK apps/ops-web/public/downloads/flixify-tv-1.1.0-test.1.apk, 1274631bytes, SHA256 4720178a76835700701f0737707f14e2c66763c4b625643439aa810fd6287a2b. Version1.1.0-test.1/code2, min23/target35. Same certificate 158ded464486435f9479db84d1eeb9af82e14338e0b4a494c4297c70ae15e594 as previous APK; v1/v2 verified. No native ABI libraries, test MP4, fixture credentials or injection hooks. Release installed over prior package and cold-launched successfully on emulator (2304ms; not a real-device startup measurement). Previous APK retained.
+
+## Production acceptance
+
+Artifact/descriptor revisioncf0703ee32302525370071436e70839223427ebd was pushed to the existing codex/montana-ui-20260925 branch. Local web TypeScript check and11 bounded-release guard tests passed. The remote source checkout fetched that exact commit. APK/source/scope preflight passed before build.
+
+Pinned web-only container build completed with result0, actual1280MiB/1536MiB cgroup limits, network-none, original config restored and no base-image cache duplication. Candidate source/ancestry/config/APK bytes and internal HEAD/MIME/range/full digest gates passed. Candidate: sha256:0798cdecfbc024c4a17beb09cb16d05db84c98ad9d62870e832172c8ec5eda24; tag flixify-ops-web:edge-recovery-cf0703ee3230-20261026.
+
+Dryrun, web-only Coolify metadata synchronization and scoped recreation passed. Post-read: web uses the accepted candidate; API8cdbf9, workerd5b9 and DB721873 remain unchanged. All four services running/restart0. Owned build/check containers0; free disk8.93→8.91GiB. No unrelated cleanup or service changes.
+
+Public HTTPS/downloads/flixify-tv-1.1.0-test.1.apk: HEAD200, application/vnd.android.package-archive,1274631bytes, Accept-Ranges bytes. Range0–31 returned206 and Content-Range bytes0-31/1274631 with32bytes. Complete GET1274631bytes matched SHA2564720178a76835700701f0737707f14e2c66763c4b625643439aa810fd6287a2b. Both / and /indir200. Browser /indir displayed version1.1.0-test.1 and exact new anchor; hydrated signed-in homepage also exposed the exact new APK URL. No stream was opened.
+
+Saved public-download.png and native24 screenshots under the task visualization directory android-tv/cinematic/. New download page remains available as the deliverable. Existing app can upgrade in place with the verified same signing certificate. Real provider first-frame/connection speed remains for user feedback on their physical TV.

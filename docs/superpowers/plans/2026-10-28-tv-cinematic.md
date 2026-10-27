@@ -53,8 +53,8 @@
 ### Task 4: Integrate, verify and publish update
 
 **Files:** Gradle version, Android README, existing web tv-download descriptor and versioned public APK; web-only release tooling/record as needed.
-- [ ] Run complete Android unit/instrumentation/release lint once all edits settle; address actual failures and review findings.
-- [ ] Inspect actual screenshots for login/home/catalog/details/series/player/live across responsive bounds and D-pad reachability.
-- [ ] Set version 1.1.0-test.1/code2, assemble signed release, verify same certificate/universal content and release install.
-- [ ] Publish new immutable APK file and existing download links with guarded web-only source-pinned deployment; verify public signature/hash/HEAD/MIME/range/full GET, protected service identities and homepage/indir anchors.
-- [ ] Record evidence, commit/push authorized branch and report new install link plus measured verification limits.
+- [x] Run complete Android unit/instrumentation/release lint once all edits settle; address actual failures and review findings.
+- [x] Inspect actual screenshots for login/home/catalog/details/series/player/live across responsive bounds and D-pad reachability.
+- [x] Set version 1.1.0-test.1/code2, assemble signed release, verify same certificate/universal content and release install.
+- [x] Publish new immutable APK file and existing download links with guarded web-only source-pinned deployment; verify public signature/hash/HEAD/MIME/range/full GET, protected service identities and homepage/indir anchors.
+- [x] Record evidence, commit/push authorized branch and report new install link plus measured verification limits.
