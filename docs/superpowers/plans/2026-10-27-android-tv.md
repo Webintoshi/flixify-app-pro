@@ -29,34 +29,44 @@
 **Files:** Create under apps/tv-android/app/src/main/java/vip/flixify/tv/data/: NetworkTvRepository, TokenStore, ProviderParser and focused helpers. Tests in matching test paths. Consume root-owned TvModels/TvRepository; do not edit shared interfaces without parent.
 **Interfaces:** Frozen root TvRepository.java and TvModels.java, callbacks main-thread, scope accountId:sourceVersion. Parent supplies build config/application factory.
 
-- [ ] Write failing policy/parser and scope/cutoff tests; exact allowlist from existing web personal-provider.ts.
-- [ ] Implement bounded async auth/refresh, encrypted session storage, provider metadata/categories/episodes/EPG, direct playback and library/resume. Serialize token refresh; generation guards and no secrets in errors.
-- [ ] Verify unit tests/build with parent runner, report exact results/limits and commit owned files.
+- [x] Write failing policy/parser and scope/cutoff tests; exact allowlist from existing web personal-provider.ts.
+- [x] Implement bounded async auth/refresh, encrypted session storage, provider metadata/categories/episodes/EPG, direct playback and library/resume. Serialize token refresh; generation guards and no secrets in errors.
+- [x] Verify unit tests/build with parent runner, report exact results/limits and commit owned files.
 
 ### Task 2: Complete TV remote UI
 
 **Files:** MainActivity.java, TvUi.java, ArtworkLoader.java and UI-only resources/tests under apps/tv-android/app. Consume frozen repository/models; launch PlayerActivity with EXTRA_ITEM. No data/player/build/web edits.
 **Interfaces:** TvApplication.repository(Context), TvRepository callbacks main thread; Item serializable scoped identifier, TvModels types. Tests may inject TvApplication.setRepositoryForTests only via instrumentation (no Intent/public bypass).
 
-- [ ] Write focused instrumented D-pad cases for login/home/navigation/search/category/series/favorite/back and loading error recovery.
-- [ ] Native TV margin/readability/grid, explicit focus and selection, initial focus/restore, complete login and account/logout. Keep colors from web; no signup/payments on TV.
-- [ ] Verify offline fixture-only tests via parent emulator, report and commit owned files.
+- [x] Write focused instrumented D-pad cases for login/home/navigation/search/category/series/favorite/back and loading error recovery.
+- [x] Native TV margin/readability/grid, explicit focus and selection, initial focus/restore, complete login and account/logout. Keep colors from web; no signup/payments on TV.
+- [x] Verify offline fixture-only tests via parent emulator, report and commit owned files.
 
 ### Task 3: Native TV player
 
 **Files:** PlayerActivity.java, player helpers/resources and focused tests. Consume frozen repository/models/application. No data/main UI/build/web edits.
 **Interfaces:** EXTRA_ITEM serializable Item. repository.playback returns Playback(url,mime,expiresAtMs,resume,nextEpisode), refreshAccess returns Account; update cutoff without engine reset; currentScope must match item scope.
 
-- [ ] Write cutoff/recovery/remote tests before behavior: VOD seek/pause, live zap, track selection, next episode,2s autohide, expiry/outage/source change/stop.
-- [ ] Media3 hardware player and remote controls; bounded silent recovery, release old media before new, no production playback/diagnostic network tests.
-- [ ] Verify offline media/fixture instrumentation via parent emulator, report and commit owned files.
+- [x] Write cutoff/recovery/remote tests before behavior: VOD seek/pause, live zap, track selection, next episode,2s autohide, expiry/outage/source change/stop.
+- [x] Media3 hardware player and remote controls; bounded silent recovery, release old media before new, no production playback/diagnostic network tests.
+- [x] Verify offline media/fixture instrumentation via parent emulator, report and commit owned files.
 
 ### Task 4: Build, homepage and guarded publish
 
 **Files:** Parent shared models/repository/factory, Gradle/manifest/resources/wrapper/build script and README; homepage landing.tsx/AppShell.tsx,/indir, styles or shared download metadata; versioned public APK; new build/release adapters and tests.
 
-- [ ] Freeze contracts, set up reproducible verified Gradle/SDK build, launcher/banner/permission/network/backup metadata and stable test signing. Obtain official dependencies only.
-- [ ] Integrate tasks, independent code review and fixture emulator tests; unit/lint/APK install/start and D-pad focus traversal. No fixture data/public bypass in shipped APK.
-- [ ] Publish versioned APK artifact, verify manifest/signature/checksum and anonymous+signed-in homepage links and installation page. Run relevant web checks.
-- [ ] New exact-source and APK-hash pinned web adapter, offline guard tests, bounded candidate build, protected rollout. Public HEAD/MIME/GET digest/range206 and real page links verified. Scoped own-cache cleanup only.
-- [ ] Record results/physical-device limits, commit/push and provide direct APK download link.
+- [x] Freeze contracts, set up reproducible verified Gradle/SDK build, launcher/banner/permission/network/backup metadata and stable test signing. Obtain official dependencies only.
+- [x] Integrate tasks, independent code review and fixture emulator tests; unit/lint/APK install/start and D-pad focus traversal. No fixture data/public bypass in shipped APK.
+- [x] Publish versioned APK artifact, verify manifest/signature/checksum and anonymous+signed-in homepage links and installation page. Run relevant web checks.
+- [x] New exact-source and APK-hash pinned web adapter, offline guard tests, bounded candidate build, protected rollout. Public HEAD/MIME/GET digest/range206 and real page links verified. Scoped own-cache cleanup only.
+- [x] Record results/physical-device limits, commit/push and provide direct APK download link.
+
+
+## Final source verification
+
+Task1/2/3 independent reviews and broad integration review approved. Final33/33 Android TV instrumentation,16/16 unit tests, release lint0errors, webTypeScript and11 deployment guard tests passed. Source Android041a8f85 frozen; optimized signed APK1266867bytes SHA86d32ee772049a608ca5cd6b55632199766f61f5ca0e09cf298cdcf19dabb927 installed/cold-launched on emulator(1172ms), universal/no testassets or factory hooks. Published artifact source04a5f5db pushed. New optional reviewed container-build avoids duplicating13.91GiB base into BuildKit when disk9.83GiBfree, preserves all resource/source/config/binary/HTTP guards. Hostdefaultpreflight passed; actualboundedcandidate build inprogress. Public rollout/acceptance pending, no actualproductionmedia/account/provider writes.
+
+
+## Production complete
+
+Candidate04a5f5db/1d7a1fde passed scoped overlay build+actualresource/immutableconfig/source/binary checks and publicAPKHTTPtests, then web-only guarded release. PublicAPKHEAD200/MIME/length,206range32bytes andfull1266867bytes SHA86d32ee7...abb927 verified. Real /indir andsignedinhome DOMdownloadlinksconfirmed; screenshotsrecorded, no actualmedia. All4servicesrunning0restarts,protectedAPI/worker/DBunchanged, ownsmallrecords+containersremoved/noBuildKitprune,9.80GiBfree. Fullrecord in docs/superpowers/2026-10-27-android-tv-release-verification.md.
