@@ -30,6 +30,8 @@ public final class PlayerPolicy {
         recoveryCount++;
         return true;
     }
+    public int recoveryCount() {return recoveryCount;}
+    public void restoreRecoveryCount(int count) {recoveryCount=Math.max(recoveryCount,Math.max(0,count));}
     public void stop() { stopped = true; }
     private boolean sameScope(String scope) { return !expectedScope.isEmpty() && expectedScope.equals(scope); }
     public static boolean nearEnd(long positionMs, long durationMs) {

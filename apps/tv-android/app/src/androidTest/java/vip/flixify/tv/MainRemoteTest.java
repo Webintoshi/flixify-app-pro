@@ -98,6 +98,38 @@ public class MainRemoteTest {
         }
         return null;
     }
+    private void waitForFocusedDialogEditor() {
+        String appPackage=instrumentation.getTargetContext().getPackageName();
+        long deadline=SystemClock.uptimeMillis()+5000;boolean ready=false;
+        do {
+            for(AccessibilityWindowInfo window:instrumentation.getUiAutomation().getWindows()) {
+                if(!window.isFocused())continue;
+                AccessibilityNodeInfo root=window.getRoot();
+                if(root==null || !appPackage.contentEquals(root.getPackageName()))continue;
+                AccessibilityNodeInfo field=editable(root);
+                if(field!=null && field.isFocused()){ready=true;break;}
+            }
+            if(!ready)SystemClock.sleep(30);
+        } while(!ready && SystemClock.uptimeMillis()<deadline);
+        assertTrue("Focused dialog window and visible focused native editor",ready);idle();
+    }
+    private void waitForFocusedDialogControl(String label) {
+        String appPackage=instrumentation.getTargetContext().getPackageName();
+        long deadline=SystemClock.uptimeMillis()+5000;boolean ready=false;
+        do {
+            for(AccessibilityWindowInfo window:instrumentation.getUiAutomation().getWindows()) {
+                if(!window.isFocused())continue;
+                AccessibilityNodeInfo root=window.getRoot();
+                if(root==null || !appPackage.contentEquals(root.getPackageName()))continue;
+                AccessibilityNodeInfo focus=root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+                if(focus!=null && focus.isVisibleToUser() && focus.isFocused()
+                        && "android.widget.Button".contentEquals(focus.getClassName())
+                        && label.equalsIgnoreCase(String.valueOf(focus.getText()))){ready=true;break;}
+            }
+            if(!ready)SystemClock.sleep(30);
+        } while(!ready && SystemClock.uptimeMillis()<deadline);
+        assertTrue("Focused dialog window with safe focused control: "+label,ready);idle();
+    }
     private void enterNativeDialog(String value) {
         // The OS owns TV keyboard character selection; inject text at its documented editable boundary.
         AccessibilityNodeInfo field=dialogEditor();assertNotNull("Native dialog editor",field);
@@ -129,8 +161,8 @@ public class MainRemoteTest {
     }
     @Test public void remoteSearchFiltersCatalogAndBackClearsFilter() {
         launch(true); down(2); click(); key(KeyEvent.KEYCODE_DPAD_RIGHT); focused("Ara"); click();
-        // AlertDialog's native search input is accessible to the TV IME.
-        key(KeyEvent.KEYCODE_DPAD_CENTER); waitForIme(true); enterNativeDialog("Deniz");
+        // Dialog attachment/window focus is asynchronous; send one real OK only after its editor owns focus.
+        waitForFocusedDialogEditor();key(KeyEvent.KEYCODE_DPAD_CENTER); waitForIme(true); enterNativeDialog("Deniz");
         key(KeyEvent.KEYCODE_BACK); waitForIme(false); down(1); click();
         visible("Sessiz Deniz"); absent("Uzay Yolculuğu");
         key(KeyEvent.KEYCODE_BACK); visible("Uzay Yolculuğu");
@@ -174,12 +206,12 @@ public class MainRemoteTest {
         key(KeyEvent.KEYCODE_DPAD_RIGHT);focused("Oturumu kapat");key(KeyEvent.KEYCODE_BACK);focused("Hesabım");
         instrumentation.runOnMainSync(()->repository.releaseDelayedAccount());idle();visible("Hesap bilgisi alınamadı");
         key(KeyEvent.KEYCODE_DPAD_RIGHT);focused("Oturumu kapat");down(1);focused("Tekrar dene");key(KeyEvent.KEYCODE_DPAD_UP);focused("Oturumu kapat");click();
-        key(KeyEvent.KEYCODE_DPAD_RIGHT);click();visible("Giriş yap");assertFalse(repository.hasSession());
+        waitForFocusedDialogControl("Vazgeç");key(KeyEvent.KEYCODE_DPAD_RIGHT);click();visible("Giriş yap");assertFalse(repository.hasSession());
     }
     @Test public void accountAndLogoutAreReachableWithRemote() {
         launch(true); down(5); focused("Hesabım"); click(); visible("Test Paketi");
         key(KeyEvent.KEYCODE_DPAD_RIGHT); focused("Oturumu kapat"); click();
-        // Confirmation starts on the safe cancel option; RIGHT reaches the explicit logout action.
-        key(KeyEvent.KEYCODE_DPAD_RIGHT); click(); visible("Giriş yap"); assertFalse(repository.hasSession());
+        // Observe the safe cancel focus in the ready dialog before RIGHT reaches the explicit logout action.
+        waitForFocusedDialogControl("Vazgeç");key(KeyEvent.KEYCODE_DPAD_RIGHT); click(); visible("Giriş yap"); assertFalse(repository.hasSession());
     }
 }

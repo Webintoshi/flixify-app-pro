@@ -29,9 +29,15 @@ final class TvUi {
         d.addState(new int[]{android.R.attr.state_selected},shape(c,Color.rgb(39,30,38),Color.rgb(101,47,58)));
         d.addState(new int[]{},shape(c,PANEL,Color.rgb(43,49,60))); return d;
     }
+    static StateListDrawable railBackground(Context c) {
+        StateListDrawable d=new StateListDrawable();
+        d.addState(new int[]{android.R.attr.state_focused},shape(c,Color.rgb(98,26,39),ACCENT));
+        d.addState(new int[]{android.R.attr.state_selected},shape(c,Color.rgb(39,30,38),Color.rgb(101,47,58)));
+        d.addState(new int[]{},shape(c,Color.TRANSPARENT,0));return d;
+    }
     static Button button(Context c,String label,Runnable action) {
         Button b=new Button(c); b.setId(View.generateViewId()); b.setText(label); b.setTextSize(16); b.setTextColor(WHITE);
-        b.setAllCaps(false); b.setMinHeight(dp(c,46)); b.setMinimumHeight(dp(c,46)); b.setMinWidth(0); b.setMinimumWidth(0);
+        b.setAllCaps(false); b.setTypeface(Typeface.DEFAULT,Typeface.NORMAL); b.setMinHeight(dp(c,46)); b.setMinimumHeight(dp(c,46)); b.setMinWidth(0); b.setMinimumWidth(0);
         b.setPadding(dp(c,16),dp(c,8),dp(c,16),dp(c,8)); b.setGravity(Gravity.CENTER);
         b.setBackground(focusBackground(c)); b.setFocusable(true); b.setFocusableInTouchMode(true);
         b.setOnClickListener(v->action.run()); return b;

@@ -41,6 +41,7 @@ public final class Media3PlayerEngine implements PlayerEngine {
         player.addListener(new Player.Listener() {
             @Override public void onPlaybackStateChanged(int state) {if(!released)listener.onStateChanged(state);}
             @Override public void onIsPlayingChanged(boolean playing) {if(!released)listener.onStateChanged(player.getPlaybackState());}
+            @Override public void onRenderedFirstFrame() {if(!released)listener.onFirstFrame();}
             @Override public void onTracksChanged(Tracks tracks) {if(!released)listener.onTracksChanged();}
             @Override public void onPlayerError(PlaybackException error) {if(!released)listener.onError();}
         });

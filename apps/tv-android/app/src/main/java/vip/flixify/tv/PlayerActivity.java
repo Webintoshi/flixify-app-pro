@@ -16,6 +16,9 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.SeekBar;
+import android.text.TextUtils;
+import androidx.core.widget.TextViewCompat;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -25,13 +28,15 @@ import vip.flixify.tv.TvModels.*;
 import vip.flixify.tv.player.Media3PlayerEngine;
 import vip.flixify.tv.player.PlayerEngine;
 import vip.flixify.tv.player.PlayerPolicy;
+import vip.flixify.tv.player.NextEpisodePolicy;
+import vip.flixify.tv.player.PlaybackWatchdog;
 
 /** A foreground-only TV player. Media addresses enter exclusively through the scoped repository. */
 @androidx.annotation.OptIn(markerClass=androidx.media3.common.util.UnstableApi.class)
 public final class PlayerActivity extends Activity {
     public static final String EXTRA_ITEM="tv_item";
     private static PlayerEngine.Factory testFactory;
-    private static final long REFRESH_MS=60000, STALL_MS=12000, HIDE_MS=2000;
+    private static final long REFRESH_MS=60000, HIDE_MS=2000;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private TvRepository repository;
     private PlayerEngine engine;
@@ -39,12 +44,16 @@ public final class PlayerActivity extends Activity {
     private Item item;
     private Playback playback;
     private FrameLayout root,video;
-    private LinearLayout controls,row;
+    private LinearLayout controls,row,secondary,countdownRow;
+    private SeekBar timeline;
+    private TextView episodeLine,countdownText;
+    private final PlaybackWatchdog watchdog=new PlaybackWatchdog();
+    private NextEpisodePolicy continuation=new NextEpisodePolicy(false,false);
     private TextView title,position,status;
     private Button play,backward,forward,audio,subtitles,next;
     private AlertDialog trackDialog;
     private List<Item> liveItems=Collections.emptyList();
-    private boolean active,loading,fatal,admitted,refreshing,watched,desiredPlay=true;
+    private boolean active,resumed,loading,fatal,admitted,refreshing,watched,desiredPlay=true;
     private int generation,pendingZap;
     private long cutoffAtMs,lastRefresh,lastProgress,lastPosition,lastSave,resumeOverride=-1;
 
@@ -57,14 +66,37 @@ public final class PlayerActivity extends Activity {
         super.onCreate(savedInstanceState);
         repository=TvApplication.repository(this);
         buildUi();
-        Serializable value=getIntent().getSerializableExtra(EXTRA_ITEM);
+        Serializable value=savedInstanceState==null?getIntent().getSerializableExtra(EXTRA_ITEM):savedInstanceState.getSerializable(EXTRA_ITEM);
         if(!(value instanceof Item) || !playable((Item)value)) {fail(false);return;}
         item=(Item)value;
         title.setText(item.title);
+        updateEpisodeLine();
+        if(savedInstanceState!=null) {
+            desiredPlay=savedInstanceState.getBoolean("desired_play",true);
+            resumeOverride=savedInstanceState.getLong("resume",-1);
+            watched=savedInstanceState.getBoolean("watched",false);
+            continuation=new NextEpisodePolicy(savedInstanceState.getBoolean("next_cancelled"),savedInstanceState.getBoolean("next_handled"));
+            admitted=savedInstanceState.getBoolean("admitted",false);
+            cutoffAtMs=savedInstanceState.getLong("cutoff",0);
+            policy=new PlayerPolicy(item.scope);
+            if(admitted)policy.admit(item.scope,cutoffAtMs,System.currentTimeMillis());
+            policy.restoreRecoveryCount(savedInstanceState.getInt("recoveries",0));
+        }
+    }
+    @Override protected void onSaveInstanceState(Bundle state) {
+        savePosition();
+        if(engine!=null)desiredPlay=engine.wantsToPlay();
+        state.putSerializable(EXTRA_ITEM,item);
+        state.putBoolean("desired_play",desiredPlay);state.putLong("resume",resumeOverride);
+        state.putBoolean("watched",watched);state.putBoolean("admitted",admitted);state.putLong("cutoff",cutoffAtMs);
+        state.putBoolean("next_cancelled",continuation.cancelled() || continuation.pending());
+        state.putBoolean("next_handled",continuation.handled());
+        state.putInt("recoveries",policy==null?0:policy.recoveryCount());
+        super.onSaveInstanceState(state);
     }
     @Override protected void onResume() {
         super.onResume();
-        active=true;
+        active=true;resumed=true;
         immersive();
         if(fatal || item==null)return;
         // Wall-clock access is checked before any decoder is recreated after sleep/backgrounding.
@@ -75,7 +107,16 @@ public final class PlayerActivity extends Activity {
         handler.removeCallbacks(tick);
         handler.post(tick);
     }
+    @Override protected void onPause() {
+        // The player may remain visible in STARTED while another activity owns input.
+        // Keep admission/engine callbacks alive; only continuation requires resumed state.
+        resumed=false;
+        if(continuation.pending())cancelContinuation();
+        super.onPause();
+    }
     @Override protected void onStop() {
+        if(continuation.pending())cancelContinuation();
+        if(engine!=null)desiredPlay=engine.wantsToPlay();
         active=false;
         generation++;
         loading=false;
@@ -99,7 +140,12 @@ public final class PlayerActivity extends Activity {
         if(!playable(candidate)) {fail(true);return;}
         savePosition();
         releaseEngine(); // The prior connection closes before requesting or creating another stream.
+        handler.removeCallbacks(advance);
+        continuation=new NextEpisodePolicy(false,false);
+        countdownRow.setVisibility(View.GONE);
+        updateCountdownFocus();
         item=candidate;
+        updateEpisodeLine();
         playback=null;
         watched=false;
         admitted=false;
@@ -127,6 +173,7 @@ public final class PlayerActivity extends Activity {
                         || !item.scope.equals(value.scope) || !playable(value.item)
                         || value.url==null || value.url.isEmpty()
                         || !policy.admit(value.scope,value.expiresAtMs,System.currentTimeMillis())) {fail(true);return;}
+                item=value.item;title.setText(item.title);updateEpisodeLine();
                 playback=value;
                 admitted=true;
                 cutoffAtMs=value.expiresAtMs;
@@ -135,10 +182,11 @@ public final class PlayerActivity extends Activity {
                     @Override public void onStateChanged(int state) {
                         if(!current(request))return;
                         if(state==PlayerEngine.READY)status.setVisibility(View.GONE);
-                        if(state==PlayerEngine.ENDED) {savePosition();showControls(false);}
+                        if(state==PlayerEngine.ENDED) {savePosition();showControls(false);beginContinuation();}
                         updateButtons();
                         scheduleHide();
                     }
+                    @Override public void onFirstFrame() {if(current(request)) {watchdog.firstFrame(SystemClock.elapsedRealtime());status.setVisibility(View.GONE);}}
                     @Override public void onTracksChanged() {if(current(request))updateButtons();}
                     @Override public void onError() {if(current(request))recover();}
                 };
@@ -149,6 +197,7 @@ public final class PlayerActivity extends Activity {
                     long start=item.kind==Kind.LIVE?0:(resumeOverride>=0?resumeOverride:value.resumePositionMs);
                     lastPosition=Math.max(0,start);
                     lastProgress=SystemClock.elapsedRealtime();
+                    watchdog.start(lastProgress,lastPosition);
                     engine.prepare(value,lastPosition,desiredPlay);
                     updateButtons();
                     if(!recovery)showControls(true);
@@ -206,13 +255,12 @@ public final class PlayerActivity extends Activity {
             if(admitted && now-lastRefresh>=REFRESH_MS)refreshAccess();
             if(engine!=null) {
                 long value=engine.position();
-                if(!engine.wantsToPlay() || engine.state()==PlayerEngine.ENDED
-                        || (engine.state()==PlayerEngine.READY && !engine.playing())
-                        || Math.abs(value-lastPosition)>=200)lastProgress=now;
+                boolean stalled=watchdog.stalled(now,value,engine.wantsToPlay(),engine.state(),engine.playing());
                 lastPosition=value;
                 position.setText(item.kind==Kind.LIVE?"CANLI":time(value)+" / "+time(engine.duration()));
                 if(now-lastSave>=10000) {savePosition();lastSave=now;}
-                if(engine.wantsToPlay() && engine.state()!=PlayerEngine.ENDED && now-lastProgress>=STALL_MS)recover();
+                updateTimeline();
+                if(stalled)recover();
             }
             handler.postDelayed(this,500);
         }
@@ -246,6 +294,9 @@ public final class PlayerActivity extends Activity {
         generation++;
         if(policy!=null)policy.stop();
         handler.removeCallbacksAndMessages(null);
+        continuation.cancel();
+        countdownRow.setVisibility(View.GONE);
+        updateCountdownFocus();
         if(trackDialog!=null)trackDialog.dismiss();
         savePosition();
         releaseEngine();
@@ -254,7 +305,7 @@ public final class PlayerActivity extends Activity {
         status.setVisibility(View.VISIBLE);
         controls.setVisibility(View.VISIBLE);
         updateButtons();
-        View exit=row.findViewWithTag("tv_player_exit");
+        View exit=controls.findViewWithTag("tv_player_exit");
         if(exit!=null)exit.requestFocus();
     }
     private void loadLiveCatalog(int request) {
@@ -281,7 +332,7 @@ public final class PlayerActivity extends Activity {
     }
     private void next() {
         if(item!=null && item.kind==Kind.LIVE)zap(1);
-        else if(playback!=null && playback.nextEpisode!=null)select(playback.nextEpisode);
+        else if(validNext())select(playback.nextEpisode);
     }
     private void toggle() {
         if(engine==null || fatal)return;
@@ -293,10 +344,13 @@ public final class PlayerActivity extends Activity {
     }
     private void seek(long delta) {
         if(engine==null || item.kind==Kind.LIVE || fatal)return;
+        if(continuation.pending())cancelContinuation();
         long destination=Math.max(0,engine.position()+delta),duration=engine.duration();
         if(duration>0)destination=Math.min(destination,Math.max(0,duration-1000));
         engine.seek(destination);
         lastProgress=SystemClock.elapsedRealtime();
+        watchdog.interaction(lastProgress);
+        updateTimeline();
         showControls(false);
     }
     private void tracks(boolean text) {
@@ -318,14 +372,14 @@ public final class PlayerActivity extends Activity {
         trackDialog.show();
     }
     private final Runnable hide=()-> {
-        if(active && !fatal && engine!=null && engine.playing() && trackDialog==null) {
+        if(active && !fatal && engine!=null && engine.playing() && trackDialog==null && !continuation.pending()) {
             controls.setVisibility(View.GONE);
             root.requestFocus();
         }
     };
     private void scheduleHide() {
         handler.removeCallbacks(hide);
-        if(engine!=null && engine.playing() && trackDialog==null)handler.postDelayed(hide,HIDE_MS);
+        if(engine!=null && engine.playing() && trackDialog==null && !continuation.pending())handler.postDelayed(hide,HIDE_MS);
     }
     private void showControls(boolean focus) {
         boolean wasHidden=controls.getVisibility()!=View.VISIBLE;
@@ -342,7 +396,9 @@ public final class PlayerActivity extends Activity {
         forward.setText(live?"Sonraki kanal":"+10 sn");
         backward.setEnabled(available);forward.setEnabled(available);
         audio.setEnabled(available);subtitles.setEnabled(available);
-        next.setVisibility(!live && playback!=null && playback.nextEpisode!=null?View.VISIBLE:View.GONE);
+        next.setVisibility(!live && validNext()?View.VISIBLE:View.GONE);
+        timeline.setVisibility(live?View.GONE:View.VISIBLE);
+        timeline.setEnabled(available && !live && engine.duration()>0);
         next.setEnabled(available);
     }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
@@ -384,6 +440,7 @@ public final class PlayerActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
     @Override public void onBackPressed() {
+        if(continuation.pending()) {cancelContinuation();return;}
         if(!fatal && controls.getVisibility()==View.VISIBLE && engine!=null && engine.playing()) {
             handler.removeCallbacks(hide);controls.setVisibility(View.GONE);root.requestFocus();
         } else super.onBackPressed();
@@ -393,42 +450,135 @@ public final class PlayerActivity extends Activity {
                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                 | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
     }
+    private boolean validNext() {
+        return playback!=null && NextEpisodePolicy.validSuccessor(item,playback.nextEpisode)
+                && playable(playback.nextEpisode);
+    }
+    private void beginContinuation() {
+        if(!resumed || engine==null || !validNext() || !policy.allows(System.currentTimeMillis(),repository.currentScope()))return;
+        if(!continuation.begin(item,playback.nextEpisode,engine.duration(),SystemClock.elapsedRealtime()))return;
+        countdownRow.setVisibility(View.VISIBLE);
+        updateCountdownFocus();
+        handler.removeCallbacks(hide);
+        showControls(false);
+        controls.findViewWithTag("tv_player_watch_next").requestFocus();
+        handler.post(advance);
+    }
+    private final Runnable advance=new Runnable() {
+        @Override public void run() {
+            if(!active || !resumed || fatal || !continuation.pending())return;
+            if(!policy.allows(System.currentTimeMillis(),repository.currentScope())) {fail(true);return;}
+            if(!validNext()) {cancelContinuation();return;}
+            long remaining=continuation.remaining(SystemClock.elapsedRealtime());
+            countdownText.setText("Sonraki bölüm · "+Math.max(1,(remaining+999)/1000)+" sn");
+            if(continuation.claim(SystemClock.elapsedRealtime(),false)) {select(playback.nextEpisode);return;}
+            handler.postDelayed(this,Math.min(250,Math.max(1,remaining)));
+        }
+    };
+    private void watchNextNow() {
+        if(!active || !resumed || fatal || !validNext() || !policy.allows(System.currentTimeMillis(),repository.currentScope()))return;
+        if(continuation.claim(SystemClock.elapsedRealtime(),true))select(playback.nextEpisode);
+    }
+    private void cancelContinuation() {cancelContinuation(true);}
+    private void cancelContinuation(boolean focusPlay) {
+        continuation.cancel();handler.removeCallbacks(advance);countdownRow.setVisibility(View.GONE);updateCountdownFocus();showControls(false);
+        if(focusPlay)play.requestFocus();
+    }
+    private void updateCountdownFocus() {
+        View watchNow=countdownRow.findViewWithTag("tv_player_watch_next"),cancel=countdownRow.findViewWithTag("tv_player_cancel_next");
+        boolean shown=countdownRow.getVisibility()==View.VISIBLE;
+        int above=shown?watchNow.getId():timeline.getId();
+        play.setNextFocusUpId(above);backward.setNextFocusUpId(above);forward.setNextFocusUpId(above);
+        timeline.setNextFocusDownId(shown?watchNow.getId():play.getId());
+        watchNow.setNextFocusUpId(timeline.getId());cancel.setNextFocusUpId(timeline.getId());
+        watchNow.setNextFocusDownId(play.getId());cancel.setNextFocusDownId(forward.getId());
+    }
+    private void updateEpisodeLine() {
+        episodeLine.setText(item.kind==Kind.EPISODE?"Sezon "+item.season+" · Bölüm "+item.episode:item.kind==Kind.LIVE?"CANLI YAYIN":"FİLM");
+    }
+    private void updateTimeline() {
+        if(engine==null || item.kind==Kind.LIVE)return;
+        long duration=engine.duration();
+        timeline.setEnabled(!fatal && duration>0);
+        if(duration>0) {
+            timeline.setKeyProgressIncrement(Math.max(1,(int)Math.min(1000,10000000L/duration)));
+            timeline.setProgress((int)Math.min(1000,Math.max(0,engine.position()*1000/duration)));
+        } else timeline.setProgress(0);
+    }
     private void buildUi() {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        root=new FrameLayout(this);root.setBackgroundColor(Color.BLACK);root.setFocusable(true);root.setFocusableInTouchMode(true);
+        root=new FrameLayout(this) {
+            @Override protected void onMeasure(int widthSpec,int heightSpec) {
+                // Insets belong to measurement: changing them after child measurement leaves
+                // the first layout using stale weighted widths and a stale overlay height.
+                if(controls!=null) {
+                    int w=View.MeasureSpec.getSize(widthSpec),h=View.MeasureSpec.getSize(heightSpec);
+                    int inset=Math.max(dp(12),Math.min(dp(36),w/25));
+                    int top=dp(h<dp(400)?8:20),bottom=dp(h<dp(400)?12:24);
+                    if(controls.getPaddingLeft()!=inset || controls.getPaddingRight()!=inset
+                            || controls.getPaddingTop()!=top || controls.getPaddingBottom()!=bottom)
+                        controls.setPadding(inset,top,inset,bottom);
+                }
+                super.onMeasure(widthSpec,heightSpec);
+            }
+        };
+        root.setBackgroundColor(0xff07090c);root.setFocusable(true);root.setFocusableInTouchMode(true);
         video=new FrameLayout(this);video.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         root.addView(video,new FrameLayout.LayoutParams(-1,-1));
-        status=new TextView(this);status.setTag("tv_player_status");status.setTextColor(Color.WHITE);status.setTextSize(22);status.setGravity(Gravity.CENTER);status.setPadding(dp(48),dp(24),dp(48),dp(24));
+        status=new TextView(this);status.setTag("tv_player_status");status.setTextColor(0xfff5f6f8);status.setTextSize(22);status.setGravity(Gravity.CENTER);status.setPadding(dp(24),dp(16),dp(24),dp(16));
         root.addView(status,new FrameLayout.LayoutParams(-1,-1));
         controls=new LinearLayout(this);controls.setTag("tv_player_controls");controls.setOrientation(LinearLayout.VERTICAL);
-        controls.setPadding(dp(36),dp(20),dp(36),dp(24));controls.setBackgroundResource(R.drawable.tv_player_scrim);
-        title=new TextView(this);title.setTextColor(Color.WHITE);title.setTextSize(24);title.setMaxLines(1);
-        controls.addView(title,new LinearLayout.LayoutParams(-1,-2));
-        position=new TextView(this);position.setTextColor(0xffb9bcc6);position.setTextSize(16);position.setPadding(0,dp(6),0,dp(12));
-        controls.addView(position,new LinearLayout.LayoutParams(-1,-2));
-        row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(Gravity.CENTER_VERTICAL);
-        play=button("Oynat","play",this::toggle);
-        backward=button("−10 sn","backward",()->{if(item!=null && item.kind==Kind.LIVE)zap(-1);else seek(-10000);});
-        forward=button("+10 sn","forward",()->{if(item!=null && item.kind==Kind.LIVE)zap(1);else seek(10000);});
-        audio=button("Ses","audio",()->tracks(false));
-        subtitles=button("Altyazı","subtitles",()->tracks(true));
-        next=button("Sonraki bölüm","next",this::next);
-        button("Çıkış","exit",this::finish);
+        controls.setBackgroundResource(R.drawable.tv_player_scrim);
+        title=label(24,0xfff5f6f8);title.setTag("tv_player_title");controls.addView(title,new LinearLayout.LayoutParams(-1,dp(32)));
+        episodeLine=label(14,0xffa7b0be);controls.addView(episodeLine,new LinearLayout.LayoutParams(-1,dp(22)));
+        position=label(14,0xffa7b0be);controls.addView(position,new LinearLayout.LayoutParams(-1,dp(22)));
+        timeline=new SeekBar(this);timeline.setTag("tv_player_timeline");timeline.setId(View.generateViewId());timeline.setMax(1000);timeline.setProgressTintList(android.content.res.ColorStateList.valueOf(0xffff3545));
+        timeline.setThumbTintList(android.content.res.ColorStateList.valueOf(0xfff5f6f8));timeline.setFocusable(true);
+        timeline.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onStartTrackingTouch(SeekBar bar) {handler.removeCallbacks(hide);}
+            public void onStopTrackingTouch(SeekBar bar) {scheduleHide();}
+            public void onProgressChanged(SeekBar bar,int progress,boolean user) {
+                if(user && engine!=null && !fatal && item.kind!=Kind.LIVE && engine.duration()>0) {
+                    if(!policy.allows(System.currentTimeMillis(),repository.currentScope())) {fail(true);return;}
+                    if(continuation.pending())cancelContinuation(false);
+                    engine.seek(engine.duration()*progress/1000);watchdog.interaction(SystemClock.elapsedRealtime());showControls(false);
+                }
+            }
+        });
+        controls.addView(timeline,new LinearLayout.LayoutParams(-1,dp(28)));
+        row=controlRow();secondary=controlRow();countdownRow=controlRow();countdownRow.setVisibility(View.GONE);
+        countdownText=label(15,0xfff5f6f8);countdownRow.addView(countdownText,new LinearLayout.LayoutParams(0,dp(42),1.4f));
+        button(countdownRow,"Şimdi izle","watch_next",this::watchNextNow);
+        button(countdownRow,"İptal","cancel_next",this::cancelContinuation);
+        play=button(row,"Oynat","play",this::toggle);
+        backward=button(row,"−10 sn","backward",()->{if(item!=null && item.kind==Kind.LIVE)zap(-1);else seek(-10000);});
+        forward=button(row,"+10 sn","forward",()->{if(item!=null && item.kind==Kind.LIVE)zap(1);else seek(10000);});
+        audio=button(secondary,"Ses","audio",()->tracks(false));
+        subtitles=button(secondary,"Altyazı","subtitles",()->tracks(true));
+        next=button(secondary,"Sonraki bölüm","next",this::next);
+        Button exit=button(secondary,"Çıkış","exit",this::finish);
+        play.setNextFocusDownId(audio.getId());backward.setNextFocusDownId(subtitles.getId());forward.setNextFocusDownId(next.getId());
+        audio.setNextFocusUpId(play.getId());subtitles.setNextFocusUpId(backward.getId());next.setNextFocusUpId(forward.getId());exit.setNextFocusUpId(forward.getId());
+        controls.addView(countdownRow,new LinearLayout.LayoutParams(-1,-2));
         controls.addView(row,new LinearLayout.LayoutParams(-1,-2));
-        FrameLayout.LayoutParams overlay=new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM);
-        root.addView(controls,overlay);
-        setContentView(root);
-        play.requestFocus();
+        LinearLayout.LayoutParams secondaryLayout=new LinearLayout.LayoutParams(-1,-2);secondaryLayout.topMargin=dp(5);controls.addView(secondary,secondaryLayout);
+        root.addView(controls,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
+        updateCountdownFocus();
+        setContentView(root);play.requestFocus();
     }
-    private Button button(String text,String tag,Runnable action) {
-        Button button=new Button(this);button.setTag("tv_player_"+tag);button.setText(text);button.setTextColor(Color.WHITE);button.setTextSize(16);button.setAllCaps(false);
-        button.setMinWidth(0);button.setMinimumWidth(0);button.setMinHeight(dp(48));button.setPadding(dp(14),dp(8),dp(14),dp(8));
+    private TextView label(int size,int color) {
+        TextView view=new TextView(this);view.setTextColor(color);view.setTextSize(size);view.setMaxLines(1);view.setEllipsize(TextUtils.TruncateAt.END);view.setGravity(Gravity.CENTER_VERTICAL);
+        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(view,12,size,1,android.util.TypedValue.COMPLEX_UNIT_SP);return view;
+    }
+    private LinearLayout controlRow() {LinearLayout value=new LinearLayout(this);value.setOrientation(LinearLayout.HORIZONTAL);value.setGravity(Gravity.CENTER_VERTICAL);return value;}
+    private Button button(LinearLayout parent,String text,String tag,Runnable action) {
+        Button button=new Button(this);button.setId(View.generateViewId());button.setTag("tv_player_"+tag);button.setText(text);button.setTextColor(0xfff5f6f8);button.setTextSize(16);button.setAllCaps(false);button.setSingleLine(true);button.setEllipsize(TextUtils.TruncateAt.END);
+        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(button,12,16,1,android.util.TypedValue.COMPLEX_UNIT_SP);
+        button.setMinWidth(0);button.setMinimumWidth(0);button.setMinHeight(0);button.setMinimumHeight(0);button.setPadding(dp(6),dp(4),dp(6),dp(4));
         button.setBackgroundResource(R.drawable.tv_player_focus);button.setFocusable(true);button.setFocusableInTouchMode(true);
         button.setOnClickListener(view->{action.run();scheduleHide();});
-        button.setOnFocusChangeListener((view,focused)->{view.setScaleX(focused?1.04f:1f);view.setScaleY(focused?1.04f:1f);if(focused)scheduleHide();});
-        LinearLayout.LayoutParams layout=new LinearLayout.LayoutParams(-2,dp(50));layout.setMargins(0,0,dp(10),0);
-        row.addView(button,layout);
-        return button;
+        button.setOnFocusChangeListener((view,focused)->{if(focused)scheduleHide();});
+        LinearLayout.LayoutParams layout=new LinearLayout.LayoutParams(0,dp(42),1);layout.setMargins(dp(2),0,dp(2),0);parent.addView(button,layout);return button;
     }
     private int dp(int value) {return Math.round(value*getResources().getDisplayMetrics().density);}
     private static String time(long ms) {

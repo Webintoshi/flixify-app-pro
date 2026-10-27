@@ -10,6 +10,8 @@ public interface PlayerEngine {
     int IDLE=1, BUFFERING=2, READY=3, ENDED=4;
     interface Listener {
         void onStateChanged(int state);
+        /** A decoded video frame reached the output surface; READY alone is insufficient. */
+        default void onFirstFrame() {}
         void onTracksChanged();
         void onError();
     }

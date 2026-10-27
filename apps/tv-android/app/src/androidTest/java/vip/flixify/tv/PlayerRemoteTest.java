@@ -2,6 +2,9 @@ package vip.flixify.tv;
 
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Rect;
+import android.widget.FrameLayout;
+import android.widget.SeekBar;
 import android.os.SystemClock;
 import android.view.KeyEvent;
 import android.view.View;
@@ -30,9 +33,10 @@ public final class PlayerRemoteTest {
     private final List<FakeEngine> engines = new ArrayList<>();
     @Before public void setup() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            repository.beforePlayback=()->{for(FakeEngine value:engines)if(!value.released)repository.allReleasedAtSwitch=false;};
             TvApplication.setRepositoryForTests(repository);
             PlayerActivity.setEngineFactoryForTests((context, listener) -> {
-                FakeEngine result = new FakeEngine(context, listener); engines.add(result); return result;
+                FakeEngine result = new FakeEngine(context, listener); result.state=repository.initialState; result.startPaused=!repository.initialPlay; engines.add(result); return result;
             });
         });
     }
@@ -99,7 +103,7 @@ public final class PlayerRemoteTest {
     @Test public void nextEpisodeAndTrackDialogsAreRemoteReachable() {
         try (ActivityScenario<PlayerActivity> scenario = launch(repository.episode)) {
             scenario.onActivity(activity -> assertEquals(View.VISIBLE,activity.findViewById(android.R.id.content).findViewWithTag("tv_player_next").getVisibility()));
-            key(KeyEvent.KEYCODE_DPAD_RIGHT); key(KeyEvent.KEYCODE_DPAD_RIGHT); key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            key(KeyEvent.KEYCODE_DPAD_DOWN);
             scenario.onActivity(activity -> assertEquals("tv_player_audio", activity.getCurrentFocus().getTag()));
             key(KeyEvent.KEYCODE_DPAD_CENTER);
             awaitDialog("Otomatik");
@@ -219,30 +223,225 @@ public final class PlayerRemoteTest {
             });
         }
     }
+    private void ended(ActivityScenario<PlayerActivity> scenario) {
+        scenario.onActivity(activity -> { latest().state=PlayerEngine.ENDED; latest().position=latest().duration; latest().listener.onStateChanged(PlayerEngine.ENDED); });
+    }
+    private void assertCountdown(ActivityScenario<PlayerActivity> scenario) {
+        scenario.onActivity(activity -> {
+            View cancel=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_cancel_next");
+            assertNotNull("Actual ENDED must expose cancellable auto-next",cancel);
+            assertTrue("Countdown action is visible through its parent surface",cancel.isShown());
+        });
+    }
+    @Test public void endedStartsFiveSecondCountdownAndDuplicateCallbacksSwitchOnlyOnce() throws Exception {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            scenario.onActivity(activity -> latest().position=299000);
+            Thread.sleep(700);
+            assertEquals("Near-end progress must not skip credits",1,repository.playbackCalls);
+            ended(scenario);assertCountdown(scenario);
+            scenario.onActivity(activity -> latest().listener.onStateChanged(PlayerEngine.ENDED));
+            Thread.sleep(4200);
+            assertEquals("Full five-second choice window",1,repository.playbackCalls);
+            Thread.sleep(1200);
+            scenario.onActivity(activity -> {
+                assertEquals(repository.next.id,repository.lastPlayback.id);
+                assertEquals(2,repository.playbackCalls);
+                assertTrue(engines.get(0).released);
+                assertTrue("Old stream released before repository admission",repository.allReleasedAtSwitch);
+            });
+            Thread.sleep(1000);assertEquals(2,repository.playbackCalls);
+        }
+    }
+    @Test public void cancelRemainsLatchedAcrossRecoveryAndRecreation() throws Exception {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            ended(scenario);assertCountdown(scenario);
+            scenario.onActivity(activity -> activity.findViewById(android.R.id.content).findViewWithTag("tv_player_cancel_next").performClick());
+            scenario.onActivity(activity -> latest().listener.onError());
+            scenario.recreate();ended(scenario);
+            Thread.sleep(5400);
+            assertEquals(repository.episode.id,repository.lastPlayback.id);
+            scenario.onActivity(activity -> {
+                View cancel=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_cancel_next");
+                assertTrue("Cancelled episode must not re-arm",cancel==null || !cancel.isShown());
+            });
+        }
+    }
+    @Test public void recreationPersistsCurrentSelectedEpisodeInsteadOfLaunchIntent() {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            key(KeyEvent.KEYCODE_MEDIA_NEXT);
+            assertEquals(repository.next.id,repository.lastPlayback.id);
+            scenario.recreate();
+            assertEquals("Recreation retains selected continuation",repository.next.id,repository.lastPlayback.id);
+        }
+    }
+    @Test public void backgroundCancelsPendingCountdownWithoutOpeningAnotherStream() throws Exception {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            ended(scenario);assertCountdown(scenario);
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
+            Thread.sleep(5400);
+            assertEquals(1,repository.playbackCalls);assertTrue(latest().released);
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
+            ended(scenario);Thread.sleep(5400);
+            assertEquals(repository.episode.id,repository.lastPlayback.id);
+        }
+    }
+    @Test public void pausedButVisibleActivityCancelsAndLatchesContinuation() throws Exception {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            ended(scenario);assertCountdown(scenario);
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.STARTED);
+            Thread.sleep(5400);
+            assertEquals("Losing resumed state must prevent successor admission before onStop",1,repository.playbackCalls);
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
+            ended(scenario);
+            scenario.onActivity(activity -> assertFalse("Pause cancellation remains latched after resume",
+                    activity.findViewById(android.R.id.content).findViewWithTag("tv_player_cancel_next").isShown()));
+            Thread.sleep(5400);assertEquals(1,repository.playbackCalls);
+        }
+    }
+    @Test public void remoteCanReturnFromTransportToCountdownAndCancel() throws Exception {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            ended(scenario);assertCountdown(scenario);
+            scenario.onActivity(activity -> assertEquals("tv_player_watch_next",activity.getCurrentFocus().getTag()));
+            key(KeyEvent.KEYCODE_DPAD_DOWN);
+            scenario.onActivity(activity -> {
+                Object tag=activity.getCurrentFocus().getTag();
+                assertTrue("Down reaches a transport control",Arrays.asList("tv_player_play","tv_player_backward","tv_player_forward").contains(tag));
+            });
+            key(KeyEvent.KEYCODE_DPAD_UP);
+            scenario.onActivity(activity -> assertEquals("Up returns to visible countdown choice","tv_player_watch_next",activity.getCurrentFocus().getTag()));
+            key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            scenario.onActivity(activity -> assertEquals("tv_player_cancel_next",activity.getCurrentFocus().getTag()));
+            key(KeyEvent.KEYCODE_DPAD_CENTER);
+            scenario.onActivity(activity -> assertFalse(activity.findViewById(android.R.id.content).findViewWithTag("tv_player_cancel_next").isShown()));
+            Thread.sleep(5400);assertEquals(1,repository.playbackCalls);
+        }
+    }
+    @Test public void explicitRewindCancelsPendingContinuationForReplay() throws Exception {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            ended(scenario);assertCountdown(scenario);key(KeyEvent.KEYCODE_MEDIA_REWIND);
+            scenario.onActivity(activity -> {
+                assertTrue("Rewind still moves actual playback",latest().position<latest().duration);
+                assertFalse("Viewer replay cancels auto-next",activity.findViewById(android.R.id.content).findViewWithTag("tv_player_cancel_next").isShown());
+            });
+            ended(scenario);Thread.sleep(5400);assertEquals(1,repository.playbackCalls);
+        }
+    }
+    @Test public void remoteTimelineSeekCancelsPendingContinuationForReplay() throws Exception {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            ended(scenario);assertCountdown(scenario);
+            scenario.onActivity(activity -> {SeekBar bar=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_timeline");bar.setProgress(1000);bar.requestFocus();});
+            key(KeyEvent.KEYCODE_DPAD_LEFT);
+            scenario.onActivity(activity -> {
+                assertTrue("Timeline still moves actual playback",latest().position<latest().duration);
+                assertFalse("Timeline replay cancels auto-next",activity.findViewById(android.R.id.content).findViewWithTag("tv_player_cancel_next").isShown());
+            });
+            ended(scenario);Thread.sleep(5400);assertEquals(1,repository.playbackCalls);
+        }
+    }
+    @Test public void expiryDuringCountdownCannotAdmitSuccessor() throws Exception {
+        repository.ttl=1600;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            ended(scenario);assertCountdown(scenario);Thread.sleep(5400);
+            scenario.onActivity(activity -> {assertEquals(1,repository.playbackCalls);assertTrue(latest().released);});
+        }
+    }
+    @Test public void finalMovieLiveUnknownDurationAndWrongSeriesNeverAutoAdvance() throws Exception {
+        for(Item value:Arrays.asList(repository.next,repository.movie,repository.live1)) {
+            try(ActivityScenario<PlayerActivity> scenario=launch(value)) {
+                ended(scenario);
+                scenario.onActivity(activity -> { View cancel=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_cancel_next"); assertTrue(cancel==null || !cancel.isShown()); });
+            }
+        }
+        repository.successor=new Item(Kind.EPISODE,"6","Wrong series","","","","mp4",repository.scope,"other-series",1,6,"");
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            ended(scenario);key(KeyEvent.KEYCODE_MEDIA_NEXT);
+            assertEquals("Cross-series continuation is not valid",repository.episode.id,repository.lastPlayback.id);
+        }
+        repository.successor=repository.next;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            scenario.onActivity(activity -> latest().duration=-1);ended(scenario);
+            scenario.onActivity(activity -> {
+                View cancel=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_cancel_next");
+                assertTrue(cancel==null || !cancel.isShown());
+            });
+        }
+    }
+    @Test public void initialBufferingIsNotRecycledAtEstablishedStallDeadline() throws Exception {
+        repository.initialState=PlayerEngine.BUFFERING;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.live1)) {
+            Thread.sleep(13300);
+            scenario.onActivity(activity -> {assertEquals("Valid startup gets its own bounded preparation window",1,engines.size());assertFalse(latest().released);});
+        }
+    }
+    @Test public void initialPausedPlayerFitsAllControlsWithoutResizeOrFocusSteering() {
+        repository.initialPlay=false;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(activity -> {
+                assertFalse("Fixture starts paused without a corrective input/layout",latest().playing());
+                FrameLayout content=activity.findViewById(android.R.id.content);
+                View actual=content.getChildAt(0);
+                Rect bounds=new Rect();assertTrue(actual.getGlobalVisibleRect(bounds));
+                for(String tag:Arrays.asList("play","backward","forward","audio","subtitles","next","exit")) {
+                    View control=content.findViewWithTag("tv_player_"+tag);Rect visible=new Rect();
+                    assertTrue("Initial "+tag+" is visible",control.isShown() && control.getGlobalVisibleRect(visible));
+                    assertTrue("Initial "+tag+" fully fits first player layout; player="+bounds+", visible="+visible+", measured="+control.getWidth()+"x"+control.getHeight(),
+                            bounds.contains(visible) && visible.width()>=control.getWidth()-2 && visible.height()>=control.getHeight()-2);
+                }
+            });
+        }
+    }
+    @Test public void shortNarrowPlayerHasRealTimelineAndReachableControls() {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            key(KeyEvent.KEYCODE_MEDIA_PAUSE);
+            scenario.onActivity(activity -> {
+                FrameLayout content=activity.findViewById(android.R.id.content);
+                View actual=content.getChildAt(0);
+                float density=activity.getResources().getDisplayMetrics().density;
+                actual.setLayoutParams(new FrameLayout.LayoutParams((int)(560*density),(int)(320*density)));
+                actual.requestLayout();
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(activity -> {
+                FrameLayout content=activity.findViewById(android.R.id.content);View actual=content.getChildAt(0);
+                Rect bounds=new Rect();assertTrue(actual.getGlobalVisibleRect(bounds));
+                View timeline=content.findViewWithTag("tv_player_timeline");
+                assertTrue("VOD needs an actual remote seek control",timeline instanceof SeekBar);
+                for(String tag:Arrays.asList("play","backward","forward","audio","subtitles","next","exit")) {
+                    View control=content.findViewWithTag("tv_player_"+tag);Rect visible=new Rect();
+                    assertTrue(tag+" fully fits measured player bounds",control.getGlobalVisibleRect(visible) && bounds.contains(visible) && visible.width()>=control.getWidth()-2 && visible.height()>=control.getHeight()-2);
+                    assertTrue(tag+" remains focusable",control.requestFocus());
+                }
+            });
+            scenario.onActivity(activity -> activity.findViewById(android.R.id.content).findViewWithTag("tv_player_timeline").requestFocus());
+            long before=latest().position;key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            scenario.onActivity(activity -> assertTrue("Remote timeline moves actual playback position",latest().position>before));
+        }
+    }
     static final class FakeEngine implements PlayerEngine {
-        final View view; final Listener listener; boolean playing, released; long position; int selectedAudio=-1,selectedSubtitle=-1;
+        final View view; final Listener listener; boolean playing, released,startPaused; long position,duration=300000; int state=READY; int selectedAudio=-1,selectedSubtitle=-1;
         FakeEngine(Context context, Listener listener) { this.view=new View(context); this.listener=listener; }
         public View view() {return view;}
-        public void prepare(Playback playback,long start,boolean play) {position=start;playing=play;listener.onStateChanged(READY);}
+        public void prepare(Playback playback,long start,boolean play) {position=start;playing=play && !startPaused;listener.onStateChanged(state);if(state==READY)listener.onFirstFrame();}
         public void play() {playing=true;listener.onStateChanged(READY);}
         public void pause() {playing=false;listener.onStateChanged(READY);}
         public void seek(long positionMs) {position=positionMs;}
         public long position() {return position;}
-        public long duration() {return 300000;}
-        public boolean playing() {return playing;}
+        public long duration() {return duration;}
+        public boolean playing() {return playing && state==READY;}
         public boolean wantsToPlay() {return playing;}
-        public int state() {return READY;}
+        public int state() {return state;}
         public List<Track> tracks(boolean subtitles) {return Arrays.asList(new Track("a", "Türkçe",false),new Track("b", "English",false));}
         public void selectTrack(boolean subtitles,String id) {if(subtitles)selectedSubtitle=1;else selectedAudio=1;}
         public void release() {released=true;playing=false;}
     }
     static final class FakeRepository implements TvRepository {
         String scope="fixture:source1"; long expiry=System.currentTimeMillis()+60000,savedPosition,ttl=-1; Item lastPlayback;
-        int watched; boolean deferAccess,deferPlayback; Failure.Code accessFailure; Callback<Account> pendingAccess; Callback<Playback> pendingPlayback;
+        Runnable beforePlayback; int watched,playbackCalls,initialState=PlayerEngine.READY; boolean allReleasedAtSwitch=true,initialPlay=true; Item successor; boolean deferAccess,deferPlayback; Failure.Code accessFailure; Callback<Account> pendingAccess; Callback<Playback> pendingPlayback;
         final Item movie=item(Kind.MOVIE,"1"),live1=item(Kind.LIVE,"2"),live2=item(Kind.LIVE,"3"),episode=item(Kind.EPISODE,"4"),next=item(Kind.EPISODE,"5");
         static Item item(Kind kind,String id) {return new Item(kind,id,"Fixture "+id,"","","","mp4","fixture:source1","series1",1,Integer.parseInt(id),"");}
         public boolean hasSession() {return true;} public String currentScope() {return scope;}
-        public void playback(Item item,Callback<Playback> callback) {lastPlayback=item;if(deferPlayback){pendingPlayback=callback;return;}if(ttl>=0)expiry=System.currentTimeMillis()+ttl;callback.onResult(new Playback(item,"asset:///fixture.mp4","video/mp4",expiry,item.kind==Kind.LIVE?0:12000,item.key().equals(episode.key())?next:null));}
+        public void playback(Item item,Callback<Playback> callback) {if(beforePlayback!=null)beforePlayback.run();playbackCalls++;lastPlayback=item;if(deferPlayback){pendingPlayback=callback;return;}if(ttl>=0)expiry=System.currentTimeMillis()+ttl;callback.onResult(new Playback(item,"asset:///fixture.mp4","video/mp4",expiry,item.kind==Kind.LIVE?0:12000,item.key().equals(episode.key())?(successor==null?next:successor):null));}
         public void refreshAccess(Callback<Account> callback) {if(deferAccess){pendingAccess=callback;return;}if(accessFailure!=null)callback.onError(new Failure(accessFailure,"fixture"));else callback.onResult(new Account("fixture","0000","Fixture",expiry,true,false,""));}
         public void catalog(Kind kind,boolean force,Callback<Catalog> callback) {callback.onResult(new Catalog(kind,Arrays.asList(live1,live2),Collections.emptyList()));}
         public void savePosition(Item item,long position,long duration) {savedPosition=position;}

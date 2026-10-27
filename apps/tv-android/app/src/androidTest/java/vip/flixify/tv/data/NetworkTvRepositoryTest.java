@@ -25,6 +25,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import vip.flixify.tv.TvModels.*;
 import vip.flixify.tv.TvRepository.Callback;
 import static org.junit.Assert.*;
@@ -48,6 +49,11 @@ public class NetworkTvRepositoryTest {
     private static final class Fixture implements NetworkTvRepository.ConnectionFactory {
         volatile boolean eligible=true,denyLibrary=false;
         volatile String source="source-a";
+        volatile int bootstrapStatus=200;
+        volatile long leaseExpiry=NOW+600000;
+        final AtomicInteger bootstrapReads=new AtomicInteger(),liveCategoryReads=new AtomicInteger(),liveStreamReads=new AtomicInteger(),epgReads=new AtomicInteger();
+        final CountDownLatch epgStarted=new CountDownLatch(1),releaseEpg=new CountDownLatch(1);
+        volatile boolean holdEpg;
         final List<String> favoriteMethods=new ArrayList<>();
         volatile int libraryReads;
         @Override public HttpURLConnection open(URL url) {return new HttpURLConnection(url) {
@@ -67,7 +73,10 @@ public class NetworkTvRepositoryTest {
                         if(denyLibrary && path.equals("/auth/refresh")){status=401;raw=new JSONObject();}
                         else raw=new JSONObject().put("accessToken","fixture-access").put("refreshToken","fixture-refresh-token-with-32-chars").put("user",user);
                     } else if(path.equals("/me"))raw=new JSONObject().put("user",user);
-                    else if(path.equals("/me/provider-session"))raw=new JSONObject().put("accountId","fixture-account").put("sourceVersion",source).put("providerOrigin","https://provider.test").put("username","fixture-user").put("password","fixture-password").put("expiresAt",date(NOW+600000)).put("moviePolicy","general-audience-only");
+                    else if(path.equals("/me/provider-session")) {
+                        bootstrapReads.incrementAndGet();status=bootstrapStatus;
+                        raw=new JSONObject().put("accountId","fixture-account").put("sourceVersion",source).put("providerOrigin","https://provider.test").put("username","fixture-user").put("password","fixture-password").put("expiresAt",date(leaseExpiry)).put("moviePolicy","general-audience-only");
+                    }
                     else if(path.equals("/me/personal-library")) {
                         libraryReads++;if(denyLibrary){status=401;raw=new JSONObject();}
                         else raw=new JSONObject().put("favorites",new JSONArray().put(new JSONObject().put("source","personal").put("sourceVersion",source).put("kind","movie").put("id","12"))).put("watched",new JSONArray());
@@ -79,7 +88,15 @@ public class NetworkTvRepositoryTest {
                         String query=url.getQuery();
                         if(query.contains("action=get_vod_categories"))raw=new JSONArray().put(new JSONObject().put("category_id","9").put("category_name","Filmler"));
                         else if(query.contains("action=get_vod_streams"))raw=new JSONArray().put(new JSONObject().put("stream_id","12").put("name","Fixture Film").put("category_id","9").put("container_extension","mp4"));
-                        else raw=new JSONArray();
+                        else if(query.contains("action=get_live_categories")) {
+                            liveCategoryReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("category_id","7").put("category_name","Canlı"));
+                        } else if(query.contains("action=get_live_streams")) {
+                            liveStreamReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("stream_id","34").put("name","Fixture Kanal").put("category_id","7").put("container_extension","ts"));
+                        } else if(query.contains("action=get_short_epg")) {
+                            epgReads.incrementAndGet();epgStarted.countDown();
+                            if(holdEpg && !releaseEpg.await(10,TimeUnit.SECONDS))throw new AssertionError("EPG fixture was not released");
+                            raw=new JSONObject().put("epg_listings",new JSONArray().put(new JSONObject().put("title","Rml4dHVyZSBQcm9ncmFtbWU=").put("start_timestamp","1700000000").put("stop_timestamp","1700003600")));
+                        } else raw=new JSONArray();
                     } else throw new AssertionError("Unexpected request path");
                     response=raw.toString().getBytes(StandardCharsets.UTF_8);
                 }catch(Exception exception){throw new AssertionError(exception);}
@@ -146,6 +163,99 @@ public class NetworkTvRepositoryTest {
             Result<Boolean> toggle=new Result<>();h.repository.toggleFavorite(movie,toggle);h.deliver();assertNull(toggle.error);assertEquals(Boolean.FALSE,toggle.value);assertFalse(h.repository.isFavorite(movie));
             synchronized(h.fixture.favoriteMethods){assertEquals(1,h.fixture.favoriteMethods.size());assertEquals("DELETE",h.fixture.favoriteMethods.get(0));}
         }finally{h.repository.logout();}
+    }
+    private static Item liveCandidate(String id) {
+        return new Item(Kind.LIVE,id,"Forged title","999","Forged category","","m3u8","fixture-account:source-a","",0,0,"");
+    }
+    private static Item warmLive(Harness h) throws Exception {
+        Result<Catalog> catalog=new Result<>();h.repository.catalog(Kind.LIVE,false,catalog);h.deliver();
+        assertNull(catalog.error);assertNotNull(catalog.value);assertEquals(1,catalog.value.items.size());return catalog.value.items.get(0);
+    }
+    @Test public void warmLivePlaybackRevalidatesAccessWithoutRefetchingCanonicalMetadata() throws Exception {
+        Harness h=new Harness(true);try {
+            warmLive(h);int bootstraps=h.fixture.bootstrapReads.get();h.fixture.leaseExpiry=NOW+120000;
+            Result<Playback> result=new Result<>();h.repository.playback(liveCandidate("34"),result);h.deliver();
+            assertNull(result.error);assertNotNull(result.value);assertEquals("Fixture Kanal",result.value.item.title);
+            assertEquals("7",result.value.item.categoryId);assertEquals("ts",result.value.item.extension);
+            assertEquals("video/mp2t",result.value.mime);assertTrue(result.value.url.endsWith("/34.ts"));
+            assertEquals("fixture-account:source-a",result.value.scope);assertEquals(NOW+120000,result.value.expiresAtMs);
+            assertEquals("Playback must still force authoritative bootstrap",bootstraps+1,h.fixture.bootstrapReads.get());
+            assertEquals("Warm LIVE must reuse validated categories",1,h.fixture.liveCategoryReads.get());
+            assertEquals("Warm LIVE must reuse validated streams",1,h.fixture.liveStreamReads.get());
+        }finally{h.repository.logout();}
+    }
+    @Test public void coldLivePlaybackResolvesCanonicalItemAndRejectsUnknownId() throws Exception {
+        Harness h=new Harness(true);try {
+            Result<Playback> known=new Result<>();h.repository.playback(liveCandidate("34"),known);h.deliver();
+            assertNull(known.error);assertNotNull(known.value);assertEquals("Fixture Kanal",known.value.item.title);
+            assertEquals("ts",known.value.item.extension);assertTrue(known.value.url.endsWith("/34.ts"));
+            Result<Playback> unknown=new Result<>();h.repository.playback(liveCandidate("999"),unknown);h.deliver();
+            assertNull(unknown.value);assertNotNull(unknown.error);assertEquals(Failure.Code.INVALID,unknown.error.code);
+            assertEquals("Unknown LIVE must not redownload the same metadata",1,h.fixture.liveStreamReads.get());
+        }finally{h.repository.logout();}
+    }
+    @Test public void warmLivePlaybackRejectsAuthoritativeBootstrapDenial() throws Exception {
+        Harness h=new Harness(true);try {
+            Item live=warmLive(h);h.fixture.bootstrapStatus=403;
+            Result<Playback> result=new Result<>();h.repository.playback(live,result);h.deliver();
+            assertNull(result.value);assertNotNull(result.error);assertEquals("",h.repository.currentScope());
+            assertEquals(2,h.fixture.bootstrapReads.get());assertEquals(1,h.fixture.liveStreamReads.get());
+        }finally{h.repository.logout();}
+    }
+    @Test public void warmLivePlaybackRejectsReplacedSourceBeforeMetadataFetch() throws Exception {
+        Harness h=new Harness(true);try {
+            Item live=warmLive(h);h.fixture.source="source-b";
+            Result<Playback> result=new Result<>();h.repository.playback(live,result);h.deliver();
+            assertNull(result.value);assertNotNull(result.error);assertEquals(Failure.Code.STALE,result.error.code);
+            assertEquals("fixture-account:source-b",h.repository.currentScope());assertEquals(1,h.fixture.liveStreamReads.get());
+        }finally{h.repository.logout();}
+    }
+    @Test public void blockedEpgDoesNotBlockPlaybackAndDuplicateEpgSharesRequest() throws Exception {
+        Harness h=new Harness(true);try {
+            Item live=warmLive(h);h.fixture.holdEpg=true;
+            Result<List<Programme>> first=new Result<>(),duplicate=new Result<>();h.repository.epg(live,first);
+            assertTrue("Optional provider request did not begin",h.fixture.epgStarted.await(5,TimeUnit.SECONDS));
+            h.repository.epg(live,duplicate);Result<Playback> playback=new Result<>();h.repository.playback(live,playback);
+            h.deliver();assertNull("EPG remains held while playback completes",first.value);assertEquals(0,first.calls);
+            assertNull(playback.error);assertNotNull("Playback validation must complete while EPG is blocked",playback.value);
+            h.fixture.releaseEpg.countDown();h.deliver();
+            assertNull(first.error);assertNull(duplicate.error);assertNotNull(first.value);assertEquals(1,first.value.size());
+            assertEquals("Fixture Programme",first.value.get(0).title);assertEquals(1,first.calls);assertEquals(1,duplicate.calls);
+            assertEquals("Same-item EPG calls must coalesce",1,h.fixture.epgReads.get());
+        }finally{h.fixture.releaseEpg.countDown();h.repository.logout();}
+    }
+    @Test public void blockedEpgCannotPublishAfterSourceReplacement() throws Exception {
+        Harness h=new Harness(true);try {
+            Item live=warmLive(h);h.fixture.holdEpg=true;Result<List<Programme>> epg=new Result<>();h.repository.epg(live,epg);
+            assertTrue(h.fixture.epgStarted.await(5,TimeUnit.SECONDS));h.fixture.source="source-b";
+            Result<Account> refreshed=new Result<>();h.repository.refreshAccess(refreshed);h.deliver();
+            assertNull(refreshed.error);assertNotNull("Source refresh must not wait for EPG",refreshed.value);
+            assertEquals("fixture-account:source-b",h.repository.currentScope());
+            h.fixture.releaseEpg.countDown();h.deliver();assertNull(epg.value);assertNotNull(epg.error);assertEquals(Failure.Code.STALE,epg.error.code);
+        }finally{h.fixture.releaseEpg.countDown();h.repository.logout();}
+    }
+    @Test public void blockedEpgUsesLatestShortenedLeaseCutoff() throws Exception {
+        Harness h=new Harness(true);try {
+            Item live=warmLive(h);h.fixture.holdEpg=true;Result<List<Programme>> epg=new Result<>();h.repository.epg(live,epg);
+            assertTrue(h.fixture.epgStarted.await(5,TimeUnit.SECONDS));h.fixture.leaseExpiry=NOW+1000;
+            Result<Account> refreshed=new Result<>();h.repository.refreshAccess(refreshed);h.deliver();
+            assertNull(refreshed.error);assertNotNull("Lease refresh must not wait for EPG",refreshed.value);
+            assertEquals(NOW+1000,refreshed.value.expiresAtMs);h.clock.value=NOW+1000;
+            h.fixture.releaseEpg.countDown();h.deliver();assertNull(epg.value);assertNotNull(epg.error);
+        }finally{h.fixture.releaseEpg.countDown();h.repository.logout();}
+    }
+    @Test public void queuedEpgCannotPublishAfterAbsoluteExpiry() throws Exception {
+        Harness h=new Harness(true);try {
+            Item live=warmLive(h);Result<List<Programme>> epg=new Result<>();h.repository.epg(live,epg);h.awaitQueued(1);
+            h.clock.value=NOW+600000;h.deliver();assertNull(epg.value);assertNotNull(epg.error);assertEquals(Failure.Code.STALE,epg.error.code);
+        }finally{h.repository.logout();}
+    }
+    @Test public void blockedEpgCannotPublishAfterLogout() throws Exception {
+        Harness h=new Harness(true);try {
+            Item live=warmLive(h);h.fixture.holdEpg=true;Result<List<Programme>> epg=new Result<>();h.repository.epg(live,epg);
+            assertTrue(h.fixture.epgStarted.await(5,TimeUnit.SECONDS));h.repository.logout();h.fixture.releaseEpg.countDown();h.deliver();
+            assertNull(epg.value);assertNotNull(epg.error);assertEquals(Failure.Code.STALE,epg.error.code);
+        }finally{h.fixture.releaseEpg.countDown();h.repository.logout();}
     }
     @Test public void productionCallbackDispatcherUsesAndroidMainThread() throws Exception {
         Context context=ApplicationProvider.getApplicationContext();TokenStore store=new TokenStore(context);store.clear();store.save(new TokenStore.Session("fixture-access","fixture-refresh-token-with-32-chars","fixture-account","1234"));

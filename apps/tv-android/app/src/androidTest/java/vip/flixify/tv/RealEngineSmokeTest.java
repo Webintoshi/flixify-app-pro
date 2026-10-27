@@ -32,12 +32,13 @@ public class RealEngineSmokeTest {
   }
   FakeTvRepository repository=new FakeTvRepository();repository.session=true;
   TvApplication.setRepositoryForTests(repository);
-  CountDownLatch ready=new CountDownLatch(1);AtomicBoolean error=new AtomicBoolean();
+  CountDownLatch ready=new CountDownLatch(1),firstFrame=new CountDownLatch(1);AtomicBoolean error=new AtomicBoolean();
   final Media3PlayerEngine[] engine={null};
   try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)) {
    scenario.onActivity(activity->{
     engine[0]=new Media3PlayerEngine(activity,new PlayerEngine.Listener(){
      public void onStateChanged(int state){if(state==PlayerEngine.READY)ready.countDown();}
+     public void onFirstFrame(){firstFrame.countDown();}
      public void onTracksChanged(){}
      public void onError(){error.set(true);ready.countDown();}
     });
@@ -49,6 +50,7 @@ public class RealEngineSmokeTest {
    long until=SystemClock.uptimeMillis()+4000;AtomicBoolean progressed=new AtomicBoolean();
    while(SystemClock.uptimeMillis()<until&&!progressed.get()) {scenario.onActivity(activity->progressed.set(engine[0].position()>250));SystemClock.sleep(25);}
    assertTrue("Actual local playback position advanced",progressed.get());
+   assertTrue("Decoded local video frame reached output surface",firstFrame.await(8,TimeUnit.SECONDS));
    scenario.onActivity(activity->{engine[0].pause();assertFalse(engine[0].wantsToPlay());engine[0].release();engine[0]=null;});
   } finally {
    InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{if(engine[0]!=null)engine[0].release();TvApplication.setRepositoryForTests(null);});

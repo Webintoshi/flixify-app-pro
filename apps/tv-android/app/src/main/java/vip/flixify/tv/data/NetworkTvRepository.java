@@ -44,6 +44,8 @@ public final class NetworkTvRepository implements TvRepository {
     private final Handler main=new Handler(Looper.getMainLooper());
     // One worker also serializes rotating refresh tokens. Concurrent callers join the same pending operation.
     private final ThreadPoolExecutor worker=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(64),r->{Thread t=new Thread(r,"flixify-personal-data");t.setDaemon(true);return t;});
+    // Optional provider-only I/O never consumes the auth/bootstrap worker or rotates API tokens.
+    private final ThreadPoolExecutor epgWorker=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(16),r->{Thread t=new Thread(r,"flixify-personal-epg");t.setDaemon(true);return t;});
     private final ScheduledExecutorService timeout=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"flixify-request-deadline");t.setDaemon(true);return t;});
     interface Clock { long now(); }
     interface ConnectionFactory { HttpURLConnection open(URL url) throws Exception; }
@@ -72,7 +74,7 @@ public final class NetworkTvRepository implements TvRepository {
         this.callbacks=callbacks==null?main::post:callbacks;
         Context app=context.getApplicationContext(); tokenStore=new TokenStore(app);
         positions=app.getSharedPreferences("tv_scoped_resume",Context.MODE_PRIVATE);
-        tokens=tokenStore.load(); worker.allowCoreThreadTimeOut(true);
+        tokens=tokenStore.load(); worker.allowCoreThreadTimeOut(true);epgWorker.allowCoreThreadTimeOut(true);
     }
     @Override public boolean hasSession() { return tokens!=null; }
     @Override public String currentScope() {
@@ -100,7 +102,15 @@ public final class NetworkTvRepository implements TvRepository {
         final long auth; final String scope; final boolean sourceBound; final List<Callback<T>> callbacks=new ArrayList<>();
         Pending(long auth,String scope,boolean sourceBound) {this.auth=auth;this.scope=scope;this.sourceBound=sourceBound;}
     }
+    private static final class Prepared<T> {
+        final Work<T> work; final long source; final String scope;
+        Prepared(Work<T> work,long source,String scope) {this.work=work;this.source=source;this.scope=scope;}
+    }
+    private interface Preparation<T> { Prepared<T> run(long auth) throws Exception; }
     private <T> void enqueue(String name,boolean sourceBound,Callback<T> callback,Work<T> work) {
+        enqueuePrepared(name,sourceBound,callback,auth->new Prepared<>(work,-1,null),false);
+    }
+    private <T> void enqueuePrepared(String name,boolean sourceBound,Callback<T> callback,Preparation<T> preparation,boolean optional) {
         final Pending<T> operation; final String key;
         synchronized(lock) {
             String scope=currentScope(); key=name+"@"+authGeneration+"@"+scope;
@@ -111,28 +121,45 @@ public final class NetworkTvRepository implements TvRepository {
             operation=new Pending<>(authGeneration,scope,sourceBound); if(callback!=null) operation.callbacks.add(callback); pending.put(key,operation);
         }
         try { worker.execute(()->{
-            T result=null; Failure error=null;
-            try { checkAuth(operation.auth); result=work.run(operation.auth); checkAuth(operation.auth); }
-            catch(Exception e) { error=failure(e); }
-            final T value=result; final Failure issue=error; final String completedScope=currentScope(); final long completedSource=guard.generation();
-            callbacks.execute(()->{
-                List<Callback<T>> callbacks; synchronized(lock) { if(pending.get(key)==operation) pending.remove(key); callbacks=new ArrayList<>(operation.callbacks); }
-                for(Callback<T> cb:callbacks) {
-                    Failure delivered=issue;
-                    synchronized(lock) {
-                        boolean playableAccount=value instanceof Account && ((Account)value).canPlay;
-                        boolean needsLease=operation.sourceBound || playableAccount;
-                        boolean wrongInitialSource=operation.sourceBound && !operation.scope.isEmpty() && !operation.scope.equals(currentScope());
-                        boolean inactiveResult=issue==null && needsLease && (!guard.active(completedSource,completedScope,clock.now()) || (playableAccount && ((Account)value).expiresAtMs<=clock.now()));
-                        if(operation.auth!=authGeneration || wrongInitialSource || inactiveResult) delivered=failure(new Problem(Failure.Code.STALE));
-                    }
-                    if(delivered==null) cb.onResult(value); else cb.onError(delivered);
-                }
-            });
+            try {
+                checkAuth(operation.auth);Prepared<T> prepared=preparation.run(operation.auth);checkAuth(operation.auth);
+                Runnable request=()->runPrepared(key,operation,prepared);
+                if(optional)epgWorker.execute(request);else request.run();
+            } catch(RejectedExecutionException rejected) {complete(key,operation,null,failure(new Problem(Failure.Code.LIMIT)),-1,null);}
+            catch(Exception error) {complete(key,operation,null,failure(error),-1,null);}
         }); } catch(RejectedExecutionException ignored) {
-            synchronized(lock) { pending.remove(key); }
-            callbacks.execute(()->{for(Callback<T> cb:operation.callbacks)cb.onError(failure(new Problem(Failure.Code.LIMIT)));});
+            complete(key,operation,null,failure(new Problem(Failure.Code.LIMIT)),-1,null);
         }
+    }
+    private <T> void runPrepared(String key,Pending<T> operation,Prepared<T> prepared) {
+        T value=null;Failure issue=null;
+        try {checkAuth(operation.auth);value=prepared.work.run(operation.auth);checkAuth(operation.auth);}
+        catch(Exception error) {issue=failure(error);}
+        complete(key,operation,value,issue,prepared.source,prepared.scope);
+    }
+    private <T> void complete(String key,Pending<T> operation,T value,Failure issue,long preparedSource,String preparedScope) {
+        final String completedScope;final long completedSource;
+        synchronized(lock) {
+            // An optional result retains the lease captured before its I/O, even if bootstrap changed meanwhile.
+            completedScope=preparedScope==null?currentScope():preparedScope;
+            completedSource=preparedScope==null?guard.generation():preparedSource;
+        }
+        callbacks.execute(()->{
+            List<Callback<T>> deliveries;
+            synchronized(lock) {if(pending.get(key)==operation)pending.remove(key);deliveries=new ArrayList<>(operation.callbacks);}
+            for(Callback<T> cb:deliveries) {
+                Failure delivered=issue;
+                synchronized(lock) {
+                    boolean playableAccount=value instanceof Account && ((Account)value).canPlay;
+                    boolean needsLease=operation.sourceBound || playableAccount;
+                    boolean wrongInitialSource=operation.sourceBound && !operation.scope.isEmpty() && !operation.scope.equals(currentScope());
+                    boolean wrongPreparedSource=preparedScope!=null && (completedSource!=guard.generation() || !completedScope.equals(currentScope()));
+                    boolean inactiveResult=issue==null && needsLease && (!guard.active(completedSource,completedScope,clock.now()) || (playableAccount && ((Account)value).expiresAtMs<=clock.now()));
+                    if(operation.auth!=authGeneration || wrongInitialSource || wrongPreparedSource || inactiveResult)delivered=failure(new Problem(Failure.Code.STALE));
+                }
+                if(delivered==null)cb.onResult(value);else cb.onError(delivered);
+            }
+        });
     }
     private void checkAuth(long auth) throws Problem { synchronized(lock) { if(auth!=authGeneration) throw new Problem(Failure.Code.STALE); } }
     private TokenStore.Session requireTokens(long auth) throws Problem {
@@ -249,9 +276,12 @@ public final class NetworkTvRepository implements TvRepository {
         main.postDelayed(expiryTimer,Math.min(Math.max(1,b.expiresAtMs-clock.now()),Integer.MAX_VALUE));
     }
     private void clearMetadataLocked() { catalogs.clear();details.clear();favoriteRefs.clear();watchedRefs.clear();libraryScope=""; }
-    private void clearProvider() {
+    private void clearProvider() {clearProvider(-1,-1,null);}
+    private void clearProvider(long auth,long source,String scope) {
         List<HttpURLConnection> cancel;
         synchronized(lock) {
+            // A late optional denial may revoke only the lease that issued its request.
+            if(scope!=null && (auth!=authGeneration || !guard.active(source,scope,clock.now())))return;
             guard.clear();bootstrapCheckedAt=0;clearMetadataLocked();
             Account previous=currentAccount;if(previous!=null && previous.canPlay)currentAccount=new Account(previous.id,previous.codeSuffix,previous.packageTitle,previous.expiresAtMs,false,previous.trial,"İzleme erişimin şu anda açık değil.");
             accountCheckedAt=0;
@@ -306,10 +336,21 @@ public final class NetworkTvRepository implements TvRepository {
         if("get_series_info".equals(action)||"get_short_epg".equals(action)) {if(ProviderParser.id(id).isEmpty())throw new ProviderParser.Invalid();url+=("get_series_info".equals(action)?"&series_id=":"&stream_id=")+id;}
         if("get_short_epg".equals(action))url+="&limit=24";
         try { return request(url,"GET",null,null,auth,source,b.scope()); }
-        catch(Problem denied) { if(denied.code==Failure.Code.AUTH || denied.code==Failure.Code.INELIGIBLE)clearProvider();throw denied; }
+        catch(Problem denied) { if(denied.code==Failure.Code.AUTH || denied.code==Failure.Code.INELIGIBLE)clearProvider(auth,source,b.scope());throw denied; }
     }
     @Override public void epg(Item live,Callback<List<Programme>> callback) {
-        enqueue("epg-"+(live==null?"":live.id),true,callback,auth->{ProviderParser.Bootstrap b=bootstrap(auth,false);if(live==null || live.kind!=Kind.LIVE)throw new ProviderParser.Invalid();ProviderParser.reference(live,b.scope());if(find(catalogFor(auth,b,Kind.LIVE,false),live.id)==null)throw new ProviderParser.Invalid();long source=guard.generation();List<Programme> result=ProviderParser.epg(provider(auth,b,source,"get_short_epg",live.id));active(auth,source,b.scope());return result;});
+        enqueuePrepared("epg-"+(live==null?"":live.id),true,callback,auth->{
+            // Bootstrap and catalog preparation stay serialized with all API/token operations.
+            ProviderParser.Bootstrap b=bootstrap(auth,false);
+            if(live==null || live.kind!=Kind.LIVE)throw new ProviderParser.Invalid();ProviderParser.reference(live,b.scope());
+            Item verified=find(catalogFor(auth,b,Kind.LIVE,false),live.id);if(verified==null)throw new ProviderParser.Invalid();
+            long source=guard.generation();active(auth,source,b.scope());
+            return new Prepared<>(optionalAuth->{
+                active(optionalAuth,source,b.scope());
+                List<Programme> result=ProviderParser.epg(provider(optionalAuth,b,source,"get_short_epg",verified.id));
+                active(optionalAuth,source,b.scope());return result;
+            },source,b.scope());
+        },true);
     }
     @Override public void playback(Item candidate,Callback<Playback> callback) {
         enqueue("playback-"+(candidate==null?"":refKey(candidate)),true,callback,auth->{
@@ -319,7 +360,7 @@ public final class NetworkTvRepository implements TvRepository {
                 Item parent=new Item(Kind.SERIES,candidate.seriesId,"","","","","",b.scope(),"",0,0,"");
                 SeriesDetail detail=seriesFor(auth,b,parent,true);List<Item> all=new ArrayList<>();for(Season season:detail.seasons)all.addAll(season.episodes);
                 for(int i=0;i<all.size();i++)if(all.get(i).id.equals(candidate.id)){verified=all.get(i);if(i+1<all.size())next=all.get(i+1);break;}
-            } else if(candidate.kind!=Kind.SERIES)verified=find(catalogFor(auth,b,candidate.kind,true),candidate.id);
+            } else if(candidate.kind!=Kind.SERIES)verified=find(catalogFor(auth,b,candidate.kind,candidate.kind!=Kind.LIVE),candidate.id);
             if(verified==null)throw new ProviderParser.Invalid();long source=guard.generation();active(auth,source,b.scope());
             // Read the current identity's deadline: a metadata refresh can shorten or extend it.
             ProviderParser.Bootstrap current=guard.current();String url=ProviderParser.mediaUrl(current,verified,clock.now());
