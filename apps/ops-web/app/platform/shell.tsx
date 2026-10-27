@@ -7,6 +7,7 @@ import { usePlatform } from "./session";
 import { maskCode } from "./types";
 import { LoginDialog } from "./login";
 import s from "./platform.module.css";
+import { tvDownload } from "./tv-download";
 
 const links = [{ href: "/", label: "Ana Sayfa", icon: "home" }, { href: "/canli-tv", label: "Canlı TV", icon: "live" }, { href: "/filmler", label: "Filmler", icon: "movie" }, { href: "/diziler", label: "Diziler", icon: "series" }, { href: "/favoriler", label: "Favoriler", icon: "heart" }];
 export function AppShell({ children, publicAccess = false }: { children: ReactNode; publicAccess?: boolean }) {
@@ -35,7 +36,7 @@ export function AppShell({ children, publicAccess = false }: { children: ReactNo
       {catalogRoute && <svg className={s.catalogAccountIcon} width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="3"/><path d="M5.7 18.4c1.5-2.3 3.6-3.5 6.3-3.5s4.8 1.2 6.3 3.5"/></svg>}
       <span>{revealed ? code : maskCode(code)}</span><Icon name="chevron" />
     </button> : <div className={s.guestActions}><Link href="/giris-yap" className={s.code}>Giriş yap</Link><Link href="/kayit-ol" className={s.code}>Kayıt Ol</Link></div>}
-    {revealed && <div className={s.accountMenu}><span>Kullanıcı kodun</span><strong>{code}</strong><Link href="/ayarlar">Hesap ayarları</Link><button onClick={() => { logout(); router.push("/"); }}>Çıkış Yap</button></div>}
+    {revealed && <div className={s.accountMenu}><span>Kullanıcı kodun</span><strong>{code}</strong><Link href="/ayarlar">Hesap ayarları</Link><Link href="/indir">Android TV uygulaması</Link><button onClick={() => { logout(); router.push("/"); }}>Çıkış Yap</button></div>}
   </div>;
   if (!ready) return <div className={s.loading} aria-busy="true">Flixify hazırlanıyor…</div>;
   if (!session && !publicAccess) return <div className={s.app}><Link href="/" className={s.brand}><img src="/logo/flixify-logo.png" alt="Flixify" width="142" height="37" /></Link><div className={s.loading}>İçeriklerin. Tek yerde.</div><LoginDialog onClose={() => router.push("/")} onSuccess={() => setRevealed(false)} /></div>;
@@ -51,7 +52,7 @@ export function AppShell({ children, publicAccess = false }: { children: ReactNo
     </header>
     <div className={s.appBody}>
       <nav className={s.rail} aria-label="Hızlı menü">{links.map(link => <Link key={link.href} href={link.href} aria-label={link.label} className={pathname === link.href ? s.active : ""}><Icon name={link.icon} /></Link>)}<Link className={s.settings} href="/ayarlar" aria-label="Hesap ayarları"><Icon name="settings" /></Link></nav>
-      <div className={s.main}>{children}</div>
+      <div className={s.main}>{session && pathname === "/" && <aside className={s.tvDownloadNotice} aria-label="Android TV uygulaması"><a href={tvDownload.href} download={tvDownload.filename}>Android TV APK indir <span aria-hidden="true">↓</span></a><span>Tek APK · Test sürümü</span><Link href="/indir">Kurulum</Link></aside>}{children}</div>
     </div>
     <nav className={s.mobileNav} aria-label="Mobil menü">{navigation.map(link => <Link key={link.href} href={link.href} className={pathname === link.href ? s.active : ""} aria-current={pathname === link.href ? "page" : undefined}><Icon name={link.icon}/><span>{link.label}</span></Link>)}</nav>
     {error && <div className={s.toast} role="alert"><span>{error}</span><button onClick={reload}>Tekrar Dene</button><button aria-label="Bildirimi kapat" onClick={dismissError}><Icon name="close" /></button></div>}

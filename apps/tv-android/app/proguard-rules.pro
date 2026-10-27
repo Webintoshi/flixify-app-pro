@@ -1,0 +1,2 @@
+-keepattributes Signature,InnerClasses,EnclosingMethod
+-keepclassmembers class vip.flixify.tv.TvModels$Item { <fields>; }

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { LoginDialog } from "./login";
 import { Icon } from "./icons";
 import s from "./landing.module.css";
+import { tvDownload } from "./tv-download";
 
 const examples = ["Uzak Yerler", "Sakin Şehirler", "Mavi Ufuk", "Doğanın Sesi", "Bir Gün Daha"];
 function InterfacePreview({ compact = false }: { compact?: boolean }) {
@@ -18,7 +19,7 @@ export function Landing() {
   const open = () => setLogin(true);
   return <main className={s.landing}>
     <header className={s.header}><a href="#ozellikler" aria-label="Flixify ana sayfa"><img className={s.logo} src="/logo/flixify-logo.png" alt="Flixify Pro" width="170" height="45"/></a><nav aria-label="Ana sayfa bölümleri"><a href="#ozellikler">Özellikler</a><a href="#nasil-kullanilir">Nasıl Kullanılır</a><a href="#cihazlar">Cihazlar</a><Link href="/kayit-ol">Kayıt Ol</Link></nav><div className={s.authActions}><button className={s.login} onClick={open}>Giriş Yap</button><Link href="/kayit-ol" className={s.register}>Kayıt Ol</Link></div></header>
-    <section className={s.hero} id="ozellikler"><div className={s.heroCopy}><h1>Medyan için<br/>kendi alanın<span>.</span></h1><p>İçeriklerini düzenle, favorilerini sakla.<br/> Flixify ile kontrol sende.</p><div className={s.actions}><button className={s.primary} onClick={open}>Oynatıcıyı Aç<Icon name="arrow"/></button></div></div><figure className={s.heroFigure}><div className={s.monitor}><InterfacePreview/></div><figcaption>Flixify · Örnek arayüz</figcaption></figure></section>
+    <section className={s.hero} id="ozellikler"><div className={s.heroCopy}><h1>Medyan için<br/>kendi alanın<span>.</span></h1><p>İçeriklerini düzenle, favorilerini sakla.<br/> Flixify ile kontrol sende.</p><div className={s.actions}><button className={s.primary} onClick={open}>Oynatıcıyı Aç<Icon name="arrow"/></button><a className={s.secondary} href={tvDownload.href} download={tvDownload.filename}>Android TV APK indir</a><Link className={s.secondary} href="/indir">TV kurulumu</Link></div></div><figure className={s.heroFigure}><div className={s.monitor}><InterfacePreview/></div><figcaption>Flixify · Örnek arayüz</figcaption></figure></section>
     <section className={s.steps} id="nasil-kullanilir"><h2>Üç adımda kendi alanın<span>.</span></h2><ol><li><div className={s.stepNumber}>01<i/></div><h3>Kodunu gir</h3><p>Kullanıcı kodunla kişisel alanını aç.</p></li><li><div className={s.stepNumber}>02<i/></div><h3>İçeriklerini düzenle</h3><p>Favorilerini seç; içeriklerini tek yerde bul.</p></li><li><div className={s.stepNumber}>03<i/></div><h3>Oynatıcıyı aç</h3><p>İçeriğini seç, oynatma kontrolünü eline al.</p></li></ol></section>
     <section className={s.devices} id="cihazlar"><div><h2>Hangi ekranı seçersen<span>.</span></h2><p>Telefonunda, tabletinde ve bilgisayarında aynı Flixify deneyimi.</p></div><figure className={s.deviceFigure} aria-label="Masaüstü, dizüstü ve telefonda örnek Flixify arayüzü"><div className={s.desktop}><InterfacePreview compact/></div><div className={s.laptop}><InterfacePreview compact/></div><div className={s.phone}><InterfacePreview compact/></div></figure></section>
     <footer className={s.footer}><img src="/logo/flixify-logo.png" alt="Flixify Pro" width="136" height="36"/><span>Flixify bir medya oynatıcıdır.</span><Link href="/iletisim">İletişim</Link></footer>

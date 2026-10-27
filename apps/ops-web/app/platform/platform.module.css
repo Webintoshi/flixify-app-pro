@@ -291,3 +291,5 @@
   .app, .landing { padding-top: env(safe-area-inset-top, 0px); }
   .catalogApp .header { top: env(safe-area-inset-top, 0px); }
 }
+
+.tvDownloadNotice{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:12px 20px;padding:14px 4%;color:#afb3be;font-size:12px;border-bottom:1px solid #ffffff0d}.tvDownloadNotice>a{color:#f6f7fb;text-decoration:none;font-weight:600}.tvDownloadNotice>a:first-child{color:#ff3545}.tvDownloadNotice>a:focus-visible{outline:2px solid #ff3545;outline-offset:5px}.tvDownloadNotice>a:hover{text-decoration:underline}@media(max-width:600px){.tvDownloadNotice{justify-content:flex-start;padding:14px 22px}.tvDownloadNotice>span{display:none}}

@@ -1,0 +1,5 @@
+sample.mp4 is an unmodified AndroidX Media test fixture from release1.11.1:
+https://github.com/androidx/media/blob/1.11.1/libraries/test_data/src/test/assets/media/mp4/sample.mp4
+SHA256:6aecd03e411743feec6e9d2bb0209ada82f176ad45a4a44cbd2df0ee8290c8f6
+Project license:https://github.com/androidx/media/blob/1.11.1/LICENSE
+This fixture is packaged in the instrumentation test APK only, never the public application APK.

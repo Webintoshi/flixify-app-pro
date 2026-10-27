@@ -5,3 +5,10 @@
 .content a { display: inline-flex; align-items: center; gap: 16px; margin-top: 24px; padding: 14px 0; color: #fff; font-weight: 700; text-decoration: none; }
 .content a:hover { color: #ff4054; }
 .content a:focus-visible { outline: 2px solid #ff4054; outline-offset: 6px; }
+.eyebrow { display: block; color: #ff4054; font-size: 12px; font-weight: 700; letter-spacing: .12em; margin-bottom: 22px; }
+.content a.download { padding: 16px 24px; border-radius: 8px; background: #ff3545; color: #fff; }
+.content .release { font-size: 13px; margin-top: 14px; }
+.content h2 { margin-top: 54px; font-size: 24px; }
+.steps { padding-left: 22px; color: #afb3be; line-height: 1.8; }
+.steps li { padding-left: 8px; margin: 14px 0; }
+.content p a { padding: 0; margin: 0; display: inline; text-decoration: underline; font-weight: inherit; }
