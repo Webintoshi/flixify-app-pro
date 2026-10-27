@@ -45,6 +45,11 @@ public final class NetworkTvRepository implements TvRepository {
     // One worker also serializes rotating refresh tokens. Concurrent callers join the same pending operation.
     private final ThreadPoolExecutor worker=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(64),r->{Thread t=new Thread(r,"flixify-personal-data");t.setDaemon(true);return t;});
     private final ScheduledExecutorService timeout=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"flixify-request-deadline");t.setDaemon(true);return t;});
+    interface Clock { long now(); }
+    interface ConnectionFactory { HttpURLConnection open(URL url) throws Exception; }
+    private final Clock clock;
+    private final ConnectionFactory connectionFactory;
+    private final java.util.concurrent.Executor callbacks;
     private final TokenStore tokenStore;
     private final SharedPreferences positions;
     private final SourceGuard guard=new SourceGuard();
@@ -60,14 +65,18 @@ public final class NetworkTvRepository implements TvRepository {
     private String libraryScope="";
     private Runnable refreshTimer, expiryTimer;
 
-    public NetworkTvRepository(Context context) {
+    public NetworkTvRepository(Context context) { this(context,null,null,null); }
+    NetworkTvRepository(Context context,ConnectionFactory connectionFactory,Clock clock,java.util.concurrent.Executor callbacks) {
+        this.connectionFactory=connectionFactory==null?url->(HttpURLConnection)url.openConnection():connectionFactory;
+        this.clock=clock==null?System::currentTimeMillis:clock;
+        this.callbacks=callbacks==null?main::post:callbacks;
         Context app=context.getApplicationContext(); tokenStore=new TokenStore(app);
         positions=app.getSharedPreferences("tv_scoped_resume",Context.MODE_PRIVATE);
         tokens=tokenStore.load(); worker.allowCoreThreadTimeOut(true);
     }
     @Override public boolean hasSession() { return tokens!=null; }
     @Override public String currentScope() {
-        ProviderParser.Bootstrap b=guard.current(); return b!=null && b.expiresAtMs>System.currentTimeMillis()?b.scope():"";
+        ProviderParser.Bootstrap b=guard.current(); return b!=null && b.expiresAtMs>clock.now()?b.scope():"";
     }
     private static final class Problem extends Exception {
         final Failure.Code code;
@@ -97,7 +106,7 @@ public final class NetworkTvRepository implements TvRepository {
             String scope=currentScope(); key=name+"@"+authGeneration+"@"+scope;
             @SuppressWarnings("unchecked") Pending<T> existing=(Pending<T>)pending.get(key);
             if(existing!=null) {
-                if(callback!=null) { if(existing.callbacks.size()>=64) { main.post(()->callback.onError(failure(new Problem(Failure.Code.LIMIT))));return; } existing.callbacks.add(callback); } return;
+                if(callback!=null) { if(existing.callbacks.size()>=64) { callbacks.execute(()->callback.onError(failure(new Problem(Failure.Code.LIMIT))));return; } existing.callbacks.add(callback); } return;
             }
             operation=new Pending<>(authGeneration,scope,sourceBound); if(callback!=null) operation.callbacks.add(callback); pending.put(key,operation);
         }
@@ -106,15 +115,23 @@ public final class NetworkTvRepository implements TvRepository {
             try { checkAuth(operation.auth); result=work.run(operation.auth); checkAuth(operation.auth); }
             catch(Exception e) { error=failure(e); }
             final T value=result; final Failure issue=error; final String completedScope=currentScope(); final long completedSource=guard.generation();
-            main.post(()->{
+            callbacks.execute(()->{
                 List<Callback<T>> callbacks; synchronized(lock) { if(pending.get(key)==operation) pending.remove(key); callbacks=new ArrayList<>(operation.callbacks); }
-                Failure delivered=issue;
-                synchronized(lock) { if(operation.auth!=authGeneration || (operation.sourceBound && ((!operation.scope.isEmpty() && !operation.scope.equals(currentScope())) || (issue==null && !guard.active(completedSource,completedScope,System.currentTimeMillis()))))) delivered=failure(new Problem(Failure.Code.STALE)); }
-                for(Callback<T> cb:callbacks) { if(delivered==null) cb.onResult(value); else cb.onError(delivered); }
+                for(Callback<T> cb:callbacks) {
+                    Failure delivered=issue;
+                    synchronized(lock) {
+                        boolean playableAccount=value instanceof Account && ((Account)value).canPlay;
+                        boolean needsLease=operation.sourceBound || playableAccount;
+                        boolean wrongInitialSource=operation.sourceBound && !operation.scope.isEmpty() && !operation.scope.equals(currentScope());
+                        boolean inactiveResult=issue==null && needsLease && (!guard.active(completedSource,completedScope,clock.now()) || (playableAccount && ((Account)value).expiresAtMs<=clock.now()));
+                        if(operation.auth!=authGeneration || wrongInitialSource || inactiveResult) delivered=failure(new Problem(Failure.Code.STALE));
+                    }
+                    if(delivered==null) cb.onResult(value); else cb.onError(delivered);
+                }
             });
         }); } catch(RejectedExecutionException ignored) {
             synchronized(lock) { pending.remove(key); }
-            main.post(()->{for(Callback<T> cb:operation.callbacks)cb.onError(failure(new Problem(Failure.Code.LIMIT)));});
+            callbacks.execute(()->{for(Callback<T> cb:operation.callbacks)cb.onError(failure(new Problem(Failure.Code.LIMIT)));});
         }
     }
     private void checkAuth(long auth) throws Problem { synchronized(lock) { if(auth!=authGeneration) throw new Problem(Failure.Code.STALE); } }
@@ -123,14 +140,14 @@ public final class NetworkTvRepository implements TvRepository {
     }
     private void active(long auth,long source,String scope) throws Problem {
         checkAuth(auth);
-        if(!guard.active(source,scope,System.currentTimeMillis())) {
+        if(!guard.active(source,scope,clock.now())) {
             ProviderParser.Bootstrap b=guard.current();
-            throw new Problem(b!=null && b.scope().equals(scope) && b.expiresAtMs<=System.currentTimeMillis()?Failure.Code.INELIGIBLE:Failure.Code.STALE);
+            throw new Problem(b!=null && b.scope().equals(scope) && b.expiresAtMs<=clock.now()?Failure.Code.INELIGIBLE:Failure.Code.STALE);
         }
     }
     @Override public void login(String code,Callback<Account> callback) {
         String normalized=code==null?"":code.trim().toUpperCase(Locale.ROOT);
-        if(!normalized.matches("[A-Z0-9]{16}")) {main.post(()->callback.onError(failure(new ProviderParser.Invalid())));return;}
+        if(!normalized.matches("[A-Z0-9]{16}")) {callbacks.execute(()->callback.onError(failure(new ProviderParser.Invalid())));return;}
         // A login attempt supersedes work from the previous account immediately.
         clearSession();
         enqueue("login",false,callback,auth->{
@@ -144,7 +161,7 @@ public final class NetworkTvRepository implements TvRepository {
     }
     @Override public void refreshAccess(Callback<Account> callback) { account(true,callback); }
     private Account loadAccount(long auth,boolean force) throws Exception {
-        requireTokens(auth); long now=System.currentTimeMillis(); Account cached=currentAccount;
+        requireTokens(auth); long now=clock.now(); Account cached=currentAccount;
         if(!force && cached!=null && now-accountCheckedAt<60000 && (!cached.canPlay || cached.expiresAtMs>now)) return cached;
         JSONObject response=ProviderParser.object(api("/me","GET",null,auth));
         JSONObject user=ProviderParser.object(response.opt("user"));
@@ -166,11 +183,11 @@ public final class NetworkTvRepository implements TvRepository {
                 account=new Account(id,suffix,title,b.expiresAtMs,true,trial,message);
             } catch(Problem issue) {
                 if(issue.code==Failure.Code.INELIGIBLE) account=new Account(id,suffix,title,0,false,trial,"İzleme erişimin şu anda açık değil.");
-                else if(issue.code==Failure.Code.NETWORK && cached!=null && cached.canPlay && guard.current()!=null && guard.current().expiresAtMs>System.currentTimeMillis()) account=new Account(id,suffix,title,guard.current().expiresAtMs,true,trial,"Son doğrulanan erişim bilgisi gösteriliyor.");
+                else if(issue.code==Failure.Code.NETWORK && cached!=null && cached.canPlay && guard.current()!=null && guard.current().expiresAtMs>clock.now()) account=new Account(id,suffix,title,guard.current().expiresAtMs,true,trial,"Son doğrulanan erişim bilgisi gösteriliyor.");
                 else throw issue;
             }
         } else clearProvider();
-        checkAuth(auth); currentAccount=account;accountCheckedAt=System.currentTimeMillis();return account;
+        checkAuth(auth); currentAccount=account;accountCheckedAt=clock.now();return account;
     }
     private void installTokens(JSONObject raw,long auth,TokenStore.Session previous) throws Exception {
         String access=ProviderParser.secret(raw.opt("accessToken"),16384), refresh=ProviderParser.secret(raw.opt("refreshToken"),16384);
@@ -198,11 +215,11 @@ public final class NetworkTvRepository implements TvRepository {
         }
     }
     private ProviderParser.Bootstrap bootstrap(long auth,boolean force) throws Exception {
-        requireTokens(auth); ProviderParser.Bootstrap old=guard.current(); long now=System.currentTimeMillis();
+        requireTokens(auth); ProviderParser.Bootstrap old=guard.current(); long now=clock.now();
         if(old!=null && old.expiresAtMs<=now) {clearProvider();old=null;}
         if(!force && old!=null && now-bootstrapCheckedAt<60000) return old;
         ProviderParser.Bootstrap incoming;
-        try { incoming=ProviderParser.bootstrap(ProviderParser.object(api("/me/provider-session","GET",null,auth)),System.currentTimeMillis()); }
+        try { incoming=ProviderParser.bootstrap(ProviderParser.object(api("/me/provider-session","GET",null,auth)),clock.now()); }
         catch(Problem error) { if(error.code==Failure.Code.INELIGIBLE || error.code==Failure.Code.AUTH)clearProvider();throw error; }
         catch(ProviderParser.Invalid invalid) { clearProvider();throw invalid; }
         checkAuth(auth); TokenStore.Session t=requireTokens(auth);
@@ -210,7 +227,7 @@ public final class NetworkTvRepository implements TvRepository {
         synchronized(lock) {
             checkAuth(auth);
             if(!incoming.sameIdentity(old)) clearMetadataLocked();
-            guard.install(incoming);bootstrapCheckedAt=System.currentTimeMillis();scheduleAccessLocked(auth,incoming);
+            guard.install(incoming);bootstrapCheckedAt=clock.now();scheduleAccessLocked(auth,incoming);
         }
         return incoming;
     }
@@ -218,18 +235,18 @@ public final class NetworkTvRepository implements TvRepository {
         if(refreshTimer!=null)main.removeCallbacks(refreshTimer); if(expiryTimer!=null)main.removeCallbacks(expiryTimer);
         refreshTimer=()->{synchronized(lock){if(auth!=authGeneration || guard.current()==null)return;} refreshAccess(new Callback<Account>() {
             @Override public void onResult(Account value) { }
-            @Override public void onError(Failure failure) { synchronized(lock) { ProviderParser.Bootstrap current=guard.current();if(auth==authGeneration && current!=null && current.expiresAtMs>System.currentTimeMillis() && refreshTimer!=null)main.postDelayed(refreshTimer,60000); } }
+            @Override public void onError(Failure failure) { synchronized(lock) { ProviderParser.Bootstrap current=guard.current();if(auth==authGeneration && current!=null && current.expiresAtMs>clock.now() && refreshTimer!=null)main.postDelayed(refreshTimer,60000); } }
         });};
         main.postDelayed(refreshTimer,60000);
         expiryTimer=()->{
             synchronized(lock) {
                 ProviderParser.Bootstrap current=guard.current(); if(auth!=authGeneration || current==null || !current.sameIdentity(b))return;
-                long remaining=current.expiresAtMs-System.currentTimeMillis();
+                long remaining=current.expiresAtMs-clock.now();
                 if(remaining>0){main.postDelayed(expiryTimer,Math.min(remaining,Integer.MAX_VALUE));return;}
                 clearProvider();
             }
         };
-        main.postDelayed(expiryTimer,Math.min(Math.max(1,b.expiresAtMs-System.currentTimeMillis()),Integer.MAX_VALUE));
+        main.postDelayed(expiryTimer,Math.min(Math.max(1,b.expiresAtMs-clock.now()),Integer.MAX_VALUE));
     }
     private void clearMetadataLocked() { catalogs.clear();details.clear();favoriteRefs.clear();watchedRefs.clear();libraryScope=""; }
     private void clearProvider() {
@@ -251,7 +268,7 @@ public final class NetworkTvRepository implements TvRepository {
     @Override public void logout() { clearSession(); }
 
     @Override public void catalog(Kind kind,boolean force,Callback<Catalog> callback) {
-        enqueue("catalog-"+kind+(force?"-fresh":""),true,callback,auth->{ProviderParser.Bootstrap b=bootstrap(auth,false);return catalogFor(auth,b,kind,force);});
+        enqueue("catalog-"+kind+(force?"-fresh":""),true,callback,auth->{ProviderParser.Bootstrap b=bootstrap(auth,false);library(auth,b,false);return catalogFor(auth,b,kind,force);});
     }
     private Catalog catalogFor(long auth,ProviderParser.Bootstrap b,Kind kind,boolean force) throws Exception {
         long source=guard.generation();active(auth,source,b.scope()); if(kind==null || kind==Kind.EPISODE)throw new ProviderParser.Invalid();
@@ -271,7 +288,7 @@ public final class NetworkTvRepository implements TvRepository {
         return new Item(item.kind,item.id,item.title,item.categoryId,item.categoryName,art,item.extension,item.scope,item.seriesId,item.season,item.episode,item.description);
     }
     @Override public void series(Item series,Callback<SeriesDetail> callback) {
-        enqueue("series-"+(series==null?"":series.id),true,callback,auth->{ProviderParser.Bootstrap b=bootstrap(auth,false);return seriesFor(auth,b,series,false);});
+        enqueue("series-"+(series==null?"":series.id),true,callback,auth->{ProviderParser.Bootstrap b=bootstrap(auth,false);library(auth,b,false);return seriesFor(auth,b,series,false);});
     }
     private Item find(Catalog catalog,String id) {for(Item item:catalog.items)if(item.id.equals(id))return item;return null;}
     private SeriesDetail seriesFor(long auth,ProviderParser.Bootstrap b,Item candidate,boolean force) throws Exception {
@@ -305,7 +322,7 @@ public final class NetworkTvRepository implements TvRepository {
             } else if(candidate.kind!=Kind.SERIES)verified=find(catalogFor(auth,b,candidate.kind,true),candidate.id);
             if(verified==null)throw new ProviderParser.Invalid();long source=guard.generation();active(auth,source,b.scope());
             // Read the current identity's deadline: a metadata refresh can shorten or extend it.
-            ProviderParser.Bootstrap current=guard.current();String url=ProviderParser.mediaUrl(current,verified,System.currentTimeMillis());
+            ProviderParser.Bootstrap current=guard.current();String url=ProviderParser.mediaUrl(current,verified,clock.now());
             String mime="m3u8".equals(verified.extension)?"application/x-mpegURL":"ts".equals(verified.extension)?"video/mp2t":"mkv".equals(verified.extension)?"video/x-matroska":"avi".equals(verified.extension)?"video/x-msvideo":"video/mp4";
             return new Playback(verified,url,mime,current.expiresAtMs,resumePosition(verified),next);
         });
@@ -364,7 +381,7 @@ public final class NetworkTvRepository implements TvRepository {
     @Override public void savePosition(Item item,long positionMs,long durationMs) {
         String key=positionKey(item);if(key.isEmpty() || positionMs<0 || durationMs<=0)return;
         long value=positionMs>=durationMs-15000 || positionMs>=durationMs*.95?0:Math.min(positionMs,durationMs);
-        SharedPreferences.Editor edit=positions.edit(); if(value==0)edit.remove(key).remove(key+".time");else edit.putLong(key,value).putLong(key+".time",System.currentTimeMillis());
+        SharedPreferences.Editor edit=positions.edit(); if(value==0)edit.remove(key).remove(key+".time");else edit.putLong(key,value).putLong(key+".time",clock.now());
         Map<String,?> all=positions.getAll();if(all.size()>4000){String oldest=null;long time=Long.MAX_VALUE;for(Map.Entry<String,?> entry:all.entrySet())if(entry.getKey().endsWith(".time") && entry.getValue() instanceof Long && (Long)entry.getValue()<time){time=(Long)entry.getValue();oldest=entry.getKey().substring(0,entry.getKey().length()-5);}if(oldest!=null)edit.remove(oldest).remove(oldest+".time");}
         edit.apply();
     }
@@ -373,7 +390,7 @@ public final class NetworkTvRepository implements TvRepository {
         HttpURLConnection connection=null;ScheduledFuture<?> deadline=null;
         try {
             URL target=new URL(url);if(!"https".equals(target.getProtocol()) || target.getUserInfo()!=null)throw new ProviderParser.Invalid();
-            connection=(HttpURLConnection)target.openConnection();connection.setInstanceFollowRedirects(false);connection.setConnectTimeout(TIMEOUT_MS);connection.setReadTimeout(TIMEOUT_MS);connection.setUseCaches(false);connection.setRequestMethod(method);
+            connection=connectionFactory.open(target);connection.setInstanceFollowRedirects(false);connection.setConnectTimeout(TIMEOUT_MS);connection.setReadTimeout(TIMEOUT_MS);connection.setUseCaches(false);connection.setRequestMethod(method);
             connection.setRequestProperty("Accept","application/json");connection.setRequestProperty("Cache-Control","no-store");connection.setRequestProperty("Cookie","");connection.setRequestProperty("Referer","");
             if(bearer!=null)connection.setRequestProperty("Authorization","Bearer "+bearer);
             synchronized(lock){checkAuth(auth);connections.add(connection);}
