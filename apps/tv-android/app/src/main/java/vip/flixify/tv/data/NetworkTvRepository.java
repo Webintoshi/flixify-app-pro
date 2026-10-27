@@ -105,11 +105,11 @@ public final class NetworkTvRepository implements TvRepository {
             T result=null; Failure error=null;
             try { checkAuth(operation.auth); result=work.run(operation.auth); checkAuth(operation.auth); }
             catch(Exception e) { error=failure(e); }
-            final T value=result; final Failure issue=error; final String completedScope=currentScope();
+            final T value=result; final Failure issue=error; final String completedScope=currentScope(); final long completedSource=guard.generation();
             main.post(()->{
                 List<Callback<T>> callbacks; synchronized(lock) { if(pending.get(key)==operation) pending.remove(key); callbacks=new ArrayList<>(operation.callbacks); }
                 Failure delivered=issue;
-                synchronized(lock) { if(operation.auth!=authGeneration || (operation.sourceBound && ((!operation.scope.isEmpty() && !operation.scope.equals(currentScope())) || (issue==null && (completedScope.isEmpty() || !completedScope.equals(currentScope())))))) delivered=failure(new Problem(Failure.Code.STALE)); }
+                synchronized(lock) { if(operation.auth!=authGeneration || (operation.sourceBound && ((!operation.scope.isEmpty() && !operation.scope.equals(currentScope())) || (issue==null && !guard.active(completedSource,completedScope,System.currentTimeMillis()))))) delivered=failure(new Problem(Failure.Code.STALE)); }
                 for(Callback<T> cb:callbacks) { if(delivered==null) cb.onResult(value); else cb.onError(delivered); }
             });
         }); } catch(RejectedExecutionException ignored) {
