@@ -32,5 +32,5 @@
 ### Task 3: Verification and delivery
 - [x] Run full instrumentation/unit/lint; fresh independent source review and repairs.
 - [x] Capture actual native screenshots at three sizes using official local sample; inspect player/countdown/panel/browse.
-- [ ] Freeze source, bump code3/version1.2.0-test.1, sign and verify certificate/hash/contents/install compatibility.
+- [x] Freeze source, bump code3/version1.2.0-test.1, sign and verify certificate/hash/contents/install compatibility.
 - [ ] Update APK descriptor and publish existing download route with guarded web-only deployment; verify public APK hash/range/links.
