@@ -74,6 +74,74 @@ public final class PlayerRemoteTest {
     }
     private boolean focused(PlayerActivity activity,String tag) {return activity.hasWindowFocus() && activity.getCurrentFocus()!=null && tag.equals(activity.getCurrentFocus().getTag());}
     private FakeEngine latest() { return engines.get(engines.size()-1); }
+    @Test public void playerUsesCompactIconsWithStableFocusBounds() {
+        repository.initialPlay=false;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            scenario.onActivity(activity -> {
+                View content=activity.findViewById(android.R.id.content);
+                float density=activity.getResources().getDisplayMetrics().density;
+                View chrome=content.findViewWithTag("tv_player_controls");
+                assertTrue("Content-first chrome must stay shallow",chrome.getHeight()<=density*192);
+                for(String tag:Arrays.asList("play","backward","forward","audio","subtitles","next","exit")) {
+                    View icon=content.findViewWithTag("tv_player_"+tag);
+                    assertTrue("Use compact native icon target for "+tag,icon instanceof android.widget.ImageButton);
+                    assertTrue("No weighted screen-wide tile for "+tag,icon.getWidth()<=density*52);
+                    assertNotNull("Accessible action for "+tag,icon.getContentDescription());
+                    Rect before=new Rect(icon.getLeft(),icon.getTop(),icon.getRight(),icon.getBottom());
+                    assertTrue(icon.requestFocus());
+                    assertEquals(before,new Rect(icon.getLeft(),icon.getTop(),icon.getRight(),icon.getBottom()));
+                }
+            });
+        }
+    }
+    @Test public void iconGroupsAreFullyRemoteReachableAndLiveSkipsHiddenTimeline() {
+        repository.initialPlay=false;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            for(String tag:Arrays.asList("backward","forward","exit")) {
+                key(KeyEvent.KEYCODE_DPAD_RIGHT);
+                scenario.onActivity(activity -> assertEquals("tv_player_"+tag,activity.getCurrentFocus().getTag()));
+            }
+            key(KeyEvent.KEYCODE_DPAD_UP);key(KeyEvent.KEYCODE_DPAD_UP);
+            scenario.onActivity(activity -> assertEquals("tv_player_subtitles",activity.getCurrentFocus().getTag()));
+            key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            scenario.onActivity(activity -> assertEquals("tv_player_audio",activity.getCurrentFocus().getTag()));
+            key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            scenario.onActivity(activity -> assertEquals("tv_player_next",activity.getCurrentFocus().getTag()));
+            key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_DOWN);
+            scenario.onActivity(activity -> assertEquals("tv_player_play",activity.getCurrentFocus().getTag()));
+        }
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.live1)) {
+            key(KeyEvent.KEYCODE_DPAD_UP);
+            scenario.onActivity(activity -> {
+                assertEquals("tv_player_subtitles",activity.getCurrentFocus().getTag());
+                assertEquals(View.GONE,activity.findViewById(android.R.id.content).findViewWithTag("tv_player_timeline").getVisibility());
+            });
+            key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            scenario.onActivity(activity -> assertEquals("tv_player_audio",activity.getCurrentFocus().getTag()));
+            key(KeyEvent.KEYCODE_DPAD_DOWN);
+            scenario.onActivity(activity -> assertEquals("tv_player_play",activity.getCurrentFocus().getTag()));
+        }
+    }
+    @Test public void trackPanelRetainsSelectedIndicatorAndBackRestoresIconFocus() {
+        repository.initialPlay=false;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.movie)) {
+            key(KeyEvent.KEYCODE_DPAD_UP);key(KeyEvent.KEYCODE_DPAD_UP);key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            key(KeyEvent.KEYCODE_DPAD_CENTER);awaitDialog("Otomatik, seçili");
+            key(KeyEvent.KEYCODE_DPAD_DOWN);awaitDialog("Otomatik, seçili");
+            key(KeyEvent.KEYCODE_BACK);
+            await(scenario,"Panel Back must restore originating icon",activity -> focused(activity,"tv_player_audio"));
+        }
+    }
+    @Test public void centerOnHiddenPlayerPausesImmediatelyAndRevealsControls() throws Exception {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.movie)) {
+            Thread.sleep(2300);
+            key(KeyEvent.KEYCODE_DPAD_CENTER);
+            scenario.onActivity(activity -> {
+                assertFalse("Remote center must pause in one press",latest().playing());
+                assertEquals(View.VISIBLE,activity.findViewById(android.R.id.content).findViewWithTag("tv_player_controls").getVisibility());
+            });
+        }
+    }
     @Test public void mediaKeysSeekAndStopReleaseVod() {
         try (ActivityScenario<PlayerActivity> scenario = launch(repository.movie)) {
             scenario.onActivity(activity -> assertTrue(activity.findViewById(android.R.id.content).findViewWithTag("tv_player_play").hasFocus()));
@@ -103,14 +171,16 @@ public final class PlayerRemoteTest {
     @Test public void nextEpisodeAndTrackDialogsAreRemoteReachable() {
         try (ActivityScenario<PlayerActivity> scenario = launch(repository.episode)) {
             scenario.onActivity(activity -> assertEquals(View.VISIBLE,activity.findViewById(android.R.id.content).findViewWithTag("tv_player_next").getVisibility()));
-            key(KeyEvent.KEYCODE_DPAD_DOWN);
+            key(KeyEvent.KEYCODE_DPAD_UP); // Thin timeline above transport.
+            key(KeyEvent.KEYCODE_DPAD_UP); // Utility icons above timeline.
+            key(KeyEvent.KEYCODE_DPAD_RIGHT); // Subtitles then audio.
             scenario.onActivity(activity -> assertEquals("tv_player_audio", activity.getCurrentFocus().getTag()));
             key(KeyEvent.KEYCODE_DPAD_CENTER);
             awaitDialog("Otomatik");
             key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_CENTER);
             await(scenario,"Audio choice must apply",activity -> latest().selectedAudio>=0);
             await(scenario,"Audio dialog must restore remote focus",activity -> focused(activity,"tv_player_audio"));
-            key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            key(KeyEvent.KEYCODE_DPAD_LEFT);
             await(scenario,"Subtitles must be remote reachable",activity -> focused(activity,"tv_player_subtitles"));
             key(KeyEvent.KEYCODE_DPAD_CENTER);
             awaitDialog("Kapalı");
@@ -316,6 +386,26 @@ public final class PlayerRemoteTest {
             Thread.sleep(5400);assertEquals(1,repository.playbackCalls);
         }
     }
+    @Test public void endedLiveSourceNeverSeeksThroughReplayControl() {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.live1)) {
+            scenario.onActivity(activity -> {latest().state=PlayerEngine.ENDED;latest().listener.onStateChanged(PlayerEngine.ENDED);});
+            key(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE);
+            scenario.onActivity(activity -> assertEquals("Live has channel navigation, never a VOD replay seek",0,latest().seekCalls));
+        }
+    }
+    @Test public void playAtActualEndReplaysAndCancelsAutomaticSuccessor() {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            ended(scenario);assertCountdown(scenario);
+            scenario.onActivity(activity -> {
+                View play=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_play");
+                assertEquals("Oynat",play.getContentDescription());
+                play.performClick();
+                assertEquals(0,latest().position());assertTrue(latest().playing());
+                assertFalse(activity.findViewById(android.R.id.content).findViewWithTag("tv_player_cancel_next").isShown());
+                assertEquals(1,repository.playbackCalls);
+            });
+        }
+    }
     @Test public void explicitRewindCancelsPendingContinuationForReplay() throws Exception {
         try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
             ended(scenario);assertCountdown(scenario);key(KeyEvent.KEYCODE_MEDIA_REWIND);
@@ -419,13 +509,13 @@ public final class PlayerRemoteTest {
         }
     }
     static final class FakeEngine implements PlayerEngine {
-        final View view; final Listener listener; boolean playing, released,startPaused; long position,duration=300000; int state=READY; int selectedAudio=-1,selectedSubtitle=-1;
+        final View view; final Listener listener; boolean playing, released,startPaused; long position,duration=300000; int state=READY; int seekCalls; int selectedAudio=-1,selectedSubtitle=-1;
         FakeEngine(Context context, Listener listener) { this.view=new View(context); this.listener=listener; }
         public View view() {return view;}
         public void prepare(Playback playback,long start,boolean play) {position=start;playing=play && !startPaused;listener.onStateChanged(state);if(state==READY)listener.onFirstFrame();}
-        public void play() {playing=true;listener.onStateChanged(READY);}
+        public void play() {playing=true;state=READY;listener.onStateChanged(READY);}
         public void pause() {playing=false;listener.onStateChanged(READY);}
-        public void seek(long positionMs) {position=positionMs;}
+        public void seek(long positionMs) {seekCalls++;position=positionMs;}
         public long position() {return position;}
         public long duration() {return duration;}
         public boolean playing() {return playing && state==READY;}

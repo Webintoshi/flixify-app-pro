@@ -1,7 +1,12 @@
 package vip.flixify.tv;
 
 import android.app.Activity;
-import android.app.AlertDialog;
+import android.app.Dialog;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.ClipDrawable;
+import android.graphics.drawable.LayerDrawable;
+import android.widget.ScrollView;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
@@ -45,13 +50,15 @@ public final class PlayerActivity extends Activity {
     private Playback playback;
     private FrameLayout root,video;
     private LinearLayout controls,row,secondary,countdownRow;
+    private TextView focusCaption,remaining;
+    private PlayerIconButton exit;
     private SeekBar timeline;
     private TextView episodeLine,countdownText;
     private final PlaybackWatchdog watchdog=new PlaybackWatchdog();
     private NextEpisodePolicy continuation=new NextEpisodePolicy(false,false);
     private TextView title,position,status;
-    private Button play,backward,forward,audio,subtitles,next;
-    private AlertDialog trackDialog;
+    private PlayerIconButton play,backward,forward,audio,subtitles,next;
+    private Dialog trackDialog;
     private List<Item> liveItems=Collections.emptyList();
     private boolean active,resumed,loading,fatal,admitted,refreshing,watched,desiredPlay=true;
     private int generation,pendingZap;
@@ -257,7 +264,8 @@ public final class PlayerActivity extends Activity {
                 long value=engine.position();
                 boolean stalled=watchdog.stalled(now,value,engine.wantsToPlay(),engine.state(),engine.playing());
                 lastPosition=value;
-                position.setText(item.kind==Kind.LIVE?"CANLI":time(value)+" / "+time(engine.duration()));
+                position.setText(item.kind==Kind.LIVE?"● CANLI":time(value));
+                remaining.setText(item.kind==Kind.LIVE?"":"−"+time(Math.max(0,engine.duration()-value)));
                 if(now-lastSave>=10000) {savePosition();lastSave=now;}
                 updateTimeline();
                 if(stalled)recover();
@@ -337,7 +345,9 @@ public final class PlayerActivity extends Activity {
     private void toggle() {
         if(engine==null || fatal)return;
         if(!policy.allows(System.currentTimeMillis(),repository.currentScope())) {fail(true);return;}
-        if(engine.wantsToPlay())engine.pause();else engine.play();
+        if(engine.state()==PlayerEngine.ENDED && item.kind!=Kind.LIVE) {
+            cancelContinuation(false);engine.seek(0);engine.play();watchdog.interaction(SystemClock.elapsedRealtime());
+        } else if(engine.wantsToPlay())engine.pause();else engine.play();
         desiredPlay=engine.wantsToPlay();
         showControls(false);
         updateButtons();
@@ -359,17 +369,42 @@ public final class PlayerActivity extends Activity {
         List<PlayerEngine.Track> options=new ArrayList<>();
         options.add(new PlayerEngine.Track("",text?"Kapalı":"Otomatik",false));
         options.addAll(engine.tracks(text));
-        String[] labels=new String[options.size()];
         int selected=0;
-        for(int i=0;i<options.size();i++) {labels[i]=options.get(i).label;if(options.get(i).selected)selected=i;}
+        for(int i=0;i<options.size();i++)if(options.get(i).selected)selected=i;
         handler.removeCallbacks(hide);
-        trackDialog=new AlertDialog.Builder(this).setTitle(text?"Altyazı":"Ses dili")
-                .setSingleChoiceItems(labels,selected,(dialog,which)-> {
-                    if(active && !fatal && engine==selectedEngine)selectedEngine.selectTrack(text,options.get(which).id);
-                    dialog.dismiss();
-                }).setNegativeButton("Geri",(dialog,which)->dialog.dismiss()).create();
-        trackDialog.setOnDismissListener(dialog->{trackDialog=null;showControls(false);(text?subtitles:audio).requestFocus();});
-        trackDialog.show();
+        Dialog dialog=new Dialog(this);trackDialog=dialog;
+        LinearLayout panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18),dp(18),dp(18),dp(18));
+        GradientDrawable glass=PlayerIconButton.glass(this,false);glass.setCornerRadius(dp(24));panel.setBackground(glass);
+        TextView heading=label(22,TvUi.WHITE);heading.setText(text?"Altyazı":"Ses dili");heading.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        panel.addView(heading,new LinearLayout.LayoutParams(-1,dp(42)));
+        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(false);
+        LinearLayout choices=new LinearLayout(this);choices.setOrientation(LinearLayout.VERTICAL);
+        List<Button> buttons=new ArrayList<>();
+        for(int i=0;i<options.size();i++) {
+            final int choice=i;
+            Button button=new Button(this);button.setText((i==selected?"✓  ":"")+options.get(i).label);button.setSelected(i==selected);button.setContentDescription(options.get(i).label+(i==selected?", seçili":""));
+            button.setTextColor(TvUi.WHITE);button.setTextSize(16);button.setAllCaps(false);button.setGravity(Gravity.CENTER_VERTICAL);
+            button.setPadding(dp(16),0,dp(16),0);button.setBackground(PlayerIconButton.surface(this,false));
+            button.setFocusable(true);button.setFocusableInTouchMode(true);button.setId(View.generateViewId());
+            button.setOnClickListener(view->{
+                if(active && !fatal && engine==selectedEngine)selectedEngine.selectTrack(text,options.get(choice).id);
+                dialog.dismiss();
+            });
+            choices.addView(button,new LinearLayout.LayoutParams(-1,dp(48)));buttons.add(button);
+        }
+        scroll.addView(choices);int maxHeight=getResources().getDisplayMetrics().heightPixels-dp(170);
+        panel.addView(scroll,new LinearLayout.LayoutParams(-1,Math.min(dp(options.size()*48),Math.max(dp(96),maxHeight))));
+        TextView hint=label(12,TvUi.MUTED);hint.setText("Geri tuşuyla kapat");panel.addView(hint,new LinearLayout.LayoutParams(-1,dp(28)));
+        dialog.setContentView(panel);
+        dialog.setOnDismissListener(value->{trackDialog=null;if(active && !fatal){showControls(false);(text?subtitles:audio).requestFocus();}});
+        dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        dialog.getWindow().setDimAmount(0.18f);
+        dialog.show();
+        dialog.getWindow().setLayout(Math.min(dp(300),getResources().getDisplayMetrics().widthPixels-dp(48)),-2);
+        WindowManager.LayoutParams window=dialog.getWindow().getAttributes();window.gravity=Gravity.RIGHT|Gravity.CENTER_VERTICAL;window.x=dp(32);dialog.getWindow().setAttributes(window);
+        buttons.get(selected).requestFocus();
     }
     private final Runnable hide=()-> {
         if(active && !fatal && engine!=null && engine.playing() && trackDialog==null && !continuation.pending()) {
@@ -391,15 +426,18 @@ public final class PlayerActivity extends Activity {
         boolean available=engine!=null && !fatal;
         boolean live=item!=null && item.kind==Kind.LIVE;
         play.setEnabled(available);
-        play.setText(available && engine.wantsToPlay()?"Duraklat":"Oynat");
-        backward.setText(live?"Önceki kanal":"−10 sn");
-        forward.setText(live?"Sonraki kanal":"+10 sn");
+        boolean pausable=available && engine.wantsToPlay() && engine.state()!=PlayerEngine.ENDED;
+        play.setIcon(pausable?PlayerIconButton.Icon.PAUSE:PlayerIconButton.Icon.PLAY,pausable?"Duraklat":"Oynat");
+        backward.setIcon(live?PlayerIconButton.Icon.PREVIOUS:PlayerIconButton.Icon.BACK,live?"Önceki kanal":"10 saniye geri");
+        forward.setIcon(live?PlayerIconButton.Icon.NEXT:PlayerIconButton.Icon.FORWARD,live?"Sonraki kanal":"10 saniye ileri");
         backward.setEnabled(available);forward.setEnabled(available);
         audio.setEnabled(available);subtitles.setEnabled(available);
         next.setVisibility(!live && validNext()?View.VISIBLE:View.GONE);
         timeline.setVisibility(live?View.GONE:View.VISIBLE);
         timeline.setEnabled(available && !live && engine.duration()>0);
         next.setEnabled(available);
+        updateCountdownFocus();
+        View focused=root.findFocus();if(focused instanceof PlayerIconButton)focusCaption.setText(focused.getContentDescription());
     }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int code=event.getKeyCode();
@@ -428,8 +466,9 @@ public final class PlayerActivity extends Activity {
         }
         boolean dpad=code==KeyEvent.KEYCODE_DPAD_LEFT || code==KeyEvent.KEYCODE_DPAD_RIGHT || code==KeyEvent.KEYCODE_DPAD_UP
                 || code==KeyEvent.KEYCODE_DPAD_DOWN || code==KeyEvent.KEYCODE_DPAD_CENTER || code==KeyEvent.KEYCODE_ENTER;
-        if(dpad) {
+        if(dpad && trackDialog==null) {
             if(controls.getVisibility()!=View.VISIBLE) {
+                if((code==KeyEvent.KEYCODE_DPAD_CENTER || code==KeyEvent.KEYCODE_ENTER) && event.getRepeatCount()==0)toggle();
                 if(code==KeyEvent.KEYCODE_DPAD_LEFT) {if(item.kind==Kind.LIVE)zap(-1);else seek(-10000);}
                 if(code==KeyEvent.KEYCODE_DPAD_RIGHT) {if(item.kind==Kind.LIVE)zap(1);else seek(10000);}
                 showControls(true);
@@ -461,7 +500,7 @@ public final class PlayerActivity extends Activity {
         updateCountdownFocus();
         handler.removeCallbacks(hide);
         showControls(false);
-        controls.findViewWithTag("tv_player_watch_next").requestFocus();
+        countdownRow.findViewWithTag("tv_player_watch_next").requestFocus();
         handler.post(advance);
     }
     private final Runnable advance=new Runnable() {
@@ -485,13 +524,30 @@ public final class PlayerActivity extends Activity {
         if(focusPlay)play.requestFocus();
     }
     private void updateCountdownFocus() {
+        if(exit==null)return;
         View watchNow=countdownRow.findViewWithTag("tv_player_watch_next"),cancel=countdownRow.findViewWithTag("tv_player_cancel_next");
         boolean shown=countdownRow.getVisibility()==View.VISIBLE;
-        int above=shown?watchNow.getId():timeline.getId();
-        play.setNextFocusUpId(above);backward.setNextFocusUpId(above);forward.setNextFocusUpId(above);
-        timeline.setNextFocusDownId(shown?watchNow.getId():play.getId());
-        watchNow.setNextFocusUpId(timeline.getId());cancel.setNextFocusUpId(timeline.getId());
-        watchNow.setNextFocusDownId(play.getId());cancel.setNextFocusDownId(forward.getId());
+        List<View> transport=new ArrayList<>();
+        for(View v:new View[]{play,backward,forward,exit})if(v.getVisibility()==View.VISIBLE && v.isEnabled())transport.add(v);
+        List<View> utility=new ArrayList<>();
+        for(View v:new View[]{subtitles,audio,next})if(v.getVisibility()==View.VISIBLE && v.isEnabled())utility.add(v);
+        int upper=!utility.isEmpty()?utility.get(0).getId():exit.getId();
+        int middle=timeline.getVisibility()==View.VISIBLE && timeline.isEnabled()?timeline.getId():upper;
+        for(int i=0;i<transport.size();i++) {
+            View v=transport.get(i);v.setNextFocusLeftId(transport.get(Math.max(0,i-1)).getId());v.setNextFocusRightId(transport.get(Math.min(transport.size()-1,i+1)).getId());
+            v.setNextFocusUpId(shown?watchNow.getId():middle);v.setNextFocusDownId(v.getId());
+        }
+        for(int i=0;i<utility.size();i++) {
+            View v=utility.get(i);v.setNextFocusLeftId(utility.get(Math.max(0,i-1)).getId());v.setNextFocusRightId(utility.get(Math.min(utility.size()-1,i+1)).getId());
+            v.setNextFocusDownId(timeline.getVisibility()==View.VISIBLE && timeline.isEnabled()?timeline.getId():play.isEnabled()?play.getId():exit.getId());
+            v.setNextFocusUpId(shown?watchNow.getId():v.getId());
+        }
+        timeline.setNextFocusUpId(shown?watchNow.getId():upper);timeline.setNextFocusDownId(play.getId());
+        watchNow.setNextFocusUpId(watchNow.getId());cancel.setNextFocusUpId(cancel.getId());
+        watchNow.setNextFocusRightId(cancel.getId());cancel.setNextFocusLeftId(watchNow.getId());
+        watchNow.setNextFocusDownId(play.getId());cancel.setNextFocusDownId(exit.getId());
+        View focused=root.findFocus();
+        if(focused!=null && (!focused.isShown() || !focused.isEnabled()))(play.isEnabled()?play:exit).requestFocus();
     }
     private void updateEpisodeLine() {
         episodeLine.setText(item.kind==Kind.EPISODE?"Sezon "+item.season+" · Bölüm "+item.episode:item.kind==Kind.LIVE?"CANLI YAYIN":"FİLM");
@@ -509,31 +565,43 @@ public final class PlayerActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         root=new FrameLayout(this) {
             @Override protected void onMeasure(int widthSpec,int heightSpec) {
-                // Insets belong to measurement: changing them after child measurement leaves
-                // the first layout using stale weighted widths and a stale overlay height.
                 if(controls!=null) {
                     int w=View.MeasureSpec.getSize(widthSpec),h=View.MeasureSpec.getSize(heightSpec);
-                    int inset=Math.max(dp(12),Math.min(dp(36),w/25));
-                    int top=dp(h<dp(400)?8:20),bottom=dp(h<dp(400)?12:24);
-                    if(controls.getPaddingLeft()!=inset || controls.getPaddingRight()!=inset
-                            || controls.getPaddingTop()!=top || controls.getPaddingBottom()!=bottom)
-                        controls.setPadding(inset,top,inset,bottom);
+                    int inset=Math.max(dp(16),Math.min(dp(40),w/24));
+                    int top=dp(8),bottom=dp(h<dp(400)?12:20);
+                    if(controls.getPaddingLeft()!=inset || controls.getPaddingBottom()!=bottom)controls.setPadding(inset,top,inset,bottom);
+                    FrameLayout.LayoutParams card=(FrameLayout.LayoutParams)countdownRow.getLayoutParams();
+                    int margin=dp(h<dp(400)?184:192);
+                    if(card.bottomMargin!=margin || card.rightMargin!=inset){card.bottomMargin=margin;card.rightMargin=inset;countdownRow.setLayoutParams(card);}
                 }
                 super.onMeasure(widthSpec,heightSpec);
             }
         };
-        root.setBackgroundColor(0xff07090c);root.setFocusable(true);root.setFocusableInTouchMode(true);
+        root.setBackgroundColor(TvUi.BACKGROUND);root.setFocusable(true);root.setFocusableInTouchMode(true);
         video=new FrameLayout(this);video.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         root.addView(video,new FrameLayout.LayoutParams(-1,-1));
-        status=new TextView(this);status.setTag("tv_player_status");status.setTextColor(0xfff5f6f8);status.setTextSize(22);status.setGravity(Gravity.CENTER);status.setPadding(dp(24),dp(16),dp(24),dp(16));
+        status=new TextView(this);status.setTag("tv_player_status");status.setTextColor(TvUi.WHITE);status.setTextSize(22);status.setGravity(Gravity.CENTER);status.setPadding(dp(24),dp(16),dp(24),dp(16));
         root.addView(status,new FrameLayout.LayoutParams(-1,-1));
-        controls=new LinearLayout(this);controls.setTag("tv_player_controls");controls.setOrientation(LinearLayout.VERTICAL);
-        controls.setBackgroundResource(R.drawable.tv_player_scrim);
-        title=label(24,0xfff5f6f8);title.setTag("tv_player_title");controls.addView(title,new LinearLayout.LayoutParams(-1,dp(32)));
-        episodeLine=label(14,0xffa7b0be);controls.addView(episodeLine,new LinearLayout.LayoutParams(-1,dp(22)));
-        position=label(14,0xffa7b0be);controls.addView(position,new LinearLayout.LayoutParams(-1,dp(22)));
-        timeline=new SeekBar(this);timeline.setTag("tv_player_timeline");timeline.setId(View.generateViewId());timeline.setMax(1000);timeline.setProgressTintList(android.content.res.ColorStateList.valueOf(0xffff3545));
-        timeline.setThumbTintList(android.content.res.ColorStateList.valueOf(0xfff5f6f8));timeline.setFocusable(true);
+        controls=new LinearLayout(this);controls.setTag("tv_player_controls");controls.setOrientation(LinearLayout.VERTICAL);controls.setBackgroundResource(R.drawable.tv_player_scrim);
+        LinearLayout header=controlRow();header.setGravity(Gravity.BOTTOM);
+        LinearLayout titles=new LinearLayout(this);titles.setOrientation(LinearLayout.VERTICAL);
+        episodeLine=label(13,TvUi.WHITE);titles.addView(episodeLine,new LinearLayout.LayoutParams(-1,dp(20)));
+        title=label(28,TvUi.WHITE);title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);title.setTag("tv_player_title");titles.addView(title,new LinearLayout.LayoutParams(-1,dp(42)));
+        header.addView(titles,new LinearLayout.LayoutParams(0,dp(62),1));
+        secondary=controlRow();
+        subtitles=icon(secondary,PlayerIconButton.Icon.SUBTITLES,"Altyazı","subtitles",true,()->tracks(true));
+        audio=icon(secondary,PlayerIconButton.Icon.AUDIO,"Ses dili","audio",true,()->tracks(false));
+        next=icon(secondary,PlayerIconButton.Icon.NEXT,"Sonraki bölüm","next",true,this::next);
+        LinearLayout.LayoutParams tools=new LinearLayout.LayoutParams(-2,dp(48));tools.leftMargin=dp(16);header.addView(secondary,tools);
+        controls.addView(header,new LinearLayout.LayoutParams(-1,dp(64)));
+        timeline=new SeekBar(this,null,0,R.style.TvPlayerTimeline);timeline.setTag("tv_player_timeline");timeline.setContentDescription("Oynatma konumu");timeline.setId(View.generateViewId());timeline.setMax(1000);timeline.setFocusable(true);
+        GradientDrawable track=new GradientDrawable();track.setColor(0x55a7b0be);track.setCornerRadius(dp(2));
+        GradientDrawable progress=new GradientDrawable();progress.setColor(TvUi.WHITE);progress.setCornerRadius(dp(2));
+        ClipDrawable clip=new ClipDrawable(progress,Gravity.LEFT,ClipDrawable.HORIZONTAL);
+        LayerDrawable layers=new LayerDrawable(new android.graphics.drawable.Drawable[]{track,clip});layers.setId(0,android.R.id.background);layers.setId(1,android.R.id.progress);
+        timeline.setProgressDrawable(layers);timeline.setProgressTintList(null);timeline.setProgressBackgroundTintList(null);timeline.setMinimumHeight(0);
+        GradientDrawable thumb=new GradientDrawable();thumb.setShape(GradientDrawable.OVAL);thumb.setColor(TvUi.WHITE);thumb.setSize(dp(7),dp(7));timeline.setThumb(thumb);timeline.setThumbTintList(null);timeline.setSplitTrack(false);timeline.setPadding(0,0,0,0);
+        timeline.setOnFocusChangeListener((v,focused)->{thumb.setColor(focused?TvUi.ACCENT:TvUi.WHITE);if(focused){focusCaption.setText("İleri / geri sar");scheduleHide();}});
         timeline.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             public void onStartTrackingTouch(SeekBar bar) {handler.removeCallbacks(hide);}
             public void onStopTrackingTouch(SeekBar bar) {scheduleHide();}
@@ -545,39 +613,43 @@ public final class PlayerActivity extends Activity {
                 }
             }
         });
-        controls.addView(timeline,new LinearLayout.LayoutParams(-1,dp(28)));
-        row=controlRow();secondary=controlRow();countdownRow=controlRow();countdownRow.setVisibility(View.GONE);
-        countdownText=label(15,0xfff5f6f8);countdownRow.addView(countdownText,new LinearLayout.LayoutParams(0,dp(42),1.4f));
-        button(countdownRow,"Şimdi izle","watch_next",this::watchNextNow);
-        button(countdownRow,"İptal","cancel_next",this::cancelContinuation);
-        play=button(row,"Oynat","play",this::toggle);
-        backward=button(row,"−10 sn","backward",()->{if(item!=null && item.kind==Kind.LIVE)zap(-1);else seek(-10000);});
-        forward=button(row,"+10 sn","forward",()->{if(item!=null && item.kind==Kind.LIVE)zap(1);else seek(10000);});
-        audio=button(secondary,"Ses","audio",()->tracks(false));
-        subtitles=button(secondary,"Altyazı","subtitles",()->tracks(true));
-        next=button(secondary,"Sonraki bölüm","next",this::next);
-        Button exit=button(secondary,"Çıkış","exit",this::finish);
-        play.setNextFocusDownId(audio.getId());backward.setNextFocusDownId(subtitles.getId());forward.setNextFocusDownId(next.getId());
-        audio.setNextFocusUpId(play.getId());subtitles.setNextFocusUpId(backward.getId());next.setNextFocusUpId(forward.getId());exit.setNextFocusUpId(forward.getId());
-        controls.addView(countdownRow,new LinearLayout.LayoutParams(-1,-2));
-        controls.addView(row,new LinearLayout.LayoutParams(-1,-2));
-        LinearLayout.LayoutParams secondaryLayout=new LinearLayout.LayoutParams(-1,-2);secondaryLayout.topMargin=dp(5);controls.addView(secondary,secondaryLayout);
+        controls.addView(timeline,new LinearLayout.LayoutParams(-1,dp(22)));
+        LinearLayout times=controlRow();position=label(12,TvUi.WHITE);remaining=label(12,TvUi.WHITE);remaining.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+        times.addView(position,new LinearLayout.LayoutParams(0,dp(18),1));times.addView(remaining,new LinearLayout.LayoutParams(-2,dp(18)));controls.addView(times,new LinearLayout.LayoutParams(-1,dp(18)));
+        LinearLayout bottom=controlRow();row=controlRow();row.setBackground(PlayerIconButton.glass(this,false));row.setPadding(dp(3),0,dp(3),0);
+        play=icon(row,PlayerIconButton.Icon.PLAY,"Oynat","play",false,this::toggle);
+        backward=icon(row,PlayerIconButton.Icon.BACK,"10 saniye geri","backward",false,()->{if(item!=null && item.kind==Kind.LIVE)zap(-1);else seek(-10000);});
+        forward=icon(row,PlayerIconButton.Icon.FORWARD,"10 saniye ileri","forward",false,()->{if(item!=null && item.kind==Kind.LIVE)zap(1);else seek(10000);});
+        bottom.addView(row,new LinearLayout.LayoutParams(-2,dp(44)));
+        focusCaption=label(12,TvUi.WHITE);focusCaption.setTag("tv_player_focus_caption");focusCaption.setPadding(dp(16),0,dp(8),0);bottom.addView(focusCaption,new LinearLayout.LayoutParams(0,dp(44),1));
+        exit=icon(bottom,PlayerIconButton.Icon.EXIT,"Geri dön","exit",true,this::finish);
+        LinearLayout.LayoutParams bottomLayout=new LinearLayout.LayoutParams(-1,dp(44));bottomLayout.topMargin=dp(6);controls.addView(bottom,bottomLayout);
         root.addView(controls,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
-        updateCountdownFocus();
-        setContentView(root);play.requestFocus();
+        countdownRow=new LinearLayout(this);countdownRow.setTag("tv_player_countdown");countdownRow.setOrientation(LinearLayout.VERTICAL);countdownRow.setVisibility(View.GONE);countdownRow.setPadding(dp(16),dp(12),dp(12),dp(10));
+        GradientDrawable card=PlayerIconButton.glass(this,false);card.setCornerRadius(dp(20));countdownRow.setBackground(card);
+        countdownText=label(15,TvUi.WHITE);countdownText.setTypeface(Typeface.DEFAULT,Typeface.BOLD);countdownRow.addView(countdownText,new LinearLayout.LayoutParams(-1,dp(28)));
+        LinearLayout countdownActions=controlRow();button(countdownActions,"Şimdi izle","watch_next",this::watchNextNow);button(countdownActions,"İptal","cancel_next",this::cancelContinuation);countdownRow.addView(countdownActions);
+        root.addView(countdownRow,new FrameLayout.LayoutParams(dp(280),-2,Gravity.BOTTOM|Gravity.RIGHT));
+        setContentView(root);updateCountdownFocus();play.requestFocus();
+    }
+    private PlayerIconButton icon(LinearLayout parent,PlayerIconButton.Icon glyph,String description,String tag,boolean glass,Runnable action) {
+        PlayerIconButton button=new PlayerIconButton(this,glyph,description,glass);button.setId(View.generateViewId());button.setTag("tv_player_"+tag);
+        button.setOnClickListener(view->{action.run();scheduleHide();});
+        button.setOnFocusChangeListener((view,focused)->{if(focused && focusCaption!=null){focusCaption.setText(view.getContentDescription());scheduleHide();}});
+        LinearLayout.LayoutParams layout=new LinearLayout.LayoutParams(dp(44),dp(44));layout.setMargins(dp(3),0,dp(3),0);parent.addView(button,layout);return button;
     }
     private TextView label(int size,int color) {
         TextView view=new TextView(this);view.setTextColor(color);view.setTextSize(size);view.setMaxLines(1);view.setEllipsize(TextUtils.TruncateAt.END);view.setGravity(Gravity.CENTER_VERTICAL);
-        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(view,12,size,1,android.util.TypedValue.COMPLEX_UNIT_SP);return view;
+        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(view,Math.min(10,size-1),size,1,android.util.TypedValue.COMPLEX_UNIT_SP);return view;
     }
     private LinearLayout controlRow() {LinearLayout value=new LinearLayout(this);value.setOrientation(LinearLayout.HORIZONTAL);value.setGravity(Gravity.CENTER_VERTICAL);return value;}
     private Button button(LinearLayout parent,String text,String tag,Runnable action) {
         Button button=new Button(this);button.setId(View.generateViewId());button.setTag("tv_player_"+tag);button.setText(text);button.setTextColor(0xfff5f6f8);button.setTextSize(16);button.setAllCaps(false);button.setSingleLine(true);button.setEllipsize(TextUtils.TruncateAt.END);
         TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(button,12,16,1,android.util.TypedValue.COMPLEX_UNIT_SP);
         button.setMinWidth(0);button.setMinimumWidth(0);button.setMinHeight(0);button.setMinimumHeight(0);button.setPadding(dp(6),dp(4),dp(6),dp(4));
-        button.setBackgroundResource(R.drawable.tv_player_focus);button.setFocusable(true);button.setFocusableInTouchMode(true);
+        button.setBackground(PlayerIconButton.surface(this,true));button.setFocusable(true);button.setFocusableInTouchMode(true);
         button.setOnClickListener(view->{action.run();scheduleHide();});
-        button.setOnFocusChangeListener((view,focused)->{if(focused)scheduleHide();});
+        button.setOnFocusChangeListener((view,focused)->{if(focused){focusCaption.setText("");scheduleHide();}});
         LinearLayout.LayoutParams layout=new LinearLayout.LayoutParams(0,dp(42),1);layout.setMargins(dp(2),0,dp(2),0);parent.addView(button,layout);return button;
     }
     private int dp(int value) {return Math.round(value*getResources().getDisplayMetrics().density);}

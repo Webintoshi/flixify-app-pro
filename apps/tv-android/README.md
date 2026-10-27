@@ -1,6 +1,6 @@
 # Flixify Android TV
 
-Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; test version `1.1.0-test.1`, code2. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
+Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; test version `1.2.0-test.1`, code3. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
 
 ## Build
 
@@ -27,7 +27,7 @@ The connected tests require an Android TV emulator. Repository fixtures use no r
 - Native TV keyboard enters the existing16-character account code and search. No signup or purchase is performed on TV.
 - Live TV, movies, series/seasons/episodes, favorites, account and search use native controls.
 - Cinematic artwork-led home/details and virtualized cards adapt to measured usable width and height; rail, forms, account and series content scroll when needed. Focus is restored after resize.
-- Player: real remote seek timeline, transport and secondary action rows, media keys, live channel switching, audio/subtitles and next episode. Controls hide after2seconds while playing and return on remote input.
+- Player: Apple TV reference bottom title/tools, compact circular icons, thin remote seek timeline, translucent track panel with active selection, media keys, live channel switching and next episode. Hidden-player OK toggles playback; up/down reveals controls. Controls hide after2seconds while playing and remain during pause, track selection or continuation. VOD play at actual end explicitly replays; live sources never seek.
 - An episode's actual end starts a cancellable5second next-episode countdown, including the next available season. Back, replay/seek and leaving the foreground cancel it for that selected episode. The final episode does not start another stream.
 - Stopping/leaving playback releases its decoder/connection; resume is local to the current account/source.
 

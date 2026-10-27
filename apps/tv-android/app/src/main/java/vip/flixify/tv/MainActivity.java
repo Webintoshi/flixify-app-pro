@@ -232,7 +232,8 @@ public final class MainActivity extends Activity {
         ImageView logo=new ImageView(this);logo.setImageResource(R.drawable.flixify_logo);logo.setScaleType(ImageView.ScaleType.FIT_CENTER);logo.setContentDescription("Flixify");navigation.addView(logo,TvUi.space(this,-1,sizing.shortScreen?36:52));
         rail=new Button[NAV.length];
         for(int n=0;n<NAV.length;n++) {
-            final Section target=Section.values()[n];Button b=TvUi.button(this,NAV[n],()->navigate(target));b.setBackground(TvUi.railBackground(this));b.setTextSize(sizing.compact?14:15);b.setPadding(TvUi.dp(this,12),0,TvUi.dp(this,10),0);
+            final Section target=Section.values()[n];Button b=TvUi.button(this,NAV[n],()->navigate(target));b.setBackground(TvUi.railBackground(this));b.setTextSize(sizing.compact?14:15);b.setPadding(TvUi.dp(this,10),0,TvUi.dp(this,8),0);
+            b.setCompoundDrawablesWithIntrinsicBounds(TvUi.railIcon(this,n,sizing.compact?16:19),null,null,null);b.setCompoundDrawablePadding(TvUi.dp(this,6));
             b.setGravity(Gravity.CENTER_VERTICAL|Gravity.START);b.setSelected(target==page.section);b.setSingleLine(true);
             markFocus(b,"rail:"+n);navigation.addView(b,TvUi.space(this,-1,44));rail[n]=b;
         }
@@ -268,10 +269,10 @@ public final class MainActivity extends Activity {
     private void renderCatalog(boolean contentFocus) {
         if(page.section==Section.HOME && sizing.hero>0 && !page.catalog.items.isEmpty())addHomeHero(page.catalog.items.get(0));
         LinearLayout controls=TvUi.row(this);body.addView(controls,TvUi.space(this,-1,50));
-        Button search=TvUi.button(this,"Ara",this::search);markFocus(search,"catalog:search");controls.addView(search,TvUi.space(this,sizing.compact?66:78,42));
-        Button category=TvUi.button(this,"Kategori: "+page.categoryTitle,this::categories);markFocus(category,"catalog:category");category.setSingleLine(true);category.setEllipsize(TextUtils.TruncateAt.END);
+        Button search=TvUi.button(this,"Ara",this::search);search.setBackground(TvUi.utilityBackground(this));markFocus(search,"catalog:search");controls.addView(search,TvUi.space(this,sizing.compact?66:78,42));
+        Button category=TvUi.button(this,"Kategori: "+page.categoryTitle,this::categories);category.setBackground(TvUi.utilityBackground(this));markFocus(category,"catalog:category");category.setSingleLine(true);category.setEllipsize(TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams categorySpace=TvUi.space(this,0,42);categorySpace.weight=1;controls.addView(category,categorySpace);
-        Button refresh=TvUi.button(this,"Yenile",()->showPage(true,true));markFocus(refresh,"catalog:refresh");controls.addView(refresh,TvUi.space(this,sizing.compact?78:92,42));
+        Button refresh=TvUi.button(this,"Yenile",()->showPage(true,true));refresh.setBackground(TvUi.utilityBackground(this));markFocus(refresh,"catalog:refresh");controls.addView(refresh,TvUi.space(this,sizing.compact?78:92,42));
         linkContent(search); search.setNextFocusRightId(category.getId()); category.setNextFocusLeftId(search.getId()); category.setNextFocusRightId(refresh.getId()); refresh.setNextFocusLeftId(category.getId());
         List<Item> filtered=new ArrayList<>(); String query=page.query.toLowerCase(Locale.forLanguageTag("tr-TR"));
         for(Item item:page.catalog.items)if((page.category.isEmpty() || page.category.equals(item.categoryId)) && item.title.toLowerCase(Locale.forLanguageTag("tr-TR")).contains(query))filtered.add(item);
@@ -293,14 +294,15 @@ public final class MainActivity extends Activity {
         restoreResizeFocus(true);
     }
     private void addHomeHero(Item item) {
-        FrameLayout hero=new FrameLayout(this);hero.setTag("tv-home-hero");hero.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{TvUi.PANEL,TvUi.BACKGROUND,TvUi.PANEL}));hero.setClipToOutline(true);hero.setContentDescription(item.title);
+        FrameLayout hero=new FrameLayout(this);hero.setTag("tv-home-hero");hero.setBackground(TvUi.rounded(this,TvUi.PANEL,0,16,1));hero.setClipToOutline(true);hero.setContentDescription(item.title);
         body.addView(hero,TvUi.space(this,-1,sizing.hero));
         ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);hero.addView(image,new FrameLayout.LayoutParams(-1,-1));loadArtwork(image,item.artwork);
-        View shade=new View(this);shade.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,new int[]{TvUi.BACKGROUND,0xdd07090c,0x3307090c}));hero.addView(shade,new FrameLayout.LayoutParams(-1,-1));
-        LinearLayout story=TvUi.column(this);story.setGravity(Gravity.CENTER_VERTICAL);story.setPadding(TvUi.dp(this,22),TvUi.dp(this,12),TvUi.dp(this,22),TvUi.dp(this,12));hero.addView(story,new FrameLayout.LayoutParams(-1,-1));
-        TextView eyebrow=TvUi.text(this,item.categoryName.isEmpty()?"FLIXIFY":item.categoryName.toUpperCase(Locale.forLanguageTag("tr-TR")),12,TvUi.ACCENT);eyebrow.setSingleLine(true);story.addView(eyebrow,new LinearLayout.LayoutParams(-1,-2));
-        TextView title=TvUi.text(this,item.title,30,TvUi.WHITE);TvUi.heading(title);title.setMaxLines(2);title.setEllipsize(TextUtils.TruncateAt.END);story.addView(title,new LinearLayout.LayoutParams(-1,-2));
-        if(!item.description.isEmpty()){TextView description=TvUi.text(this,item.description,14,TvUi.MUTED);description.setMaxLines(2);description.setEllipsize(TextUtils.TruncateAt.END);story.addView(description,new LinearLayout.LayoutParams(-1,-2));}
+        View shade=new View(this);shade.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,new int[]{TvUi.BACKGROUND,TvUi.alpha(TvUi.BACKGROUND,210),TvUi.alpha(TvUi.BACKGROUND,16)}));hero.addView(shade,new FrameLayout.LayoutParams(-1,-1));
+        LinearLayout story=TvUi.column(this);story.setGravity(Gravity.CENTER_VERTICAL);story.setPadding(TvUi.dp(this,22),TvUi.dp(this,12),TvUi.dp(this,12),TvUi.dp(this,12));
+        int storyWidth=Math.round((sizing.contentWidth()-8)*(sizing.compact?0.76f:0.64f));hero.addView(story,new FrameLayout.LayoutParams(TvUi.dp(this,storyWidth),-1,Gravity.START));
+        TextView eyebrow=TvUi.text(this,item.categoryName.isEmpty()?"FLIXIFY":item.categoryName.toUpperCase(Locale.forLanguageTag("tr-TR")),12,TvUi.ACCENT);eyebrow.setSingleLine(true);eyebrow.setEllipsize(TextUtils.TruncateAt.END);story.addView(eyebrow,new LinearLayout.LayoutParams(-1,-2));
+        TextView title=TvUi.text(this,item.title,sizing.compact?26:32,TvUi.WHITE);TvUi.heading(title);title.setMaxLines(2);title.setEllipsize(TextUtils.TruncateAt.END);story.addView(title,new LinearLayout.LayoutParams(-1,-2));
+        if(!item.description.isEmpty()){TextView description=TvUi.text(this,item.description,14,TvUi.MUTED);description.setMaxLines(1);description.setEllipsize(TextUtils.TruncateAt.END);LinearLayout.LayoutParams descriptionSpace=new LinearLayout.LayoutParams(-1,-2);descriptionSpace.topMargin=TvUi.dp(this,6);story.addView(description,descriptionSpace);}
     }
     private final class PosterAdapter extends RecyclerView.Adapter<PosterHolder> {
         private final List<Item> items; private final int toolbar,columns;
@@ -308,19 +310,20 @@ public final class MainActivity extends Activity {
         @Override public long getItemId(int p) { return p; }
         @Override public int getItemCount() { return items.size(); }
         @Override public PosterHolder onCreateViewHolder(ViewGroup parent,int type) {
-            LinearLayout card=TvUi.column(MainActivity.this); card.setId(View.generateViewId()); card.setFocusable(true); card.setFocusableInTouchMode(true); card.setBackground(TvUi.focusBackground(MainActivity.this)); card.setPadding(TvUi.dp(MainActivity.this,5),TvUi.dp(MainActivity.this,5),TvUi.dp(MainActivity.this,5),TvUi.dp(MainActivity.this,5));
+            LinearLayout card=TvUi.column(MainActivity.this); card.setId(View.generateViewId()); card.setFocusable(true); card.setFocusableInTouchMode(true); card.setBackground(TvUi.artworkBackground(MainActivity.this)); card.setPadding(TvUi.dp(MainActivity.this,3),TvUi.dp(MainActivity.this,3),TvUi.dp(MainActivity.this,3),TvUi.dp(MainActivity.this,2));
             RecyclerView.LayoutParams p=new RecyclerView.LayoutParams(-1,TvUi.dp(MainActivity.this,sizing.cardHeight(page.section==Section.HOME))); p.setMargins(TvUi.dp(MainActivity.this,4),TvUi.dp(MainActivity.this,4),TvUi.dp(MainActivity.this,4),TvUi.dp(MainActivity.this,4)); card.setLayoutParams(p);
-            ImageView image=new ImageView(MainActivity.this); image.setScaleType(ImageView.ScaleType.CENTER_CROP); image.setBackground(TvUi.shape(MainActivity.this,0xff202733,0)); card.addView(image,new LinearLayout.LayoutParams(-1,0,1));
-            TextView title=TvUi.text(MainActivity.this,"",16,TvUi.WHITE); title.setMaxLines(2); title.setEllipsize(TextUtils.TruncateAt.END); title.setPadding(TvUi.dp(MainActivity.this,5),TvUi.dp(MainActivity.this,5),TvUi.dp(MainActivity.this,5),0); card.addView(title,new LinearLayout.LayoutParams(-1,TvUi.dp(MainActivity.this,sizing.shortScreen?42:50)));
+            ImageView image=new ImageView(MainActivity.this); image.setScaleType(ImageView.ScaleType.CENTER_CROP); image.setBackground(TvUi.rounded(MainActivity.this,TvUi.PANEL,0,10,1));image.setClipToOutline(true);card.addView(image,new LinearLayout.LayoutParams(-1,0,1));
+            TextView title=TvUi.text(MainActivity.this,"",15,TvUi.WHITE); title.setMaxLines(2); title.setEllipsize(TextUtils.TruncateAt.END); title.setPadding(TvUi.dp(MainActivity.this,4),TvUi.dp(MainActivity.this,5),TvUi.dp(MainActivity.this,4),0); card.addView(title,new LinearLayout.LayoutParams(-1,TvUi.dp(MainActivity.this,sizing.shortScreen?42:50)));
             return new PosterHolder(card,image,title);
         }
         @Override public void onBindViewHolder(PosterHolder holder,int position) {
             Item item=items.get(position); holder.title.setText(item.title); holder.itemView.setTag(item.key()); holder.itemView.setContentDescription(item.title);
             holder.itemView.setNextFocusLeftId(position%columns==0?rail[page.section.ordinal()].getId():View.NO_ID); holder.itemView.setNextFocusUpId(position<columns?toolbar:View.NO_ID);
-            holder.itemView.setOnFocusChangeListener((v,focus)->{if(focus){page.focusKey=item.key();int positionNow=holder.getBindingAdapterPosition();if(grid!=null && positionNow!=RecyclerView.NO_POSITION)grid.scrollToPosition(positionNow);}});
+            holder.itemView.setElevation(TvUi.dp(MainActivity.this,holder.itemView.hasFocus()?8:0));
+            holder.itemView.setOnFocusChangeListener((v,focus)->{v.setElevation(TvUi.dp(MainActivity.this,focus?8:0));if(focus){page.focusKey=item.key();int positionNow=holder.getBindingAdapterPosition();if(grid!=null && positionNow!=RecyclerView.NO_POSITION)grid.scrollToPosition(positionNow);}});
             holder.itemView.setOnClickListener(v->{captureGrid();showDetail(item,true);}); loadArtwork(holder.image,item.artwork);
         }
-        @Override public void onViewRecycled(PosterHolder holder) { artwork.unbind(holder.image); holder.itemView.setOnFocusChangeListener(null); }
+        @Override public void onViewRecycled(PosterHolder holder) { artwork.unbind(holder.image); holder.itemView.setOnFocusChangeListener(null);holder.itemView.setElevation(0); }
     }
     private static final class PosterHolder extends RecyclerView.ViewHolder {
         final ImageView image; final TextView title;
@@ -374,9 +377,9 @@ public final class MainActivity extends Activity {
         restoreResizeFocus(true);
     }
     private View storyPanel(Item item) {
-        LinearLayout panel=TvUi.row(this);panel.setTag("tv-detail-artwork");panel.setGravity(Gravity.TOP);panel.setBackground(TvUi.shape(this,TvUi.PANEL,0));panel.setPadding(TvUi.dp(this,12),TvUi.dp(this,12),TvUi.dp(this,12),TvUi.dp(this,12));
+        LinearLayout panel=TvUi.row(this);panel.setTag("tv-detail-artwork");panel.setGravity(Gravity.TOP);panel.setPadding(TvUi.dp(this,4),TvUi.dp(this,10),TvUi.dp(this,4),TvUi.dp(this,10));
         int artWidth=sizing.shortScreen?72:sizing.compact?104:132;
-        ImageView poster=new ImageView(this);poster.setBackground(TvUi.shape(this,TvUi.BACKGROUND,0));poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        ImageView poster=new ImageView(this);poster.setBackground(TvUi.rounded(this,TvUi.PANEL,0,12,1));poster.setClipToOutline(true);poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
         panel.addView(poster,new LinearLayout.LayoutParams(TvUi.dp(this,artWidth),TvUi.dp(this,artWidth*3/2)));loadArtwork(poster,item.artwork);
         LinearLayout info=TvUi.column(this);info.setPadding(TvUi.dp(this,16),0,0,0);panel.addView(info,new LinearLayout.LayoutParams(0,-2,1));
         TextView category=TvUi.text(this,item.categoryName.isEmpty()?(item.kind==Kind.LIVE?"CANLI YAYIN":item.kind==Kind.SERIES?"DİZİ":"FİLM"):item.categoryName,12,TvUi.ACCENT);category.setMaxLines(1);category.setEllipsize(TextUtils.TruncateAt.END);info.addView(category,new LinearLayout.LayoutParams(-1,-2));

@@ -163,8 +163,9 @@ public class MainRemoteTest {
         launch(true); down(2); click(); key(KeyEvent.KEYCODE_DPAD_RIGHT); focused("Ara"); click();
         // Dialog attachment/window focus is asynchronous; send one real OK only after its editor owns focus.
         waitForFocusedDialogEditor();key(KeyEvent.KEYCODE_DPAD_CENTER); waitForIme(true); enterNativeDialog("Deniz");
-        key(KeyEvent.KEYCODE_BACK); waitForIme(false); down(1); click();
-        visible("Sessiz Deniz"); absent("Uzay Yolculuğu");
+        key(KeyEvent.KEYCODE_BACK); waitForIme(false); waitForFocusedDialogEditor();
+        down(1); waitForFocusedDialogControl("Ara"); click();
+        visible("Arama: Deniz · 1 sonuç"); visible("Sessiz Deniz"); absent("Uzay Yolculuğu");
         key(KeyEvent.KEYCODE_BACK); visible("Uzay Yolculuğu");
     }
     @Test public void remoteCategoryNarrowsGridAndBackRestoresAllItems() {
