@@ -40,6 +40,19 @@ class TvApkGuards(unittest.TestCase):
   self.assertIn('COPY '+tv.APK+' /app/'+tv.APK,value)
   self.assertIn(tv.SOURCE_TAG,value);self.assertIn('build_cgroup_limit_exceeds_cap',value)
   self.assertIn('next_config_restore_failed',value);self.assertEqual(value.count('RUN node -e '),1)
+ def test_container_compile_caps_restores_command_and_removes_only_owned_container(self):
+  self.command.side_effect=lambda *args,**kwargs:b'0\n' if args[:3]==('docker','inspect','--format') else b'ok'
+  base={'Config':{'Cmd':['npm','run','start','-w','@flixify/ops-web'],'Volumes':None}}
+  tv.container_compile(self.rev,base,{tv.APK:self.value},{'NEXT_PUBLIC_API_BASE_URL':'https://api.test'})
+  calls=[call.args for call in self.command.call_args_list]
+  create=next(x for x in calls if x[:2]==('docker','create'))
+  self.assertIn('--network',create);self.assertIn('none',create);self.assertIn('1280m',create);self.assertIn('1536m',create);self.assertIn(tv.SOURCE_ID,create)
+  commit=next(x for x in calls if x[:2]==('docker','commit'));self.assertIn('CMD ["npm", "run", "start", "-w", "@flixify/ops-web"]',commit)
+  self.assertEqual(calls[-1][:3],('docker','rm','--force'));self.assertTrue(calls[-1][3].startswith('flixify-tv-web-build-'))
+ def test_container_compile_rejects_volumes_before_mutation(self):
+  with self.assertRaisesRegex(tv.GateError,'base_config_unsupported'):
+   tv.container_compile(self.rev,{'Config':{'Cmd':['node'],'Volumes':{'/app':{}}}},{},{})
+  self.command.assert_not_called()
  def test_runtime_manifest_is_six_paths_with_one_new_path(self):
   self.assertEqual(len(tv.PATHS),6);self.assertEqual(tv.NEW_PATHS,('apps/ops-web/app/platform/tv-download.ts',))
   self.assertEqual(tv.builder.SOURCE_ID,tv.SOURCE_ID)

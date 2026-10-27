@@ -23,3 +23,12 @@ Parentsonkomut: testDebugUnitTest +connectedDebugAndroidTest +lintRelease.33/33e
 ## Yayın ön koşulu
 
 YeniAPKyalnızversionedpublic/downloadsyoluve6webdosyasıoverlay. Kaynakweb44bd380/ad05c921,korunanworker539e01c/d5b9,API8cdbf9,gerçekDB721873.27Ekimsonsunucuokumasındadörthizmetrunning/0restart;disk9.83GiB. Coolifyoturumuetkin. API/bot/worker/Edge/DNS/sağlayıcı/askıdakisunucudeğiştirilmez. Sabitkaynak/byteshash/8GiBdisk/gerçekcgroupsınırlarıvefinalHTTP/MIME/range/digestgatesdağıtımöncesigereklidir.
+
+
+## Final APK ve kaynak
+
+- Android kaynak dondurma:041a8f85da4b47ddc0ce0200271d696b66cb5a87. Bu commit sonrasında assembleRelease37sn başarıyla bitti; uygulama Java/resources değişmedi.
+- Versioned artifact: `/downloads/flixify-tv-1.0.0-test.1.apk`,1.266.867bayt, SHA256 `86d32ee772049a608ca5cd6b55632199766f61f5ca0e09cf298cdcf19dabb927`.
+- OptimizeDEX içinde setRepositoryForTests/setEngineFactoryForTests/FakeTvRepository/NetworkTvRepositoryTest adları yok; nativeABI lib/ ve testMP4 yok. Final imza/kurulum/yayınkabulü aşağıda kaydedilecek.
+- Final Task2 dalgası iki inceleme bulgusunu kapattı; iki gerçekREDregresyon ardından33/33instrumentation,16/16JUnitve lintRelease0error doğrulandı. Task1/2/3 ve broadcode/Task4 bağımsız onaylı.
+- Ruling: sunucuda boş9,83GiB ve kaynakwebimaj13,91GiB; klasikBuildKit öncekiyayında~11,4GiBkopyaönbellek oluşturmuştu. Opsiyonelcontainer-build aynıimmutablekaynağıDocker'ınvarolan katmanlarıyla kullanır,network-none ve1280/1536MiBcgroupsınırında yalnız geçiciyapıkonteynerinde derler; özgünCmd/labelsrestored,sonadayconfig/ancestry/source/APKbytesveHTTPgatesaynenzorunlu. Böylece büyükkaynakönbelleğidublikatıyazılmaz ve diğeruygulamalara/önbelleklere dokunulmaz.11çevrimdışıguardtestibaşarılı; operasyoneldeltaincelemevekonteynergerçekkabulpending.

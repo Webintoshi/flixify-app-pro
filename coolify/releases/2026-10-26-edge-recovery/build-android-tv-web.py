@@ -50,27 +50,56 @@ def verify_download(candidate_id,sha256,size):
         if image!=candidate_id:raise GateError('apk_check_container_drift')
         command('docker','stop','-t','10',name)
 
+def container_compile(revision,base,updated,web_env):
+    """Compile in an isolated disposable overlay; avoid reimporting a14GiB base into BuildKit."""
+    config=base.get('Config') or {}
+    if not config.get('Cmd') or config.get('Volumes'):
+        raise GateError('container_compile_base_config_unsupported')
+    name='flixify-tv-web-build-'+uuid.uuid4().hex[:12]
+    args=['docker','create','--name',name,'--network','none','--memory',f'{builder.RUN_MEMORY_MIB}m','--memory-swap',f'{builder.RUN_TOTAL_MEMORY_MIB}m','--pids-limit','256']
+    for key,value in web_env.items():args+=['--env',key+'='+value]
+    args += [SOURCE_ID,'node','-e',builder.build_script()]
+    created=False
+    try:
+        command(*args);created=True
+        with tempfile.TemporaryDirectory(prefix='flixify-tv-overlay-') as directory:
+            for index,(path,value) in enumerate(updated.items()):
+                file=Path(directory)/str(index);file.write_bytes(value)
+                command('docker','cp',str(file),name+':/app/'+path)
+        command('docker','start','--attach',name,timeout=1200)
+        status=command('docker','inspect','--format','{{.State.ExitCode}}',name).decode().strip()
+        if status!='0':raise GateError('container_web_compile_failed')
+        command('docker','commit','--change','CMD '+json.dumps(config['Cmd']),
+                '--change','LABEL org.opencontainers.image.revision='+revision,
+                '--change','LABEL vip.flixify.edge-recovery.base='+SOURCE_ID,name,builder.target(revision),timeout=300)
+    finally:
+        if created:command('docker','rm','--force',name)
+    print('container_compile_passed; actual_cgroup_bounded; network_disabled; own_container_removed')
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source_repo',type=Path);parser.add_argument('--revision',required=True)
     parser.add_argument('--apk-sha256',required=True);parser.add_argument('--apk-bytes',required=True,type=int)
-    action=parser.add_mutually_exclusive_group();action.add_argument('--build',action='store_true');action.add_argument('--verify-existing',action='store_true')
+    action=parser.add_mutually_exclusive_group();action.add_argument('--build',action='store_true');action.add_argument('--container-build',action='store_true');action.add_argument('--verify-existing',action='store_true')
     args=parser.parse_args()
     base,updated,web_env,config=builder.preflight(args.source_repo,args.revision)
     updated[APK]=validate_apk(args.source_repo,args.revision,args.apk_sha256,args.apk_bytes)
-    if not(args.build or args.verify_existing):print('tv_apk_web_preflight_ok; no_mutation');return
-    if args.build:
+    if not(args.build or args.container_build or args.verify_existing):print('tv_apk_web_preflight_ok; no_mutation');return
+    if args.build or args.container_build:
         if shutil.disk_usage('/var/lib/docker').free<builder.MIN_FREE_BYTES:raise GateError('insufficient_disk_web_build_requires_8GiB')
         tags=command('docker','image','ls','--format','{{.Repository}}:{{.Tag}}',builder.target(args.revision)).decode().splitlines()
         if builder.target(args.revision) in tags:raise GateError('candidate_tag_already_exists_use_verify_existing')
-        with tempfile.TemporaryDirectory(prefix='flixify-tv-web-') as directory:
-            root=Path(directory)
-            for path,value in updated.items():
-                file=root/path;file.parent.mkdir(parents=True,exist_ok=True);file.write_bytes(value)
-            (root/'Dockerfile').write_text(dockerfile(args.revision))
-            build_args=[]
-            for key,value in web_env.items():build_args+=['--build-arg',key+'='+value]
-            command('docker','build','--load','--no-cache','--rm','--force-rm','--pull=false','--network=none','--resource',f'memory={builder.RUN_MEMORY_MIB}m','--resource',f'memory-swap={builder.RUN_TOTAL_MEMORY_MIB}m','-t',builder.target(args.revision),*build_args,str(root),timeout=1200)
+        if args.container_build:
+            container_compile(args.revision,base,updated,web_env)
+        else:
+            with tempfile.TemporaryDirectory(prefix='flixify-tv-web-') as directory:
+                root=Path(directory)
+                for path,value in updated.items():
+                    file=root/path;file.parent.mkdir(parents=True,exist_ok=True);file.write_bytes(value)
+                (root/'Dockerfile').write_text(dockerfile(args.revision))
+                build_args=[]
+                for key,value in web_env.items():build_args+=['--build-arg',key+'='+value]
+                command('docker','build','--load','--no-cache','--rm','--force-rm','--pull=false','--network=none','--resource',f'memory={builder.RUN_MEMORY_MIB}m','--resource',f'memory-swap={builder.RUN_TOTAL_MEMORY_MIB}m','-t',builder.target(args.revision),*build_args,str(root),timeout=1200)
     candidate=builder.verify_candidate(base,args.revision,updated,web_env,config)
     verify_download(candidate,args.apk_sha256,args.apk_bytes)
     print('web_candidate_verified:'+candidate)
