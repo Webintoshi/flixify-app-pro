@@ -7,6 +7,9 @@ import vip.flixify.tv.TvModels.*;
 final class FakeTvRepository implements TvRepository {
     boolean session;
     boolean failCatalog;
+    boolean failAccount;
+    boolean delayAccount;
+    Callback<Account> delayedAccount;
     boolean delayCatalog;
     boolean bootstrapOnCatalog;
     boolean bootstrapped=true;
@@ -29,7 +32,15 @@ final class FakeTvRepository implements TvRepository {
         if (!"1234567890123456".equals(code)) { cb.onError(new Failure(Failure.Code.AUTH,"Kod geçersiz")); return; }
         session=true; cb.onResult(user());
     }
-    public void account(boolean force,Callback<Account> cb) { cb.onResult(user()); }
+    public void account(boolean force,Callback<Account> cb) {
+        if(delayAccount){delayedAccount=cb;return;}
+        if(failAccount){cb.onError(new Failure(Failure.Code.NETWORK,"Hesap bilgisi alınamadı"));return;}
+        cb.onResult(user());
+    }
+    void releaseDelayedAccount() {
+        Callback<Account> cb=delayedAccount;delayedAccount=null;delayAccount=false;
+        if(cb!=null)account(true,cb);
+    }
     public void refreshAccess(Callback<Account> cb) { cb.onResult(user()); }
     public void catalog(Kind kind,boolean force,Callback<Catalog> cb) {
         if(bootstrapOnCatalog)bootstrapped=true;

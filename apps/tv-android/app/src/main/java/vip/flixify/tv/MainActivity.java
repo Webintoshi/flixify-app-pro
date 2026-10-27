@@ -122,7 +122,7 @@ public final class MainActivity extends Activity {
             public void onError(Failure failure) {
                 if(!screenAlive(ticket) || failure.code==Failure.Code.STALE)return;
                 if(failure.code==Failure.Code.AUTH && (scope.equals(repository.currentScope()) || !repository.hasSession()))sessionEnded(failure.message);
-                else if(scope.equals(repository.currentScope()))showFailure(failure.message,retry);
+                else if(failure.code!=Failure.Code.AUTH && valid(ticket,scope))showFailure(failure.message,retry);
             }
         };
     }
@@ -336,14 +336,18 @@ public final class MainActivity extends Activity {
     }
     private void showAccount() {
         detail=null;page=pages.get(Section.ACCOUNT);shell("Hesabım","");body.addView(TvUi.text(this,"Hesap yükleniyor…",20,TvUi.MUTED),TvUi.space(this,-1,64));
+        linkContent(addLocalLogout());
         final long ticket=generation;String scope=repository.currentScope();repository.account(true,callback(ticket,scope,account->{
             shell("Hesabım","");TextView packageTitle=TvUi.text(this,account.packageTitle,26,TvUi.WHITE);TvUi.heading(packageTitle);body.addView(packageTitle,TvUi.space(this,-1,48));
             body.addView(TvUi.text(this,"Hesap kodu: •••• "+account.codeSuffix,18,TvUi.MUTED),TvUi.space(this,-1,38));
             String expiry=account.expiresAtMs>0?DateFormat.getDateTimeInstance(DateFormat.MEDIUM,DateFormat.SHORT).format(new Date(account.expiresAtMs)):"Belirtilmedi";
             body.addView(TvUi.text(this,"Bitiş: "+expiry,18,TvUi.MUTED),TvUi.space(this,-1,38));
             body.addView(TvUi.text(this,account.message.isEmpty()?(account.canPlay?"Hesabınız aktif":"İzleme erişimi bulunmuyor."):account.message,18,account.canPlay?TvUi.MUTED:TvUi.ACCENT),TvUi.space(this,-1,52));
-            Button logout=TvUi.button(this,"Oturumu kapat",this::confirmLogout);body.addView(logout,TvUi.space(this,230,48));linkContent(logout);
+            linkContent(addLocalLogout());
         },this::showAccount));
+    }
+    private Button addLocalLogout() {
+        Button logout=TvUi.button(this,"Oturumu kapat",this::confirmLogout);body.addView(logout,TvUi.space(this,230,48));return logout;
     }
     private void confirmLogout() {
         dialog=new AlertDialog.Builder(this).setTitle("Oturum kapatılsın mı?").setMessage("Bu cihazda tekrar giriş yapmak için hesap kodunuz gerekir.")
@@ -354,7 +358,10 @@ public final class MainActivity extends Activity {
     private void showFailure(String message,Runnable retry) {
         while(body.getChildCount()>1)body.removeViewAt(1);
         TextView text=TvUi.text(this,safeMessage(message),20,TvUi.MUTED);text.setMaxLines(4);body.addView(text,TvUi.space(this,-1,100));
-        Button button=TvUi.button(this,"Tekrar dene",retry);body.addView(button,TvUi.space(this,220,48));linkContent(button);
+        Button logout=page.section==Section.ACCOUNT && detail==null?addLocalLogout():null;
+        Button button=TvUi.button(this,"Tekrar dene",retry);body.addView(button,TvUi.space(this,220,48));
+        if(logout!=null){linkContent(logout);logout.setNextFocusDownId(button.getId());button.setNextFocusUpId(logout.getId());}
+        else linkContent(button);
     }
     private void notice(String message) { dialog=new AlertDialog.Builder(this).setMessage(message).setPositiveButton("Tamam",null).create();dialog.show(); }
     @Override public void onBackPressed() {

@@ -163,6 +163,19 @@ public class MainRemoteTest {
         repository.bootstrapped=false;repository.bootstrapOnCatalog=true;
         launch(true);visible("Uzay Yolculuğu");focused("Ana Sayfa");
     }
+    @Test public void firstBootstrapCatalogFailureExposesRemoteRetry() {
+        repository.bootstrapped=false;repository.bootstrapOnCatalog=true;repository.failCatalog=true;
+        launch(true);visible("Bağlantı kurulamadı");key(KeyEvent.KEYCODE_DPAD_RIGHT);focused("Tekrar dene");
+        repository.failCatalog=false;click();visible("Uzay Yolculuğu");
+    }
+    @Test public void accountLogoutStaysReachableDuringLoadingAndAfterFailure() {
+        repository.delayAccount=true;repository.failAccount=true;
+        launch(true);down(5);click();visible("Hesap yükleniyor…");visible("Oturumu kapat");
+        key(KeyEvent.KEYCODE_DPAD_RIGHT);focused("Oturumu kapat");key(KeyEvent.KEYCODE_BACK);focused("Hesabım");
+        instrumentation.runOnMainSync(()->repository.releaseDelayedAccount());idle();visible("Hesap bilgisi alınamadı");
+        key(KeyEvent.KEYCODE_DPAD_RIGHT);focused("Oturumu kapat");down(1);focused("Tekrar dene");key(KeyEvent.KEYCODE_DPAD_UP);focused("Oturumu kapat");click();
+        key(KeyEvent.KEYCODE_DPAD_RIGHT);click();visible("Giriş yap");assertFalse(repository.hasSession());
+    }
     @Test public void accountAndLogoutAreReachableWithRemote() {
         launch(true); down(5); focused("Hesabım"); click(); visible("Test Paketi");
         key(KeyEvent.KEYCODE_DPAD_RIGHT); focused("Oturumu kapat"); click();
