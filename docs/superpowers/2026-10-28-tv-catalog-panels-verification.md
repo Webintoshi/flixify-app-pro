@@ -29,4 +29,3 @@ Dryrun, web-only image metadata synchronization and scoped web recreation passed
 Public /downloads/flixify-tv-1.3.0-test.1.apk HEAD200/application/vnd.android.package-archive/1,316,709bytes; range0–31 returned206/32bytes and exact Content-Range. Full GET SHA256e0bc9dfd432d12fde9bd6af6bc71c991a99d4a1806ebc5370f9007e0b179a1be matches the signed local APK. Home and /indir200; actual hydrated browser homepage and download page both link the exact new APK, with version1.3.0-test.1 displayed. Proof saved android-tv/catalog/public-download.png.
 
 Prior APK files remain available. Compatible update installed successfully without removing the existing app. Task emulator stopped; display overrides reset to physical1920x1080/density320/font1.0. Temporary gallery source stays ignored, absent from release; native visual evidence retained. No customer/provider media was played. Automated UI evidence is from the TV emulator; real TV/box feedback remains the user's device check.
-
