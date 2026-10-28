@@ -18,4 +18,7 @@ Final combined suite:31/31 native cases (new panels + MainRemote + Responsive + 
 
 Actual screenshots inspected at1920x1080/density320/font1.0,1280x720/density320/font1.3 and1920x1080/density240/font1.0. The last configuration reports native1920x1080root/density1.5 and category bounds1314,0,570x1080, respecting the right36px inset. A first capture caught a transient window animation; the settled frame was recaptured and inspected. An attempted3840override still produced a1920physical capture and is not claimed as4K verification. Final artwork is a public marketing fixture, not a customer library. Captures remain in the task visualization directory android-tv/catalog/{normal,compact,spacious}.
 
-Signed APK and production acceptance are pending below.
+## Signed APK
+Frozen source6cf9c0f46c5af0c29b30441140062ad8cc587e1c; assembleRelease15seconds successful. APK1,316,709bytes, SHA256e0bc9dfd432d12fde9bd6af6bc71c991a99d4a1806ebc5370f9007e0b179a1be. Version1.3.0-test.1/code5/min23/target35/packagevip.flixify.tv; optimized/not-debuggable. Bothv1/v2signatures verified against existing1.2.1certificate158ded464486435f9479db84d1eeb9af82e14338e0b4a494c4297c70ae15e594. Exact poster WAV digest and raw/poster_move resource retained. No nativeABI libraries, testMP4, testhooks, fakeaccount or galleryfixture identifiers in release. Installed-r overcode4successfully and cold-launched663ms in the emulator; no customer account or media opened.
+
+Production acceptance is pending.
