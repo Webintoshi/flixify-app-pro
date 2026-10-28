@@ -23,7 +23,7 @@ The connected tests require an Android TV emulator. Repository fixtures use no r
 
 ## Remote
 
-- Direction keys move visible focus; OK selects. Back closes input/dialog/detail, returns focus to the navigation and exits at the root.
+- Direction keys move visible focus; OK selects. Back closes input/dialogs, hides active playback controls before leaving the player, restores catalog focus, then returns to navigation and exits at the root.
 - Search uses a focused panel with live local result counts and sample titles; edits stay as drafts until Ara. Categories use a virtualized side panel, local finder, per-category counts and a selected mark independent of focus. Search and category remain intersected, Turkish-aware, and scoped to the current account/catalog. Native keyboard resize preserves the editor; Back/cancel restores the opener. Short screens simplify optional context so the action stays visible.
 - Native TV keyboard enters the existing16-character account code and search. No signup or purchase is performed on TV.
 - Live TV, movies, series/seasons/episodes, favorites, account and search use native controls.

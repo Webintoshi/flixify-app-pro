@@ -47,6 +47,6 @@ Files: TvRepository.java, data/NetworkTvRepository.java, PlayerActivity.java, Pl
 Files: app/build.gradle, README.md, web tv-download.ts, exact new public APK, narrowly scoped release wrappers and verification document.
 
 - [x] Freeze tested native source, build/sign and verify compatible install over existing release.
-- [ ] Pin digest/bytes; test bounded web build/release gates including preserved old public tree.
-- [ ] Resolve disk capacity using evidenced safe scoped artifacts only, guarded build then web-only recreate.
-- [ ] Independently verify public download bytes and unchanged protected services, save proof and final evidence.
+- [x] Pin digest/bytes; test bounded web build/release gates including preserved old public tree.
+- [x] Resolve disk capacity using evidenced safe scoped artifacts only, guarded build then web-only recreate. User approved exact unused shared cache scope; all running container/image identities retained during cleanup.
+- [x] Independently verify public download bytes and unchanged protected services, save proof and final evidence.

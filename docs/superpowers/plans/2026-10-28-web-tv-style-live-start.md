@@ -32,5 +32,5 @@
 
 ### Task3: Acceptance and delivery
 - [x] Independent review, focused automated suites, TypeScript and freeze source.
-- [ ] Guarded network-none bounded web build from exact current image with exact changed-file allowlist; no API/worker/DB mutation.
-- [ ] Public pages/assets and actual browser design verification, protected-service post-read, save screenshots and final evidence; remove local QA source/routes and stop own processes.
+- [x] Guarded network-none bounded web build from exact current image with exact changed-file allowlist; no API/worker/DB mutation. Published in combined artifact4d7cb29401974bb11fc8946239f8529ba18abdc3.
+- [x] Public pages/assets and actual browser design verification, protected-service post-read, save screenshots and final evidence; remove local QA source/routes and stop own processes. Full combined report2026-10-29-tv-direct-play-verification.md.
