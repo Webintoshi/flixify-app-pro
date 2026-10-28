@@ -25,6 +25,6 @@
 - [x] Verify unit, real SoundPool and remote integration, browse regressions/lint.
 
 ### Task2: Publish
-- [ ] Review, freeze, assemble and check signature/asset/version/install.
+- [x] Review, freeze, assemble and check signature/asset/version/install.
 - [ ] Update descriptor+APK, bounded guarded web-only deployment.
 - [ ] Verify public hash/MIME/range and actual browser links; keep short preview.

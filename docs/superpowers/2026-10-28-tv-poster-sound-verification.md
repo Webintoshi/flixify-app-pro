@@ -19,3 +19,6 @@ Five native sound cases: ordered17rapidposter transitions, unchanged boundary, d
 Independent review identified potential nativepool cleanup on setup/stop failures; finally paths repaired and source rechecked, no remaining important findings. New bounded webwrapper32/32tests independently passed; agent executed all150release-tooltests successfully.
 
 Native tests use offline repository and no customer/provider media. SoundPool decode/play acceptance is automated; actual TV output/volume remains physical-device feedback. Release signing/asset/install/publication acceptance recorded below when verified.
+
+## Signed APK
+Frozen source559e5758832e1133380160395f6a0ab5406fac09; assembleRelease14s successful. APK1307370bytes SHA25639899ad62031225c6f390c9887f5f0b7ee84e9d58f1b9c251a5f5f2d83b4a290,1.2.1-test.1/code4/min23/target35, samev1/v2cert158ded464486435f9479db84d1eeb9af82e14338e0b4a494c4297c70ae15e594asprior1.2.0. Exact298msassetdigestverified inside release; optimizer renames its path tores/mx.wav, with raw/poster_move resourcepresent. No testhooks/fixtures/MP4/nativeABI libs. Installed-r overcode3andcoldlaunchedsuccessfully inemulator. No customer account or provider stream opened.
