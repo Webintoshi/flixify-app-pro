@@ -36,3 +36,12 @@ Final runtime source gallery was rebuilt and recaptured at allthree sizes after 
 
 ## Signed artifact
 Android source frozen at 82f415ab0554c17be3c1aa1863c3700f6fd09879. assembleRelease passed in16s; no runtime/source changes after freeze. APK1279589bytes, SHA256905bc31f8d67acae4606fb14f3637ddd708db3ff15da475534809927b4f7e1d3, version1.2.0-test.1/code3, min23/target35, universal no native ABI library. v1/v2 signing verified; certificate158ded464486435f9479db84d1eeb9af82e14338e0b4a494c4297c70ae15e594 exactly matches previous1.1.0APK. Release contains no sample MP4, fixture source identifier, gallery or test injection hook names. Installed with adb install-r over existing1.1.0 and cold-launched successfully on the emulator; no physical-device latency claim.
+
+## Production acceptance
+Artifact/descriptor revision8694b8fee0f0445b53d3706bad9d09777b7acf62 was pushed on the existing branch and fetched exactly by the remote checkout. Local web TypeScript check passed. APK/source/scope preflight passed. Bounded network-none container compilation, original-config/ancestry/source validation and candidate HEAD/MIME/range/full digest all passed; result0. Candidate sha256:a4621ca6637f466057067f1af8235dea780fd0c403caa6a3f1211ed8d81e8335; tag flixify-ops-web:edge-recovery-8694b8fee0f0-20261026.
+
+Dryrun, Coolify web-only metadata synchronization and scoped recreation passed. Independent post-read verifies exact new web and unchanged API8cdbf9/workerd5b9/DB721873, allfour running/restart0. No TV build/check container remains; final shared-host diskfree9.76GiB. No unrelated service/cleanup was performed. The earlier terminal session had gone idle; reconnecting the owned terminal restored normal input before any deployment mutation.
+
+Public HTTPS APK HEAD200/application/vnd.android.package-archive/1279589bytes. Range0–31 returned206,32bytes, Content-Range bytes0-31/1279589. Complete GET matched SHA256905bc31f8d67acae4606fb14f3637ddd708db3ff15da475534809927b4f7e1d3. Home and /indir return200. /indir server HTML and real browser link show1.2.0-test.1. Home SSR contains the pre-hydration shell; its hydrated signed-in browser link independently points at the same exact APK. No stream opened.
+
+Actual27native screenshots, optimized-release login and public-download proof saved in the task visualization directory android-tv/apple/. The download page is retained as user-facing output. Owned local64MBsample removed and emulator stopped after verification. Existing APK files retained for compatibility/history.
