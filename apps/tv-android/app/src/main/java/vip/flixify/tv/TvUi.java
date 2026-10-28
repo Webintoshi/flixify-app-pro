@@ -64,6 +64,24 @@ final class TvUi {
         d.addState(new int[]{android.R.attr.state_pressed},rounded(c,alpha(WHITE,20),alpha(WHITE,160),13,2));
         d.addState(new int[]{},rounded(c,Color.TRANSPARENT,0,13,2));return d;
     }
+    static StateListDrawable catalogActionBackground(Context c,boolean active) {
+        StateListDrawable d=new StateListDrawable();
+        d.addState(new int[]{android.R.attr.state_focused},glass(c,42,alpha(WHITE,190),24));
+        d.addState(new int[]{android.R.attr.state_pressed},glass(c,32,alpha(WHITE,130),24));
+        d.addState(new int[]{},rounded(c,alpha(active?WHITE:PANEL,active?20:150),alpha(active?ACCENT:WHITE,active?110:28),24,1));return d;
+    }
+    static Drawable catalogIcon(Context c,int kind,int size) {return new CatalogIcon(kind,dp(c,size));}
+    private static final class CatalogIcon extends Drawable {
+        final int kind,size;final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+        CatalogIcon(int kind,int size){this.kind=kind;this.size=size;paint.setColor(WHITE);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.8f);paint.setStrokeCap(Paint.Cap.ROUND);paint.setStrokeJoin(Paint.Join.ROUND);}
+        @Override public void draw(Canvas canvas){int saved=canvas.save();canvas.translate(getBounds().left,getBounds().top);canvas.scale(getBounds().width()/24f,getBounds().height()/24f);
+            if(kind==0){canvas.drawCircle(10,10,6.5f,paint);canvas.drawLine(15,15,21,21,paint);}
+            else if(kind==1){canvas.drawLine(3,5,21,5,paint);canvas.drawLine(6,12,18,12,paint);canvas.drawLine(9,19,15,19,paint);}
+            else{canvas.drawArc(4,4,20,20,35,290,false,paint);canvas.drawLine(20,3,20,8,paint);canvas.drawLine(15,8,20,8,paint);}
+            canvas.restoreToCount(saved);}
+        @Override public int getIntrinsicWidth(){return size;}@Override public int getIntrinsicHeight(){return size;}
+        @Override public void setAlpha(int alpha){paint.setAlpha(alpha);invalidateSelf();}@Override public void setColorFilter(ColorFilter filter){paint.setColorFilter(filter);invalidateSelf();}@Override public int getOpacity(){return PixelFormat.TRANSLUCENT;}
+    }
     static Drawable railIcon(Context c,int section,int size) {return new BrowseIcon(section,dp(c,size));}
     private static final class BrowseIcon extends Drawable {
         private final int section,size;

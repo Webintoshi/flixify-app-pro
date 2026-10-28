@@ -1,6 +1,6 @@
 # Flixify Android TV
 
-Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; test version `1.2.1-test.1`, code4. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
+Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; test version `1.3.0-test.1`, code5. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
 
 ## Build
 
@@ -24,6 +24,7 @@ The connected tests require an Android TV emulator. Repository fixtures use no r
 ## Remote
 
 - Direction keys move visible focus; OK selects. Back closes input/dialog/detail, returns focus to the navigation and exits at the root.
+- Search uses a focused panel with live local result counts and sample titles; edits stay as drafts until Ara. Categories use a virtualized side panel, local finder, per-category counts and a selected mark independent of focus. Search and category remain intersected, Turkish-aware, and scoped to the current account/catalog. Native keyboard resize preserves the editor; Back/cancel restores the opener. Short screens simplify optional context so the action stays visible.
 - Native TV keyboard enters the existing16-character account code and search. No signup or purchase is performed on TV.
 - Live TV, movies, series/seasons/episodes, favorites, account and search use native controls.
 - Cinematic artwork-led home/details and virtualized cards adapt to measured usable width and height; rail, forms, account and series content scroll when needed. Focus is restored after resize.

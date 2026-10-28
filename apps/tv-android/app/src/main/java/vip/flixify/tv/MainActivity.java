@@ -2,6 +2,7 @@ package vip.flixify.tv;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.InputFilter;
@@ -57,7 +58,8 @@ public final class MainActivity extends Activity {
     private int selectedSeason;
     private long generation;
     private boolean stopped,destroyed,initialized,resumeReload;
-    private AlertDialog dialog;
+    private Dialog dialog,catalogDialog;
+    private boolean resizeAfterCatalog;
     private EditText loginCode;
     private LinearLayout loginForm;
     private ScrollView loginScroll;
@@ -179,6 +181,9 @@ public final class MainActivity extends Activity {
     private interface Result<T> { void accept(T value); }
     private void sessionEnded(String message) { repository.logout(); for(Page p:pages.values()){p.catalog=null;p.focusKey="";p.query="";p.category="";p.categoryTitle="Tümü";} detail=null; showLogin(message); }
     private void resizeScreen() {
+        // A native IME may resize the Activity behind its dialog. Keep the owning
+        // catalogue and the same editor alive until the draft is closed/submitted.
+        if(catalogDialog!=null && catalogDialog.isShowing()){resizeAfterCatalog=true;return;}
         if(!repository.hasSession()) {
             // Resize existing views: replacing the editor would detach the IME and invalidate a pending login.
             sizing=TvLayout.measure(this);
@@ -214,6 +219,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void showLogin(String message) {
+        if(catalogDialog!=null && catalogDialog.isShowing())catalogDialog.dismiss();
         generation++; detail=null; body=null; grid=null;resizeFocus=null;sizing=TvLayout.measure(this);measuredWidth=sizing.width;measuredHeight=sizing.height;
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         ScrollView background=new ScrollView(this);loginScroll=background;background.setTag("tv-login");background.setFillViewport(true);background.setBackgroundColor(TvUi.BACKGROUND);
@@ -255,6 +261,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void shell(String title,String subtitle) {
+        if(catalogDialog!=null && catalogDialog.isShowing())catalogDialog.dismiss();
         generation++;grid=null;sizing=TvLayout.measure(this);measuredWidth=sizing.width;measuredHeight=sizing.height;
         LinearLayout root=TvUi.row(this);root.setTag("tv-catalog-shell");root.setGravity(Gravity.TOP);root.setBackgroundColor(TvUi.BACKGROUND);
         root.setPadding(TvUi.dp(this,sizing.inset),TvUi.dp(this,sizing.shortScreen?10:18),TvUi.dp(this,sizing.inset),TvUi.dp(this,sizing.shortScreen?10:16));
@@ -299,15 +306,14 @@ public final class MainActivity extends Activity {
     }
     private void linkContent(View first) { for(Button b:rail)b.setNextFocusRightId(first.getId()); first.setNextFocusLeftId(rail[page.section.ordinal()].getId()); }
     private void renderCatalog(boolean contentFocus) {
-        if(page.section==Section.HOME && sizing.hero>0 && !page.catalog.items.isEmpty())addHomeHero(page.catalog.items.get(0));
+        List<Item> filtered=CatalogFilterData.filtered(page.catalog,page.category,page.query);
+        if(page.section==Section.HOME && sizing.hero>0 && !filtered.isEmpty())addHomeHero(filtered.get(0));
         LinearLayout controls=TvUi.row(this);body.addView(controls,TvUi.space(this,-1,50));
-        Button search=TvUi.button(this,"Ara",this::search);search.setBackground(TvUi.utilityBackground(this));markFocus(search,"catalog:search");controls.addView(search,TvUi.space(this,sizing.compact?66:78,42));
-        Button category=TvUi.button(this,"Kategori: "+page.categoryTitle,this::categories);category.setBackground(TvUi.utilityBackground(this));markFocus(category,"catalog:category");category.setSingleLine(true);category.setEllipsize(TextUtils.TruncateAt.END);
+        Button search=TvUi.button(this,"Ara",this::search);search.setBackground(TvUi.catalogActionBackground(this,!page.query.isEmpty()));search.setPadding(TvUi.dp(this,10),0,TvUi.dp(this,10),0);search.setCompoundDrawablesWithIntrinsicBounds(TvUi.catalogIcon(this,0,16),null,null,null);search.setCompoundDrawablePadding(TvUi.dp(this,6));markFocus(search,"catalog:search");controls.addView(search,TvUi.space(this,sizing.compact?86:96,42));
+        Button category=TvUi.button(this,"Kategori: "+page.categoryTitle,this::categories);category.setBackground(TvUi.catalogActionBackground(this,!page.category.isEmpty()));category.setPadding(TvUi.dp(this,10),0,TvUi.dp(this,10),0);category.setCompoundDrawablesWithIntrinsicBounds(TvUi.catalogIcon(this,1,16),null,null,null);category.setCompoundDrawablePadding(TvUi.dp(this,6));markFocus(category,"catalog:category");category.setSingleLine(true);category.setEllipsize(TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams categorySpace=TvUi.space(this,0,42);categorySpace.weight=1;controls.addView(category,categorySpace);
-        Button refresh=TvUi.button(this,"Yenile",()->showPage(true,true));refresh.setBackground(TvUi.utilityBackground(this));markFocus(refresh,"catalog:refresh");controls.addView(refresh,TvUi.space(this,sizing.compact?78:92,42));
+        Button refresh=TvUi.button(this,"Yenile",()->showPage(true,true));refresh.setBackground(TvUi.utilityBackground(this));refresh.setPadding(TvUi.dp(this,8),0,TvUi.dp(this,8),0);refresh.setCompoundDrawablesWithIntrinsicBounds(TvUi.catalogIcon(this,2,16),null,null,null);refresh.setCompoundDrawablePadding(TvUi.dp(this,5));markFocus(refresh,"catalog:refresh");controls.addView(refresh,TvUi.space(this,sizing.compact?90:100,42));
         linkContent(search); search.setNextFocusRightId(category.getId()); category.setNextFocusLeftId(search.getId()); category.setNextFocusRightId(refresh.getId()); refresh.setNextFocusLeftId(category.getId());
-        List<Item> filtered=new ArrayList<>(); String query=page.query.toLowerCase(Locale.forLanguageTag("tr-TR"));
-        for(Item item:page.catalog.items)if((page.category.isEmpty() || page.category.equals(item.categoryId)) && item.title.toLowerCase(Locale.forLanguageTag("tr-TR")).contains(query))filtered.add(item);
         if(!page.query.isEmpty())body.addView(TvUi.text(this,"Arama: "+page.query+" · "+filtered.size()+" sonuç",15,TvUi.MUTED),TvUi.space(this,-1,30));
         if(filtered.isEmpty()) {
             body.addView(TvUi.text(this,page.section==Section.FAVORITES?"Henüz favoriniz yok. Bir içeriği açıp favorilere ekleyin.":"İçerik bulunamadı.",18,TvUi.MUTED),TvUi.space(this,-1,72));
@@ -361,29 +367,50 @@ public final class MainActivity extends Activity {
         final ImageView image; final TextView title;
         PosterHolder(View view,ImageView image,TextView title) { super(view);this.image=image;this.title=title; }
     }
-    private void search() {
-        EditText field=new EditText(this); field.setSingleLine(true); field.setText(page.query); field.setSelectAllOnFocus(true); field.setTextColor(TvUi.WHITE); field.setHintTextColor(TvUi.MUTED); field.setHint("İçerik adı"); field.setTextSize(22); field.setPadding(TvUi.dp(this,24),TvUi.dp(this,12),TvUi.dp(this,24),TvUi.dp(this,12)); field.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
-        Runnable apply=()->{page.query=field.getText().toString().trim();page.scroll=0;page.focusKey="";if(dialog!=null)dialog.dismiss();showPage(false,true);};
-        dialog=new AlertDialog.Builder(this).setTitle("İçerik ara").setView(field).setPositiveButton("Ara",(d,w)->apply.run()).setNegativeButton("Vazgeç",null).create();
-        field.setOnEditorActionListener((v,action,event)->{if(action==EditorInfo.IME_ACTION_SEARCH || (event!=null && event.getKeyCode()==KeyEvent.KEYCODE_ENTER && event.getAction()==KeyEvent.ACTION_DOWN)){apply.run();return true;}return false;});
-        field.setOnKeyListener((v,key,event)->{
-            if(key==KeyEvent.KEYCODE_DPAD_DOWN && event.getAction()==KeyEvent.ACTION_DOWN){dialog.getButton(AlertDialog.BUTTON_POSITIVE).requestFocus();return true;}
-            return false;
+    private boolean catalogOwner(Page owner,Catalog snapshot,long ticket,String scope) {
+        return screenAlive(ticket) && repository.hasSession() && page==owner && owner.catalog==snapshot
+                && detail==null && scope.equals(repository.currentScope());
+    }
+    private void catalogDismissed(Dialog dismissed,Page owner,Catalog snapshot,long ticket,String scope,String opener,boolean[] committed) {
+        if(dialog==dismissed)dialog=null;
+        if(catalogDialog!=dismissed)return;
+        catalogDialog=null;
+        boolean resize=resizeAfterCatalog;resizeAfterCatalog=false;
+        if(stopped || destroyed || isFinishing())return;
+        findViewById(android.R.id.content).post(()->{
+            if(stopped || destroyed || isFinishing())return;
+            if(catalogDialog!=null && catalogDialog.isShowing()){if(resize)resizeAfterCatalog=true;return;}
+            if(!committed[0] && catalogOwner(owner,snapshot,ticket,scope)) {
+                View control=findFocus(findViewById(android.R.id.content),opener);
+                if(control!=null)control.requestFocus();
+            }
+            if(resize)resizeScreen();
         });
-        dialog.setOnShowListener(d->{
-            if(dialog.getWindow()!=null)dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
-            field.requestFocus();
-        }); dialog.show();
+    }
+    private void search() {
+        if(page.catalog==null)return;
+        final Page owner=page;final Catalog snapshot=page.catalog;final long ticket=generation;final String scope=repository.currentScope();
+        final Dialog[] panel={null};final boolean[] committed={false};
+        panel[0]=CatalogDialogs.search(this,pageTitle(),owner.query,owner.categoryTitle,
+                text->CatalogFilterData.preview(snapshot,owner.category,text),text->{
+                    committed[0]=true;
+                    if(!catalogOwner(owner,snapshot,ticket,scope)){panel[0].dismiss();return;}
+                    owner.query=text.trim();owner.scroll=0;owner.focusKey="";
+                    panel[0].dismiss();showPage(false,true);
+                },()->catalogDismissed(panel[0],owner,snapshot,ticket,scope,"catalog:search",committed));
+        dialog=catalogDialog=panel[0];panel[0].show();
     }
     private void categories() {
-        List<Category> rows=new ArrayList<>(); rows.add(new Category("","Tümü")); rows.addAll(page.catalog.categories);
-        if(rows.size()==1)for(Item item:page.catalog.items) { boolean found=false;for(Category c:rows)if(c.id.equals(item.categoryId)){found=true;break;}if(!found && !item.categoryId.isEmpty())rows.add(new Category(item.categoryId,item.categoryName)); }
-        String[] titles=new String[rows.size()];int checked=0;for(int n=0;n<rows.size();n++){titles[n]=rows.get(n).title;if(rows.get(n).id.equals(page.category))checked=n;}
-        final int selection=checked;
-        dialog=new AlertDialog.Builder(this).setTitle("Kategori seçin").setSingleChoiceItems(titles,checked,(d,which)->{
-            page.category=rows.get(which).id;page.categoryTitle=rows.get(which).title;page.focusKey="";page.scroll=0;d.dismiss();showPage(false,true);
-        }).setNegativeButton("Vazgeç",null).create();
-        dialog.setOnShowListener(d->{dialog.getListView().requestFocus();dialog.getListView().setSelection(selection);});dialog.show();
+        if(page.catalog==null)return;
+        final Page owner=page;final Catalog snapshot=page.catalog;final long ticket=generation;final String scope=repository.currentScope();
+        final Dialog[] panel={null};final boolean[] committed={false};
+        panel[0]=CatalogDialogs.categories(this,pageTitle(),CatalogFilterData.categories(snapshot,owner.query),owner.category,option->{
+            committed[0]=true;
+            if(!catalogOwner(owner,snapshot,ticket,scope)){panel[0].dismiss();return;}
+            owner.category=option.id;owner.categoryTitle=option.title;owner.focusKey="";owner.scroll=0;
+            panel[0].dismiss();showPage(false,true);
+        },()->catalogDismissed(panel[0],owner,snapshot,ticket,scope,"catalog:category",committed));
+        dialog=catalogDialog=panel[0];panel[0].show();
     }
     private void showDetail(Item item,boolean newItem) {
         if(!item.scope.equals(repository.currentScope())) {
@@ -485,9 +512,9 @@ public final class MainActivity extends Activity {
         Button logout=TvUi.button(this,"Oturumu kapat",this::confirmLogout);markFocus(logout,"account:logout");parent.addView(logout,TvUi.space(this,Math.min(230,sizing.contentWidth()-8),48));return logout;
     }
     private void confirmLogout() {
-        dialog=new AlertDialog.Builder(this).setTitle("Oturum kapatılsın mı?").setMessage("Bu cihazda tekrar giriş yapmak için hesap kodunuz gerekir.")
+        AlertDialog confirmation=new AlertDialog.Builder(this).setTitle("Oturum kapatılsın mı?").setMessage("Bu cihazda tekrar giriş yapmak için hesap kodunuz gerekir.")
             .setNegativeButton("Vazgeç",null).setPositiveButton("Oturumu kapat",(d,w)->sessionEnded("")).create();
-        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus());dialog.show();
+        dialog=confirmation;confirmation.setOnShowListener(d->confirmation.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus());confirmation.show();
     }
     private String safeMessage(String message) { return message==null || message.trim().isEmpty()?"İşlem tamamlanamadı. Lütfen tekrar deneyin.":message; }
     private void showFailure(String message,Runnable retry) {
@@ -507,6 +534,6 @@ public final class MainActivity extends Activity {
         View focus=getCurrentFocus();boolean inRail=false;for(Button b:rail)if(focus==b)inRail=true;
         if(!inRail) { rail[page.section.ordinal()].requestFocus();return; }
         if(page.section!=Section.HOME) { navigate(Section.HOME);return; }
-        dialog=new AlertDialog.Builder(this).setTitle("Flixify'dan çıkılsın mı?").setNegativeButton("Vazgeç",null).setPositiveButton("Çık",(d,w)->finish()).create();dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus());dialog.show();
+        AlertDialog confirmation=new AlertDialog.Builder(this).setTitle("Flixify'dan çıkılsın mı?").setNegativeButton("Vazgeç",null).setPositiveButton("Çık",(d,w)->finish()).create();dialog=confirmation;confirmation.setOnShowListener(d->confirmation.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus());confirmation.show();
     }
 }
