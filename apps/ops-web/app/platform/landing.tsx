@@ -9,9 +9,10 @@ import { tvDownload } from "./tv-download";
 const examples = ["Uzak Yerler", "Sakin Şehirler", "Mavi Ufuk", "Doğanın Sesi", "Bir Gün Daha"];
 function InterfacePreview({ compact = false }: { compact?: boolean }) {
   return <div className={`${s.interface} ${compact ? s.compact : ""}`} aria-hidden="true">
-    <div className={s.previewNav}><img src="/logo/flixify-logo.png" alt="" width="110" height="29"/><div><span>Ana Sayfa</span><span>Canlı TV</span><span>Filmler</span><span>Diziler</span><span>Favoriler</span></div><Icon name="search"/></div>
-    <div className={s.previewHero}><img src="/images/landing-v2/mountain-lake.webp" alt="" width="1536" height="1024" loading={compact ? "lazy" : "eager"}/><div><strong>Uzak Yerler</strong><span>Keşfetmenin her zaman yeni bir yolu vardır.</span></div></div>
+    <div className={s.previewNav}><img src="/logo/flixify-logo.png" alt="" width="110" height="29"/><div><span><Icon name="home"/>Ana Sayfa</span><span><Icon name="live"/>Canlı TV</span><span><Icon name="movie"/>Filmler</span><span><Icon name="series"/>Diziler</span><span><Icon name="heart"/>Favoriler</span></div><Icon name="search"/></div>
+    <div className={s.previewCanvas}><div className={s.previewHero}><img src="/images/landing-v2/mountain-lake.webp" alt="" width="1536" height="1024" loading={compact ? "lazy" : "eager"}/><div><strong>Uzak Yerler</strong><span>Keşfetmenin her zaman yeni bir yolu vardır.</span></div></div>
     <div className={s.previewLibrary}><p>Örnek koleksiyon <Icon name="arrow"/></p><div className={s.previewRail}>{examples.map((name,index)=><div key={name}><div className={`${s.thumbnail} ${s[`thumb${index}`]}`}/><span>{name}</span></div>)}</div><p>Keşif notları <Icon name="arrow"/></p><div className={s.previewRail}>{[2,0,4,1,3].map(index=><div key={index}><div className={`${s.thumbnail} ${s[`thumb${index}`]}`}/></div>)}</div></div>
+    </div>
   </div>;
 }
 export function Landing() {

@@ -5,13 +5,14 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import CatalogPage from "./catalog";
 import { orderShowcaseCatalog } from "./catalog-showcase";
 import type { MediaItem } from "./types";
-const state = vi.hoisted(() => ({ platform: {} as any, params: new URLSearchParams(), api: vi.fn() }));
+const state = vi.hoisted(() => ({ platform: {} as any, params: new URLSearchParams(), api: vi.fn(), preference: null as null | ((revision: number, visible: boolean) => void) }));
 vi.mock("./session", () => ({ usePlatform: () => state.platform }));
 vi.mock("../../lib/api", () => ({ apiRequest: (path: string) => state.api(path) }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => state.params, useRouter: () => ({ push: vi.fn(), back: vi.fn(), replace: vi.fn() }) }));
 vi.mock("next/link", () => ({ default: (props: any) => <a {...props}/> }));
 vi.mock("./artwork", () => ({ Artwork: () => null, FavoriteButton: () => null }));
 vi.mock("./detail", () => ({ Detail: ({ item }: any) => <div data-detail>{item.title}</div> }));
+vi.mock("./adult-movie-toggle", () => ({ AdultMovieToggle: ({ onChanged }: any) => { state.preference = onChanged; return null; } }));
 let root: Root, container: HTMLElement;
 const items = (kind = "movie", version = "v1") => Array.from({ length: 120 }, (_, i) => ({ id: `${version}-${i}`, kind, title: `${kind} Title ${i}`, groupTitle: `Group ${i % 8}`, posterUrl: "/poster", personalRef: { kind, id: String(i), sourceVersion: version } } as MediaItem));
 const titles = () => [...container.querySelectorAll("strong")].map(n => n.textContent);
@@ -21,10 +22,14 @@ const click = async (text: string) => settle(() => { ([...container.querySelecto
 beforeEach(() => {
   const dom = parseHTML("<html><body><div id='root'></div></body></html>");
   vi.stubGlobal("window", dom.window); vi.stubGlobal("document", dom.window.document); vi.stubGlobal("Event", dom.window.Event); vi.stubGlobal("React", React); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("HTMLElement", dom.window.HTMLElement);
+  (dom.window.HTMLElement.prototype as any).showModal = function (this: HTMLElement) { this.setAttribute("open", ""); };
+  (dom.window.HTMLElement.prototype as any).close = function (this: HTMLElement) { this.removeAttribute("open"); };
   Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-26T12:00:00Z"));
   state.api.mockReset().mockResolvedValue({ user: { status: "active", hasAssignedLink: true, hasActiveSubscription: true, activePackage: { endsAt: "2099-01-01" } } });
   state.params = new URLSearchParams();
+  state.preference = null;
   state.platform = { session: { accessToken: "a" }, providerMode: "personal", providerScope: "v1", personalProvider: { catalog: vi.fn(async (kind: string) => items(kind)), detail: vi.fn() }, favorites: [], favoritesReady: true, invalidateFavorites: vi.fn(), reload: vi.fn() };
   container = document.getElementById("root")!; root = createRoot(container);
 });
@@ -49,8 +54,47 @@ it("refreshes a safe new day without fetching and defers while on page two", asy
   await click("Daha Fazla Göster"); const second = titles(); vi.setSystemTime(new Date("2026-10-28T12:00:00Z")); await settle(() => window.dispatchEvent(new Event("focus"))); expect(titles()).toEqual(second); expect(state.platform.personalProvider.catalog).toHaveBeenCalledTimes(1);
 });
 it("preserves category order and favorite order", async () => {
-  await render(); await click("Group 0"); expect(titles()).toEqual(items().filter(i => i.groupTitle === "Group 0").map(i => i.title));
+  await render(); await click("Kategori: Tümü"); await settle(() => (container.querySelector('[data-category-value="Group 0"]') as HTMLElement).click()); expect(titles()).toEqual(items().filter(i => i.groupTitle === "Group 0").map(i => i.title));
   state.platform.favorites = [items()[4], items()[1]]; await render({ favoritesOnly: true }); expect(titles()).toEqual(["movie Title 4", "movie Title 1"]);
+});
+
+it("previews a draft without changing rows, cancels it, and commits the category intersection without refetching", async () => {
+  await render(); await click("Kategori: Tümü"); await settle(() => (container.querySelector('[data-category-value="Group 0"]') as HTMLElement).click());
+  const before = titles();
+  const openSearch = () => (container.querySelector('[data-catalog-search-trigger]') as HTMLElement).click();
+  const draft = (value: string) => { const input = container.querySelector<HTMLInputElement>("#catalog-search")!; input.value = value; input.dispatchEvent(new Event("input", { bubbles: true })); };
+  await settle(openSearch); await settle(() => draft("Title 1")); await act(async () => { await vi.advanceTimersByTimeAsync(180); });
+  expect(container.querySelector("dialog")?.textContent).toContain("3 sonuç"); expect(titles()).toEqual(before);
+  await click("Vazgeç"); expect(titles()).toEqual(before); expect(container.querySelector("dialog")).toBeNull();
+  await settle(openSearch); expect(container.querySelector<HTMLInputElement>("#catalog-search")!.value).toBe("");
+  await settle(() => draft("Title 1")); await settle(() => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(titles()).toEqual(items().filter(item => item.groupTitle === "Group 0" && item.title.includes("Title 1")).map(item => item.title));
+  expect(state.platform.personalProvider.catalog).toHaveBeenCalledTimes(1);
+  await click("Kategori: Group 0");
+  expect(container.querySelector('[data-category-value="Group 0"]')?.textContent).toContain("3");
+});
+it("closes catalog panels on source changes so old drafts cannot be submitted", async () => {
+  await render(); await settle(() => (container.querySelector('[data-catalog-search-trigger]') as HTMLElement).click());
+  const input = container.querySelector<HTMLInputElement>("#catalog-search")!;
+  await settle(() => { input.value = "Old draft"; input.dispatchEvent(new Event("input", { bubbles: true })); });
+  state.platform = { ...state.platform, providerScope: "replacement", personalProvider: { catalog: vi.fn(async () => items("movie", "replacement")) } };
+  await render(); await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  expect(container.querySelector("dialog")).toBeNull(); expect(container.textContent).not.toContain("Old draft"); expect(titles()).toHaveLength(48);
+});
+it("defers daily reshuffling while a search draft is open", async () => {
+  await render(); const before = titles(); await settle(() => (container.querySelector('[data-catalog-search-trigger]') as HTMLElement).click());
+  vi.setSystemTime(new Date("2026-10-27T12:00:00Z")); await settle(() => window.dispatchEvent(new Event("focus"))); expect(titles()).toEqual(before);
+  await click("Vazgeç"); expect(titles()).not.toEqual(before); expect(state.platform.personalProvider.catalog).toHaveBeenCalledTimes(1);
+});
+it("drops an open search when a pending movie-visibility preference changes its revision", async () => {
+  state.platform = { ...state.platform, providerMode: "legacy", providerScope: "legacy-preference", personalProvider: null };
+  state.api.mockImplementation(async (path: string) => path.startsWith("/me/catalog/")
+    ? { items: items().slice(0, 48), total: 120, groups: [{ title: "Group 0", count: 15 }] }
+    : { user: { status: "active", hasAssignedLink: true, hasActiveSubscription: true, activePackage: { endsAt: "2099-01-01" } } });
+  await render(); await settle(() => (container.querySelector('[data-catalog-search-trigger]') as HTMLElement).click());
+  expect(container.querySelector("dialog")).not.toBeNull(); expect(state.preference).not.toBeNull();
+  await settle(() => state.preference!(1, false));
+  expect(container.querySelector("dialog")).toBeNull();
 });
 it("keeps every hero candidate out of recommendation rails", async () => {
   await render({ overview: true }); const heroes = [...container.querySelectorAll('[aria-label^="Öne çıkan"] button')].map(b => b.getAttribute("aria-label")!.split(": ")[1]); expect(heroes).toHaveLength(5); expect(titles().filter(t => heroes.includes(t!))).toEqual([]);

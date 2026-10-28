@@ -33,26 +33,6 @@ test('live engine policy chooses HLS, MPEG-TS, and native file playback', () => 
   }
 });
 
-test('live page native branch plays exact URL and registers source clearing cleanup', async () => {
-  const { readFile } = await import('node:fs/promises');
-  const source = await readFile(new URL('../canli-tv/page.tsx', import.meta.url), 'utf8');
-  assert.match(source, /const playbackEngine = selectLivePlaybackEngine\(playback.transport, playbackUrl\)/);
-  const branch = source.match(/if \(playbackEngine === "native"\) \{([\s\S]*?)\n        \}\n\n        if \(playbackEngine === "hls"\)/);
-  assert.ok(branch, 'native file branch must return before HLS and MPEG-TS imports');
-  const run = new Function('mediaElement', 'playbackUrl', 'resetMedia', 'cancelled', 'setConnectionState', 'reportDirectEvent',
-    `return (async () => { let cleanupCurrent; ${branch[1].replace('          return;', '          return cleanupCurrent;')} })()`);
-  for (const transport of ['mp4', 'mkv']) {
-    const url = `https://provider.test/live/1.${transport}?subtitle=.m3u8`;
-    const events: string[] = [];
-    const media = { src: '', play: async () => { events.push('play'); } };
-    const cleanup = await run(media, url, () => { media.src = ''; }, false,
-      (state: string) => events.push(state), (event: string) => events.push(event));
-    assert.equal(media.src, url);
-    assert.deepEqual(events, ['play', 'live', 'playing']);
-    cleanup();
-    assert.equal(media.src, '');
-    events.length = 0;
-    await run(media, url, () => {}, true, () => events.push('late-state'), () => events.push('late-health'));
-    assert.deepEqual(events, ['play']);
-  }
-});
+// Native file attachment, cleanup and late-start cancellation are exercised through
+// the actual React page in canli-tv/live-stall-recovery.test.tsx. Do not eval slices
+// of its source: declarations and closure ownership are not observable behavior.

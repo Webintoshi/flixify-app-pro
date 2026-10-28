@@ -229,6 +229,7 @@ function LiveVideo({
     let lastProgressAt = performance.now();
     let healthyProgressSince: number | null = null;
     let stallWatchdog: ReturnType<typeof setInterval> | null = null;
+    const progressTimedOut = () => performance.now() - lastProgressAt >= (hasProgressed ? 12_000 : 30_000);
 
     let qualityFallbackStarted = false;
     let lastReportedEvent: "playing" | "stalled" | "failed" | null = null;
@@ -338,7 +339,9 @@ function LiveVideo({
       const currentEngine = () => !cancelled && version === engineVersion;
       activeAttempt = attempt;
       try {
-        if (playback.personalRef && refreshPersonalPlayback) {
+        // The channel selection already obtained a fresh authorization. Only a
+        // recovery/manual retry needs another one before opening its connection.
+        if (playback.personalRef && refreshPersonalPlayback && (attempt > 0 || revision > 0)) {
           const refreshed = await refreshPersonalPlayback();
           if (!currentEngine()) return;
           deadline?.dispose();
@@ -352,6 +355,7 @@ function LiveVideo({
         setActiveReconnectAttempt(attempt);
         setActivePlaybackMode(mode);
         lastProgressTime = 0;
+        hasProgressed = false;
         lastProgressAt = performance.now();
         healthyProgressSince = null;
         setPlayerError(null);
@@ -371,16 +375,24 @@ function LiveVideo({
 
         if (playbackEngine === "hls") {
           const canPlayNativeHls = Boolean(mediaElement.canPlayType("application/vnd.apple.mpegurl"));
-          const { default: Hls } = await import("hls.js");
-          if (!currentEngine()) return;
-          const hlsJsSupported = Hls.isSupported();
-
-          if (shouldUseNativeHls(playback.deliveryMode, canPlayNativeHls, hlsJsSupported)) {
+          const playNativeHls = async () => {
             mediaElement.src = playbackUrl;
             cleanupCurrent = resetMedia;
             starting = false;
             await mediaElement.play();
             if (currentEngine()) setConnectionState("live");
+          };
+          // Safari's direct HLS path needs no optional MSE engine or chunk fetch.
+          if (shouldUseNativeHls(playback.deliveryMode, canPlayNativeHls, true)) {
+            await playNativeHls();
+            return;
+          }
+          const { default: Hls } = await import("hls.js");
+          if (!currentEngine()) return;
+          const hlsJsSupported = Hls.isSupported();
+
+          if (shouldUseNativeHls(playback.deliveryMode, canPlayNativeHls, hlsJsSupported)) {
+            await playNativeHls();
             return;
           }
 
@@ -484,7 +496,11 @@ function LiveVideo({
       } finally { if (version === engineVersion) starting = false; }
     }
 
-    const handlePlaying = () => markHealthy();
+    const handlePlaying = () => {
+      hasProgressed = true;
+      lastProgressAt = performance.now();
+      markHealthy();
+    };
     const handleTimeUpdate = () => {
       if (cancelled) return;
       const currentTime = mediaElement.currentTime;
@@ -503,12 +519,12 @@ function LiveVideo({
     const handleWaiting = () => {
       if (cancelled || Date.now() < suppressMediaEventsUntil) return;
       setConnectionState("reconnecting");
-      if (shouldReconnectNow()) recoverTransport(activeAttempt, activeMode);
+      if (progressTimedOut() && shouldReconnectNow()) recoverTransport(activeAttempt, activeMode);
     };
     const handleStalled = () => {
       if (cancelled || Date.now() < suppressMediaEventsUntil) return;
       setConnectionState("reconnecting");
-      if (shouldReconnectNow()) recoverTransport(activeAttempt, activeMode);
+      if (progressTimedOut() && shouldReconnectNow()) recoverTransport(activeAttempt, activeMode);
     };
     const handleMediaError = () => {
       if (cancelled || Date.now() < suppressMediaEventsUntil) return;
@@ -534,7 +550,7 @@ function LiveVideo({
         if (cancelled || terminalAudioFailure || starting) return;
         if (mediaElement.paused && !mediaElement.ended) { lastProgressAt = performance.now(); healthyProgressSince = null; return; }
         handleTimeUpdate();
-        if (performance.now() - lastProgressAt >= 8_000) {
+        if (progressTimedOut()) {
           healthyProgressSince = null;
           recoverTransport(activeAttempt, activeMode);
         }

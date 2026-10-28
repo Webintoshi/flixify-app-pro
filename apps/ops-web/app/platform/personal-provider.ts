@@ -163,7 +163,10 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
   async playback(value: unknown) {
    const ref = validatePersonalRef(value);const {b,g}=await bootstrap(true);if(ref.sourceVersion !== b.sourceVersion) fail();let verified: PersonalRef | undefined;
    if(ref.kind === 'episode') {const detail=await seriesFor({source:'personal',sourceVersion:ref.sourceVersion,kind:'series',id:ref.seriesId!},b,g,true);verified=detail.seasons.flatMap(s=>s.episodes).find(e=>e.personalRef.id===ref.id)?.personalRef;}
-   else if(ref.kind !== 'series') verified=(await catalogFor(ref.kind,b,g,true)).find(i=>i.personalRef.id===ref.id)?.personalRef;
+   // Access is freshly revalidated above. A live channel's membership can reuse the
+   // catalog already verified for this exact source; on identity changes clear()
+   // discards it before a new source can authorize a stream.
+   else if(ref.kind !== 'series') verified=(await catalogFor(ref.kind,b,g,ref.kind !== 'live')).find(i=>i.personalRef.id===ref.id)?.personalRef;
    if(!verified) fail();active(g,b);return {url:buildPersonalMediaUrl(b,verified,now()),expiresAt:b.expiresAt};
   }
  };

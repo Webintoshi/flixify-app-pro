@@ -93,7 +93,7 @@ test('reference versions reject control characters and whitespace changes',()=>{
 for (const operation of ['playback','catalog','detail','epg'] as const) {
  test(`unchanged bootstrap refresh preserves overlapping ${operation}`,async()=>{
   let release:()=>void=()=>{};let entered:()=>void=()=>{};const blocked=new Promise<void>(r=>entered=r);let hold=false;let held=false;let loads=0;
-  const blockedAction={playback:'get_live_streams',catalog:'get_vod_streams',detail:'get_series_info',epg:'get_short_epg'}[operation];
+  const blockedAction={playback:'get_vod_streams',catalog:'get_vod_streams',detail:'get_series_info',epg:'get_short_epg'}[operation];
   const client=createPersonalProviderClient({loadBootstrap:async()=>{loads++;return {...bootstrap};},fetch:async(url)=>{
    const action=new URL(String(url)).searchParams.get('action');
    if(hold && !held && action===blockedAction){held=true;entered();await new Promise<void>(r=>release=r);}
@@ -102,7 +102,7 @@ for (const operation of ['playback','catalog','detail','epg'] as const) {
   }});
   const liveRef={source:'personal',sourceVersion:'v1',kind:'live',id:'7'};
   await client.catalog('live');hold=true;
-  const ongoing=operation==='playback'?client.playback(liveRef):operation==='catalog'?client.catalog('movie'):operation==='detail'?client.series({source:'personal',sourceVersion:'v1',kind:'series',id:'3'}):client.shortEpg(liveRef);
+  const ongoing=operation==='playback'?client.playback(ref):operation==='catalog'?client.catalog('movie'):operation==='detail'?client.series({source:'personal',sourceVersion:'v1',kind:'series',id:'3'}):client.shortEpg(liveRef);
   await blocked;await client.playback(liveRef);release();
   const result=await ongoing;
   if(operation==='epg') assert.equal((result as {status:string}).status,'empty');
@@ -160,4 +160,42 @@ test('forced metadata refresh coalesces, preserves catalog cache and retries aft
  outage=true;await assert.rejects(client.refreshMetadata());
  await client.catalog('live');assert.equal(calls,2);
  client.clear();
+});
+test('live selection waits for fresh access but skips slow catalog downloads already verified for this source',async()=>{
+ let loads=0;let blockAccess=false;let accessEntered!:()=>void;let releaseAccess!:()=>void;let releaseCatalog!:()=>void;
+ const entered=new Promise<void>(done=>accessEntered=done);const accessGate=new Promise<void>(done=>releaseAccess=done);const catalogGate=new Promise<void>(done=>releaseCatalog=done);
+ const actions:string[]=[];let result:unknown;let warmed=false;
+ const client=createPersonalProviderClient({loadBootstrap:async()=>{loads++;if(blockAccess){accessEntered();await accessGate;}return {...bootstrap};},fetch:async(url)=>{
+  const action=new URL(String(url)).searchParams.get('action')!;actions.push(action);if(warmed)await catalogGate;
+  return new Response(JSON.stringify(action==='get_live_categories'?[]:[{stream_id:7,name:'Channel',container_extension:'m3u8'}]));
+ }});
+ const liveRef={source:'personal',sourceVersion:'v1',kind:'live',id:'7',extension:'mp4'};
+ await client.catalog('live');warmed=true;blockAccess=true;
+ const ongoing=client.playback(liveRef).then(value=>{result=value;return value;});
+ try{
+  await entered;assert.equal(result,undefined,'fresh entitlement must finish before media is authorized');releaseAccess();await new Promise(done=>setImmediate(done));
+  assert.ok(result,'a cached live selection must not wait for the slow provider catalog');assert.equal(loads,2);
+  assert.deepEqual(actions,['get_live_categories','get_live_streams']);
+  assert.equal((result as {url:string}).url,'https://provider.test/live/u%2Fa/p%3F%23/7.m3u8');
+ }finally{releaseAccess();releaseCatalog();await ongoing;client.clear();}
+});
+test('a mutated cached live reference cannot forge membership or its verified stream extension',async()=>{
+ let requests=0;const client=createPersonalProviderClient({loadBootstrap:async()=>({...bootstrap}),fetch:async(url)=>{
+  requests++;const action=new URL(String(url)).searchParams.get('action');return new Response(JSON.stringify(action==='get_live_categories'?[]:[{stream_id:7,name:'Channel',container_extension:'m3u8'}]));
+ }});
+ const rows=await client.catalog('live');rows[0].personalRef.id='999';await assert.rejects(client.playback(rows[0].personalRef));
+ const response=await client.playback({...rows[0].personalRef,id:'7',extension:'mp4'});assert.equal(response.url,'https://provider.test/live/u%2Fa/p%3F%23/7.m3u8');assert.equal(requests,2);client.clear();
+});
+test('cached live playback still refuses a failed fresh access check before contacting the provider',async()=>{
+ let denied=false,requests=0;const client=createPersonalProviderClient({loadBootstrap:async()=>{if(denied)throw new Error('private failure');return {...bootstrap};},fetch:async(url)=>{
+  requests++;const action=new URL(String(url)).searchParams.get('action');return new Response(JSON.stringify(action==='get_live_categories'?[]:[{stream_id:7,name:'Channel'}]));
+ }});
+ await client.catalog('live');denied=true;await assert.rejects(client.playback({source:'personal',sourceVersion:'v1',kind:'live',id:'7'}));assert.equal(requests,2);client.clear();
+});
+test('a credential change invalidates cached live membership even if the source version was reused',async()=>{
+ let current={...bootstrap};let requests=0;const client=createPersonalProviderClient({loadBootstrap:async()=>({...current}),fetch:async(url)=>{
+  requests++;const action=new URL(String(url)).searchParams.get('action');return new Response(JSON.stringify(action==='get_live_categories'?[]:[{stream_id:current.username===bootstrap.username?7:8,name:'Channel'}]));
+ }});
+ await client.catalog('live');current={...current,username:'replacement'};await assert.rejects(client.playback({source:'personal',sourceVersion:'v1',kind:'live',id:'7'}));assert.equal(requests,4);
+ const response=await client.playback({source:'personal',sourceVersion:'v1',kind:'live',id:'8'});assert.ok(response.url.includes('/replacement/'));assert.equal(requests,4);client.clear();
 });

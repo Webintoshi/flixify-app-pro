@@ -219,10 +219,10 @@
 }
 
 /* Reference-driven live directory: theatre player left, channel rail right. */
-.page { min-height: calc(100dvh - 100px); padding: 0 0 38px; background: transparent; }
-.appBody { width: 100%; grid-template-columns: minmax(0, 1.9fr) minmax(350px, .92fr); gap: 12px; }
-.playerColumn { top: 12px; }
-.playerStage { position: relative; overflow: hidden; border: 1px solid #242a34; border-radius: 12px; background: #080b10; }
+.page { min-height: calc(100dvh - 100px); padding: 0 0 38px; background: transparent; overflow: visible; }
+.appBody { width: 100%; grid-template-columns: minmax(0, 1.9fr) minmax(330px, .92fr); gap: 24px; }
+.playerColumn { top: calc(var(--platform-header-height, 0px) + 16px); }
+.playerStage { position: relative; overflow: hidden; border: 1px solid #242a34; border-radius: 24px; background: #080b10; }
 .playerShell, .playerEmpty { aspect-ratio: 16 / 9; }
 .playerEmpty {
   background: linear-gradient(0deg, rgba(4,6,10,.75), rgba(4,6,10,.1) 60%), url('/images/landing-v2/mountain-lake.webp') center / cover no-repeat;
@@ -237,7 +237,7 @@
 .playerTitle { display: grid; gap: 5px; padding-left: 15px; border-left: 1px solid #ffffff74; letter-spacing: 0; }
 .playerTitle strong { max-width: min(42vw, 520px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: clamp(15px, 1.4vw, 22px); }
 .playerTitle small { max-width: min(42vw, 520px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cad0d8; font-size: 11px; font-weight: 500; }
-.closeButton { width: 34px; height: 34px; border: 1px solid #ffffff50; border-radius: 7px; background: #080c17a8; color: white; }
+.closeButton { width: 40px; height: 40px; border: 1px solid #ffffff50; border-radius: 50%; background: #080c17a8; color: white; }
 .closeButton svg { width: 17px; }
 .nowPlaying { min-height: 124px; gap: 20px; padding: 24px 10px; border: 0; }
 .nowPlaying .logoBox { width: 80px; height: 80px; flex: 0 0 80px; border-radius: 12px; background: #fff; }
@@ -248,25 +248,25 @@
 .nowPlaying .detailAction { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; margin-left: auto; padding: 0; border: 0; background: transparent; color: #e8ebf0; font-size: 13px; }
 .detailAction > button { position: static; width: 40px; height: 40px; background: transparent; }
 .detailAction > button svg { width: 21px; height: 21px; }
-.channelRail { min-height: 70vh; padding: 7px 11px 11px; border: 1px solid #242a34; border-radius: 12px; background: #101419; }
-.directoryTabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; padding: 0 0 12px; }
-.directoryTabs button { display: inline-flex; min-width: 0; min-height: 43px; align-items: center; justify-content: center; gap: 7px; padding: 6px 5px; border: 1px solid transparent; border-radius: 9px; background: #181d23; color: #b7bec8; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.channelRail { min-height: 70vh; min-width: 0; padding: 14px; border: 1px solid #242a34; border-radius: 24px; background: #101419; }
+.directoryTabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 0 0 16px; }
+.directoryTabs button { display: inline-flex; min-width: 0; min-height: 43px; align-items: center; justify-content: center; gap: 7px; padding: 6px 5px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: #b7bec8; cursor: pointer; font-size: 12px; white-space: nowrap; }
 .directoryTabs button svg { width: 15px; height: 15px; flex-shrink: 0; }
 .directoryTabs button:hover { color: white; }
 .directoryTabs .activeTab { border-color: #83313a; background: #341b20; color: #ff525e; }
 .filterDropdowns { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; margin: 2px 0 12px; }
 .filterDropdowns label { min-width: 0; }
-.filterDropdowns select { width: 100%; min-height: 43px; padding: 0 28px 0 12px; border: 1px solid #353d47; border-radius: 8px; background: #11161c; color: #ecf0f4; font: inherit; font-size: 13px; text-overflow: ellipsis; cursor: pointer; }
+.filterDropdowns select { width: 100%; min-height: 43px; padding: 0 28px 0 12px; border: 1px solid #353d47; border-radius: 999px; background: #11161c; color: #ecf0f4; font: inherit; font-size: 13px; text-overflow: ellipsis; cursor: pointer; }
 .filterDropdowns select:focus-visible { outline: 2px solid #ff3b43; outline-offset: 2px; }
 .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .directoryHeader { align-items: center; gap: 10px; margin: 0; }
-.searchLine { height: 41px; padding: 0 12px; border: 1px solid #353d47; border-radius: 8px; background: #11161c; }
+.searchLine { height: 46px; padding: 0 16px; border: 1px solid #353d47; border-radius: 999px; background: #11161c; }
 .searchLine svg { width: 18px; height: 18px; flex-shrink: 0; }
 .searchLine:focus-within { border-color: #ff3b43; }
 .channelCount { padding: 0 2px 0 0; color: #b4bac3; font-size: 12px; }
 .catalogStatus { min-height: 21px; padding: 5px 3px 3px; }
 .channelList { max-height: calc(100dvh - 275px); min-height: 350px; border: 0; }
-.favoriteRow { display: flex; align-items: center; margin: 0 0 6px; padding: 0 7px 0 0; border: 1px solid #ffffff08; border-radius: 9px; background: #11161c; }
+.favoriteRow { display: flex; align-items: center; margin: 0 0 6px; padding: 0 8px 0 0; border: 1px solid transparent; border-radius: 18px; background: transparent; transition: background .16s ease, border-color .16s ease; }
 .favoriteRow:hover { background: #171d25; }
 .favoriteRow:has(.selectedChannel) { border-color: #96323d; background: #21171d; box-shadow: 0 0 16px #e72e4418; }
 .channelRow { grid-template-columns: 48px minmax(0,1fr) auto; flex: 1; min-width: 0; min-height: 58px; gap: 10px; padding: 5px 0 5px 7px; border: 0; border-radius: 9px; background: transparent; }
@@ -310,8 +310,22 @@
   .rowLive { min-width: 7px; }
 }
 
-.epg { margin-top: 16px; padding: 20px; background: #15171c; border: 1px solid #292c33; border-radius: 12px; color: #f4f4f5; }
+.epg { margin-top: 16px; padding: 24px; background: #15171c; border: 1px solid #292c33; border-radius: 24px; color: #f4f4f5; }
 .epg h2 { margin: 0 0 14px; font-size: 16px; }
 .epg article { display: grid; gap: 6px; padding: 12px 0; border-top: 1px solid #292c33; }
 .epg time, .epg p { color: #a7abb5; font-size: 13px; line-height: 1.5; margin: 0; }
-.epg button { color: inherit; background: transparent; border: 1px solid #555; border-radius: 6px; padding: 5px 9px; }
+.epg button { color: inherit; background: transparent; border: 1px solid #555; border-radius: 999px; padding: 7px 13px; }
+
+/* Shared TV-style focus without changing channel/player ownership. */
+.page :is(button, input, select):focus-visible { outline: 2px solid var(--live-text); outline-offset: 3px; }
+.channelRow:focus-visible { outline-offset: -3px; }
+.channelRow { border-radius: 18px; }
+.filterDropdowns select { min-height: 46px; }
+.livePill { box-shadow: none; }
+@media (max-width: 1100px) and (min-width: 851px) { .appBody { gap: 16px; } .channelRail { padding: 10px; } }
+@media (max-width: 850px) { .playerColumn { position: static; } .channelRail { padding: 14px; } }
+@media (max-width: 520px) { .playerStage { margin: 0; border: 1px solid #242a34; border-radius: 20px; } .channelRail { padding: 12px; border-radius: 20px; } .directoryTabs button { white-space: normal; line-height: 1.25; } }
+@media (prefers-reduced-motion: reduce) { .favoriteRow { transition: none; } }
+
+.page .directoryTabs button { min-height: 46px; padding: 8px 6px; gap: 5px; white-space: normal; font-size: 11px; font-weight: 600; line-height: 1.25; }
+@media (max-width: 520px) { .page .directoryTabs button { flex-direction: column; min-height: 62px; padding: 8px 4px; gap: 4px; font-size: 10px; } }

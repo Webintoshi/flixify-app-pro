@@ -92,3 +92,14 @@
   .episodeEnd svg { width: 17px; height: 17px; }
 }
 @media (prefers-reduced-motion: reduce) { .episode { transition: none; } }
+
+/* Native TV material/geometry; episode and playback behavior remains unchanged. */
+.surface .poster { border-radius: 16px; }
+.surface .playAction { min-height: 48px; padding-inline: 24px; border-radius: 999px; font-size: 14px; }
+.surface .favoriteAction button { border-radius: 999px; }
+.surface .seasonTabs { gap: 8px; }
+.surface .seasonTabs button { min-height: 42px; padding-inline: 18px; border-radius: 999px; font-size: 13px; }
+.surface .episode { border-radius: 16px; }
+.surface .episodeArt { border-radius: 12px; }
+.surface .notice,.surface .error { border-radius: 16px; }
+@media (max-width: 440px) { .surface .playAction { padding-inline: 18px; } .surface .seasonTabs button { padding-inline: 14px; } }

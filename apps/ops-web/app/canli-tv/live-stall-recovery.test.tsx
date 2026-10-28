@@ -4,13 +4,15 @@ import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LiveTvPage from "./page";
 
-const state = vi.hoisted(() => ({ platform: {} as any, engines: [] as any[] }));
+const state = vi.hoisted(() => ({ platform: {} as any, engines: [] as any[], hlsImportGate:null as Promise<void>|null }));
 vi.mock("../platform/session", () => ({ usePlatform: () => state.platform, useProviderExpiry: () => state.platform.providerExpiresAt }));
 vi.mock("../platform/artwork", () => ({ FavoriteButton: () => null }));
 vi.mock("../components/player-chrome", () => ({ PlayerChrome: () => null }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams("channel=channel-a") }));
 vi.mock("next/link", () => ({ default: (props: any) => React.createElement("a", props) }));
-vi.mock("hls.js", () => ({ default: class {
+vi.mock("hls.js", async () => {
+ if(state.hlsImportGate)await state.hlsImportGate;
+ return { default: class {
   static Events = { ERROR: "error" };
   static ErrorTypes = { MEDIA_ERROR: "media" };
   static isSupported() { return true; }
@@ -24,7 +26,8 @@ vi.mock("hls.js", () => ({ default: class {
   recoverMediaError() {}
   destroy() { this.destroyed = true; }
   networkError() { this.handlers.get("error")?.("error", { fatal: true, type: "network" }); }
-} }));
+} };
+});
 
 describe("live stream stall recovery", () => {
   let root: Root;
@@ -51,18 +54,19 @@ describe("live stream stall recovery", () => {
     Object.defineProperty(dom.window, "localStorage", { configurable: true, value: storage });
     Object.defineProperties(dom.window.HTMLElement.prototype, {
       currentTime: { configurable: true, writable: true, value: 0 },
+      src: { configurable: true, get() { return this.getAttribute("src") ?? ""; }, set(value: string) { this.setAttribute("src",value); } },
       readyState: { configurable: true, writable: true, value: 4 },
       paused: { configurable: true, writable: true, value: false },
       ended: { configurable: true, writable: true, value: false },
       buffered: { configurable: true, get() { return { length: 1, start: () => 0, end: () => this.currentTime + 5 }; } },
       play: { configurable: true, value() { this.paused = false; return Promise.resolve(); } },
       pause: { configurable: true, value() { this.paused = true; } },
-      load: { configurable: true, value() {} },
+      load: { configurable: true, value() { this.currentTime = 0; } },
       canPlayType: { configurable: true, value: () => "" }
     });
     expiresAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
     playback = vi.fn(async () => ({ url, expiresAt }));
-    state.engines = [];
+    state.engines = [];state.hlsImportGate=null;
     state.platform = { session: { accessToken: "test-token" }, favorites: [], providerMode: "personal", providerScope: "line-a",
       personalProvider: { catalog: async () => [{ id: "channel-a", title: "ATV HD", groupTitle: "TR", personalRef: ref }],
         playback, shortEpg: async () => ({ status: "empty", programmes: [] }) } };
@@ -77,10 +81,118 @@ describe("live stream stall recovery", () => {
     await progress();
   }
 
+  it("attaches supported native HLS without waiting for the optional JavaScript engine download", async () => {
+    let release!:()=>void;state.hlsImportGate=new Promise<void>(done=>release=done);
+    Object.defineProperty(window.HTMLElement.prototype,"canPlayType",{configurable:true,value:()=>"probably"});
+    try {
+      await act(async()=>root.render(<LiveTvPage/>));
+      await act(async()=>{await vi.advanceTimersByTimeAsync(0);});
+      expect(video().src).toBe(url);
+      expect(state.engines).toHaveLength(0);
+      expect(playback).toHaveBeenCalledTimes(1);
+    }finally{release();state.hlsImportGate=null;await settle();}
+  });
+
+  it("starts from the channel selection authorization without waiting for a duplicate personal request", async () => {
+    playback.mockResolvedValueOnce({url,expiresAt}).mockImplementation(()=>new Promise(()=>{}));
+    await settle(()=>root.render(<LiveTvPage/>));await settle();
+    expect(state.engines).toHaveLength(1);
+    expect(state.engines[0].source).toBe(url);
+    expect(playback).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a slow first-frame connection for its thirty-second preparation budget", async () => {
+    await settle(()=>root.render(<LiveTvPage/>));await settle();
+    expect(state.engines).toHaveLength(1);
+    Object.defineProperty(video(),"readyState",{value:0,configurable:true,writable:true});
+    await settle(()=>video().dispatchEvent(new Event("waiting")));
+    await tick(29_000);
+    expect(state.engines).toHaveLength(1);
+    expect(state.engines[0].destroyed).toBe(false);
+    await tick(5_000);
+    expect(state.engines).toHaveLength(2);
+    expect(playback).toHaveBeenCalledTimes(2);
+  });
+
+  for(const mode of ["hls","native-hls","native-mp4"]){
+    it(`recovers a pending ${mode} play promise after its startup budget and ignores its late rejection`, async () => {
+      let rejectFirst!:(reason:Error)=>void;let plays=0;
+      Object.defineProperty(window.HTMLElement.prototype,"play",{configurable:true,value(){
+        this.paused=false;plays++;return plays===1?new Promise<void>((_resolve,reject)=>rejectFirst=reject):Promise.resolve();
+      }});
+      if(mode==="native-hls")Object.defineProperty(window.HTMLElement.prototype,"canPlayType",{configurable:true,value:()=>"probably"});
+      const source=mode==="native-mp4"?"https://edge.test/live/personal/test-password/274.mp4":url;
+      playback.mockResolvedValue({url:source,expiresAt});
+      await settle(()=>root.render(<LiveTvPage/>));await settle();
+      expect(plays).toBe(1);expect(playback).toHaveBeenCalledTimes(1);
+      await tick(29_000);expect(plays).toBe(1);
+      await tick(5_000);expect(plays).toBe(2);expect(playback).toHaveBeenCalledTimes(2);
+      if(mode==="hls"){expect(state.engines).toHaveLength(2);expect(state.engines[0].destroyed).toBe(true);expect(state.engines[1].destroyed).toBe(false);}
+      else expect(video().src).toBe(source);
+      await settle(()=>rejectFirst(new Error("retired playback promise")));
+      await tick(10_000);expect(plays).toBe(2);expect(playback).toHaveBeenCalledTimes(2);
+      expect(container.querySelector("[data-reconnect-attempt]")?.getAttribute("data-reconnect-attempt")).toBe("1");
+      expect(container.textContent).not.toContain("Yayın kesildi");
+    });
+  }
+
+  it("gives established playback twelve seconds to recover before replacing its connection", async () => {
+    await mount();
+    Object.defineProperty(video(),"readyState",{value:0,configurable:true,writable:true});
+    await settle(()=>video().dispatchEvent(new Event("waiting")));
+    await tick(11_000);expect(state.engines).toHaveLength(1);
+    await tick(5_000);expect(state.engines).toHaveLength(2);
+  });
+
+  it("keeps canplay inside the startup budget and accepts playing as first-frame progress", async () => {
+    await settle(()=>root.render(<LiveTvPage/>));await settle();
+    await settle(()=>video().dispatchEvent(new Event("canplay")));
+    await tick(13_000);expect(state.engines).toHaveLength(1);
+    await settle(()=>video().dispatchEvent(new Event("playing")));
+    await tick(11_000);expect(state.engines).toHaveLength(1);
+    await tick(5_000);expect(state.engines).toHaveLength(2);
+  });
+
+  it("freshly authorizes a manual retry after the automatic connection budget is exhausted", async () => {
+    await mount();
+    for(const [index,delay] of [4_000,6_000,10_000].entries()){
+      await settle(()=>state.engines.at(-1).networkError());await tick(delay+100);
+      expect(state.engines).toHaveLength(index+2);
+    }
+    expect(state.engines).toHaveLength(4);expect(playback).toHaveBeenCalledTimes(4);
+    await settle(()=>state.engines.at(-1).networkError());
+    const retry=[...container.querySelectorAll("button")].find(button=>button.textContent==="Tekrar Dene");
+    expect(retry).toBeDefined();
+    const renewed=url+"?renewed=1";playback.mockResolvedValue({url:renewed,expiresAt});
+    await settle(()=>retry!.click());
+    expect(playback).toHaveBeenCalledTimes(5);expect(state.engines).toHaveLength(5);expect(state.engines.at(-1).source).toBe(renewed);
+  });
+
+  for(const extension of ["mp4","mkv"]){
+    it(`plays the exact native ${extension} URL and clears its media source on close`, async () => {
+      const nativeUrl=`https://edge.test/live/personal/test-password/274.${extension}?subtitle=.m3u8`;
+      playback.mockResolvedValue({url:nativeUrl,expiresAt});
+      await settle(()=>root.render(<LiveTvPage/>));await settle();
+      const media=video();expect(media.src).toBe(nativeUrl);expect(state.engines).toHaveLength(0);
+      const close=container.querySelector('button[aria-label="Oynatıcıyı kapat"]');expect(close).not.toBeNull();
+      await settle(()=> (close as HTMLElement).click());
+      expect(container.querySelector("video")).toBeNull();expect(media.src).toBe("");
+    });
+  }
+
+  it("cleans up a pending native start when its account leaves and ignores its late play result", async () => {
+    let release!:()=>void;Object.defineProperty(window.HTMLElement.prototype,"play",{configurable:true,value(){this.paused=false;return new Promise<void>(done=>release=done);}});
+    playback.mockResolvedValue({url:"https://edge.test/live/personal/test-password/274.mp4",expiresAt});
+    await settle(()=>root.render(<LiveTvPage/>));await settle();const media=video();expect(media.src).not.toBe("");
+    state.platform={...state.platform,session:null,personalProvider:null,providerMode:"legacy",providerScope:""};
+    await settle(()=>root.render(<LiveTvPage/>));expect(media.src).toBe("");
+    await settle(()=>release());expect(container.querySelector("video")).toBeNull();expect(state.engines).toHaveLength(0);
+  });
+
   it("restarts the same authorized HLS channel after a buffered stall with no further media events", async () => {
     await mount();
     await settle(() => video().dispatchEvent(new Event("stalled")));
-    await tick(9_000);
+    await tick(13_000);
     expect(container.textContent).not.toMatch(/Yayın (?:dengeleniyor|yenileniyor)/i);
     await tick(4_000);
     expect(state.engines).toHaveLength(2);
@@ -123,7 +235,7 @@ describe("live stream stall recovery", () => {
     state.platform={...state.platform,providerExpiresAt:new Date(Date.now()+60000).toISOString()};
     await settle(()=>root.render(<LiveTvPage/>));
     await settle(()=>video().dispatchEvent(new Event("stalled")));
-    await tick(13000);
+    await tick(17000);
     expect(state.engines).toHaveLength(2);expect(state.engines[1].destroyed).toBe(false);
     expect(container.querySelector("video")).not.toBeNull();
   });
@@ -142,10 +254,10 @@ describe("live stream stall recovery", () => {
     await mount();
     let resolve!: (value: { url: string; expiresAt: string }) => void;
     playback.mockImplementation(() => new Promise(done => { resolve = done; }));
-    await tick(13_000);
-    expect(playback).toHaveBeenCalledTimes(3);
+    await tick(17_000);
+    expect(playback).toHaveBeenCalledTimes(2);
     await tick(20_000);
-    expect(playback).toHaveBeenCalledTimes(3);
+    expect(playback).toHaveBeenCalledTimes(2);
     await settle(() => resolve({ url, expiresAt }));
     expect(state.engines).toHaveLength(2);
   });

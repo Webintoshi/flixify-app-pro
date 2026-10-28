@@ -7,6 +7,8 @@ import { apiRequest } from "../../lib/api";
 import { accountState, type AccountUser } from "../../lib/account-model";
 import { Artwork, FavoriteButton } from "./artwork";
 import { Detail } from "./detail";
+import { CategorySidebar } from "./categories";
+import { CatalogSearchDialog } from "./catalog-search";
 import { AdultMovieToggle } from "./adult-movie-toggle";
 import { emptyCatalogCopy } from "./catalog-empty";
 import { Icon } from "./icons";
@@ -16,6 +18,7 @@ import { buildShowcaseRails, orderShowcaseCatalog, selectShowcaseHero, showcaseD
 import { itemKey, type Catalog, type Kind, type MediaItem } from "./types";
 import s from "./platform.module.css";
 import seriesStyles from "./series-catalog.module.css";
+import panelStyles from "./catalog-panels.module.css";
 
 const cache = new Map<string, { at: number; data: Catalog }>();
 let cacheAccount = "";
@@ -98,6 +101,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const params = useSearchParams();
   const router = useRouter();
   const [query, setQuery] = useState(params.get("q") ?? "");
+  const [panel, setPanel] = useState<{ owner: object; type: "search" | "categories" } | null>(null);
   const [search, setSearch] = useState(query);
   const [group, setGroup] = useState("");
   const hasCategories = !favoritesOnly && !overview;
@@ -155,18 +159,24 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const currentMovieRevision = movieRevision.account === account ? movieRevision.revision : 0;
   const selectedId = params.get("item");
   const selectedKind = params.get("kind");
+  const panelOwner = useMemo(() => ({ account, kind, group, query, search, filter, overview, favoritesOnly, selectedId, selectedKind, currentMovieRevision, personalSnapshot }), [account, kind, group, query, search, filter, overview, favoritesOnly, selectedId, selectedKind, currentMovieRevision, personalSnapshot]);
+  const panelOwnerRef = useRef(panelOwner);
+  panelOwnerRef.current = panelOwner;
+  const activePanel = panel?.owner === panelOwner ? panel.type : null;
+  const [categoryPreview, setCategoryPreview] = useState<{ owner: object; groups: NonNullable<Catalog["groups"]>; total: number } | null>(null);
+  useEffect(() => { setPanel(null); }, [panelOwner]);
   const catalogOwner = JSON.stringify([account, kind, search, group, acquisitionDay]);
   const rowsOwner = JSON.stringify([account, search, acquisitionDay]);
   useEffect(() => {
     const refresh = () => {
-      if (document.visibilityState !== "hidden" && page === 1 && !query && !search && !group && !selectedId && !detail) setDay(showcaseDayKey());
+      if (document.visibilityState !== "hidden" && page === 1 && !query && !search && !group && !selectedId && !detail && !panel) setDay(showcaseDayKey());
     };
     refresh();
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     const timer = window.setInterval(refresh, 60_000);
     return () => { window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); window.clearInterval(timer); };
-  }, [account, kind, page, query, search, group, selectedId, detail]);
+  }, [account, kind, page, query, search, group, selectedId, detail, panel]);
   useEffect(() => { const timer = setTimeout(() => { setSearch(query.trim()); setPage(1); }, 300); return () => clearTimeout(timer); }, [query]);
   useEffect(() => { const q = params.get("q"); if (q !== null) setQuery(q); }, [params]);
   useEffect(() => {
@@ -271,6 +281,46 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const seriesCatalog = kind === "series" && !overview && !favoritesOnly;
   // Preserve the legacy provider prefix as pages append; only complete personal pools are daily-ranked.
   const discoveryRows = useMemo(() => !favoritesOnly && !overview && !group && !search && kind !== "live" ? buildShowcaseRails(items, kind) : null, [favoritesOnly, overview, group, search, kind, items]);
+  const categories = useMemo(() => categoryGroups.account === account && categoryGroups.kind === kind ? categoryGroups.groups : shownCatalog.groups ?? [], [categoryGroups, account, kind, shownCatalog.groups]);
+  useEffect(() => {
+    if (activePanel !== "categories" || providerMode !== "personal") return;
+    // Read the already-owned full snapshot; opening this panel never reacquires provider catalogs.
+    const raw = personalSnapshot.raw.get(kind);
+    if (!raw) return;
+    let cancelled = false;
+    const owner = panelOwner;
+    void raw.then(rows => {
+      if (cancelled || panelOwnerRef.current !== owner) return;
+      const counts = new Map(categories.map(category => [category.title, 0]));
+      const needle = search.toLocaleLowerCase("tr-TR");
+      let total = 0;
+      for (const item of rows) {
+        if (!item.title.toLocaleLowerCase("tr-TR").includes(needle)) continue;
+        total++;
+        if (item.groupTitle) counts.set(item.groupTitle, (counts.get(item.groupTitle) ?? 0) + 1);
+      }
+      setCategoryPreview({ owner, total, groups: [...counts].map(([title, count]) => ({ title, count })) });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [activePanel, providerMode, personalSnapshot, kind, panelOwner, categories, search]);
+  const closePanel = (owner: object) => setPanel(current => current?.owner === owner ? null : current);
+  const previewSearch = useCallback(async (value: string): Promise<Catalog> => {
+    const owner = panelOwner;
+    if (panelOwnerRef.current !== owner) throw new Error("Catalog changed");
+    if (favoritesOnly) {
+      const needle = value.toLocaleLowerCase("tr-TR");
+      const matches = favorites.filter(item => (filter === "all" || item.kind === filter) && item.title.toLocaleLowerCase("tr-TR").includes(needle));
+      return { items: matches.slice(0, 3), total: matches.length };
+    }
+    const kinds: Kind[] = overview ? [kind, "series", "live"] : [kind];
+    const catalogs = await Promise.all(kinds.map(rowKind => loadCatalog(rowKind, 1, value, overview ? "" : group, account, currentMovieRevision)));
+    if (panelOwnerRef.current !== owner) throw new Error("Catalog changed");
+    return { items: catalogs.flatMap(catalog => catalog.items).slice(0, 3), total: catalogs.reduce((sum, catalog) => sum + catalog.total, 0) };
+  }, [panelOwner, favoritesOnly, favorites, filter, overview, kind, loadCatalog, group, account, currentMovieRevision]);
+  const submitSearch = (value: string, owner: object) => {
+    if (panelOwnerRef.current !== owner) return;
+    setQuery(value); setSearch(value); setPage(1); closePanel(owner);
+  };
   if (accessCopy) return <main className={`${s.catalog} ${kind === "series" && !overview && !favoritesOnly ? seriesStyles.seriesPage : ""}`}>
     <div className={s.catalogContent} data-catalog-results>
       <div className={s.catalogToolbar}><div className={s.catalogHeading}><h1>{title}</h1></div></div>
@@ -282,9 +332,12 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     {overview && featured && !search && <section className={s.hero}><Artwork item={featured} hero/><div className={s.heroFade}/><div className={s.heroCopy}><span>{featured.kind === "series" ? "DİZİ" : "FİLM"} <b>GÜNÜN SEÇKİSİ</b></span><h1>{featured.title}</h1><p>{featured.groupTitle}{featured.seasonCount ? ` · ${featured.seasonCount} sezon` : ""}</p><div className={s.heroActions}><a className={s.heroDiscover} href="#kesfet"><Icon name="search"/>Kataloğu Keşfet</a><button className={s.heroMore} onClick={() => open(featured)}>Daha Fazla <Icon name="arrow"/></button><FavoriteButton item={featured} expanded/></div></div>{heroOptions.length > 1 && <div className={s.heroSlides} role="group" aria-label="Öne çıkan içerikler">{heroOptions.map((item, index) => <button key={itemKey(item)} type="button" aria-label={`${index + 1}. içerik: ${item.title}`} aria-pressed={heroIndex === index} onClick={() => setHeroIndex(index)}/>)}</div>}</section>}
     {overview && !search && <section className={s.featureIntro}><span className={s.featureIntroMark}><Icon name="heart"/></span><div><small>FLIXIFY SEÇKİSİ</small><h2>Hazırsan perdeyi açalım.</h2><p>Filmleri, dizileri ve yeni hikâyeleri bir arada keşfet.</p></div><a href="#kesfet">Kataloğu Keşfet <Icon name="arrow"/></a></section>}
     <div className={`${s.catalogToolbar} ${seriesCatalog ? seriesStyles.toolbar : ""}`}><div className={s.catalogHeading} id="kesfet"><h1>{title}</h1>{(!favoritesOnly || favoritesReady) && <span>{favoritesOnly ? favorites.length : shownCatalog.total.toLocaleString("tr-TR")} içerik</span>}</div>
-      <div className={s.filters}><label className={s.search}><Icon name="search"/><input id="catalog-search" aria-label={`${title} içinde ara`} placeholder={favoritesOnly ? "Favorilerinde ara…" : "İçerik ara…"} value={query} onChange={e => setQuery(e.target.value)}/>{query && <button onClick={() => setQuery("")} aria-label="Aramayı temizle"><Icon name="close"/></button>}</label></div>
+      <div className={`${s.filters} ${panelStyles.toolbarControls}`}>
+        <button type="button" className={panelStyles.trigger} data-catalog-search-trigger data-active={Boolean(search)} aria-label={`${title} içinde ara`} aria-haspopup="dialog" aria-controls="catalog-search-dialog" aria-expanded={activePanel === "search"} onClick={() => setPanel({ owner: panelOwner, type: "search" })}><Icon name="search"/><span>{search ? "Aramayı düzenle" : "Ara"}</span></button>
+        {hasCategories && <button type="button" className={`${panelStyles.trigger} ${panelStyles.categoryTrigger}`} data-active={Boolean(group)} aria-haspopup="dialog" aria-controls="category-drawer" aria-expanded={activePanel === "categories"} onClick={() => setPanel({ owner: panelOwner, type: "categories" })}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="M4 6h16M4 12h11M4 18h6"/></svg><span>Kategori: {group || "Tümü"}</span><span className={panelStyles.chevron}><Icon name="chevron"/></span></button>}
+      </div>
     </div>
-    {hasCategories && <div className={`${s.genreStrip} ${seriesCatalog ? seriesStyles.categories : ""}`} role="group" aria-label={kind === "movie" ? "Film kategorileri" : "Dizi kategorileri"}><button type="button" aria-pressed={!group} onClick={() => setGroup("")}>Tümü</button>{(categoryGroups.account === account && categoryGroups.kind === kind ? categoryGroups.groups : shownCatalog.groups ?? []).map(category => <button type="button" key={category.title} aria-pressed={group === category.title} onClick={() => setGroup(category.title)}>{category.title}</button>)}</div>}
+    {search && <div className={panelStyles.querySummary}><button type="button" aria-label="Aramayı temizle" title={search} onClick={() => { setQuery(""); setSearch(""); setPage(1); }}><span>Arama: {search}</span><Icon name="close"/></button>{!loading && <span>{shownCatalog.total.toLocaleString("tr-TR")} sonuç</span>}</div>}
     {kind === "movie" && !overview && !favoritesOnly && account && providerMode === "legacy" && <AdultMovieToggle key={account} account={account} onChanged={updateAdultPreference}/>}
     {favoritesOnly && <div className={s.chips}>{(["all","live","movie","series"] as const).map(value => <button key={value} className={filter === value ? s.selectedChip : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>{({all:"Tümü",live:"Canlı TV",movie:"Filmler",series:"Diziler"})[value]}</button>)}</div>}
     {(error || providerError) && <div className={s.inlineError} role="alert">{providerError || error}<button onClick={() => { setReload(v => v+1); if(providerMode === "loading") reloadFavorites(); }}>Tekrar Dene</button></div>}
@@ -293,5 +346,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     {!favoritesOnly && !overview && items.length < shownCatalog.total && <button className={s.more} disabled={loading} onClick={() => setPage(p => p+1)}>{loading ? "Yükleniyor…" : "Daha Fazla Göster"}</button>}
     </div>
     {detailLoading && <div className={s.toast} role="status">İçerik hazırlanıyor…</div>}{detail && detailAccount === account && providerMode !== "loading" && <Detail key={detail.id} item={detail} onClose={close}/>}
+    {activePanel === "search" && <CatalogSearchDialog title={title} initialQuery={query} scope={favoritesOnly ? `Tür: ${({ all: "Tümü", movie: "Filmler", series: "Diziler", live: "Canlı TV" })[filter]}` : `Kategori: ${group || "Tümü"}`} preview={previewSearch} onSubmit={value => submitSearch(value, panelOwner)} onClose={() => closePanel(panelOwner)}/>}
+    {activePanel === "categories" && <CategorySidebar open title={title} groups={categoryPreview?.owner === panelOwner ? categoryPreview.groups : categories} total={categoryPreview?.owner === panelOwner ? categoryPreview.total : !group && !search ? shownCatalog.total : undefined} selected={group} onSelect={value => { if (panelOwnerRef.current === panelOwner) setGroup(value); }} onClose={() => closePanel(panelOwner)}/>}
   </main>;
 }

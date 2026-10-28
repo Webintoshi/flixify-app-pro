@@ -27,6 +27,8 @@ export function AppShell({ children, publicAccess = false }: { children: ReactNo
     return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", key); };
   }, []);
   const focusCatalogSearch = () => {
+    const trigger = document.querySelector<HTMLButtonElement>("[data-catalog-search-trigger]");
+    if (trigger) { trigger.click(); return; }
     const search = document.getElementById("catalog-search") as HTMLInputElement | null;
     search?.scrollIntoView({ behavior: "smooth", block: "center" });
     search?.focus({ preventScroll: true });
@@ -40,7 +42,8 @@ export function AppShell({ children, publicAccess = false }: { children: ReactNo
   </div>;
   if (!ready) return <div className={s.loading} aria-busy="true">Flixify hazırlanıyor…</div>;
   if (!session && !publicAccess) return <div className={s.app}><Link href="/" className={s.brand}><img src="/logo/flixify-logo.png" alt="Flixify" width="142" height="37" /></Link><div className={s.loading}>İçeriklerin. Tek yerde.</div><LoginDialog onClose={() => router.push("/")} onSuccess={() => setRevealed(false)} /></div>;
-  return <div className={`${s.app}${pathname === "/canli-tv" ? ` ${s.liveTvApp}` : ""}${catalogRoute ? ` ${s.catalogApp}` : ""}`}>
+  const accountRoute = ["/ayarlar", "/paketler", "/davet", "/odeme-bildirimi", "/iletisim"].includes(pathname);
+  return <div className={`${s.app} ${s.tvShell}${pathname === "/canli-tv" ? ` ${s.liveTvApp}` : ""}${catalogRoute ? ` ${s.catalogApp}` : ""}`}>
     <header className={s.header}>
       <Link href="/" className={s.brand} aria-label="Flixify ana sayfa"><img src="/logo/flixify-logo.png" alt="Flixify" width="142" height="37" /></Link>
       <nav className={s.nav} aria-label="Ana menü">{navigation.map(link => <Link key={link.href} href={link.href} className={pathname === link.href ? s.active : ""} aria-current={pathname === link.href ? "page" : undefined}>{link.label}</Link>)}</nav>
@@ -51,7 +54,7 @@ export function AppShell({ children, publicAccess = false }: { children: ReactNo
       </div> : accountControl}
     </header>
     <div className={s.appBody}>
-      <nav className={s.rail} aria-label="Hızlı menü">{links.map(link => <Link key={link.href} href={link.href} aria-label={link.label} className={pathname === link.href ? s.active : ""}><Icon name={link.icon} /></Link>)}<Link className={s.settings} href="/ayarlar" aria-label="Hesap ayarları"><Icon name="settings" /></Link></nav>
+      <nav className={s.rail} aria-label="Hızlı menü">{links.map(link => <Link key={link.href} href={link.href} aria-label={link.label} className={pathname === link.href ? s.active : ""} aria-current={pathname === link.href ? "page" : undefined}><Icon name={link.icon} /><span className={s.railLabel}>{link.label}</span></Link>)}<Link className={`${s.settings}${accountRoute ? ` ${s.active}` : ""}`} href="/ayarlar" aria-label="Hesap ayarları" aria-current={accountRoute ? "page" : undefined}><Icon name="settings" /><span className={s.railLabel}>Hesabım</span></Link></nav>
       <div className={s.main}>{session && pathname === "/" && <aside className={s.tvDownloadNotice} aria-label="Android TV uygulaması"><a href={tvDownload.href} download={tvDownload.filename}>Android TV APK indir <span aria-hidden="true">↓</span></a><span>Tek APK · Test sürümü</span><Link href="/indir">Kurulum</Link></aside>}{children}</div>
     </div>
     <nav className={s.mobileNav} aria-label="Mobil menü">{navigation.map(link => <Link key={link.href} href={link.href} className={pathname === link.href ? s.active : ""} aria-current={pathname === link.href ? "page" : undefined}><Icon name={link.icon}/><span>{link.label}</span></Link>)}</nav>
