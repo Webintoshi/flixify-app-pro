@@ -13,6 +13,8 @@ public interface TvRepository {
     void refreshAccess(Callback<Account> callback);
     void catalog(Kind kind,boolean force,Callback<Catalog> callback);
     void series(Item series,Callback<SeriesDetail> callback);
+    /** Latest resumable episode, then first unwatched; completed series restart at the first episode. */
+    void startingEpisode(Item series,Callback<Item> callback);
     void favorites(Callback<List<Item>> callback);
     boolean isFavorite(Item item);
     void toggleFavorite(Item item,Callback<Boolean> callback);

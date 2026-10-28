@@ -17,6 +17,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.After;
 import org.junit.Before;
@@ -70,10 +72,243 @@ public final class PlayerRemoteTest {
             if(root!=null && !root.findAccessibilityNodeInfosByText(uniqueText).isEmpty())return;
             SystemClock.sleep(20);
         } while(SystemClock.elapsedRealtime()<end);
-        fail("Track dialog did not expose "+uniqueText);
+        AccessibilityNodeInfo last=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
+        fail("Track dialog did not expose "+uniqueText+"; "+nodeText(last));
+    }
+    private String nodeText(AccessibilityNodeInfo node) {
+        if(node==null)return "none";
+        Rect bounds=new Rect();node.getBoundsInScreen(bounds);
+        StringBuilder result=new StringBuilder("[").append(node.getText()).append(" / ").append(node.getContentDescription()).append(" ").append(bounds);
+        if(node.getCollectionInfo()!=null)result.append(" rows=").append(node.getCollectionInfo().getRowCount());
+        for(int i=0;i<node.getChildCount();i++)result.append(nodeText(node.getChild(i)));
+        return result.append(']').toString();
     }
     private boolean focused(PlayerActivity activity,String tag) {return activity.hasWindowFocus() && activity.getCurrentFocus()!=null && tag.equals(activity.getCurrentFocus().getTag());}
     private FakeEngine latest() { return engines.get(engines.size()-1); }
+    @Test public void favoriteCanBeToggledFromLivePlayerWithoutReopeningStream() {
+        repository.initialPlay=false;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.live1)) {
+            key(KeyEvent.KEYCODE_DPAD_UP);
+            key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            scenario.onActivity(activity -> {
+                View action=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_favorite");
+                assertNotNull("Favorite belongs inside the player",action);
+                assertSame(action,activity.getCurrentFocus());
+                assertEquals("Favorilere ekle",action.getContentDescription());
+                assertFalse(action.isSelected());
+            });
+            key(KeyEvent.KEYCODE_DPAD_CENTER);
+            scenario.onActivity(activity -> {
+                View action=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_favorite");
+                assertEquals("Favorilerden çıkar",action.getContentDescription());assertTrue(action.isSelected());
+                assertTrue(repository.isFavorite(repository.live1));
+                assertEquals(1,repository.playbackCalls);assertEquals(1,engines.size());
+            });
+            key(KeyEvent.KEYCODE_DPAD_CENTER);
+            scenario.onActivity(activity -> assertFalse(repository.isFavorite(repository.live1)));
+            key(KeyEvent.KEYCODE_CHANNEL_UP);
+            scenario.onActivity(activity -> {
+                assertEquals(repository.live2.id,repository.lastPlayback.id);
+                View action=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_favorite");
+                assertEquals("Favorilere ekle",action.getContentDescription());assertFalse(action.isSelected());
+            });
+        }
+    }
+    @Test public void episodeFavoritesItsSeriesAndMovieFavoritesItself() {
+        repository.initialPlay=false;
+        for(Item selected:Arrays.asList(repository.movie,repository.episode)) {
+            try(ActivityScenario<PlayerActivity> scenario=launch(selected)) {
+                scenario.onActivity(activity -> {
+                    View action=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_favorite");
+                    assertNotNull("Every playable kind exposes favorite",action);
+                    assertTrue(action.requestFocus());action.performClick();
+                    assertNotNull(repository.lastFavorite);
+                    assertEquals(selected.kind==Kind.EPISODE?Kind.SERIES:Kind.MOVIE,repository.lastFavorite.kind);
+                    assertEquals(selected.kind==Kind.EPISODE?selected.seriesId:selected.id,repository.lastFavorite.id);
+                    assertEquals(selected.scope,repository.lastFavorite.scope);
+                    if(selected.kind==Kind.EPISODE)assertEquals("",repository.lastFavorite.seriesId);
+                    assertTrue(action.isSelected());
+                });
+            }
+        }
+    }
+    @Test public void favoriteIgnoresLateResultAfterChangingChannelOrSource() {
+        repository.initialPlay=false;repository.deferFavorite=true;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.live1)) {
+            scenario.onActivity(activity -> {
+                View action=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_favorite");
+                assertNotNull(action);action.performClick();action.performClick();
+                assertEquals("Repeated OK must not enqueue duplicate mutation",1,repository.favoriteCalls);
+            });
+            key(KeyEvent.KEYCODE_CHANNEL_UP);
+            scenario.onActivity(activity -> {
+                repository.pendingFavorite.onResult(true);
+                View action=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_favorite");
+                assertEquals("Favorilere ekle",action.getContentDescription());assertFalse(action.isSelected());
+                action.performClick();assertEquals(2,repository.favoriteCalls);
+                repository.scope="fixture:source2";repository.pendingFavorite.onResult(true);
+                assertFalse("Other source cannot paint favorite state",action.isSelected());
+            });
+        }
+    }
+    @Test public void favoriteFailureKeepsPreviousStateAndCanRetry() {
+        repository.initialPlay=false;repository.deferFavorite=true;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.movie)) {
+            scenario.onActivity(activity -> {
+                View action=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_favorite");
+                assertNotNull(action);action.requestFocus();action.performClick();
+                repository.pendingFavorite.onError(new Failure(Failure.Code.NETWORK,"fixture"));
+                assertFalse(action.isSelected());assertEquals("Favorilere ekle",action.getContentDescription());
+                action.performClick();assertEquals(2,repository.favoriteCalls);
+                assertEquals(1,engines.size());assertFalse(latest().released);
+            });
+        }
+    }
+    @Test public void selectingSeriesEntersPlayerAndResolvesEpisodeBeforeCreatingEngine() {
+        repository.initialPlay=false;repository.deferStart=true;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.series)) {
+            scenario.onActivity(activity -> {
+                assertNotNull("Series resolves inside player",repository.pendingStart);
+                assertEquals(0,engines.size());assertEquals(0,repository.playbackCalls);
+                repository.pendingStart.onResult(repository.episode);
+                assertEquals(1,engines.size());assertEquals(repository.episode.id,repository.lastPlayback.id);
+                View action=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_episodes");
+                assertNotNull("Episode selection remains reachable in player",action);
+                assertEquals(View.VISIBLE,action.getVisibility());assertTrue(action.isEnabled());
+            });
+        }
+    }
+    @Test public void seriesResolverRejectsWrongParentAndLateSourceResult() {
+        repository.deferStart=true;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.series)) {
+            scenario.onActivity(activity -> {
+                assertNotNull(repository.pendingStart);
+                repository.pendingStart.onResult(new Item(Kind.EPISODE,"9","Wrong parent","","","","mp4",repository.scope,"other",1,1,""));
+                assertEquals(0,engines.size());assertEquals(0,repository.playbackCalls);
+            });
+        }
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.series)) {
+            scenario.onActivity(activity -> {
+                assertNotNull(repository.pendingStart);repository.scope="fixture:source2";
+                repository.pendingStart.onResult(repository.episode);
+                assertEquals(0,engines.size());assertEquals(0,repository.playbackCalls);
+            });
+        }
+    }
+    @Test public void episodePanelChangesEpisodeFromRemoteWithoutDetailScreen() {
+        repository.initialPlay=false;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            scenario.onActivity(activity -> {
+                View action=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_episodes");
+                assertNotNull(action);assertTrue(action.requestFocus());action.performClick();
+            });
+            awaitDialog("Fixture 5");
+            key(KeyEvent.KEYCODE_DPAD_DOWN);
+            awaitDialog("Fixture 4, şu anki bölüm");
+            key(KeyEvent.KEYCODE_DPAD_CENTER);
+            scenario.onActivity(activity -> {
+                assertEquals(repository.next.id,repository.lastPlayback.id);
+                assertTrue("Prior connection closes before selection",repository.allReleasedAtSwitch);
+                assertEquals(2,engines.size());assertTrue(engines.get(0).released);
+                View action=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_episodes");action.requestFocus();action.performClick();
+            });
+            awaitDialog("Fixture 4");key(KeyEvent.KEYCODE_BACK);
+            await(scenario,"Episode Back restores icon",activity -> focused(activity,"tv_player_episodes"));
+        }
+    }
+    @Test public void episodePanelFitsMeasuredPlayerAndRemainsReachableAfterResize() {
+        repository.initialPlay=false;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            scenario.onActivity(activity -> {
+                View actual=((FrameLayout)activity.findViewById(android.R.id.content)).getChildAt(0);
+                float density=activity.getResources().getDisplayMetrics().density;
+                actual.setLayoutParams(new FrameLayout.LayoutParams((int)(560*density),(int)(320*density)));actual.requestLayout();
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            Rect player=new Rect();
+            scenario.onActivity(activity -> {
+                View actual=((FrameLayout)activity.findViewById(android.R.id.content)).getChildAt(0);assertTrue(actual.getGlobalVisibleRect(player));
+                View action=actual.findViewWithTag("tv_player_episodes");action.requestFocus();action.performClick();
+            });
+            awaitDialog("Bölümler");InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            AccessibilityNodeInfo panel=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();Rect bounds=new Rect();panel.getBoundsInScreen(bounds);
+            assertTrue("Episode panel must fit actual player "+player+", panel="+bounds,player.contains(bounds));
+            scenario.onActivity(activity -> {
+                View actual=((FrameLayout)activity.findViewById(android.R.id.content)).getChildAt(0);
+                float density=activity.getResources().getDisplayMetrics().density;
+                actual.setLayoutParams(new FrameLayout.LayoutParams((int)(640*density),(int)(360*density)));actual.requestLayout();
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(activity -> ((FrameLayout)activity.findViewById(android.R.id.content)).getChildAt(0).getGlobalVisibleRect(player));
+            panel=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();panel.getBoundsInScreen(bounds);
+            assertTrue("Open episode panel follows resized player "+player+", panel="+bounds,player.contains(bounds));
+            key(KeyEvent.KEYCODE_DPAD_LEFT);key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_CENTER);
+            scenario.onActivity(activity -> assertEquals("6",repository.lastPlayback.id));
+        }
+    }
+    @Test public void openingEpisodePickerCancelsPendingAutomaticContinuation() throws Exception {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            ended(scenario);
+            scenario.onActivity(activity -> {
+                View content=activity.findViewById(android.R.id.content);
+                assertEquals(View.VISIBLE,content.findViewWithTag("tv_player_countdown").getVisibility());
+                content.findViewWithTag("tv_player_episodes").performClick();
+                assertEquals("Manual selection dismisses automatic countdown",View.GONE,content.findViewWithTag("tv_player_countdown").getVisibility());
+            });
+            Thread.sleep(5300);
+            scenario.onActivity(activity -> {
+                assertEquals("Automatic next must not replace an open picker",1,engines.size());
+                assertEquals(repository.episode.id,repository.lastPlayback.id);
+            });
+            awaitDialog("Bölümler");key(KeyEvent.KEYCODE_BACK);
+            await(scenario,"Manual picker Back restores opener",activity -> focused(activity,"tv_player_episodes"));
+        }
+    }
+    @Test public void actualEndWhileEpisodePickerOpenDoesNotReplaceManualChoice() throws Exception {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            scenario.onActivity(activity -> activity.findViewById(android.R.id.content).findViewWithTag("tv_player_episodes").performClick());
+            awaitDialog("Bölümler");ended(scenario);
+            scenario.onActivity(activity -> assertEquals("Manual picker owns choice when playback ends",View.GONE,activity.findViewById(android.R.id.content).findViewWithTag("tv_player_countdown").getVisibility()));
+            Thread.sleep(5300);
+            scenario.onActivity(activity -> {assertEquals(1,engines.size());assertEquals(repository.episode.id,repository.lastPlayback.id);});
+            awaitDialog("Bölümler");key(KeyEvent.KEYCODE_BACK);
+        }
+    }
+    @Test public void browsingAndClosingEpisodePickerMidEpisodePreservesAutomaticContinuation() {
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            scenario.onActivity(activity -> activity.findViewById(android.R.id.content).findViewWithTag("tv_player_episodes").performClick());
+            awaitDialog("Bölümler");key(KeyEvent.KEYCODE_BACK);ended(scenario);assertCountdown(scenario);
+        }
+    }
+    @Test public void liveGuideLoadsOnlyOnDemandAndReturnsFocusWithoutReopeningStream() {
+        repository.initialPlay=false;
+        long now=System.currentTimeMillis();repository.programmes=Arrays.asList(new Programme("Fixture programme",now-1000,now+60000));
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.live1)) {
+            scenario.onActivity(activity -> {
+                assertEquals("Guide must not delay first playback",0,repository.epgCalls);
+                View guide=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_guide");
+                assertNotNull("Existing guide belongs in player",guide);guide.requestFocus();guide.performClick();
+            });
+            awaitDialog("Fixture programme");
+            scenario.onActivity(activity -> {assertEquals(1,repository.epgCalls);assertEquals(1,repository.playbackCalls);assertEquals(1,engines.size());assertFalse(latest().released);});
+            key(KeyEvent.KEYCODE_BACK);await(scenario,"Guide Back restores opener",activity -> focused(activity,"tv_player_guide"));
+        }
+    }
+    @Test public void liveGuideHasEmptyAndFailureStatesAndIgnoresLateSourceData() {
+        repository.initialPlay=false;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.live1)) {
+            scenario.onActivity(activity -> {
+                View guide=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_guide");assertNotNull(guide);guide.performClick();
+            });
+            awaitDialog("Yayın bilgisi bulunamadı.");key(KeyEvent.KEYCODE_BACK);
+            scenario.onActivity(activity -> {repository.epgFailure=Failure.Code.NETWORK;activity.findViewById(android.R.id.content).findViewWithTag("tv_player_guide").performClick();});
+            awaitDialog("Yayın akışı yüklenemedi.");key(KeyEvent.KEYCODE_BACK);
+            scenario.onActivity(activity -> {repository.epgFailure=null;repository.deferEpg=true;activity.findViewById(android.R.id.content).findViewWithTag("tv_player_guide").performClick();repository.scope="fixture:source2";repository.pendingEpg.onResult(Arrays.asList(new Programme("Late source programme",1,2)));});
+            AccessibilityNodeInfo window=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
+            assertFalse(nodeText(window).contains("Late source programme"));
+            assertEquals(1,engines.size());
+        }
+    }
     @Test public void playerUsesCompactIconsWithStableFocusBounds() {
         repository.initialPlay=false;
         try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
@@ -82,7 +317,7 @@ public final class PlayerRemoteTest {
                 float density=activity.getResources().getDisplayMetrics().density;
                 View chrome=content.findViewWithTag("tv_player_controls");
                 assertTrue("Content-first chrome must stay shallow",chrome.getHeight()<=density*192);
-                for(String tag:Arrays.asList("play","backward","forward","audio","subtitles","next","exit")) {
+                for(String tag:Arrays.asList("play","backward","forward","audio","subtitles","next","episodes","favorite","exit")) {
                     View icon=content.findViewWithTag("tv_player_"+tag);
                     assertTrue("Use compact native icon target for "+tag,icon instanceof android.widget.ImageButton);
                     assertTrue("No weighted screen-wide tile for "+tag,icon.getWidth()<=density*52);
@@ -117,7 +352,9 @@ public final class PlayerRemoteTest {
                 assertEquals(View.GONE,activity.findViewById(android.R.id.content).findViewWithTag("tv_player_timeline").getVisibility());
             });
             key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_RIGHT);
-            scenario.onActivity(activity -> assertEquals("tv_player_audio",activity.getCurrentFocus().getTag()));
+            scenario.onActivity(activity -> assertEquals("tv_player_favorite",activity.getCurrentFocus().getTag()));
+            key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            scenario.onActivity(activity -> assertEquals("tv_player_guide",activity.getCurrentFocus().getTag()));
             key(KeyEvent.KEYCODE_DPAD_DOWN);
             scenario.onActivity(activity -> assertEquals("tv_player_play",activity.getCurrentFocus().getTag()));
         }
@@ -472,7 +709,7 @@ public final class PlayerRemoteTest {
                 FrameLayout content=activity.findViewById(android.R.id.content);
                 View actual=content.getChildAt(0);
                 Rect bounds=new Rect();assertTrue(actual.getGlobalVisibleRect(bounds));
-                for(String tag:Arrays.asList("play","backward","forward","audio","subtitles","next","exit")) {
+                for(String tag:Arrays.asList("play","backward","forward","audio","subtitles","next","episodes","favorite","exit")) {
                     View control=content.findViewWithTag("tv_player_"+tag);Rect visible=new Rect();
                     assertTrue("Initial "+tag+" is visible",control.isShown() && control.getGlobalVisibleRect(visible));
                     assertTrue("Initial "+tag+" fully fits first player layout; player="+bounds+", visible="+visible+", measured="+control.getWidth()+"x"+control.getHeight(),
@@ -497,7 +734,7 @@ public final class PlayerRemoteTest {
                 Rect bounds=new Rect();assertTrue(actual.getGlobalVisibleRect(bounds));
                 View timeline=content.findViewWithTag("tv_player_timeline");
                 assertTrue("VOD needs an actual remote seek control",timeline instanceof SeekBar);
-                for(String tag:Arrays.asList("play","backward","forward","audio","subtitles","next","exit")) {
+                for(String tag:Arrays.asList("play","backward","forward","audio","subtitles","next","episodes","favorite","exit")) {
                     View control=content.findViewWithTag("tv_player_"+tag);Rect visible=new Rect();
                     assertTrue(tag+" fully fits measured player bounds",control.getGlobalVisibleRect(visible) && bounds.contains(visible) && visible.width()>=control.getWidth()-2 && visible.height()>=control.getHeight()-2);
                     assertTrue(tag+" remains focusable",control.requestFocus());
@@ -528,7 +765,11 @@ public final class PlayerRemoteTest {
     static final class FakeRepository implements TvRepository {
         String scope="fixture:source1"; long expiry=System.currentTimeMillis()+60000,savedPosition,ttl=-1; Item lastPlayback;
         Runnable beforePlayback; int watched,playbackCalls,initialState=PlayerEngine.READY; boolean allReleasedAtSwitch=true,initialPlay=true; Item successor; boolean deferAccess,deferPlayback; Failure.Code accessFailure; Callback<Account> pendingAccess; Callback<Playback> pendingPlayback;
+        final Set<String> favoriteKeys=new HashSet<>(); Item lastFavorite;int favoriteCalls;boolean deferFavorite;Callback<Boolean> pendingFavorite;
+        boolean deferStart;Callback<Item> pendingStart;
+        int epgCalls;List<Programme> programmes=Collections.emptyList();Failure.Code epgFailure;boolean deferEpg;Callback<List<Programme>> pendingEpg;
         final Item movie=item(Kind.MOVIE,"1"),live1=item(Kind.LIVE,"2"),live2=item(Kind.LIVE,"3"),episode=item(Kind.EPISODE,"4"),next=item(Kind.EPISODE,"5");
+        final Item series=new Item(Kind.SERIES,"series1","Fixture series","","","","","fixture:source1","",0,0,"");
         static Item item(Kind kind,String id) {return new Item(kind,id,"Fixture "+id,"","","","mp4","fixture:source1","series1",1,Integer.parseInt(id),"");}
         public boolean hasSession() {return true;} public String currentScope() {return scope;}
         public void playback(Item item,Callback<Playback> callback) {if(beforePlayback!=null)beforePlayback.run();playbackCalls++;lastPlayback=item;if(deferPlayback){pendingPlayback=callback;return;}if(ttl>=0)expiry=System.currentTimeMillis()+ttl;callback.onResult(new Playback(item,"asset:///fixture.mp4","video/mp4",expiry,item.kind==Kind.LIVE?0:12000,item.key().equals(episode.key())?(successor==null?next:successor):null));}
@@ -538,10 +779,12 @@ public final class PlayerRemoteTest {
         public long resumePosition(Item item) {return savedPosition;} public void markWatched(Item item) {watched++;}
         public void login(String code,Callback<Account> callback) {throw new AssertionError("no login network");}
         public void account(boolean force,Callback<Account> callback) {refreshAccess(callback);}
-        public void series(Item item,Callback<SeriesDetail> callback) {throw new AssertionError();}
+        public void series(Item item,Callback<SeriesDetail> callback) {callback.onResult(new SeriesDetail(series,Arrays.asList(new Season(1,Arrays.asList(episode,next)),new Season(2,Arrays.asList(new Item(Kind.EPISODE,"6","Fixture 6","","","","mp4",scope,"series1",2,1,""))))));}
+        public void startingEpisode(Item series,Callback<Item> callback) {if(deferStart){pendingStart=callback;return;}callback.onResult(episode);}
         public void favorites(Callback<List<Item>> callback) {callback.onResult(Collections.emptyList());}
-        public boolean isFavorite(Item item) {return false;} public void toggleFavorite(Item item,Callback<Boolean> callback) {callback.onResult(false);}
-        public void epg(Item item,Callback<List<Programme>> callback) {callback.onResult(Collections.emptyList());}
+        public boolean isFavorite(Item item) {return item!=null && scope.equals(item.scope) && favoriteKeys.contains(item.key());}
+        public void toggleFavorite(Item item,Callback<Boolean> callback) {lastFavorite=item;favoriteCalls++;if(deferFavorite){pendingFavorite=callback;return;}boolean saved=!isFavorite(item);if(saved)favoriteKeys.add(item.key());else favoriteKeys.remove(item.key());callback.onResult(saved);}
+        public void epg(Item item,Callback<List<Programme>> callback) {epgCalls++;if(deferEpg){pendingEpg=callback;return;}if(epgFailure!=null)callback.onError(new Failure(epgFailure,"fixture"));else callback.onResult(programmes);}
         public void logout() {}
     }
 }

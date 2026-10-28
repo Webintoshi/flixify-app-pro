@@ -22,6 +22,11 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.SeekBar;
+import android.widget.BaseAdapter;
+import android.widget.ListView;
+import android.widget.AbsListView;
+import android.widget.Toast;
+import android.widget.Checkable;
 import android.text.TextUtils;
 import androidx.core.widget.TextViewCompat;
 import java.io.Serializable;
@@ -29,6 +34,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Date;
+import java.text.DateFormat;
 import vip.flixify.tv.TvModels.*;
 import vip.flixify.tv.player.Media3PlayerEngine;
 import vip.flixify.tv.player.PlayerEngine;
@@ -57,11 +64,14 @@ public final class PlayerActivity extends Activity {
     private final PlaybackWatchdog watchdog=new PlaybackWatchdog();
     private NextEpisodePolicy continuation=new NextEpisodePolicy(false,false);
     private TextView title,position,status;
-    private PlayerIconButton play,backward,forward,audio,subtitles,next;
-    private Dialog trackDialog;
+    private PlayerIconButton play,backward,forward,audio,subtitles,next,episodes,favorite,guide;
+    private Dialog trackDialog,episodePicker;
+    private Runnable sizeMetadataDialog;
     private List<Item> liveItems=Collections.emptyList();
     private boolean active,resumed,loading,fatal,admitted,refreshing,watched,desiredPlay=true;
     private int generation,pendingZap;
+    private int favoriteGeneration;
+    private boolean favoritePending;
     private long cutoffAtMs,lastRefresh,lastProgress,lastPosition,lastSave,resumeOverride=-1;
 
     /** Trusted instrumentation only; release builds cannot install an alternate playback engine. */
@@ -74,7 +84,7 @@ public final class PlayerActivity extends Activity {
         repository=TvApplication.repository(this);
         buildUi();
         Serializable value=savedInstanceState==null?getIntent().getSerializableExtra(EXTRA_ITEM):savedInstanceState.getSerializable(EXTRA_ITEM);
-        if(!(value instanceof Item) || !playable((Item)value)) {fail(false);return;}
+        if(!(value instanceof Item) || !launchable((Item)value)) {fail(false);return;}
         item=(Item)value;
         title.setText(item.title);
         updateEpisodeLine();
@@ -106,13 +116,13 @@ public final class PlayerActivity extends Activity {
         active=true;resumed=true;
         immersive();
         if(fatal || item==null)return;
+        handler.removeCallbacks(tick);handler.post(tick);
+        if(item.kind==Kind.SERIES) {if(!loading)resolveSeries();return;}
         // Wall-clock access is checked before any decoder is recreated after sleep/backgrounding.
         if(admitted && !policy.allows(System.currentTimeMillis(),repository.currentScope())) {fail(true);return;}
         if(policy==null)policy=new PlayerPolicy(item.scope);
         if(engine==null && !loading)requestPlayback(false);
         else refreshAccess();
-        handler.removeCallbacks(tick);
-        handler.post(tick);
     }
     @Override protected void onPause() {
         // The player may remain visible in STARTED while another activity owns input.
@@ -126,6 +136,7 @@ public final class PlayerActivity extends Activity {
         if(engine!=null)desiredPlay=engine.wantsToPlay();
         active=false;
         generation++;
+        favoriteGeneration++;favoritePending=false;
         loading=false;
         refreshing=false;
         if(trackDialog!=null)trackDialog.dismiss();
@@ -143,6 +154,30 @@ public final class PlayerActivity extends Activity {
                 && candidate.scope.equals(repository.currentScope())
                 && (candidate.kind==Kind.LIVE || candidate.kind==Kind.MOVIE || candidate.kind==Kind.EPISODE);
     }
+    private boolean launchable(Item candidate) {
+        return playable(candidate) || (candidate!=null && candidate.kind==Kind.SERIES && !candidate.id.isEmpty()
+                && !candidate.scope.isEmpty() && candidate.scope.equals(repository.currentScope()));
+    }
+    private void resolveSeries() {
+        if(!active || fatal || !launchable(item) || item.kind!=Kind.SERIES) {if(active)fail(true);return;}
+        final Item parent=item;
+        final int request=++generation;
+        loading=true;
+        status.setText("Yükleniyor…");status.setVisibility(View.VISIBLE);showControls(false);updateButtons();
+        repository.startingEpisode(parent,new TvRepository.Callback<Item>() {
+            @Override public void onResult(Item value) {
+                if(!current(request) || item!=parent)return;
+                loading=false;
+                if(!playable(value) || value.kind!=Kind.EPISODE || !parent.id.equals(value.seriesId)) {fail(true);return;}
+                item=value;title.setText(item.title);updateEpisodeLine();policy=new PlayerPolicy(item.scope);
+                requestPlayback(false);
+            }
+            @Override public void onError(Failure failure) {
+                if(!current(request) || item!=parent)return;
+                loading=false;fail(failure.code!=Failure.Code.NETWORK && failure.code!=Failure.Code.INVALID);
+            }
+        });
+    }
     private void select(Item candidate) {
         if(!playable(candidate)) {fail(true);return;}
         savePosition();
@@ -152,6 +187,7 @@ public final class PlayerActivity extends Activity {
         countdownRow.setVisibility(View.GONE);
         updateCountdownFocus();
         item=candidate;
+        favoriteGeneration++;favoritePending=false;
         updateEpisodeLine();
         playback=null;
         watched=false;
@@ -165,6 +201,7 @@ public final class PlayerActivity extends Activity {
         if(!active || fatal || !playable(item)) {if(active)fail(true);return;}
         if(admitted && !policy.allows(System.currentTimeMillis(),repository.currentScope())) {fail(true);return;}
         savePosition();
+        if(trackDialog!=null)trackDialog.dismiss();
         releaseEngine();
         final int request=++generation;
         refreshing=false;
@@ -300,6 +337,7 @@ public final class PlayerActivity extends Activity {
         if(fatal)return;
         fatal=true;
         generation++;
+        favoriteGeneration++;favoritePending=false;
         if(policy!=null)policy.stop();
         handler.removeCallbacksAndMessages(null);
         continuation.cancel();
@@ -406,6 +444,194 @@ public final class PlayerActivity extends Activity {
         WindowManager.LayoutParams window=dialog.getWindow().getAttributes();window.gravity=Gravity.RIGHT|Gravity.CENTER_VERTICAL;window.x=dp(32);dialog.getWindow().setAttributes(window);
         buttons.get(selected).requestFocus();
     }
+    private Item favoriteTarget() {
+        if(item==null || !item.scope.equals(repository.currentScope()))return null;
+        if(item.kind==Kind.LIVE || item.kind==Kind.MOVIE || item.kind==Kind.SERIES)return item;
+        if(item.kind!=Kind.EPISODE || item.seriesId.isEmpty())return null;
+        return new Item(Kind.SERIES,item.seriesId,"","","","","",item.scope,"",0,0,"");
+    }
+    private void updateFavorite() {
+        Item target=favoriteTarget();
+        boolean saved=target!=null && repository.isFavorite(target);
+        favorite.setSelected(saved);
+        favorite.setIcon(saved?PlayerIconButton.Icon.FAVORITED:PlayerIconButton.Icon.FAVORITE,saved?"Favorilerden çıkar":"Favorilere ekle");
+        favorite.setEnabled(engine!=null && !fatal && target!=null);
+        if(favorite.hasFocus())focusCaption.setText(favorite.getContentDescription());
+    }
+    private void toggleFavorite() {
+        final Item target=favoriteTarget();
+        if(target==null || !active || fatal || engine==null || favoritePending)return;
+        if(!policy.allows(System.currentTimeMillis(),repository.currentScope())) {fail(true);return;}
+        favoritePending=true;
+        final int request=++favoriteGeneration;
+        repository.toggleFavorite(target,new TvRepository.Callback<Boolean>() {
+            private boolean owns() {
+                Item selected=favoriteTarget();
+                return active && !fatal && request==favoriteGeneration && selected!=null
+                        && target.scope.equals(selected.scope) && target.key().equals(selected.key());
+            }
+            @Override public void onResult(Boolean saved) {
+                if(!owns())return;
+                favoritePending=false;updateFavorite();scheduleHide();
+            }
+            @Override public void onError(Failure failure) {
+                if(!owns())return;
+                favoritePending=false;updateFavorite();scheduleHide();
+                Toast.makeText(PlayerActivity.this,"Favoriler güncellenemedi. Yeniden deneyin.",Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+    private void episodes() {
+        if(item==null || item.kind!=Kind.EPISODE || engine==null || fatal || !playable(item))return;
+        if(continuation.pending())cancelContinuation(false);
+        final int request=generation;
+        final Item playing=item;
+        final Item parent=favoriteTarget();
+        if(parent==null)return;
+        handler.removeCallbacks(hide);
+        final Dialog dialog=new Dialog(this);trackDialog=dialog;episodePicker=dialog;
+        LinearLayout panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);panel.setPadding(dp(16),dp(12),dp(16),dp(12));
+        panel.setBackground(metadataPanelBackground());
+        TextView heading=label(22,TvUi.WHITE);heading.setText("Bölümler");heading.setTypeface(Typeface.DEFAULT,Typeface.BOLD);panel.addView(heading,new LinearLayout.LayoutParams(-1,dp(36)));
+        TextView message=label(16,TvUi.MUTED);message.setText("Bölümler yükleniyor…");panel.addView(message,new LinearLayout.LayoutParams(-1,dp(80)));
+        TextView hint=label(12,TvUi.MUTED);hint.setText("Geri tuşuyla kapat");panel.addView(hint,new LinearLayout.LayoutParams(-1,dp(28)));
+        dialog.setContentView(panel);
+        dialog.setOnDismissListener(value->{if(episodePicker==dialog)episodePicker=null;if(trackDialog==dialog){trackDialog=null;sizeMetadataDialog=null;}if(current(request) && item==playing){showControls(false);episodes.requestFocus();}});
+        dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);dialog.getWindow().setDimAmount(0.18f);
+        dialog.show();sizeMetadataDialog=()->fitMetadataDialog(dialog,message,80);sizeMetadataDialog.run();
+        repository.series(parent,new TvRepository.Callback<SeriesDetail>() {
+            private boolean owns() {return current(request) && item==playing && trackDialog==dialog && dialog.isShowing() && playing.scope.equals(repository.currentScope());}
+            @Override public void onResult(SeriesDetail detail) {
+                if(!owns())return;
+                if(detail==null || detail.series==null || detail.series.kind!=Kind.SERIES || !parent.id.equals(detail.series.id) || !parent.scope.equals(detail.series.scope)) {message.setText("Bölümler yüklenemedi. Yeniden deneyin.");return;}
+                List<Season> seasons=new ArrayList<>();
+                for(Season season:detail.seasons) {
+                    List<Item> valid=new ArrayList<>();
+                    for(Item episode:season.episodes)if(episode.kind==Kind.EPISODE && playable(episode) && parent.id.equals(episode.seriesId) && episode.season==season.number)valid.add(episode);
+                    if(!valid.isEmpty())seasons.add(new Season(season.number,valid));
+                }
+                if(seasons.isEmpty()) {message.setText("Bölüm bulunamadı.");return;}
+                panel.removeView(message);
+                LinearLayout lists=controlRow();
+                ListView seasonList=pickerList("Sezonlar"),episodeList=pickerList("Bölümler");
+                lists.addView(seasonList,new LinearLayout.LayoutParams(dp(108),-1));LinearLayout.LayoutParams episodeSpace=new LinearLayout.LayoutParams(0,-1,1);episodeSpace.leftMargin=dp(10);lists.addView(episodeList,episodeSpace);
+                panel.addView(lists,1,new LinearLayout.LayoutParams(-1,dp(96)));
+                sizeMetadataDialog=()->{
+                    fitMetadataDialog(dialog,lists,328);
+                    ViewGroup.LayoutParams size=seasonList.getLayoutParams();int width=dp(root.getWidth()<dp(640)?84:108);
+                    if(size.width!=width){size.width=width;seasonList.setLayoutParams(size);}
+                };sizeMetadataDialog.run();
+                final int[] selectedSeason={0};
+                for(int i=0;i<seasons.size();i++)if(seasons.get(i).number==playing.season)selectedSeason[0]=i;
+                BaseAdapter seasonAdapter=new BaseAdapter() {
+                    public int getCount(){return seasons.size();}public Object getItem(int i){return seasons.get(i);}public long getItemId(int i){return i;}
+                    public View getView(int i,View recycled,ViewGroup owner){boolean selected=i==selectedSeason[0];String text="Sezon "+seasons.get(i).number;return pickerRow(recycled,text,text+(selected?", seçili":""),selected);}
+                };
+                BaseAdapter episodeAdapter=new BaseAdapter() {
+                    public int getCount(){return seasons.get(selectedSeason[0]).episodes.size();}public Object getItem(int i){return seasons.get(selectedSeason[0]).episodes.get(i);}public long getItemId(int i){return i;}
+                    public View getView(int i,View recycled,ViewGroup owner){Item episode=(Item)getItem(i);boolean selected=episode.id.equals(playing.id);return pickerRow(recycled,"Bölüm "+episode.episode+" · "+episode.title,episode.title+(selected?", şu anki bölüm":""),selected);}
+                };
+                seasonList.setAdapter(seasonAdapter);episodeList.setAdapter(episodeAdapter);
+                Runnable focusEpisodes=()->{
+                    episodeAdapter.notifyDataSetChanged();int selected=0;
+                    for(int i=0;i<episodeAdapter.getCount();i++)if(((Item)episodeAdapter.getItem(i)).id.equals(playing.id))selected=i;
+                    final int target=selected;
+                    episodeList.post(()->{if(owns()){episodeList.requestFocus();episodeList.setSelectionFromTop(target,0);}});
+                };
+                seasonList.setOnItemClickListener((owner,view,index,id)->{selectedSeason[0]=index;seasonAdapter.notifyDataSetChanged();focusEpisodes.run();});
+                seasonList.setOnKeyListener((view,code,event)->{
+                    if(code!=KeyEvent.KEYCODE_DPAD_RIGHT)return false;
+                    if(event.getAction()==KeyEvent.ACTION_DOWN){selectedSeason[0]=Math.max(0,seasonList.getSelectedItemPosition());seasonAdapter.notifyDataSetChanged();focusEpisodes.run();}return true;
+                });
+                episodeList.setOnKeyListener((view,code,event)->{
+                    if(code!=KeyEvent.KEYCODE_DPAD_LEFT)return false;
+                    if(event.getAction()==KeyEvent.ACTION_DOWN){seasonList.setSelection(selectedSeason[0]);seasonList.requestFocus();}return true;
+                });
+                episodeList.setOnItemClickListener((owner,view,index,id)->{
+                    if(!owns())return;
+                    Item selected=(Item)episodeAdapter.getItem(index);dialog.dismiss();
+                    if(!selected.id.equals(item.id))select(selected);
+                });
+                seasonList.setSelection(selectedSeason[0]);focusEpisodes.run();
+            }
+            @Override public void onError(Failure failure) {if(owns())message.setText("Bölümler yüklenemedi. Geri dönüp yeniden deneyin.");}
+        });
+    }
+    private void guide() {
+        if(item==null || item.kind!=Kind.LIVE || engine==null || fatal || !playable(item))return;
+        final int request=generation;final Item playing=item;
+        handler.removeCallbacks(hide);
+        final Dialog dialog=new Dialog(this);trackDialog=dialog;
+        LinearLayout panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);panel.setPadding(dp(16),dp(12),dp(16),dp(12));
+        panel.setBackground(metadataPanelBackground());
+        TextView heading=label(22,TvUi.WHITE);heading.setText("Yayın akışı");heading.setTypeface(Typeface.DEFAULT,Typeface.BOLD);panel.addView(heading,new LinearLayout.LayoutParams(-1,dp(36)));
+        TextView message=label(16,TvUi.MUTED);message.setText("Yayın akışı yükleniyor…");panel.addView(message,new LinearLayout.LayoutParams(-1,dp(80)));
+        TextView hint=label(12,TvUi.MUTED);hint.setText("Geri tuşuyla kapat");panel.addView(hint,new LinearLayout.LayoutParams(-1,dp(28)));
+        dialog.setContentView(panel);
+        dialog.setOnDismissListener(value->{if(trackDialog==dialog){trackDialog=null;sizeMetadataDialog=null;}if(current(request) && item==playing){showControls(false);guide.requestFocus();}});
+        dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);dialog.getWindow().setDimAmount(0.18f);
+        dialog.show();sizeMetadataDialog=()->fitMetadataDialog(dialog,message,80);sizeMetadataDialog.run();
+        repository.epg(playing,new TvRepository.Callback<List<Programme>>() {
+            private boolean owns() {return current(request) && item==playing && trackDialog==dialog && dialog.isShowing() && playing.scope.equals(repository.currentScope());}
+            @Override public void onResult(List<Programme> programmes) {
+                if(!owns())return;
+                List<Programme> valid=new ArrayList<>();
+                if(programmes!=null)for(Programme value:programmes)if(value!=null && !value.title.isEmpty() && value.startsAtMs>0 && value.endsAtMs>value.startsAtMs && valid.size()<64)valid.add(value);
+                if(valid.isEmpty()){message.setText("Yayın bilgisi bulunamadı.");return;}
+                ScrollView scroll=new ScrollView(PlayerActivity.this);scroll.setFocusable(true);scroll.setContentDescription("Yayın akışı");
+                LinearLayout entries=new LinearLayout(PlayerActivity.this);entries.setOrientation(LinearLayout.VERTICAL);
+                DateFormat clock=DateFormat.getTimeInstance(DateFormat.SHORT,Locale.getDefault());long now=System.currentTimeMillis();
+                for(Programme value:valid) {
+                    LinearLayout entry=new LinearLayout(PlayerActivity.this);entry.setOrientation(LinearLayout.VERTICAL);entry.setPadding(dp(8),dp(8),dp(8),dp(8));
+                    TextView name=label(17,TvUi.WHITE);name.setMaxLines(2);name.setText(value.title);entry.addView(name,new LinearLayout.LayoutParams(-1,dp(40)));
+                    TextView time=label(13,TvUi.MUTED);time.setText((value.startsAtMs<=now && now<value.endsAtMs?"Şimdi · ":"")+clock.format(new Date(value.startsAtMs))+" - "+clock.format(new Date(value.endsAtMs)));entry.addView(time,new LinearLayout.LayoutParams(-1,dp(20)));
+                    entries.addView(entry,new LinearLayout.LayoutParams(-1,-2));
+                }
+                scroll.addView(entries);panel.removeView(message);panel.addView(scroll,1,new LinearLayout.LayoutParams(-1,dp(96)));
+                sizeMetadataDialog=()->fitMetadataDialog(dialog,scroll,328);sizeMetadataDialog.run();scroll.requestFocus();
+            }
+            @Override public void onError(Failure failure) {if(owns())message.setText("Yayın akışı yüklenemedi. Geri dönüp yeniden deneyin.");}
+        });
+    }
+    private LayerDrawable metadataPanelBackground() {
+        GradientDrawable base=TvUi.rounded(this,TvUi.PANEL,0,24,0);
+        GradientDrawable glass=PlayerIconButton.glass(this,false);glass.setCornerRadius(dp(24));
+        return new LayerDrawable(new android.graphics.drawable.Drawable[]{base,glass});
+    }
+    private ListView pickerList(String description) {
+        ListView list=new ListView(this);list.setId(View.generateViewId());list.setContentDescription(description);list.setDivider(null);list.setSelector(PlayerIconButton.glass(this,true));list.setDrawSelectorOnTop(false);list.setItemsCanFocus(false);list.setFocusable(true);return list;
+    }
+    private View pickerRow(View recycled,String text,String description,boolean selected) {
+        PickerRow row=recycled instanceof PickerRow?(PickerRow)recycled:new PickerRow();
+        row.text.setText(text);row.setContentDescription(description);row.setChecked(selected);return row;
+    }
+    private final class PickerRow extends LinearLayout implements Checkable {
+        final TextView mark,text;boolean checked;
+        PickerRow() {
+            super(PlayerActivity.this);setOrientation(HORIZONTAL);setGravity(Gravity.CENTER_VERTICAL);setPadding(dp(12),dp(4),dp(12),dp(4));setLayoutParams(new AbsListView.LayoutParams(-1,dp(52)));
+            mark=label(15,TvUi.WHITE);mark.setText("✓");mark.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);addView(mark,new LinearLayout.LayoutParams(dp(20),-1));
+            text=label(15,TvUi.WHITE);text.setMaxLines(2);text.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);addView(text,new LinearLayout.LayoutParams(0,-1,1));
+            setDescendantFocusability(FOCUS_BLOCK_DESCENDANTS);
+        }
+        public void setChecked(boolean selected){checked=selected;mark.setVisibility(selected?View.VISIBLE:View.INVISIBLE);}
+        public boolean isChecked(){return checked;}
+        public void toggle(){setChecked(!checked);}
+        @Override public void onInitializeAccessibilityNodeInfo(android.view.accessibility.AccessibilityNodeInfo info) {
+            super.onInitializeAccessibilityNodeInfo(info);info.setCheckable(true);info.setChecked(checked);
+        }
+    }
+    private void fitMetadataDialog(Dialog dialog,View body,int preferredBodyDp) {
+        if(trackDialog!=dialog || !dialog.isShowing())return;
+        int width=root.getWidth(),height=root.getHeight();if(width<=0 || height<=0)return;
+        int panelWidth=Math.min(dp(640),Math.max(dp(160),width-dp(48)));
+        int bodyHeight=Math.max(dp(52),Math.min(dp(preferredBodyDp),height-dp(148)));
+        ViewGroup.LayoutParams bodySize=body.getLayoutParams();if(bodySize.height!=bodyHeight){bodySize.height=bodyHeight;body.setLayoutParams(bodySize);}
+        int panelHeight=Math.min(height,bodyHeight+dp(88));
+        dialog.getWindow().setLayout(panelWidth,panelHeight);
+        int[] origin=new int[2];root.getLocationOnScreen(origin);
+        WindowManager.LayoutParams position=dialog.getWindow().getAttributes();position.gravity=Gravity.TOP|Gravity.LEFT;
+        position.x=origin[0]+(width-panelWidth)/2;position.y=origin[1]+(height-panelHeight)/2;dialog.getWindow().setAttributes(position);
+    }
     private final Runnable hide=()-> {
         if(active && !fatal && engine!=null && engine.playing() && trackDialog==null && !continuation.pending()) {
             controls.setVisibility(View.GONE);
@@ -433,6 +659,10 @@ public final class PlayerActivity extends Activity {
         backward.setEnabled(available);forward.setEnabled(available);
         audio.setEnabled(available);subtitles.setEnabled(available);
         next.setVisibility(!live && validNext()?View.VISIBLE:View.GONE);
+        episodes.setVisibility(item!=null && item.kind==Kind.EPISODE?View.VISIBLE:View.GONE);
+        episodes.setEnabled(available && item!=null && item.kind==Kind.EPISODE);
+        guide.setVisibility(live?View.VISIBLE:View.GONE);guide.setEnabled(available && live);
+        updateFavorite();
         timeline.setVisibility(live?View.GONE:View.VISIBLE);
         timeline.setEnabled(available && !live && engine.duration()>0);
         next.setEnabled(available);
@@ -495,6 +725,7 @@ public final class PlayerActivity extends Activity {
     }
     private void beginContinuation() {
         if(!resumed || engine==null || !validNext() || !policy.allows(System.currentTimeMillis(),repository.currentScope()))return;
+        if(episodePicker!=null && episodePicker==trackDialog && episodePicker.isShowing()) {continuation.cancel();return;}
         if(!continuation.begin(item,playback.nextEpisode,engine.duration(),SystemClock.elapsedRealtime()))return;
         countdownRow.setVisibility(View.VISIBLE);
         updateCountdownFocus();
@@ -530,7 +761,7 @@ public final class PlayerActivity extends Activity {
         List<View> transport=new ArrayList<>();
         for(View v:new View[]{play,backward,forward,exit})if(v.getVisibility()==View.VISIBLE && v.isEnabled())transport.add(v);
         List<View> utility=new ArrayList<>();
-        for(View v:new View[]{subtitles,audio,next})if(v.getVisibility()==View.VISIBLE && v.isEnabled())utility.add(v);
+        for(View v:new View[]{subtitles,audio,next,episodes,favorite,guide})if(v.getVisibility()==View.VISIBLE && v.isEnabled())utility.add(v);
         int upper=!utility.isEmpty()?utility.get(0).getId():exit.getId();
         int middle=timeline.getVisibility()==View.VISIBLE && timeline.isEnabled()?timeline.getId():upper;
         for(int i=0;i<transport.size();i++) {
@@ -550,7 +781,7 @@ public final class PlayerActivity extends Activity {
         if(focused!=null && (!focused.isShown() || !focused.isEnabled()))(play.isEnabled()?play:exit).requestFocus();
     }
     private void updateEpisodeLine() {
-        episodeLine.setText(item.kind==Kind.EPISODE?"Sezon "+item.season+" · Bölüm "+item.episode:item.kind==Kind.LIVE?"CANLI YAYIN":"FİLM");
+        episodeLine.setText(item.kind==Kind.EPISODE?"Sezon "+item.season+" · Bölüm "+item.episode:item.kind==Kind.LIVE?"CANLI YAYIN":item.kind==Kind.SERIES?"DİZİ":"FİLM");
     }
     private void updateTimeline() {
         if(engine==null || item.kind==Kind.LIVE)return;
@@ -564,6 +795,10 @@ public final class PlayerActivity extends Activity {
     private void buildUi() {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         root=new FrameLayout(this) {
+            @Override protected void onSizeChanged(int width,int height,int oldWidth,int oldHeight) {
+                super.onSizeChanged(width,height,oldWidth,oldHeight);
+                if(sizeMetadataDialog!=null)handler.post(()->{if(sizeMetadataDialog!=null)sizeMetadataDialog.run();});
+            }
             @Override protected void onMeasure(int widthSpec,int heightSpec) {
                 if(controls!=null) {
                     int w=View.MeasureSpec.getSize(widthSpec),h=View.MeasureSpec.getSize(heightSpec);
@@ -592,6 +827,9 @@ public final class PlayerActivity extends Activity {
         subtitles=icon(secondary,PlayerIconButton.Icon.SUBTITLES,"Altyazı","subtitles",true,()->tracks(true));
         audio=icon(secondary,PlayerIconButton.Icon.AUDIO,"Ses dili","audio",true,()->tracks(false));
         next=icon(secondary,PlayerIconButton.Icon.NEXT,"Sonraki bölüm","next",true,this::next);
+        episodes=icon(secondary,PlayerIconButton.Icon.EPISODES,"Bölümler","episodes",true,this::episodes);
+        favorite=icon(secondary,PlayerIconButton.Icon.FAVORITE,"Favorilere ekle","favorite",true,this::toggleFavorite);
+        guide=icon(secondary,PlayerIconButton.Icon.GUIDE,"Yayın akışı","guide",true,this::guide);
         LinearLayout.LayoutParams tools=new LinearLayout.LayoutParams(-2,dp(48));tools.leftMargin=dp(16);header.addView(secondary,tools);
         controls.addView(header,new LinearLayout.LayoutParams(-1,dp(64)));
         timeline=new SeekBar(this,null,0,R.style.TvPlayerTimeline);timeline.setTag("tv_player_timeline");timeline.setContentDescription("Oynatma konumu");timeline.setId(View.generateViewId());timeline.setMax(1000);timeline.setFocusable(true);

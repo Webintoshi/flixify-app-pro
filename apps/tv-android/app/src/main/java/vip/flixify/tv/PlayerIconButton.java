@@ -15,7 +15,7 @@ import android.widget.ImageButton;
 
 /** Small native transport control. Focus changes paint, never layout or hit bounds. */
 final class PlayerIconButton extends ImageButton {
-    enum Icon { PLAY, PAUSE, BACK, FORWARD, AUDIO, SUBTITLES, NEXT, PREVIOUS, EXIT }
+    enum Icon { PLAY, PAUSE, BACK, FORWARD, AUDIO, SUBTITLES, NEXT, PREVIOUS, EPISODES, FAVORITE, FAVORITED, GUIDE, EXIT }
     PlayerIconButton(Context context,Icon icon,String description,boolean glass) {
         super(context);
         setScaleType(ScaleType.CENTER_INSIDE);
@@ -64,6 +64,13 @@ final class PlayerIconButton extends ImageButton {
                     canvas.drawRoundRect(3,4,21,17,3,3,paint);path.moveTo(8,17);path.lineTo(8,21);path.lineTo(13,17);canvas.drawPath(path,paint);
                     line(canvas,7,9,11,9);line(canvas,14,9,17,9);line(canvas,7,13,17,13);break;
                 case NEXT: case PREVIOUS: if(icon==Icon.PREVIOUS)canvas.scale(-1,1,12,12);path.moveTo(6,5);path.lineTo(15,12);path.lineTo(6,19);canvas.drawPath(path,paint);line(canvas,19,5,19,19);break;
+                case EPISODES:
+                    canvas.drawRoundRect(3,6,21,21,2,2,paint);line(canvas,6,3,18,3);path.moveTo(10,10);path.lineTo(16,13.5f);path.lineTo(10,17);path.close();canvas.drawPath(path,paint);break;
+                case FAVORITE: case FAVORITED:
+                    if(icon==Icon.FAVORITED)paint.setStyle(Paint.Style.FILL);
+                    path.moveTo(12,21);path.cubicTo(9,18,3,14,3,8.5f);path.cubicTo(3,3,9,1.5f,12,6);path.cubicTo(15,1.5f,21,3,21,8.5f);path.cubicTo(21,14,15,18,12,21);path.close();canvas.drawPath(path,paint);break;
+                case GUIDE:
+                    canvas.drawRoundRect(3,4,21,21,2,2,paint);line(canvas,3,9,21,9);line(canvas,8,3,8,6);line(canvas,16,3,16,6);line(canvas,7,13,11,13);line(canvas,14,13,17,13);line(canvas,7,17,17,17);break;
                 case EXIT: path.moveTo(13,5);path.lineTo(6,12);path.lineTo(13,19);canvas.drawPath(path,paint);line(canvas,6,12,21,12);break;
             }
             canvas.restoreToCount(saved);

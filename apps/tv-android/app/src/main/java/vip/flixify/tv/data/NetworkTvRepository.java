@@ -320,6 +320,26 @@ public final class NetworkTvRepository implements TvRepository {
     @Override public void series(Item series,Callback<SeriesDetail> callback) {
         enqueue("series-"+(series==null?"":series.id),true,callback,auth->{ProviderParser.Bootstrap b=bootstrap(auth,false);library(auth,b,false);return seriesFor(auth,b,series,false);});
     }
+    @Override public void startingEpisode(Item series,Callback<Item> callback) {
+        String identity=series==null?"null":series.kind+":"+series.scope.length()+":"+series.scope+":"+series.id;
+        enqueue("starting-episode-"+identity,true,callback,auth->{
+            ProviderParser.Bootstrap b=bootstrap(auth,false);library(auth,b,false);
+            SeriesDetail detail=seriesFor(auth,b,series,false);long source=guard.generation();active(auth,source,b.scope());
+            Map<String,?> saved=positions.getAll();Set<String> watched;synchronized(lock){watched=new HashSet<>(watchedRefs);}
+            Item first=null,unwatched=null,resumable=null;long latest=Long.MIN_VALUE;
+            for(Season season:detail.seasons)for(Item episode:season.episodes) {
+                if(first==null)first=episode;
+                if(unwatched==null && !watched.contains(refKey(episode)))unwatched=episode;
+                if(saved.isEmpty())continue;
+                String key=positionKey(episode);Object position=saved.get(key);
+                if(!(position instanceof Long) || (Long)position<=0)continue;
+                Object stamp=saved.get(key+".time");long time=stamp instanceof Long?(Long)stamp:0;
+                if(resumable==null || time>latest){resumable=episode;latest=time;}
+            }
+            Item selected=resumable!=null?resumable:unwatched!=null?unwatched:first;
+            if(selected==null)throw new ProviderParser.Invalid();active(auth,source,b.scope());return selected;
+        });
+    }
     private Item find(Catalog catalog,String id) {for(Item item:catalog.items)if(item.id.equals(id))return item;return null;}
     private SeriesDetail seriesFor(long auth,ProviderParser.Bootstrap b,Item candidate,boolean force) throws Exception {
         if(candidate==null || candidate.kind!=Kind.SERIES)throw new ProviderParser.Invalid();ProviderParser.reference(candidate,b.scope());

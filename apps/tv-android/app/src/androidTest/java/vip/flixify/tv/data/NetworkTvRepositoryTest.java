@@ -48,10 +48,13 @@ public class NetworkTvRepositoryTest {
     }
     private static final class Fixture implements NetworkTvRepository.ConnectionFactory {
         volatile boolean eligible=true,denyLibrary=false;
+        volatile boolean emptyEpisodes;
+        final List<String> watchedEpisodes=new ArrayList<>();
         volatile String source="source-a";
         volatile int bootstrapStatus=200;
         volatile long leaseExpiry=NOW+600000;
         final AtomicInteger bootstrapReads=new AtomicInteger(),liveCategoryReads=new AtomicInteger(),liveStreamReads=new AtomicInteger(),epgReads=new AtomicInteger();
+        final AtomicInteger seriesCategoryReads=new AtomicInteger(),seriesListReads=new AtomicInteger(),seriesDetailReads=new AtomicInteger();
         final CountDownLatch epgStarted=new CountDownLatch(1),releaseEpg=new CountDownLatch(1);
         volatile boolean holdEpg;
         final List<String> favoriteMethods=new ArrayList<>();
@@ -79,7 +82,10 @@ public class NetworkTvRepositoryTest {
                     }
                     else if(path.equals("/me/personal-library")) {
                         libraryReads++;if(denyLibrary){status=401;raw=new JSONObject();}
-                        else raw=new JSONObject().put("favorites",new JSONArray().put(new JSONObject().put("source","personal").put("sourceVersion",source).put("kind","movie").put("id","12"))).put("watched",new JSONArray());
+                        else {
+                            JSONArray watched=new JSONArray();for(String id:watchedEpisodes)watched.put(new JSONObject().put("source","personal").put("sourceVersion",source).put("kind","episode").put("seriesId","56").put("id",id));
+                            raw=new JSONObject().put("favorites",new JSONArray().put(new JSONObject().put("source","personal").put("sourceVersion",source).put("kind","movie").put("id","12"))).put("watched",watched);
+                        }
                     } else if(path.equals("/me/personal-library/favorites")) {
                         JSONObject ref=new JSONObject(body.toString("UTF-8")).getJSONObject("ref");
                         if(!"12".equals(ref.getString("id")) || !source.equals(ref.getString("sourceVersion")))throw new AssertionError("Wrong personal reference");
@@ -88,6 +94,15 @@ public class NetworkTvRepositoryTest {
                         String query=url.getQuery();
                         if(query.contains("action=get_vod_categories"))raw=new JSONArray().put(new JSONObject().put("category_id","9").put("category_name","Filmler"));
                         else if(query.contains("action=get_vod_streams"))raw=new JSONArray().put(new JSONObject().put("stream_id","12").put("name","Fixture Film").put("category_id","9").put("container_extension","mp4"));
+                        else if(query.contains("action=get_series_categories")) {
+                            seriesCategoryReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("category_id","8").put("category_name","Diziler"));
+                        } else if(query.contains("action=get_series_info")) {
+                            seriesDetailReads.incrementAndGet();
+                            JSONObject episodes=new JSONObject();if(!emptyEpisodes)episodes.put("2",new JSONArray().put(episode("63",2,1))).put("1",new JSONArray().put(episode("62",1,2)).put(episode("61",1,1)));
+                            raw=new JSONObject().put("episodes",episodes);
+                        } else if(query.contains("action=get_series")) {
+                            seriesListReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("series_id","56").put("name","Fixture Dizi").put("category_id","8"));
+                        }
                         else if(query.contains("action=get_live_categories")) {
                             liveCategoryReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("category_id","7").put("category_name","Canlı"));
                         } else if(query.contains("action=get_live_streams")) {
@@ -105,6 +120,9 @@ public class NetworkTvRepositoryTest {
             @Override public String getHeaderField(String name){resolve();return "Content-Length".equals(name)?Integer.toString(response.length):null;}
             @Override public InputStream getInputStream(){resolve();return new ByteArrayInputStream(response);}
         };}
+        private JSONObject episode(String id,int season,int episode) throws Exception {
+            return new JSONObject().put("id",id).put("title","Fixture Bölüm "+id).put("season",season).put("episode_num",episode).put("container_extension","mp4");
+        }
     }
     private static final class Harness {
         final Context context=ApplicationProvider.getApplicationContext();
@@ -113,6 +131,7 @@ public class NetworkTvRepositoryTest {
         final NetworkTvRepository repository;
         Harness(boolean restored) throws Exception {
             TokenStore store=new TokenStore(context);store.clear();
+            context.getSharedPreferences("tv_scoped_resume",Context.MODE_PRIVATE).edit().clear().commit();
             if(restored)store.save(new TokenStore.Session("fixture-access","fixture-refresh-token-with-32-chars","fixture-account","1234"));
             repository=new NetworkTvRepository(context,fixture,clock,deliveries::add);
         }
@@ -267,5 +286,85 @@ public class NetworkTvRepositoryTest {
             });
             assertTrue(done.await(5,TimeUnit.SECONDS));assertNull(result.error);assertTrue(main[0]);
         }finally{repository.logout();}
+    }
+    private static Item seriesCandidate(String scope) {
+        return new Item(Kind.SERIES,"56","Untrusted title","999","Untrusted category","","",scope,"",0,0,"");
+    }
+    private static SeriesDetail warmSeries(Harness h) throws Exception {
+        Result<SeriesDetail> result=new Result<>();h.repository.series(seriesCandidate("fixture-account:source-a"),result);h.deliver();
+        assertNull(result.error);assertNotNull(result.value);return result.value;
+    }
+    @Test public void startingSeriesOpensCanonicalFirstEpisodeAndReusesWarmMetadata() throws Exception {
+        Harness h=new Harness(true);try {
+            for(int n=0;n<2;n++) {
+                Result<Item> result=new Result<>();h.repository.startingEpisode(seriesCandidate("fixture-account:source-a"),result);h.deliver();
+                assertNull(result.error);assertEquals("61",result.value.id);assertEquals("Fixture Bölüm 61",result.value.title);
+                assertEquals(Kind.EPISODE,result.value.kind);assertEquals("56",result.value.seriesId);assertEquals(1,result.value.season);assertEquals(1,result.value.episode);
+            }
+            assertEquals(1,h.fixture.bootstrapReads.get());assertEquals(1,h.fixture.seriesCategoryReads.get());
+            assertEquals(1,h.fixture.seriesListReads.get());assertEquals(1,h.fixture.seriesDetailReads.get());assertEquals(1,h.fixture.libraryReads);
+        }finally{h.repository.logout();}
+    }
+    @Test public void startingSeriesUsesMostRecentlyResumedAvailableEpisode() throws Exception {
+        Harness h=new Harness(true);try {
+            SeriesDetail detail=warmSeries(h);Item first=detail.seasons.get(0).episodes.get(0),second=detail.seasons.get(0).episodes.get(1),third=detail.seasons.get(1).episodes.get(0);
+            h.repository.savePosition(first,25000,120000);h.clock.value+=100;
+            h.repository.savePosition(third,45000,120000);h.clock.value+=100;
+            h.repository.savePosition(second,35000,120000);
+            Item removed=new Item(Kind.EPISODE,"999","No longer available","8","Diziler","","mp4",first.scope,"56",2,9,"");
+            h.clock.value+=100;h.repository.savePosition(removed,20000,120000);
+            Result<Item> result=new Result<>();h.repository.startingEpisode(detail.series,result);h.deliver();
+            assertNull(result.error);assertEquals("62",result.value.id);assertEquals(35000,h.repository.resumePosition(result.value));
+        }finally{h.repository.logout();}
+    }
+    @Test public void startingSeriesAdvancesAcrossWatchedSeasonsAndReplaysWhenComplete() throws Exception {
+        for(boolean complete:new boolean[]{false,true}) {
+            Harness h=new Harness(true);try {
+                h.fixture.watchedEpisodes.add("61");h.fixture.watchedEpisodes.add("62");if(complete)h.fixture.watchedEpisodes.add("63");
+                Result<Item> result=new Result<>();h.repository.startingEpisode(seriesCandidate("fixture-account:source-a"),result);h.deliver();
+                assertNull(result.error);assertEquals(complete?"61":"63",result.value.id);
+            }finally{h.repository.logout();}
+        }
+    }
+    @Test public void startingSeriesIgnoresSavedPositionFromPreviousSource() throws Exception {
+        Harness h=new Harness(true);try {
+            SeriesDetail detail=warmSeries(h);h.repository.savePosition(detail.seasons.get(1).episodes.get(0),45000,120000);
+            h.fixture.source="source-b";Result<Account> refreshed=new Result<>();h.repository.refreshAccess(refreshed);h.deliver();assertNull(refreshed.error);
+            Result<Item> result=new Result<>();h.repository.startingEpisode(seriesCandidate("fixture-account:source-b"),result);h.deliver();
+            assertNull(result.error);assertEquals("61",result.value.id);assertEquals("fixture-account:source-b",result.value.scope);
+        }finally{h.repository.logout();}
+    }
+    @Test public void startingSeriesRejectsUnknownEmptyAndWrongKindWithoutPlayback() throws Exception {
+        Harness h=new Harness(true);try {
+            warmSeries(h);
+            for(Item candidate:new Item[]{null,liveCandidate("34"),new Item(Kind.SERIES,"999","Unknown","","","","","fixture-account:source-a","",0,0,"")}) {
+                Result<Item> result=new Result<>();h.repository.startingEpisode(candidate,result);h.deliver();assertNull(result.value);assertEquals(Failure.Code.INVALID,result.error.code);
+            }
+        }finally{h.repository.logout();}
+        h=new Harness(true);try {
+            h.fixture.emptyEpisodes=true;Result<Item> result=new Result<>();h.repository.startingEpisode(seriesCandidate("fixture-account:source-a"),result);h.deliver();
+            assertNull(result.value);assertEquals(Failure.Code.INVALID,result.error.code);
+        }finally{h.repository.logout();}
+    }
+    @Test public void queuedStartingEpisodeCannotPublishAfterLogoutOrSourceReplacement() throws Exception {
+        for(boolean logout:new boolean[]{false,true}) {
+            Harness h=new Harness(true);try {
+                warmSeries(h);Result<Item> result=new Result<>();h.repository.startingEpisode(seriesCandidate("fixture-account:source-a"),result);h.awaitQueued(1);
+                if(logout)h.repository.logout();else {h.fixture.source="source-b";h.repository.refreshAccess(new Result<Account>());h.awaitQueued(2);}
+                h.deliver();assertNull(result.value);assertNotNull(result.error);assertEquals(Failure.Code.STALE,result.error.code);
+            }finally{h.repository.logout();}
+        }
+    }
+    @Test public void invalidStartingEpisodeCannotJoinValidPendingSelection() throws Exception {
+        Harness h=new Harness(true);try {
+            warmSeries(h);Result<Item> valid=new Result<>(),wrongKind=new Result<>(),wrongScope=new Result<>();
+            h.repository.startingEpisode(seriesCandidate("fixture-account:source-a"),valid);h.awaitQueued(1);
+            h.repository.startingEpisode(new Item(Kind.LIVE,"56","Wrong kind","","","","","fixture-account:source-a","",0,0,""),wrongKind);
+            h.repository.startingEpisode(seriesCandidate("another-account:source-a"),wrongScope);
+            h.deliver();if(wrongKind.calls==0)h.deliver();if(wrongScope.calls==0)h.deliver();
+            assertNull(valid.error);assertEquals("61",valid.value.id);
+            assertNull(wrongKind.value);assertNotNull(wrongKind.error);assertEquals(Failure.Code.INVALID,wrongKind.error.code);
+            assertNull(wrongScope.value);assertNotNull(wrongScope.error);assertEquals(Failure.Code.INVALID,wrongScope.error.code);
+        }finally{h.repository.logout();}
     }
 }

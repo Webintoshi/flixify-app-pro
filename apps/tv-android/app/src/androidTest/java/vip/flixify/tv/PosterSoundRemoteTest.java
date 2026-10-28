@@ -1,6 +1,7 @@
 package vip.flixify.tv;
 
 import android.app.Activity;
+import android.app.Instrumentation;
 import android.content.Intent;
 import android.os.SystemClock;
 import android.view.KeyEvent;
@@ -9,6 +10,8 @@ import android.view.ViewGroup;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
+import androidx.test.runner.lifecycle.Stage;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -24,7 +27,6 @@ public final class PosterSoundRemoteTest {
     final FakeTvRepository repository=new FakeTvRepository();
     final List<String> cues=new ArrayList<>();
     int stops,closes;
-    View oldFocus;
     @Before public void setup(){InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{
         repository.session=true;TvApplication.setRepositoryForTests(repository);
         PosterFocusSound.setOutputFactoryForTests(context->new PosterFocusSound.Output(){
@@ -39,6 +41,11 @@ public final class PosterSoundRemoteTest {
     void key(int code){InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(code);InstrumentationRegistry.getInstrumentation().waitForIdleSync();}
     void enterGrid(){key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_DOWN);}
     void assertFocus(ActivityScenario<MainActivity> scenario,String key){scenario.onActivity(a->assertEquals(key,a.getCurrentFocus().getTag()));}
+    void awaitStage(Activity target,Stage expected){
+        AtomicBoolean ready=new AtomicBoolean();long end=SystemClock.uptimeMillis()+5000;
+        do{InstrumentationRegistry.getInstrumentation().runOnMainSync(()->ready.set(ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(target)==expected));if(!ready.get())SystemClock.sleep(25);}while(!ready.get() && SystemClock.uptimeMillis()<end);
+        assertTrue("Activity reaches "+expected,ready.get());
+    }
     @Test public void rapidPosterChangesEachPlayOnceAndUnchangedBoundaryIsSilent(){
         try(ActivityScenario<MainActivity> s=launch()){
             assertTrue(cues.isEmpty());key(KeyEvent.KEYCODE_DPAD_RIGHT);assertTrue(cues.isEmpty());key(KeyEvent.KEYCODE_DPAD_DOWN);
@@ -51,14 +58,23 @@ public final class PosterSoundRemoteTest {
         }
         assertEquals(1,closes);assertTrue(stops>0);
     }
-    @Test public void detailBackResizeAndPauseRestoreDoNotDuplicateTheSamePoster(){
+    @Test public void playerBackResizeAndPauseRestoreDoNotDuplicateTheSamePoster(){
         try(ActivityScenario<MainActivity> s=launch()){
             enterGrid();key(KeyEvent.KEYCODE_DPAD_RIGHT);assertEquals(2,cues.size());
-            key(KeyEvent.KEYCODE_DPAD_CENTER);key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_BACK);
+            final MainActivity[] main={null};s.onActivity(a->main[0]=a);
+            Instrumentation instrumentation=InstrumentationRegistry.getInstrumentation();
+            Instrumentation.ActivityMonitor monitor=instrumentation.addMonitor(PlayerActivity.class.getName(),null,false);
+            PlayerActivity player=null;
+            try{
+                key(KeyEvent.KEYCODE_DPAD_CENTER);player=(PlayerActivity)monitor.waitForActivityWithTimeout(5000);assertNotNull("Card opens player",player);
+                awaitStage(player,Stage.RESUMED);awaitStage(main[0],Stage.STOPPED);
+                key(KeyEvent.KEYCODE_BACK);awaitStage(main[0],Stage.RESUMED);
+            }finally{if(player!=null && !player.isFinishing()){PlayerActivity selected=player;instrumentation.runOnMainSync(selected::finish);}instrumentation.removeMonitor(monitor);}
             assertFocus(s,repository.movie2.key());assertEquals(2,cues.size());
-            s.onActivity(a->{ViewGroup viewport=a.findViewById(android.R.id.content);oldFocus=a.getCurrentFocus();ViewGroup.LayoutParams p=viewport.getLayoutParams();p.width=TvUi.dp(a,760);p.height=TvUi.dp(a,400);viewport.setLayoutParams(p);});
+            final int[] target={760,400};
+            s.onActivity(a->{ViewGroup viewport=a.findViewById(android.R.id.content);if(viewport.getWidth()==TvUi.dp(a,760) && viewport.getHeight()==TvUi.dp(a,400)){target[0]=820;target[1]=440;}ViewGroup.LayoutParams p=viewport.getLayoutParams();p.width=TvUi.dp(a,target[0]);p.height=TvUi.dp(a,target[1]);viewport.setLayoutParams(p);});
             long end=SystemClock.uptimeMillis()+3000;AtomicBoolean restored=new AtomicBoolean();
-            do{s.onActivity(a->restored.set(a.getCurrentFocus()!=null && a.getCurrentFocus()!=oldFocus && repository.movie2.key().equals(a.getCurrentFocus().getTag())));SystemClock.sleep(40);}while(!restored.get() && SystemClock.uptimeMillis()<end);
+            do{s.onActivity(a->{ViewGroup viewport=a.findViewById(android.R.id.content);View focus=a.getCurrentFocus();android.graphics.Rect bounds=new android.graphics.Rect();restored.set(viewport.getWidth()==TvUi.dp(a,target[0]) && viewport.getHeight()==TvUi.dp(a,target[1]) && focus!=null && repository.movie2.key().equals(focus.getTag()) && focus.getGlobalVisibleRect(bounds) && bounds.width()==focus.getWidth() && bounds.height()==focus.getHeight());});SystemClock.sleep(40);}while(!restored.get() && SystemClock.uptimeMillis()<end);
             assertTrue(restored.get());InstrumentationRegistry.getInstrumentation().waitForIdleSync();assertEquals(2,cues.size());
             s.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);s.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();assertEquals(2,cues.size());

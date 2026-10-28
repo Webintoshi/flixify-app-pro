@@ -22,6 +22,12 @@ final class TvLayout {
     }
     int contentWidth(){return Math.max(120,width-inset*2-rail-gap);}
     int columns(){return Math.max(1,Math.min(6,contentWidth()/(shortScreen?135:145)));}
+    int liveColumns(){return Math.max(1,Math.min(4,contentWidth()/196));}
+    int liveCardHeight(int columns,int span){
+        int imageWidth=Math.max(48,contentWidth()*span/columns-18);
+        int available=height-inset*2-heading-62-12;
+        return Math.max(90,Math.min(Math.round(imageWidth*9f/16f)+(shortScreen?52:60),available));
+    }
     int cardHeight(boolean home) {
         int available=height-inset*2-heading-62-(home?hero+36:0)-12;
         int imageWidth=Math.max(48,contentWidth()/columns()-18);

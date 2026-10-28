@@ -28,6 +28,7 @@ import static org.junit.Assert.*;
 public class MainRemoteTest {
     private final Instrumentation instrumentation=InstrumentationRegistry.getInstrumentation();
     private MainActivity activity;
+    private PlayerActivity player;
     private FakeTvRepository repository;
     @Rule public TestName testName=new TestName();
     @Before public void setUp() {
@@ -39,6 +40,7 @@ public class MainRemoteTest {
     }
     @After public void tearDown() {
         captureFixture();
+        if(player!=null)instrumentation.runOnMainSync(()->player.finish());
         if(activity!=null)instrumentation.runOnMainSync(()->activity.finish());
         instrumentation.runOnMainSync(()->TvApplication.setRepositoryForTests(null));
     }
@@ -147,17 +149,35 @@ public class MainRemoteTest {
         activity=(MainActivity)monitor.waitForActivityWithTimeout(5000); instrumentation.removeMonitor(monitor);
         assertNotNull("Recreated activity",activity); idle(); visible("Uzay Yolculuğu");
     }
-    @Test public void remoteOpensSeriesSeasonEpisodeAndBackRestoresPosterFocus() {
-        launch(true); down(3); focused("Diziler"); click(); key(KeyEvent.KEYCODE_DPAD_RIGHT); focused("Ara");
-        down(1); focused("Yıldız Günlükleri"); click(); focused("1. Sezon");
-        key(KeyEvent.KEYCODE_DPAD_RIGHT); focused("2. Sezon"); click(); down(1); focused("1. Bölüm · Dönüş");
-        key(KeyEvent.KEYCODE_BACK); focused("Yıldız Günlükleri");
+    private void directPlayer(vip.flixify.tv.TvModels.Item expected) {
+        Instrumentation.ActivityMonitor monitor=instrumentation.addMonitor(PlayerActivity.class.getName(),null,false);
+        try {
+            click();player=(PlayerActivity)monitor.waitForActivityWithTimeout(5000);assertNotNull("Card opens player directly",player);
+            vip.flixify.tv.TvModels.Item selected=(vip.flixify.tv.TvModels.Item)player.getIntent().getSerializableExtra(PlayerActivity.EXTRA_ITEM);
+            assertEquals(expected.key(),selected.key());assertEquals(expected.scope,selected.scope);
+            absent("Canlı izle");absent("İzle");absent("Favorilere ekle");
+            instrumentation.runOnMainSync(()->player.finish());player=null;idle();
+        } finally {instrumentation.removeMonitor(monitor);}
     }
-    @Test public void movieDetailFavoriteReturnsToSamePosterAndFavoritesList() {
-        launch(true); down(2); click(); key(KeyEvent.KEYCODE_DPAD_RIGHT); down(1); focused("Uzay Yolculuğu"); click();
-        focused("İzle"); key(KeyEvent.KEYCODE_DPAD_RIGHT); focused("Favorilere ekle"); click(); visible("Favorilerden çıkar");
-        key(KeyEvent.KEYCODE_BACK); focused("Uzay Yolculuğu"); key(KeyEvent.KEYCODE_BACK); focused("Filmler");
-        down(2); focused("Favoriler"); click(); visible("Uzay Yolculuğu");
+    @Test public void remoteOpensSeriesPlayerDirectlyAndBackRestoresPosterFocus() {
+        launch(true); down(3); focused("Diziler"); click(); key(KeyEvent.KEYCODE_DPAD_RIGHT); focused("Ara");
+        down(1); focused("Yıldız Günlükleri");directPlayer(repository.show);focused("Yıldız Günlükleri");
+    }
+    @Test public void movieStartsDirectlyAndReturnsToSamePoster() {
+        launch(true); down(2); click(); key(KeyEvent.KEYCODE_DPAD_RIGHT); down(1); focused("Uzay Yolculuğu");
+        directPlayer(repository.movie);focused("Uzay Yolculuğu");
+    }
+    @Test public void repeatedCardClickInSameEventLoopLaunchesOnlyOnePlayer() {
+        launch(true);down(2);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);focused("Uzay Yolculuğu");
+        Instrumentation.ActivityMonitor monitor=instrumentation.addMonitor(PlayerActivity.class.getName(),null,true);
+        try {
+            instrumentation.runOnMainSync(()->{
+                View card=activity.getCurrentFocus();assertNotNull(card);
+                assertEquals(repository.movie.key(),card.getTag());
+                assertTrue(card.performClick());assertTrue(card.performClick());
+                assertEquals("Repeated OK cannot stack player activities or provider connections",1,monitor.getHits());
+            });
+        } finally {instrumentation.removeMonitor(monitor);}
     }
     @Test public void remoteSearchFiltersCatalogAndBackClearsFilter() {
         launch(true); down(2); click(); key(KeyEvent.KEYCODE_DPAD_RIGHT); focused("Ara"); click();
@@ -180,11 +200,9 @@ public class MainRemoteTest {
         down(3); focused("Hesabım"); click(); visible("Test Paketi");
         instrumentation.runOnMainSync(()->repository.releaseDelayedCatalog()); idle(); visible("Test Paketi"); absent("Uzay Yolculuğu");
     }
-    @Test public void liveDetailsExposeRemoteWatchAndFixtureProgramme() {
-        launch(true); down(1);focused("Canlı TV");click();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);focused("Örnek TV");click();
-        focused("Canlı izle");visible("Canlı izle");
-        final boolean[] found={false};instrumentation.runOnMainSync(()->found[0]=contains(activity.getWindow().getDecorView(),"Örnek Yayın"));assertTrue("EPG is visible",found[0]);
-        key(KeyEvent.KEYCODE_BACK);focused("Örnek TV");
+    @Test public void liveLogoOpensPlayerWithoutWatchConfirmation() {
+        launch(true); down(1);focused("Canlı TV");click();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);focused("Örnek TV");
+        directPlayer(repository.live);focused("Örnek TV");
     }
     private boolean contains(View root,String part) {
         if(root.getVisibility()!=View.VISIBLE)return false;

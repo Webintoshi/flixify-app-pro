@@ -97,11 +97,9 @@ public class ResponsiveUiTest {
         focusVisible("Ana Sayfa");
         instrumentation.runOnMainSync(()->assertNotNull("Accepted login result must render home",find(viewport,"Sizin için")));
     }
-    @Test public void longDetailKeepsPlayAndFavoriteReachableAndRestoresPoster() {
+    @Test public void longPosterRemainsReachableInShortVirtualizedCatalog() {
         launch(true,620,330);down(2);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);
-        focusVisible(ResponsiveFixture.LONG_TITLE);click();focusVisible("İzle");
-        key(KeyEvent.KEYCODE_DPAD_RIGHT);focusVisible("Favorilere ekle");click();focusVisible("Favorilerden çıkar");
-        key(KeyEvent.KEYCODE_BACK);focusVisible(ResponsiveFixture.LONG_TITLE);
+        focusVisible(ResponsiveFixture.LONG_TITLE);resize(650,340);focusVisible(ResponsiveFixture.LONG_TITLE);
         instrumentation.runOnMainSync(()->{
             RecyclerView recycler=findGrid(viewport);assertNotNull("Catalog remains virtualized",recycler);
             assertTrue("Large catalog binds a bounded number of cards",recycler.getChildCount()<40);
@@ -111,25 +109,23 @@ public class ResponsiveUiTest {
         instrumentation.runOnMainSync(()->{ViewGroup.LayoutParams p=viewport.getLayoutParams();p.width=TvUi.dp(activity,widthDp);p.height=TvUi.dp(activity,heightDp);viewport.setLayoutParams(p);viewport.requestLayout();});settle();
     }
     private void openSeries() {
-        down(3);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);focusVisible("Yıldız Günlükleri");click();focusVisible("1. Sezon");
+        down(3);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);focusVisible("Yıldız Günlükleri");
     }
-    @Test public void intermediateHeightSeriesKeepsSeasonEpisodeAndFavoriteFullyReachable() {
-        launch(true,960,420);openSeries();down(1);focusVisible("1. Bölüm · İlk Görev");
-        down(1);focusVisible("Favorilere ekle");key(KeyEvent.KEYCODE_DPAD_UP);focusVisible("1. Bölüm · İlk Görev");
-        key(KeyEvent.KEYCODE_DPAD_UP);focusVisible("1. Sezon");key(KeyEvent.KEYCODE_DPAD_RIGHT);focusVisible("2. Sezon");click();
-        down(1);focusVisible("1. Bölüm · Dönüş");down(1);focusVisible("Favorilere ekle");
+    @Test public void intermediateHeightSeriesKeepsPosterAndToolbarFullyReachable() {
+        launch(true,960,420);openSeries();key(KeyEvent.KEYCODE_DPAD_UP);focusVisible("Ara");
+        key(KeyEvent.KEYCODE_DPAD_RIGHT);focusVisible("Kategori: Tümü");key(KeyEvent.KEYCODE_DPAD_DOWN);focusVisible("Yıldız Günlükleri");
     }
     @Test public void measuredResizePreservesFocusedUnselectedRailTarget() {
         launch(true,960,540);down(3);focusVisible("Diziler");resize(900,500);focusVisible("Diziler");
         click();key(KeyEvent.KEYCODE_DPAD_RIGHT);focusVisible("Ara");
     }
-    @Test public void measuredResizePreservesFocusedEpisodeInSelectedSeason() {
-        launch(true,960,600);openSeries();key(KeyEvent.KEYCODE_DPAD_RIGHT);click();down(1);focusVisible("1. Bölüm · Dönüş");
-        resize(900,650);focusVisible("1. Bölüm · Dönüş");key(KeyEvent.KEYCODE_DPAD_UP);focusVisible("2. Sezon");
+    @Test public void measuredResizePreservesFocusedSeriesPoster() {
+        launch(true,960,600);openSeries();resize(900,650);focusVisible("Yıldız Günlükleri");
+        key(KeyEvent.KEYCODE_DPAD_UP);focusVisible("Ara");
     }
-    @Test public void measuredResizePreservesFocusedDetailFavoriteAction() {
-        launch(true,960,540);down(2);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);focusVisible("Favorilere ekle");
-        resize(900,600);focusVisible("Favorilere ekle");click();focusVisible("Favorilerden çıkar");
+    @Test public void measuredResizePreservesFocusedMoviePoster() {
+        launch(true,960,540);down(2);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);focusVisible(ResponsiveFixture.LONG_TITLE);
+        resize(900,600);focusVisible(ResponsiveFixture.LONG_TITLE);
     }
     private RecyclerView findGrid(View v) {
         if(v instanceof RecyclerView)return (RecyclerView)v;
@@ -154,6 +150,7 @@ public class ResponsiveUiTest {
             cb.onResult(new Catalog(kind,items,Arrays.asList(new Category("long",LONG_CATEGORY))));
         }
         public void series(Item item,Callback<SeriesDetail> cb){base.series(item,cb);}public void favorites(Callback<List<Item>> cb){base.favorites(cb);}
+        public void startingEpisode(Item item,Callback<Item> cb){base.startingEpisode(item,cb);}
         public boolean isFavorite(Item item){return base.isFavorite(item);}public void toggleFavorite(Item item,Callback<Boolean> cb){base.toggleFavorite(item,cb);}
         public void playback(Item item,Callback<Playback> cb){base.playback(item,cb);}public void epg(Item item,Callback<List<Programme>> cb){base.epg(item,cb);}
         public void markWatched(Item item){base.markWatched(item);}public void savePosition(Item item,long p,long d){base.savePosition(item,p,d);}

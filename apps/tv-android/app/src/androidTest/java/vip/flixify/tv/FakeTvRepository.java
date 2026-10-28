@@ -55,6 +55,7 @@ final class FakeTvRepository implements TvRepository {
         if (cb!=null) cb.onResult(new Catalog(Kind.MOVIE,Arrays.asList(movie,movie2),Arrays.asList(new Category("1","Bilim Kurgu"),new Category("2","Drama"))));
     }
     public void series(Item item,Callback<SeriesDetail> cb) { cb.onResult(new SeriesDetail(show,Arrays.asList(new Season(1,Arrays.asList(episode)),new Season(2,Arrays.asList(episode2))))); }
+    public void startingEpisode(Item item,Callback<Item> cb) { cb.onResult(episode); }
     public void favorites(Callback<List<Item>> cb) {
         List<Item> rows=new ArrayList<>(); for (Item i:Arrays.asList(movie,movie2,show,live)) if(saved.contains(i.key()))rows.add(i); cb.onResult(rows);
     }
