@@ -11,6 +11,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.widget.FrameLayout;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.SoundEffectConstants;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -46,6 +47,7 @@ public final class MainActivity extends Activity {
     private final EnumMap<Section,Page> pages=new EnumMap<>(Section.class);
     private TvRepository repository;
     private ArtworkLoader artwork;
+    private PosterFocusSound posterSound;
     private LinearLayout body;
     private Button[] rail;
     private RecyclerView grid;
@@ -70,7 +72,7 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,WindowManager.LayoutParams.FLAG_FULLSCREEN);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_FULLSCREEN);
-        repository=TvApplication.repository(this); artwork=new ArtworkLoader();
+        repository=TvApplication.repository(this); artwork=new ArtworkLoader();posterSound=PosterFocusSound.create(this);
         for(Section section:Section.values())pages.put(section,new Page(section));
         page=pages.get(Section.HOME);
         if(state!=null) {
@@ -95,7 +97,7 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onStart() { super.onStart(); stopped=false; }
     @Override protected void onResume() {
-        super.onResume(); if(!initialized)return;
+        super.onResume();posterSound.resume(); if(!initialized)return;
         boolean returning=resumeReload; resumeReload=false;
         if(!repository.hasSession()) { if(returning)showLogin(""); return; }
         if(returning && detail==null && page.catalog!=null)for(Item item:page.catalog.items) {
@@ -118,12 +120,42 @@ public final class MainActivity extends Activity {
             public void onError(Failure failure) { if(screenAlive(ticket) && failure.code==Failure.Code.AUTH)sessionEnded(failure.message); }
         });
     }
+    @Override protected void onPause() {posterSound.pause();super.onPause();}
     @Override protected void onStop() { captureGrid(); stopped=true;resumeReload=true;generation++;if(dialog!=null)dialog.dismiss();super.onStop(); }
-    @Override protected void onDestroy() { destroyed=true; generation++; if(artwork!=null)artwork.close(); super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed=true; generation++;if(posterSound!=null)posterSound.close(); if(artwork!=null)artwork.close(); super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle out) {
         captureGrid(); out.putString("section",page.section.name()); out.putString("query",page.query); out.putString("category",page.category);
         out.putString("categoryTitle",page.categoryTitle); out.putString("focusKey",page.focusKey); out.putInt("scroll",page.scroll);
         if(detail!=null)out.putSerializable("detail",detail); out.putInt("season",selectedSeason); super.onSaveInstanceState(out);
+    }
+    private boolean isPosterCard(View view) {
+        return view!=null && view.getTag() instanceof String && view.getParent() instanceof RecyclerView;
+    }
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        int direction;
+        switch(event.getKeyCode()) {
+            case KeyEvent.KEYCODE_DPAD_LEFT:direction=View.FOCUS_LEFT;break;
+            case KeyEvent.KEYCODE_DPAD_RIGHT:direction=View.FOCUS_RIGHT;break;
+            case KeyEvent.KEYCODE_DPAD_UP:direction=View.FOCUS_UP;break;
+            case KeyEvent.KEYCODE_DPAD_DOWN:direction=View.FOCUS_DOWN;break;
+            default:return super.dispatchKeyEvent(event);
+        }
+        if(event.getAction()==KeyEvent.ACTION_DOWN && hasWindowFocus()
+                && grid!=null && detail==null && (dialog==null || !dialog.isShowing())) {
+            View focused=getCurrentFocus();
+            View destination=focused==null?null:focused.focusSearch(direction);
+            if(isPosterCard(focused) || isPosterCard(destination)) {
+                if(destination==null || destination==focused)return true;
+                if(destination.requestFocus(direction)) {
+                    if(!isPosterCard(destination)){posterSound.leftPosters();destination.playSoundEffect(
+                            direction==View.FOCUS_LEFT?SoundEffectConstants.NAVIGATION_LEFT:
+                            direction==View.FOCUS_RIGHT?SoundEffectConstants.NAVIGATION_RIGHT:
+                            direction==View.FOCUS_UP?SoundEffectConstants.NAVIGATION_UP:SoundEffectConstants.NAVIGATION_DOWN);}
+                    return true;
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event);
     }
     private boolean screenAlive(long ticket) { return !destroyed && !stopped && !isFinishing() && ticket==generation; }
     private boolean valid(long ticket,String scope) {
@@ -310,7 +342,7 @@ public final class MainActivity extends Activity {
         @Override public long getItemId(int p) { return p; }
         @Override public int getItemCount() { return items.size(); }
         @Override public PosterHolder onCreateViewHolder(ViewGroup parent,int type) {
-            LinearLayout card=TvUi.column(MainActivity.this); card.setId(View.generateViewId()); card.setFocusable(true); card.setFocusableInTouchMode(true); card.setBackground(TvUi.artworkBackground(MainActivity.this)); card.setPadding(TvUi.dp(MainActivity.this,3),TvUi.dp(MainActivity.this,3),TvUi.dp(MainActivity.this,3),TvUi.dp(MainActivity.this,2));
+            LinearLayout card=TvUi.column(MainActivity.this); card.setId(View.generateViewId()); card.setFocusable(true); card.setFocusableInTouchMode(true);card.setSoundEffectsEnabled(false); card.setBackground(TvUi.artworkBackground(MainActivity.this)); card.setPadding(TvUi.dp(MainActivity.this,3),TvUi.dp(MainActivity.this,3),TvUi.dp(MainActivity.this,3),TvUi.dp(MainActivity.this,2));
             RecyclerView.LayoutParams p=new RecyclerView.LayoutParams(-1,TvUi.dp(MainActivity.this,sizing.cardHeight(page.section==Section.HOME))); p.setMargins(TvUi.dp(MainActivity.this,4),TvUi.dp(MainActivity.this,4),TvUi.dp(MainActivity.this,4),TvUi.dp(MainActivity.this,4)); card.setLayoutParams(p);
             ImageView image=new ImageView(MainActivity.this); image.setScaleType(ImageView.ScaleType.CENTER_CROP); image.setBackground(TvUi.rounded(MainActivity.this,TvUi.PANEL,0,10,1));image.setClipToOutline(true);card.addView(image,new LinearLayout.LayoutParams(-1,0,1));
             TextView title=TvUi.text(MainActivity.this,"",15,TvUi.WHITE); title.setMaxLines(2); title.setEllipsize(TextUtils.TruncateAt.END); title.setPadding(TvUi.dp(MainActivity.this,4),TvUi.dp(MainActivity.this,5),TvUi.dp(MainActivity.this,4),0); card.addView(title,new LinearLayout.LayoutParams(-1,TvUi.dp(MainActivity.this,sizing.shortScreen?42:50)));
@@ -320,7 +352,7 @@ public final class MainActivity extends Activity {
             Item item=items.get(position); holder.title.setText(item.title); holder.itemView.setTag(item.key()); holder.itemView.setContentDescription(item.title);
             holder.itemView.setNextFocusLeftId(position%columns==0?rail[page.section.ordinal()].getId():View.NO_ID); holder.itemView.setNextFocusUpId(position<columns?toolbar:View.NO_ID);
             holder.itemView.setElevation(TvUi.dp(MainActivity.this,holder.itemView.hasFocus()?8:0));
-            holder.itemView.setOnFocusChangeListener((v,focus)->{v.setElevation(TvUi.dp(MainActivity.this,focus?8:0));if(focus){page.focusKey=item.key();int positionNow=holder.getBindingAdapterPosition();if(grid!=null && positionNow!=RecyclerView.NO_POSITION)grid.scrollToPosition(positionNow);}});
+            holder.itemView.setOnFocusChangeListener((v,focus)->{v.setElevation(TvUi.dp(MainActivity.this,focus?8:0));if(focus){if(hasWindowFocus() && item.scope.equals(repository.currentScope()))posterSound.focused(item.scope,page.section.name()+":"+item.key());page.focusKey=item.key();int positionNow=holder.getBindingAdapterPosition();if(grid!=null && positionNow!=RecyclerView.NO_POSITION)grid.scrollToPosition(positionNow);}});
             holder.itemView.setOnClickListener(v->{captureGrid();showDetail(item,true);}); loadArtwork(holder.image,item.artwork);
         }
         @Override public void onViewRecycled(PosterHolder holder) { artwork.unbind(holder.image); holder.itemView.setOnFocusChangeListener(null);holder.itemView.setElevation(0); }
