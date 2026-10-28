@@ -29,4 +29,4 @@
 ### Task2: Visual and delivery
 - [x] Capture actualnative search/categories and activefilters atthree sizes; inspect/fix.
 - [x] Independentreview, finaltests/lint, freeze/sign/install,verifyAPK.
-- [ ] Update descriptor+immutableAPK, guarded web-onlydeploy, publichash/range/browserlinks verification.
+- [x] Update descriptor+immutableAPK, guarded web-onlydeploy, publichash/range/browserlinks verification.

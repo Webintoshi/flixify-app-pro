@@ -21,4 +21,12 @@ Actual screenshots inspected at1920x1080/density320/font1.0,1280x720/density320/
 ## Signed APK
 Frozen source6cf9c0f46c5af0c29b30441140062ad8cc587e1c; assembleRelease15seconds successful. APK1,316,709bytes, SHA256e0bc9dfd432d12fde9bd6af6bc71c991a99d4a1806ebc5370f9007e0b179a1be. Version1.3.0-test.1/code5/min23/target35/packagevip.flixify.tv; optimized/not-debuggable. Bothv1/v2signatures verified against existing1.2.1certificate158ded464486435f9479db84d1eeb9af82e14338e0b4a494c4297c70ae15e594. Exact poster WAV digest and raw/poster_move resource retained. No nativeABI libraries, testMP4, testhooks, fakeaccount or galleryfixture identifiers in release. Installed-r overcode4successfully and cold-launched663ms in the emulator; no customer account or media opened.
 
-Production acceptance is pending.
+## Production acceptance
+Artifact/descriptor d07eb17b22e3d4a1115b879b73bc69e2af120c7f pushed to the existing branch, fetched and checked out exactly on the existing server release checkout. Web TypeScript and APK/source/allowlist preflight passed. Bounded network-none compilation exited0; isolated APK HEAD/MIME/range/full digest checks passed. Candidate sha256:81cb96468427b1d2463c2b41c09b4339e9795befadff369827476580d2dca399, tag flixify-ops-web:edge-recovery-d07eb17b22e3-20261026.
+
+Dryrun, web-only image metadata synchronization and scoped web recreation passed. Independent post-read matched the exact candidate; API8cdbf9,workerd5b9andDB721873 remained unchanged, allfour running/restart0. Owned build/check containers0. Diskfree15.99to12.40GiB, above the8GiB gate; no broad image/volume/cache cleanup or unrelated service action.
+
+Public /downloads/flixify-tv-1.3.0-test.1.apk HEAD200/application/vnd.android.package-archive/1,316,709bytes; range0–31 returned206/32bytes and exact Content-Range. Full GET SHA256e0bc9dfd432d12fde9bd6af6bc71c991a99d4a1806ebc5370f9007e0b179a1be matches the signed local APK. Home and /indir200; actual hydrated browser homepage and download page both link the exact new APK, with version1.3.0-test.1 displayed. Proof saved android-tv/catalog/public-download.png.
+
+Prior APK files remain available. Compatible update installed successfully without removing the existing app. Task emulator stopped; display overrides reset to physical1920x1080/density320/font1.0. Temporary gallery source stays ignored, absent from release; native visual evidence retained. No customer/provider media was played. Automated UI evidence is from the TV emulator; real TV/box feedback remains the user's device check.
+
