@@ -22,3 +22,12 @@ Native tests use offline repository and no customer/provider media. SoundPool de
 
 ## Signed APK
 Frozen source559e5758832e1133380160395f6a0ab5406fac09; assembleRelease14s successful. APK1307370bytes SHA25639899ad62031225c6f390c9887f5f0b7ee84e9d58f1b9c251a5f5f2d83b4a290,1.2.1-test.1/code4/min23/target35, samev1/v2cert158ded464486435f9479db84d1eeb9af82e14338e0b4a494c4297c70ae15e594asprior1.2.0. Exact298msassetdigestverified inside release; optimizer renames its path tores/mx.wav, with raw/poster_move resourcepresent. No testhooks/fixtures/MP4/nativeABI libs. Installed-r overcode3andcoldlaunchedsuccessfully inemulator. No customer account or provider stream opened.
+
+## Production acceptance
+Artifact/descriptor acb1f7f741ca5187a74f7a67526c731d030add61 pushed and fetched exactly on the existing release checkout. Local web TypeScript check and server APK/source/scope preflight passed. Bounded network-none container compilation and candidate APK HEAD/MIME/range/full digest gates passed, result0. Candidate sha256:76b82c65b0646dff539faeaed79f22c8f62e716f1b5d484ae80647532abc2d0c, tag flixify-ops-web:edge-recovery-acb1f7f741ca-20261026.
+
+Dryrun, web-only metadata synchronization and scoped recreation passed. Independent post-read confirms exact new web and unchanged API8cdbf9/workerd5b9/DB721873, allfour running/restart0. Owned TVbuild/checkcontainers0; diskfree16.01→15.99GiB. No unrelated service or cleanup.
+
+Public /downloads/flixify-tv-1.2.1-test.1.apk HEAD200/application/vnd.android.package-archive/1307370bytes; range0–31 returned206/32bytes/Content-Range bytes0-31/1307370. Full GET SHA25639899ad62031225c6f390c9887f5f0b7ee84e9d58f1b9c251a5f5f2d83b4a290 matches signedlocalAPK. Home and /indir200. Real browser homepage and downloadpage both show exact newAPKlink; pageversion1.2.1-test.1. Proof saved android-tv/poster-sound/public-download.png; shortaudio preview android-tv/poster-move.wav.
+
+Existing APK files retained; same-signature update installation verified. Owned emulator stopped and temporary decodedfullsourceWAV removed. Source MP3 untouched. No customer stream played; physical TV audio output remains the user's device check.

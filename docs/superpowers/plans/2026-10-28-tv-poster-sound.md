@@ -26,5 +26,5 @@
 
 ### Task2: Publish
 - [x] Review, freeze, assemble and check signature/asset/version/install.
-- [ ] Update descriptor+APK, bounded guarded web-only deployment.
-- [ ] Verify public hash/MIME/range and actual browser links; keep short preview.
+- [x] Update descriptor+APK, bounded guarded web-only deployment.
+- [x] Verify public hash/MIME/range and actual browser links; keep short preview.
