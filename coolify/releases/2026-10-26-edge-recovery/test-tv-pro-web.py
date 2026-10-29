@@ -28,7 +28,7 @@ else:
     tv = load("pro_previous_builder_for_red", "build-tv-direct-web.py")
 
 SOURCE_TAG = "flixify-ops-web:edge-recovery-4d7cb2940197-20261026"
-SOURCE_ID = "sha256:883c2103c3cb8d21b36cf148eaca873c41c21d81caa044944691cf527a0cc21"
+SOURCE_ID = "sha256:e83c21103c3cb8d21b36cf148eaca873c41c21d81caa044944691cf527a0cc21"
 BASE = "6dd7714f3c7a16cd5acdb2ed02cc1dbab3ee37f9"
 REVISION = "a" * 40
 CANDIDATE = "sha256:" + "b" * 64
@@ -47,6 +47,7 @@ class NarrowOverlayTests(unittest.TestCase):
         self.assertEqual(tv.PATHS, (DESCRIPTOR, SHELL, DOWNLOAD_PAGE))
         self.assertEqual(tv.NEW_PATHS, ())
         self.assertEqual(tv.APK, APK)
+        self.assertRegex(tv.SOURCE_ID, r"^sha256:[0-9a-f]{64}$")
         self.assertEqual((tv.SOURCE_TAG, tv.SOURCE_ID, tv.BASE_REVISION), (SOURCE_TAG, SOURCE_ID, BASE))
 
 

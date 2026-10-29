@@ -8,7 +8,7 @@ spec = importlib.util.spec_from_file_location("pro_tv_scoped_web_release", Path(
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 SOURCE_TAG = "flixify-ops-web:edge-recovery-4d7cb2940197-20261026"
-SOURCE_ID = "sha256:883c2103c3cb8d21b36cf148eaca873c41c21d81caa044944691cf527a0cc21"
+SOURCE_ID = "sha256:e83c21103c3cb8d21b36cf148eaca873c41c21d81caa044944691cf527a0cc21"
 release.SOURCE_TAG, release.SOURCE_ID = SOURCE_TAG, SOURCE_ID
 
 if __name__ == "__main__":
