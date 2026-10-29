@@ -7,7 +7,7 @@ python3 - <<'PY'
 from pathlib import Path
 import hashlib
 p=Path('app/build/outputs/apk/release/app-release.apk')
-print('Test APK:',p.resolve())
+print('Flixify Pro APK:',p.resolve())
 print('Bytes:',p.stat().st_size)
 print('SHA256:',hashlib.sha256(p.read_bytes()).hexdigest())
 PY

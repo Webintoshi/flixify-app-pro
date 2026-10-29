@@ -8,6 +8,7 @@ import android.widget.SeekBar;
 import android.os.SystemClock;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityNodeInfo;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
@@ -38,7 +39,7 @@ public final class PlayerRemoteTest {
             repository.beforePlayback=()->{for(FakeEngine value:engines)if(!value.released)repository.allReleasedAtSwitch=false;};
             TvApplication.setRepositoryForTests(repository);
             PlayerActivity.setEngineFactoryForTests((context, listener) -> {
-                FakeEngine result = new FakeEngine(context, listener); result.state=repository.initialState; result.startPaused=!repository.initialPlay; engines.add(result); return result;
+                FakeEngine result = new FakeEngine(context, listener); result.state=repository.initialState; result.startPaused=!repository.initialPlay; result.duration=repository.initialDuration; engines.add(result); return result;
             });
         });
     }
@@ -85,6 +86,90 @@ public final class PlayerRemoteTest {
     }
     private boolean focused(PlayerActivity activity,String tag) {return activity.hasWindowFocus() && activity.getCurrentFocus()!=null && tag.equals(activity.getCurrentFocus().getTag());}
     private FakeEngine latest() { return engines.get(engines.size()-1); }
+    private void awaitDestroyed(ActivityScenario<PlayerActivity> scenario) {
+        long end=SystemClock.elapsedRealtime()+3000;
+        while(scenario.getState()!=androidx.lifecycle.Lifecycle.State.DESTROYED && SystemClock.elapsedRealtime()<end)SystemClock.sleep(20);
+        assertEquals("Remote Back completes the actual Activity lifecycle",androidx.lifecycle.Lifecycle.State.DESTROYED,scenario.getState());
+    }
+    @Test public void vodHidesBottomTransportWithoutRemovingTimelineTimesOrTools() {
+        repository.initialPlay=false;
+        for(Item selected:Arrays.asList(repository.movie,repository.episode)) {
+            try(ActivityScenario<PlayerActivity> scenario=launch(selected)) {
+                scenario.onActivity(activity -> {
+                    View content=activity.findViewById(android.R.id.content);
+                    for(String tag:Arrays.asList("play","backward","forward","exit")) {
+                        View icon=content.findViewWithTag("tv_player_"+tag);
+                        assertFalse("VOD removes on-screen "+tag,icon.isShown());
+                        assertFalse("Removed "+tag+" must not take remote focus",icon.requestFocus());
+                    }
+                    View play=content.findViewWithTag("tv_player_play");View bottom=(View)play.getParent().getParent();
+                    assertEquals("No empty bottom transport/caption row",View.GONE,bottom.getVisibility());
+                    ViewGroup chrome=content.findViewWithTag("tv_player_controls");
+                    assertTrue("Removed row also releases its vertical space",chrome.getHeight()<=TvUi.dp(activity,144));
+                    for(String tag:Arrays.asList("timeline","audio","subtitles","favorite"))assertTrue(tag+" remains visible",content.findViewWithTag("tv_player_"+tag).isShown());
+                    ViewGroup times=(ViewGroup)chrome.getChildAt(2);assertEquals(2,times.getChildCount());
+                    assertTrue("Elapsed and remaining time stay visible",times.getChildAt(0).isShown() && times.getChildAt(1).isShown());
+                    if(selected.kind==Kind.EPISODE)for(String tag:Arrays.asList("next","episodes"))assertTrue(tag+" remains visible",content.findViewWithTag("tv_player_"+tag).isShown());
+                });
+            }
+        }
+    }
+    @Test public void vodRemoteCenterSeekAndBackRemainAvailableWithoutTransportIcons() {
+        repository.initialPlay=false;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.movie)) {
+            scenario.onActivity(activity -> assertEquals("tv_player_timeline",activity.getCurrentFocus().getTag()));
+            key(KeyEvent.KEYCODE_DPAD_CENTER);scenario.onActivity(activity -> assertTrue(latest().playing()));
+            key(KeyEvent.KEYCODE_DPAD_CENTER);scenario.onActivity(activity -> assertFalse(latest().playing()));
+            key(KeyEvent.KEYCODE_MEDIA_FAST_FORWARD);scenario.onActivity(activity -> assertEquals(22000,latest().position));
+            key(KeyEvent.KEYCODE_MEDIA_REWIND);scenario.onActivity(activity -> assertEquals(12000,latest().position));
+            key(KeyEvent.KEYCODE_DPAD_RIGHT);scenario.onActivity(activity -> assertTrue("Visible timeline still seeks",latest().position>12000));
+            key(KeyEvent.KEYCODE_BACK);
+            awaitDestroyed(scenario);assertTrue(latest().released);
+        }
+    }
+    @Test public void vodFatalStateKeepsVisibleFocusAndRemoteBackExit() {
+        repository.accessFailure=Failure.Code.INELIGIBLE;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.movie)) {
+            scenario.onActivity(activity -> {
+                assertTrue(latest().released);View focus=activity.getCurrentFocus();
+                assertNotNull("Fatal VOD still owns remote input",focus);assertTrue(focus.isShown() && focus.isEnabled());
+                assertFalse("Fatal focus cannot target removed transport",Arrays.asList("tv_player_play","tv_player_backward","tv_player_forward","tv_player_exit").contains(focus.getTag()));
+            });
+            key(KeyEvent.KEYCODE_BACK);awaitDestroyed(scenario);
+        }
+    }
+    @Test public void unknownDurationVodKeepsRemoteToggleAndUtilityNavigation() {
+        repository.initialPlay=false;
+        for(long duration:new long[]{0,-1}) {
+            repository.initialDuration=duration;
+            try(ActivityScenario<PlayerActivity> scenario=launch(repository.movie)) {
+                scenario.onActivity(activity -> {
+                    View root=((FrameLayout)activity.findViewById(android.R.id.content)).getChildAt(0);
+                    assertSame("Unknown duration uses the player input surface",root,activity.getCurrentFocus());
+                });
+                key(KeyEvent.KEYCODE_DPAD_CENTER);scenario.onActivity(activity -> assertTrue(latest().playing()));
+                key(KeyEvent.KEYCODE_DPAD_UP);scenario.onActivity(activity -> assertEquals("tv_player_subtitles",activity.getCurrentFocus().getTag()));
+                key(KeyEvent.KEYCODE_DPAD_DOWN);
+                scenario.onActivity(activity -> assertSame(((FrameLayout)activity.findViewById(android.R.id.content)).getChildAt(0),activity.getCurrentFocus()));
+                key(KeyEvent.KEYCODE_DPAD_CENTER);scenario.onActivity(activity -> assertFalse(latest().playing()));
+                key(KeyEvent.KEYCODE_BACK);awaitDestroyed(scenario);
+            }
+        }
+    }
+    @Test public void liveKeepsAllBottomTransportIconsAndTheirRemoteNavigation() {
+        repository.initialPlay=false;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.live1)) {
+            scenario.onActivity(activity -> {
+                View content=activity.findViewById(android.R.id.content);
+                for(String tag:Arrays.asList("play","backward","forward","exit"))assertTrue("Live keeps "+tag,content.findViewWithTag("tv_player_"+tag).isShown());
+                assertEquals("tv_player_play",activity.getCurrentFocus().getTag());
+            });
+            for(String tag:Arrays.asList("backward","forward","exit")) {
+                key(KeyEvent.KEYCODE_DPAD_RIGHT);
+                scenario.onActivity(activity -> assertEquals("tv_player_"+tag,activity.getCurrentFocus().getTag()));
+            }
+        }
+    }
     @Test public void favoriteCanBeToggledFromLivePlayerWithoutReopeningStream() {
         repository.initialPlay=false;
         try(ActivityScenario<PlayerActivity> scenario=launch(repository.live1)) {
@@ -317,7 +402,7 @@ public final class PlayerRemoteTest {
                 float density=activity.getResources().getDisplayMetrics().density;
                 View chrome=content.findViewWithTag("tv_player_controls");
                 assertTrue("Content-first chrome must stay shallow",chrome.getHeight()<=density*192);
-                for(String tag:Arrays.asList("play","backward","forward","audio","subtitles","next","episodes","favorite","exit")) {
+                for(String tag:Arrays.asList("audio","subtitles","next","episodes","favorite")) {
                     View icon=content.findViewWithTag("tv_player_"+tag);
                     assertTrue("Use compact native icon target for "+tag,icon instanceof android.widget.ImageButton);
                     assertTrue("No weighted screen-wide tile for "+tag,icon.getWidth()<=density*52);
@@ -332,18 +417,19 @@ public final class PlayerRemoteTest {
     @Test public void iconGroupsAreFullyRemoteReachableAndLiveSkipsHiddenTimeline() {
         repository.initialPlay=false;
         try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
-            for(String tag:Arrays.asList("backward","forward","exit")) {
-                key(KeyEvent.KEYCODE_DPAD_RIGHT);
-                scenario.onActivity(activity -> assertEquals("tv_player_"+tag,activity.getCurrentFocus().getTag()));
-            }
-            key(KeyEvent.KEYCODE_DPAD_UP);key(KeyEvent.KEYCODE_DPAD_UP);
+            scenario.onActivity(activity -> assertEquals("tv_player_timeline",activity.getCurrentFocus().getTag()));
+            key(KeyEvent.KEYCODE_DPAD_UP);
             scenario.onActivity(activity -> assertEquals("tv_player_subtitles",activity.getCurrentFocus().getTag()));
             key(KeyEvent.KEYCODE_DPAD_RIGHT);
             scenario.onActivity(activity -> assertEquals("tv_player_audio",activity.getCurrentFocus().getTag()));
             key(KeyEvent.KEYCODE_DPAD_RIGHT);
             scenario.onActivity(activity -> assertEquals("tv_player_next",activity.getCurrentFocus().getTag()));
+            key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            scenario.onActivity(activity -> assertEquals("tv_player_episodes",activity.getCurrentFocus().getTag()));
+            key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            scenario.onActivity(activity -> assertEquals("tv_player_favorite",activity.getCurrentFocus().getTag()));
             key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_DOWN);
-            scenario.onActivity(activity -> assertEquals("tv_player_play",activity.getCurrentFocus().getTag()));
+            scenario.onActivity(activity -> assertEquals("tv_player_timeline",activity.getCurrentFocus().getTag()));
         }
         try(ActivityScenario<PlayerActivity> scenario=launch(repository.live1)) {
             key(KeyEvent.KEYCODE_DPAD_UP);
@@ -362,8 +448,9 @@ public final class PlayerRemoteTest {
     @Test public void trackPanelRetainsSelectedIndicatorAndBackRestoresIconFocus() {
         repository.initialPlay=false;
         try(ActivityScenario<PlayerActivity> scenario=launch(repository.movie)) {
-            key(KeyEvent.KEYCODE_DPAD_UP);key(KeyEvent.KEYCODE_DPAD_UP);key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            key(KeyEvent.KEYCODE_DPAD_UP);key(KeyEvent.KEYCODE_DPAD_RIGHT);
             key(KeyEvent.KEYCODE_DPAD_CENTER);awaitDialog("Otomatik, seçili");
+            scenario.onActivity(activity -> assertFalse("Utility OK opens its panel without toggling playback",latest().playing()));
             key(KeyEvent.KEYCODE_DPAD_DOWN);awaitDialog("Otomatik, seçili");
             key(KeyEvent.KEYCODE_BACK);
             await(scenario,"Panel Back must restore originating icon",activity -> focused(activity,"tv_player_audio"));
@@ -381,7 +468,7 @@ public final class PlayerRemoteTest {
     }
     @Test public void mediaKeysSeekAndStopReleaseVod() {
         try (ActivityScenario<PlayerActivity> scenario = launch(repository.movie)) {
-            scenario.onActivity(activity -> assertTrue(activity.findViewById(android.R.id.content).findViewWithTag("tv_player_play").hasFocus()));
+            scenario.onActivity(activity -> assertTrue(activity.findViewById(android.R.id.content).findViewWithTag("tv_player_timeline").hasFocus()));
             key(KeyEvent.KEYCODE_MEDIA_PAUSE);
             scenario.onActivity(activity -> assertFalse(latest().playing));
             key(KeyEvent.KEYCODE_MEDIA_PLAY);
@@ -408,8 +495,7 @@ public final class PlayerRemoteTest {
     @Test public void nextEpisodeAndTrackDialogsAreRemoteReachable() {
         try (ActivityScenario<PlayerActivity> scenario = launch(repository.episode)) {
             scenario.onActivity(activity -> assertEquals(View.VISIBLE,activity.findViewById(android.R.id.content).findViewWithTag("tv_player_next").getVisibility()));
-            key(KeyEvent.KEYCODE_DPAD_UP); // Thin timeline above transport.
-            key(KeyEvent.KEYCODE_DPAD_UP); // Utility icons above timeline.
+            key(KeyEvent.KEYCODE_DPAD_UP); // Utility icons above the focused timeline.
             key(KeyEvent.KEYCODE_DPAD_RIGHT); // Subtitles then audio.
             scenario.onActivity(activity -> assertEquals("tv_player_audio", activity.getCurrentFocus().getTag()));
             key(KeyEvent.KEYCODE_DPAD_CENTER);
@@ -605,21 +691,23 @@ public final class PlayerRemoteTest {
             Thread.sleep(5400);assertEquals(1,repository.playbackCalls);
         }
     }
-    @Test public void remoteCanReturnFromTransportToCountdownAndCancel() throws Exception {
+    @Test public void remoteCanReturnFromTimelineToCountdownAndCancel() throws Exception {
         try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
             ended(scenario);assertCountdown(scenario);
             scenario.onActivity(activity -> assertEquals("tv_player_watch_next",activity.getCurrentFocus().getTag()));
             key(KeyEvent.KEYCODE_DPAD_DOWN);
             scenario.onActivity(activity -> {
-                Object tag=activity.getCurrentFocus().getTag();
-                assertTrue("Down reaches a transport control",Arrays.asList("tv_player_play","tv_player_backward","tv_player_forward").contains(tag));
+                assertEquals("Down reaches the remaining timeline","tv_player_timeline",activity.getCurrentFocus().getTag());
             });
             key(KeyEvent.KEYCODE_DPAD_UP);
             scenario.onActivity(activity -> assertEquals("Up returns to visible countdown choice","tv_player_watch_next",activity.getCurrentFocus().getTag()));
             key(KeyEvent.KEYCODE_DPAD_RIGHT);
             scenario.onActivity(activity -> assertEquals("tv_player_cancel_next",activity.getCurrentFocus().getTag()));
             key(KeyEvent.KEYCODE_DPAD_CENTER);
-            scenario.onActivity(activity -> assertFalse(activity.findViewById(android.R.id.content).findViewWithTag("tv_player_cancel_next").isShown()));
+            scenario.onActivity(activity -> {
+                assertFalse(activity.findViewById(android.R.id.content).findViewWithTag("tv_player_cancel_next").isShown());
+                assertEquals("Cancellation restores visible VOD focus","tv_player_timeline",activity.getCurrentFocus().getTag());
+            });
             Thread.sleep(5400);assertEquals(1,repository.playbackCalls);
         }
     }
@@ -633,10 +721,8 @@ public final class PlayerRemoteTest {
     @Test public void playAtActualEndReplaysAndCancelsAutomaticSuccessor() {
         try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
             ended(scenario);assertCountdown(scenario);
+            key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_CENTER);
             scenario.onActivity(activity -> {
-                View play=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_play");
-                assertEquals("Oynat",play.getContentDescription());
-                play.performClick();
                 assertEquals(0,latest().position());assertTrue(latest().playing());
                 assertFalse(activity.findViewById(android.R.id.content).findViewWithTag("tv_player_cancel_next").isShown());
                 assertEquals(1,repository.playbackCalls);
@@ -709,7 +795,7 @@ public final class PlayerRemoteTest {
                 FrameLayout content=activity.findViewById(android.R.id.content);
                 View actual=content.getChildAt(0);
                 Rect bounds=new Rect();assertTrue(actual.getGlobalVisibleRect(bounds));
-                for(String tag:Arrays.asList("play","backward","forward","audio","subtitles","next","episodes","favorite","exit")) {
+                for(String tag:Arrays.asList("audio","subtitles","next","episodes","favorite")) {
                     View control=content.findViewWithTag("tv_player_"+tag);Rect visible=new Rect();
                     assertTrue("Initial "+tag+" is visible",control.isShown() && control.getGlobalVisibleRect(visible));
                     assertTrue("Initial "+tag+" fully fits first player layout; player="+bounds+", visible="+visible+", measured="+control.getWidth()+"x"+control.getHeight(),
@@ -734,7 +820,7 @@ public final class PlayerRemoteTest {
                 Rect bounds=new Rect();assertTrue(actual.getGlobalVisibleRect(bounds));
                 View timeline=content.findViewWithTag("tv_player_timeline");
                 assertTrue("VOD needs an actual remote seek control",timeline instanceof SeekBar);
-                for(String tag:Arrays.asList("play","backward","forward","audio","subtitles","next","episodes","favorite","exit")) {
+                for(String tag:Arrays.asList("audio","subtitles","next","episodes","favorite")) {
                     View control=content.findViewWithTag("tv_player_"+tag);Rect visible=new Rect();
                     assertTrue(tag+" fully fits measured player bounds",control.getGlobalVisibleRect(visible) && bounds.contains(visible) && visible.width()>=control.getWidth()-2 && visible.height()>=control.getHeight()-2);
                     assertTrue(tag+" remains focusable",control.requestFocus());
@@ -763,7 +849,7 @@ public final class PlayerRemoteTest {
         public void release() {released=true;playing=false;}
     }
     static final class FakeRepository implements TvRepository {
-        String scope="fixture:source1"; long expiry=System.currentTimeMillis()+60000,savedPosition,ttl=-1; Item lastPlayback;
+        String scope="fixture:source1"; long expiry=System.currentTimeMillis()+60000,savedPosition,ttl=-1,initialDuration=300000; Item lastPlayback;
         Runnable beforePlayback; int watched,playbackCalls,initialState=PlayerEngine.READY; boolean allReleasedAtSwitch=true,initialPlay=true; Item successor; boolean deferAccess,deferPlayback; Failure.Code accessFailure; Callback<Account> pendingAccess; Callback<Playback> pendingPlayback;
         final Set<String> favoriteKeys=new HashSet<>(); Item lastFavorite;int favoriteCalls;boolean deferFavorite;Callback<Boolean> pendingFavorite;
         boolean deferStart;Callback<Item> pendingStart;

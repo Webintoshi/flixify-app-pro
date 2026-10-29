@@ -56,7 +56,7 @@ public final class PlayerActivity extends Activity {
     private Item item;
     private Playback playback;
     private FrameLayout root,video;
-    private LinearLayout controls,row,secondary,countdownRow;
+    private LinearLayout controls,row,secondary,countdownRow,transportBar;
     private TextView focusCaption,remaining;
     private PlayerIconButton exit;
     private SeekBar timeline;
@@ -351,8 +351,7 @@ public final class PlayerActivity extends Activity {
         status.setVisibility(View.VISIBLE);
         controls.setVisibility(View.VISIBLE);
         updateButtons();
-        View exit=controls.findViewWithTag("tv_player_exit");
-        if(exit!=null)exit.requestFocus();
+        defaultControl().requestFocus();
     }
     private void loadLiveCatalog(int request) {
         repository.catalog(Kind.LIVE,false,new TvRepository.Callback<Catalog>() {
@@ -645,12 +644,21 @@ public final class PlayerActivity extends Activity {
     private void showControls(boolean focus) {
         boolean wasHidden=controls.getVisibility()!=View.VISIBLE;
         controls.setVisibility(View.VISIBLE);
-        if((focus || wasHidden) && play.isEnabled())play.requestFocus();
+        if(focus || wasHidden) {if(vod())defaultControl().requestFocus();else if(play.isEnabled())play.requestFocus();}
         scheduleHide();
+    }
+    private boolean vod() {return item!=null && item.kind!=Kind.LIVE;}
+    private View defaultControl() {
+        if(!vod())return play.isEnabled()?play:exit;
+        if(timeline.getVisibility()==View.VISIBLE && timeline.isEnabled())return timeline;
+        return root;
     }
     private void updateButtons() {
         boolean available=engine!=null && !fatal;
         boolean live=item!=null && item.kind==Kind.LIVE;
+        int transportVisibility=vod()?View.GONE:View.VISIBLE;
+        transportBar.setVisibility(transportVisibility);
+        for(View control:new View[]{play,backward,forward,exit})control.setVisibility(transportVisibility);
         play.setEnabled(available);
         boolean pausable=available && engine.wantsToPlay() && engine.state()!=PlayerEngine.ENDED;
         play.setIcon(pausable?PlayerIconButton.Icon.PAUSE:PlayerIconButton.Icon.PLAY,pausable?"Duraklat":"Oynat");
@@ -704,6 +712,14 @@ public final class PlayerActivity extends Activity {
                 showControls(true);
                 return true;
             }
+            View focused=root.findFocus();
+            if(vod() && (focused==timeline || focused==root) && (code==KeyEvent.KEYCODE_DPAD_CENTER || code==KeyEvent.KEYCODE_ENTER)) {
+                if(event.getRepeatCount()==0)toggle();return true;
+            }
+            if(vod() && focused==root && code==KeyEvent.KEYCODE_DPAD_UP) {
+                for(View tool:new View[]{subtitles,audio,next,episodes,favorite})if(tool.getVisibility()==View.VISIBLE && tool.isEnabled()){tool.requestFocus();break;}
+                scheduleHide();return true;
+            }
             scheduleHide();
         }
         return super.dispatchKeyEvent(event);
@@ -750,9 +766,9 @@ public final class PlayerActivity extends Activity {
         if(continuation.claim(SystemClock.elapsedRealtime(),true))select(playback.nextEpisode);
     }
     private void cancelContinuation() {cancelContinuation(true);}
-    private void cancelContinuation(boolean focusPlay) {
+    private void cancelContinuation(boolean focusControl) {
         continuation.cancel();handler.removeCallbacks(advance);countdownRow.setVisibility(View.GONE);updateCountdownFocus();showControls(false);
-        if(focusPlay)play.requestFocus();
+        if(focusControl)defaultControl().requestFocus();
     }
     private void updateCountdownFocus() {
         if(exit==null)return;
@@ -762,7 +778,7 @@ public final class PlayerActivity extends Activity {
         for(View v:new View[]{play,backward,forward,exit})if(v.getVisibility()==View.VISIBLE && v.isEnabled())transport.add(v);
         List<View> utility=new ArrayList<>();
         for(View v:new View[]{subtitles,audio,next,episodes,favorite,guide})if(v.getVisibility()==View.VISIBLE && v.isEnabled())utility.add(v);
-        int upper=!utility.isEmpty()?utility.get(0).getId():exit.getId();
+        int upper=!utility.isEmpty()?utility.get(0).getId():defaultControl().getId();
         int middle=timeline.getVisibility()==View.VISIBLE && timeline.isEnabled()?timeline.getId():upper;
         for(int i=0;i<transport.size();i++) {
             View v=transport.get(i);v.setNextFocusLeftId(transport.get(Math.max(0,i-1)).getId());v.setNextFocusRightId(transport.get(Math.min(transport.size()-1,i+1)).getId());
@@ -770,15 +786,15 @@ public final class PlayerActivity extends Activity {
         }
         for(int i=0;i<utility.size();i++) {
             View v=utility.get(i);v.setNextFocusLeftId(utility.get(Math.max(0,i-1)).getId());v.setNextFocusRightId(utility.get(Math.min(utility.size()-1,i+1)).getId());
-            v.setNextFocusDownId(timeline.getVisibility()==View.VISIBLE && timeline.isEnabled()?timeline.getId():play.isEnabled()?play.getId():exit.getId());
+            v.setNextFocusDownId(timeline.getVisibility()==View.VISIBLE && timeline.isEnabled()?timeline.getId():vod()?root.getId():play.isEnabled()?play.getId():exit.getId());
             v.setNextFocusUpId(shown?watchNow.getId():v.getId());
         }
-        timeline.setNextFocusUpId(shown?watchNow.getId():upper);timeline.setNextFocusDownId(play.getId());
+        timeline.setNextFocusUpId(shown?watchNow.getId():upper);timeline.setNextFocusDownId(vod()?timeline.getId():play.getId());
         watchNow.setNextFocusUpId(watchNow.getId());cancel.setNextFocusUpId(cancel.getId());
         watchNow.setNextFocusRightId(cancel.getId());cancel.setNextFocusLeftId(watchNow.getId());
-        watchNow.setNextFocusDownId(play.getId());cancel.setNextFocusDownId(exit.getId());
+        watchNow.setNextFocusDownId(vod()?defaultControl().getId():play.getId());cancel.setNextFocusDownId(vod()?defaultControl().getId():exit.getId());
         View focused=root.findFocus();
-        if(focused!=null && (!focused.isShown() || !focused.isEnabled()))(play.isEnabled()?play:exit).requestFocus();
+        if(focused!=null && (!focused.isShown() || !focused.isEnabled()))defaultControl().requestFocus();
     }
     private void updateEpisodeLine() {
         episodeLine.setText(item.kind==Kind.EPISODE?"Sezon "+item.season+" · Bölüm "+item.episode:item.kind==Kind.LIVE?"CANLI YAYIN":item.kind==Kind.SERIES?"DİZİ":"FİLM");
@@ -812,7 +828,7 @@ public final class PlayerActivity extends Activity {
                 super.onMeasure(widthSpec,heightSpec);
             }
         };
-        root.setBackgroundColor(TvUi.BACKGROUND);root.setFocusable(true);root.setFocusableInTouchMode(true);
+        root.setId(View.generateViewId());root.setBackgroundColor(TvUi.BACKGROUND);root.setFocusable(true);root.setFocusableInTouchMode(true);
         video=new FrameLayout(this);video.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         root.addView(video,new FrameLayout.LayoutParams(-1,-1));
         status=new TextView(this);status.setTag("tv_player_status");status.setTextColor(TvUi.WHITE);status.setTextSize(22);status.setGravity(Gravity.CENTER);status.setPadding(dp(24),dp(16),dp(24),dp(16));
@@ -854,7 +870,7 @@ public final class PlayerActivity extends Activity {
         controls.addView(timeline,new LinearLayout.LayoutParams(-1,dp(22)));
         LinearLayout times=controlRow();position=label(12,TvUi.WHITE);remaining=label(12,TvUi.WHITE);remaining.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
         times.addView(position,new LinearLayout.LayoutParams(0,dp(18),1));times.addView(remaining,new LinearLayout.LayoutParams(-2,dp(18)));controls.addView(times,new LinearLayout.LayoutParams(-1,dp(18)));
-        LinearLayout bottom=controlRow();row=controlRow();row.setBackground(PlayerIconButton.glass(this,false));row.setPadding(dp(3),0,dp(3),0);
+        LinearLayout bottom=controlRow();transportBar=bottom;row=controlRow();row.setBackground(PlayerIconButton.glass(this,false));row.setPadding(dp(3),0,dp(3),0);
         play=icon(row,PlayerIconButton.Icon.PLAY,"Oynat","play",false,this::toggle);
         backward=icon(row,PlayerIconButton.Icon.BACK,"10 saniye geri","backward",false,()->{if(item!=null && item.kind==Kind.LIVE)zap(-1);else seek(-10000);});
         forward=icon(row,PlayerIconButton.Icon.FORWARD,"10 saniye ileri","forward",false,()->{if(item!=null && item.kind==Kind.LIVE)zap(1);else seek(10000);});

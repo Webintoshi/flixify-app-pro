@@ -1,6 +1,6 @@
 export const tvDownload = {
-  href: "/downloads/flixify-tv-1.3.1-test.1.apk",
-  filename: "flixify-tv-1.3.1-test.1.apk",
-  version: "1.3.1-test.1",
+  href: "/downloads/flixify-pro-1.3.2.apk",
+  filename: "flixify-pro-1.3.2.apk",
+  version: "1.3.2",
   minimumAndroid: "Android 6 ve üzeri",
 } as const;
