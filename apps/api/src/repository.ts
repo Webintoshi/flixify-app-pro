@@ -748,9 +748,9 @@ export async function createUser(
             else registration_trial_ip_quota.window_started_at
           end
       where registration_trial_ip_quota.window_started_at <= now() - interval '24 hours'
-         or registration_trial_ip_quota.count < 10
+         or registration_trial_ip_quota.count < $2::integer
       returning count
-    `, [ipHash]);
+    `, [ipHash, env.AUTO_TRIAL_DAILY_IP_LIMIT]);
     if (quota.rowCount !== 1) throw new AutoTrialRegistrationRateLimitError("Daily trial registration limit reached.");
     const providerAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     const createProviderCredential = () =>

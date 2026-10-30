@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const db = vi.hoisted(() => {
-  const state = { users: [] as string[], jobs: [] as { userId: string; username: string; password: string }[], statements: [] as string[], failJobInsert: false, quotaAllowed: true, hashedIp: "" };
+  const state = { users: [] as string[], jobs: [] as { userId: string; username: string; password: string }[], statements: [] as string[], quotaParameters: [] as unknown[], failJobInsert: false, quotaAllowed: true, hashedIp: "" };
   return {
     state,
     query: vi.fn(async (): Promise<{ rows: unknown[]; rowCount: number }> => ({ rows: [], rowCount: 0 })),
@@ -13,6 +13,7 @@ const db = vi.hoisted(() => {
           state.statements.push(sql);
           if (sql.includes("insert into public.registration_trial_ip_quota")) {
             state.hashedIp = String(params[0]);
+            state.quotaParameters = [...params];
             return { rows: state.quotaAllowed ? [{ count: 1 }] : [], rowCount: state.quotaAllowed ? 1 : 0 };
           }
           if (sql.includes("insert into public.users")) {
@@ -41,16 +42,25 @@ const db = vi.hoisted(() => {
 vi.mock("./db.js", () => ({ query: db.query, withTransaction: db.withTransaction }));
 
 import { AutoTrialRegistrationRateLimitError, createUser, getUserContext, updateAppSettings } from "./repository.js";
+import { env } from "./env.js";
+
+const originalDailyLimit = env.AUTO_TRIAL_DAILY_IP_LIMIT;
 
 describe("new account automatic trial enqueue", () => {
   beforeEach(() => {
     db.state.users = [];
     db.state.jobs = [];
     db.state.statements = [];
+    db.state.quotaParameters = [];
     db.state.failJobInsert = false;
     db.state.quotaAllowed = true;
     db.state.hashedIp = "";
+    env.AUTO_TRIAL_DAILY_IP_LIMIT = 1000;
     db.withTransaction.mockClear();
+  });
+
+  afterEach(() => {
+    env.AUTO_TRIAL_DAILY_IP_LIMIT = originalDailyLimit;
   });
 
   it("creates exactly one durable trial job with the new account in the same transaction", async () => {
@@ -83,6 +93,22 @@ describe("new account automatic trial enqueue", () => {
       .rejects.toBeInstanceOf(AutoTrialRegistrationRateLimitError);
     expect(db.state.users).toEqual([]);
     expect(db.state.jobs).toEqual([]);
+  });
+
+  it.each([1000, 2500])("binds the configured %i registration cap to the atomic IP quota write", async (limit) => {
+    env.AUTO_TRIAL_DAILY_IP_LIMIT = limit;
+    await createUser("lookup", "hash", "5678", "ABCD1234EFGH5678", "installation-1", "203.0.113.7");
+
+    expect(db.state.quotaParameters).toEqual([expect.stringMatching(/^[0-9a-f]{64}$/), limit]);
+    const quotaWrites = db.state.statements.filter((sql) => sql.includes("insert into public.registration_trial_ip_quota"));
+    expect(quotaWrites).toHaveLength(1);
+    expect(quotaWrites[0]).toMatch(/on conflict\s*\(ip_hash\)\s*do update/i);
+    expect(quotaWrites[0]).toMatch(/registration_trial_ip_quota\.count\s*<\s*\$2::integer/);
+    expect(quotaWrites[0]).not.toMatch(/registration_trial_ip_quota\.count\s*<\s*\d/);
+    expect(quotaWrites[0]).toMatch(/window_started_at\s*<=\s*now\(\)\s*-\s*interval '24 hours' then 1/);
+    expect(quotaWrites[0]).toMatch(/else registration_trial_ip_quota\.count\s*\+\s*1/);
+    expect(db.state.statements[0]).toBe(quotaWrites[0]);
+    expect(db.withTransaction).toHaveBeenCalledTimes(1);
   });
 
   it("preserves a live trial's personal IPTV credentials when shared settings change", async () => {

@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { config } from "dotenv";
 import ffmpegStatic from "ffmpeg-static";
 import { z } from "zod";
+import { parseTrustedProxyCidrs } from "./trusted-proxy.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 config();
@@ -21,6 +22,8 @@ const envSchema = z.object({
     .transform((value) => value === "true"),
   ADMIN_EMAILS: z.string().min(3),
   API_PORT: z.coerce.number().int().positive().default(4000),
+  TRUSTED_PROXY_CIDRS: z.string().optional().transform(parseTrustedProxyCidrs),
+  AUTO_TRIAL_DAILY_IP_LIMIT: z.coerce.number().int().min(1).max(10000).default(1000),
   FFMPEG_BINARY: z.string().trim().min(1).optional(),
   FFPROBE_BINARY: z.string().trim().min(1).optional(),
   VOD_PLAYBACK_TTL_SECONDS: z.coerce.number().int().positive().optional().default(900),

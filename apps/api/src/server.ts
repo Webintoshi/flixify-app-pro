@@ -1302,7 +1302,7 @@ async function authenticateAdmin(authorization?: string): Promise<AdminRequest> 
 export function buildServer() {
   const app = Fastify({
     logger: true,
-    trustProxy: 1
+    trustProxy: env.TRUSTED_PROXY_CIDRS
   });
 
   app.register(cors, API_CORS_CONFIG);
