@@ -1,0 +1,6 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item><shape><solid android:color="#07090c" /></shape></item>
+    <item android:width="280dp" android:height="73dp" android:gravity="center">
+        <bitmap android:src="@drawable/flixify_logo" android:gravity="fill" android:filter="true" />
+    </item>
+</layer-list>

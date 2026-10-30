@@ -79,3 +79,25 @@ Release araci mevcut korunan worker tag/ID pinlerini ve dogrulanmis aday imaj
 ID'sini ister. `--apply` yalniz web imajini Coolify kaydinda esler;
 `--recreate` yalniz web konteynerini yeniden olusturur. Bu araclarla toplu
 temizlik, bagimli hizmet yeniden baslatma veya saglayici yayini testi yapilmaz.
+
+## Android TV 1.4.1 acilis ekrani yayini
+
+`releases/2026-10-26-edge-recovery/build-tv-startup-web.py` ve
+`release-tv-startup-web.py`, dogrulanmis `38b22d4b23e6` / `6cbd625e...` web
+imajini temel alir. Kabul edilen tam native commit once
+`ACCEPTED_NATIVE_REVISION` alanina sabitlenir. Native kaynak sonradan
+degisemez; yalniz TV indirme tanimi `1.4.0` → `1.4.1` olarak degisir.
+
+Tek yeni genel dosya `public/downloads/flixify-pro-1.4.1.apk` olur. Mevcut
+`public/downloads/flixify-tv-update.json`, ayni paket icin surum `1.4.1`/kod `9`,
+minimum API `23`, yeni APK'nin bagimsiz dogrulanmis SHA256/boyutu ile ilerletilir.
+Eski JSON'un Git ve kaynak imajdaki 428 byte / `49aced337d...` ozeti ve dosya
+modu sabittir. Diger tum genel dosyalar, onceki APK'lar dahil, ayni kalir.
+
+CLI ve korumalar 1.4.0 yayiniyla aynidir: varsayilan salt okunur on kontrol,
+`--container-build` ile ag kapali 1280/1536 MiB derleme, degismeyen 8 GiB disk
+esigi, tam genel dosya agaci, APK HEAD/MIME/Range/tam GET ve JSON uyumu.
+Release yalniz web imajini esler/yeniden olusturur; API, worker ve veritabani
+kimlikleri, imajlari ve ayarlari korunur. `test-tv-startup-web.py` bu yeni
+ekleme/JSON-degistirme sozlesmesini gercek gecici Git depolari ve calistirilan
+HTTP kontrolu ile sinar.

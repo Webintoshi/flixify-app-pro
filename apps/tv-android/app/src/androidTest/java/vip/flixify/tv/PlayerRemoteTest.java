@@ -70,11 +70,18 @@ public final class PlayerRemoteTest {
         long end=SystemClock.elapsedRealtime()+3000;
         do {
             AccessibilityNodeInfo root=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
-            if(root!=null && !root.findAccessibilityNodeInfosByText(uniqueText).isEmpty())return;
+            if(dialogContentVisible(root,uniqueText))return;
             SystemClock.sleep(20);
         } while(SystemClock.elapsedRealtime()<end);
         AccessibilityNodeInfo last=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
         fail("Track dialog did not expose "+uniqueText+"; "+nodeText(last));
+    }
+    private boolean dialogContentVisible(AccessibilityNodeInfo root,String uniqueText) {
+        if(root==null)return false;
+        for(String heading:Arrays.asList("Bölümler","Ses dili","Altyazı","Yayın akışı"))
+            for(AccessibilityNodeInfo node:root.findAccessibilityNodeInfosByText(heading))
+                if(node.getText()!=null && heading.contentEquals(node.getText()))return !root.findAccessibilityNodeInfosByText(uniqueText).isEmpty();
+        return false;
     }
     private String nodeText(AccessibilityNodeInfo node) {
         if(node==null)return "none";
@@ -362,7 +369,20 @@ public final class PlayerRemoteTest {
     @Test public void browsingAndClosingEpisodePickerMidEpisodePreservesAutomaticContinuation() {
         try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
             scenario.onActivity(activity -> activity.findViewById(android.R.id.content).findViewWithTag("tv_player_episodes").performClick());
-            awaitDialog("Bölümler");key(KeyEvent.KEYCODE_BACK);ended(scenario);assertCountdown(scenario);
+            awaitDialog("Bölümler");key(KeyEvent.KEYCODE_BACK);
+            await(scenario,"Closed episode picker returns input to its opener",activity->focused(activity,"tv_player_episodes"));
+            ended(scenario);assertCountdown(scenario);
+        }
+    }
+    @Test public void closedEpisodePanelDoesNotMatchItsToolDescription() {
+        repository.initialPlay=false;
+        try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
+            key(KeyEvent.KEYCODE_DPAD_UP);
+            await(scenario,"Player owns the input window",activity->activity.hasWindowFocus());
+            AccessibilityNodeInfo root=null;long end=SystemClock.elapsedRealtime()+3000;
+            while(SystemClock.elapsedRealtime()<end){root=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();if(root!=null && !root.findAccessibilityNodeInfosByText("Bölümler").isEmpty())break;SystemClock.sleep(20);}
+            assertNotNull(root);assertFalse("The episode tool is present",root.findAccessibilityNodeInfosByText("Bölümler").isEmpty());
+            assertFalse("A tool description is not an open dialog heading",dialogContentVisible(root,"Bölümler"));
         }
     }
     @Test public void liveGuideLoadsOnlyOnDemandAndReturnsFocusWithoutReopeningStream() {
@@ -551,12 +571,18 @@ public final class PlayerRemoteTest {
         }
     }
     @Test public void transientRefreshKeepsPlaybackOnlyUntilConfirmedOldCutoff() throws Exception {
-        repository.ttl=1700;repository.accessFailure=Failure.Code.NETWORK;
+        repository.deferPlayback=true;repository.accessFailure=Failure.Code.NETWORK;
         try (ActivityScenario<PlayerActivity> scenario=launch(repository.movie)) {
-            Thread.sleep(400);
-            scenario.onActivity(activity -> {assertFalse(latest().released);assertEquals(1,engines.size());});
-            Thread.sleep(1600);
-            scenario.onActivity(activity -> assertTrue(latest().released));
+            scenario.onActivity(activity -> {
+                repository.expiry=System.currentTimeMillis()+1700;
+                TvRepository.Callback<Playback> pending=repository.pendingPlayback;repository.pendingPlayback=null;
+                assertNotNull(pending);
+                pending.onResult(new Playback(repository.movie,"asset:///fixture.mp4","video/mp4",repository.expiry,12000,null));
+                assertFalse(latest().released);assertEquals(1,engines.size());
+            });
+            final long confirmedCutoff=repository.expiry;
+            await(scenario,"The old confirmed cutoff still expires after transient refresh",activity->latest().released);
+            scenario.onActivity(activity->{assertTrue("Transient failure cannot release before the confirmed deadline",latest().releasedAtMs>=confirmedCutoff);assertEquals(1,engines.size());});
         }
     }
     @Test public void accessRefreshChangesCutoffWithoutRecreatingEngine() throws Exception {
@@ -832,7 +858,7 @@ public final class PlayerRemoteTest {
         }
     }
     static final class FakeEngine implements PlayerEngine {
-        final View view; final Listener listener; boolean playing, released,startPaused; long position,duration=300000; int state=READY; int seekCalls; int selectedAudio=-1,selectedSubtitle=-1;
+        final View view; final Listener listener; boolean playing, released,startPaused; long position,duration=300000,releasedAtMs; int state=READY; int seekCalls; int selectedAudio=-1,selectedSubtitle=-1;
         FakeEngine(Context context, Listener listener) { this.view=new View(context); this.listener=listener; }
         public View view() {return view;}
         public void prepare(Playback playback,long start,boolean play) {position=start;playing=play && !startPaused;listener.onStateChanged(state);if(state==READY)listener.onFirstFrame();}
@@ -846,7 +872,7 @@ public final class PlayerRemoteTest {
         public int state() {return state;}
         public List<Track> tracks(boolean subtitles) {return Arrays.asList(new Track("a", "Türkçe",false),new Track("b", "English",false));}
         public void selectTrack(boolean subtitles,String id) {if(subtitles)selectedSubtitle=1;else selectedAudio=1;}
-        public void release() {released=true;playing=false;}
+        public void release() {if(!released)releasedAtMs=System.currentTimeMillis();released=true;playing=false;}
     }
     static final class FakeRepository implements TvRepository {
         String scope="fixture:source1"; long expiry=System.currentTimeMillis()+60000,savedPosition,ttl=-1,initialDuration=300000; Item lastPlayback;

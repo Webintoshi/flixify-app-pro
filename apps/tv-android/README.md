@@ -1,6 +1,6 @@
 # Flixify Pro for Android TV
 
-Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.4.0`, code8, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
+Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.4.1`, code9, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
 
 ## Build
 
@@ -22,6 +22,8 @@ Output: `app/build/outputs/apk/release/app-release.apk`. The build script retain
 The connected tests require an Android TV emulator. Repository fixtures use no real accounts, providers or streams. The separate real Media3 smoke test decodes an official local MP4 fixture packaged only in the test APK. Trusted debug-only Java injection hooks are not exposed through Intents/URLs and are removed from the optimized release.
 
 ## Remote
+
+Cold launch shows the existing Flixify logo in the Android starting window, followed by a full-screen logo, native spinner and Yükleniyor… while the first target screen loads. The cover leaves on the first ready frame, including login, empty catalog or recoverable error, without a fixed delay or waiting for all artwork. It keeps the underlying remote focus, blocks hidden navigation and allows Back to exit. Later refresh/navigation/player or Settings return does not repeat it; completed state survives same-process Activity recreation; a task restored after process death shows its loading cover again. Player theme and playback remain unchanged.
 
 - Direction keys move visible focus; OK selects. Back closes input/dialogs, hides active playback controls before leaving the player, restores catalog focus, then returns to navigation and exits at the root.
 - Search uses a focused panel with live local result counts and sample titles; edits stay as drafts until Ara. Categories use a virtualized side panel, local finder, per-category counts and a selected mark independent of focus. Search and category remain intersected, Turkish-aware, and scoped to the current account/catalog. Native keyboard resize preserves the editor; Back/cancel restores the opener. Short screens simplify optional context so the action stays visible.
@@ -48,4 +50,4 @@ Catalog and series metadata are kept in a bounded64MiB private cache, partitione
 
 Artwork uses8MiB RAM and64MiB private evictable disk storage, with7day expiry and2MiB response limits. Both caches stop writing below32MiB available storage and tolerate eviction or corrupt files. Images are downloaded only as needed; no whole catalog image prefetch or video download is performed. Optional background metadata/artwork/update network work yields while the player is active. Remote focus and open search drafts survive catalog refreshes.
 
-Hesabım → Güncellemeleri kontrol et reads the separate Android manifest at `https://flixify.vip/downloads/flixify-tv-update.json`. The user explicitly chooses download and installation. The client checks the fixed HTTPS download host/path, package, newer version, supported Android version, exact size/SHA256 and the installed app's signing identity before opening the standard Android permission/installer flow. Android still asks for installation approval. Existing1.3.2 users install1.4.0 once from the website to gain this in-app update feature. APK files are immutable per version; the static manifest advances only with a verified published APK.
+Hesabım → Güncellemeleri kontrol et reads the separate Android manifest at `https://flixify.vip/downloads/flixify-tv-update.json`. The user explicitly chooses download and installation. The client checks the fixed HTTPS download host/path, package, newer version, supported Android version, exact size/SHA256 and the installed app's signing identity before opening the standard Android permission/installer flow. Android still asks for installation approval. Existing1.3.2 users install the current release once from the website to gain this in-app update feature. APK files are immutable per version; the static manifest advances only with a verified published APK.

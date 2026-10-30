@@ -50,6 +50,7 @@ public final class MainActivity extends Activity {
     private ArtworkLoader artwork;
     private PosterFocusSound posterSound;
     private TvUpdatePanel updatePanel;
+    private StartupScreen startup;
     private AutoCloseable catalogObservation;
     private long observationEpoch;
     private final EnumMap<Kind,Catalog> pendingCatalogUpdates=new EnumMap<>(Kind.class);
@@ -73,9 +74,12 @@ public final class MainActivity extends Activity {
     private boolean resizePosted;
 
     @Override public void onCreate(Bundle state) {
+        setTheme(R.style.TvTheme);
         super.onCreate(state);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,WindowManager.LayoutParams.FLAG_FULLSCREEN);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_FULLSCREEN);
+        startup=new StartupScreen(this,StartupScreen.restoredComplete(state));
+        FrameLayout initial=new FrameLayout(this);initial.setBackgroundColor(TvUi.BACKGROUND);startup.show(initial);
         repository=TvApplication.repository(this); artwork=new ArtworkLoader(this);posterSound=PosterFocusSound.create(this);updatePanel=new TvUpdatePanel(this);
         for(Section section:Section.values())pages.put(section,new Page(section));
         page=pages.get(Section.HOME);
@@ -126,21 +130,27 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onPause() {posterSound.pause();super.onPause();}
     @Override protected void onStop() {
+        startup.cancelPendingFrame();
         captureGrid();stopped=true;resumeReload=true;generation++;observationEpoch++;clearPendingCatalogs();
         if(catalogObservation!=null){try{catalogObservation.close();}catch(Exception ignored){}catalogObservation=null;}
         updatePanel.cancel();if(dialog!=null)dialog.dismiss();super.onStop();
     }
-    @Override protected void onDestroy() { destroyed=true; generation++;if(posterSound!=null)posterSound.close();if(artwork!=null)artwork.close();if(updatePanel!=null)updatePanel.close();super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed=true; generation++;if(startup!=null)startup.close();if(posterSound!=null)posterSound.close();if(artwork!=null)artwork.close();if(updatePanel!=null)updatePanel.close();super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle out) {
         captureGrid(); out.putString("section",page.section.name()); out.putString("query",page.query); out.putString("category",page.category);
         out.putString("categoryTitle",page.categoryTitle); out.putString("focusKey",page.focusKey); out.putInt("scroll",page.scroll);
         out.putString("controlFocus",focusIdentity(getCurrentFocus()));
+        startup.saveInstanceState(out);
         super.onSaveInstanceState(out);
     }
     private boolean isPosterCard(View view) {
         return view!=null && view.getTag() instanceof String && view.getParent() instanceof RecyclerView;
     }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if(startup!=null && startup.isShowing())switch(event.getKeyCode()) {
+            case KeyEvent.KEYCODE_DPAD_LEFT:case KeyEvent.KEYCODE_DPAD_RIGHT:case KeyEvent.KEYCODE_DPAD_UP:case KeyEvent.KEYCODE_DPAD_DOWN:
+            case KeyEvent.KEYCODE_DPAD_CENTER:case KeyEvent.KEYCODE_ENTER:case KeyEvent.KEYCODE_NUMPAD_ENTER:case KeyEvent.KEYCODE_SPACE:case KeyEvent.KEYCODE_TAB:return true;
+        }
         int direction;
         switch(event.getKeyCode()) {
             case KeyEvent.KEYCODE_DPAD_LEFT:direction=View.FOCUS_LEFT;break;
@@ -285,7 +295,7 @@ public final class MainActivity extends Activity {
         loginCode.setOnEditorActionListener((v,action,event)->{if(action==EditorInfo.IME_ACTION_GO){login();return true;}return false;});
         loginMessage=TvUi.text(this,message,15,TvUi.ACCENT);loginMessage.setMinHeight(TvUi.dp(this,26));form.addView(loginMessage,TvUi.space(this,-1,-2));
         TextView remember=TvUi.text(this,"Oturumunuz bu cihazda güvenle hatırlanır.",14,TvUi.MUTED);form.addView(remember,TvUi.space(this,-1,-2));
-        setContentView(background);loginCode.requestFocus();
+        startup.show(background);loginCode.requestFocus();startup.ready();
     }
     private void login() {
         String code=loginCode.getText().toString().trim();
@@ -326,7 +336,7 @@ public final class MainActivity extends Activity {
         body=TvUi.column(this);body.setPadding(TvUi.dp(this,sizing.gap),0,0,0);root.addView(body,new LinearLayout.LayoutParams(0,-1,1));
         TextView heading=TvUi.text(this,title,sizing.shortScreen?22:28,TvUi.WHITE);TvUi.heading(heading);heading.setSingleLine(true);heading.setEllipsize(TextUtils.TruncateAt.END);body.addView(heading,TvUi.space(this,-1,sizing.heading));
         if(subtitle!=null && !subtitle.isEmpty() && !sizing.shortScreen){TextView sub=TvUi.text(this,subtitle,14,TvUi.MUTED);sub.setSingleLine(true);sub.setEllipsize(TextUtils.TruncateAt.END);body.addView(sub,TvUi.space(this,-1,24));}
-        setContentView(root);rail[page.section.ordinal()].requestFocus();restoreResizeFocus();
+        startup.show(root);rail[page.section.ordinal()].requestFocus();restoreResizeFocus();
     }
     private void navigate(Section target) {
         resizeFocus=null;captureGrid(); page=pages.get(target);
@@ -365,7 +375,7 @@ public final class MainActivity extends Activity {
         if(!page.query.isEmpty())body.addView(TvUi.text(this,"Arama: "+page.query+" · "+filtered.size()+" sonuç",15,TvUi.MUTED),TvUi.space(this,-1,30));
         if(filtered.isEmpty()) {
             body.addView(TvUi.text(this,page.section==Section.FAVORITES?"Henüz favoriniz yok. Bir içeriği açıp favorilere ekleyin.":"İçerik bulunamadı.",18,TvUi.MUTED),TvUi.space(this,-1,72));
-            if(contentFocus)search.requestFocus();restoreResizeFocus(true);return;
+            if(contentFocus)search.requestFocus();restoreResizeFocus(true);startup.ready();return;
         }
         grid=new RecyclerView(this); grid.setId(View.generateViewId()); grid.setClipToPadding(false); grid.setPadding(0,TvUi.dp(this,8),0,TvUi.dp(this,12)); grid.setItemAnimator(null);
         grid.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS); grid.setFocusable(false);
@@ -382,6 +392,7 @@ public final class MainActivity extends Activity {
             grid.scrollToPosition(position); final int wanted=position; grid.post(()->{if(grid!=null){RecyclerView.ViewHolder holder=grid.findViewHolderForAdapterPosition(wanted);if(holder!=null)holder.itemView.requestFocus();else search.requestFocus();}});
         });
         restoreResizeFocus(true);
+        startup.ready();
     }
     private void addHomeHero(Item item) {
         FrameLayout hero=new FrameLayout(this);hero.setTag("tv-home-hero");hero.setBackground(TvUi.rounded(this,TvUi.PANEL,0,16,1));hero.setClipToOutline(true);hero.setContentDescription(item.title);
@@ -503,7 +514,7 @@ public final class MainActivity extends Activity {
             String expiry=account.expiresAtMs>0?DateFormat.getDateTimeInstance(DateFormat.MEDIUM,DateFormat.SHORT).format(new Date(account.expiresAtMs)):"Belirtilmedi";
             inner.addView(TvUi.text(this,"Bitiş: "+expiry,18,TvUi.MUTED),TvUi.space(this,-1,-2));
             TextView message=TvUi.text(this,account.message.isEmpty()?(account.canPlay?"Hesabınız aktif":"İzleme erişimi bulunmuyor."):account.message,18,account.canPlay?TvUi.MUTED:TvUi.ACCENT);inner.addView(message,TvUi.space(this,-1,-2));
-            addAccountActions(inner);if(resizeFocus==null)resizeFocus=accountFocus;restoreResizeFocus(true);
+            addAccountActions(inner);if(resizeFocus==null)resizeFocus=accountFocus;restoreResizeFocus(true);startup.ready();
         },this::showAccount));
     }
     private void addAccountActions(LinearLayout parent) {
@@ -525,7 +536,7 @@ public final class MainActivity extends Activity {
         TextView text=TvUi.text(this,safeMessage(message),20,TvUi.MUTED);inner.addView(text,TvUi.space(this,-1,-2));
         if(page.section==Section.ACCOUNT)addAccountActions(inner);
         Button button=TvUi.button(this,"Tekrar dene",retry);markFocus(button,"content:retry");inner.addView(button,TvUi.space(this,Math.min(220,sizing.contentWidth()-8),48));
-        if(page.section!=Section.ACCOUNT)linkContent(button);restoreResizeFocus(true);
+        if(page.section!=Section.ACCOUNT)linkContent(button);restoreResizeFocus(true);startup.ready();
     }
     private void afterOrdinaryDialog(Dialog shown) {
         shown.setOnDismissListener(d->{
@@ -535,6 +546,7 @@ public final class MainActivity extends Activity {
     }
     private void notice(String message) { dialog=new AlertDialog.Builder(this).setMessage(message).setPositiveButton("Tamam",null).create();afterOrdinaryDialog(dialog);dialog.show(); }
     @Override public void onBackPressed() {
+        if(startup!=null && startup.isShowing()){finish();return;}
         if(body==null) { super.onBackPressed();return; }
         if(!page.query.isEmpty() || !page.category.isEmpty()) { page.query="";page.category="";page.categoryTitle="Tümü";page.scroll=0;page.focusKey="";showPage(false,true);return; }
         View focus=getCurrentFocus();boolean inRail=false;for(Button b:rail)if(focus==b)inRail=true;

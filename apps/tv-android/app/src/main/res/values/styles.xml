@@ -10,6 +10,9 @@
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowFullscreen">true</item>
     </style>
+    <style name="TvLaunchTheme" parent="TvTheme">
+        <item name="android:windowBackground">@drawable/tv_startup_window</item>
+    </style>
     <style name="TvPlayerTimeline" parent="android:style/Widget.Material.SeekBar">
         <item name="android:maxHeight">3dp</item>
         <item name="android:minHeight">3dp</item>

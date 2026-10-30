@@ -1,0 +1,8 @@
+<resources>
+    <style name="TvLaunchTheme" parent="TvTheme">
+        <item name="android:windowBackground">@drawable/tv_startup_window</item>
+        <item name="android:windowSplashScreenBackground">#07090c</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/tv_icon</item>
+        <item name="android:windowSplashScreenBrandingImage">@drawable/flixify_logo</item>
+    </style>
+</resources>
