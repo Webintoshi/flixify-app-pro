@@ -18,4 +18,8 @@ User confirms only one device is open. Parallel-use hypothesis is excluded by th
 
 ## Rollout
 
-Pending: current protected source imagef7f38e513b8cdf21b8a10983fc7c2ce12f792562dd7a0f87168ff486dca4ab38/tag66930da3835c, app66930da3835c5c9030c139117b4b12c78455d78c. New candidate must be built and released using the live-reliability wrappers and its owned verified artifact.
+Deployed frozen application revision`996d4e434e47cb1e22cd936a406f2fc7e95a1052`; tag`flixify-ops-web:edge-recovery-996d4e434e47-20261026`; immutable image`sha256:bd2e42822516acedabd2480e5d85a1cb524c86097269df9069d375b8c4a185ca`. Candidate ID was read from owned verified artifact at`/tmp/flixify-live-reliability-996d4e434e47.candidate`; release record is`.released`. Bounded offline compile, unchanged public/native tree, source/config/ancestry checks, dry run, image sync and web-only recreate passed. Independent postcheck: web/API/worker/DB running, protected images and restart counts unchanged, all restart counts0.
+
+Rollback retained: tag66930da3835c/imagef7f38e513b8cdf21b8a10983fc7c2ce12f792562dd7a0f87168ff486dca4ab38.
+
+Owned local HLS fixture was stopped/closed; it used only public Apple sample and existing installed hls.js. No customer line was opened. End-user playback improvement and provider-side configuration remain unverified; do not claim all channels are fixed. Provider login request remains pending.
