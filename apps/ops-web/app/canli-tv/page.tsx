@@ -229,6 +229,7 @@ function LiveVideo({
     let suppressMediaEventsUntil = 0;
     let terminalAudioFailure = false;
     let starting = false;
+    let preparationStartedAt = performance.now();
     let engineVersion = 0;
     let lastProgressAt = performance.now();
     let healthyProgressSince: number | null = null;
@@ -339,6 +340,7 @@ function LiveVideo({
     async function start(attempt: number, mode: PlaybackMode = "direct") {
       if (cancelled || starting) return;
       starting = true;
+      preparationStartedAt = performance.now();
       const version = ++engineVersion;
       const currentEngine = () => !cancelled && version === engineVersion;
       activeAttempt = attempt;
@@ -551,7 +553,15 @@ function LiveVideo({
     if (!deadline?.expired) {
       // Buffered ranges can remain ahead after a dead HLS/MSE connection stops producing frames.
       stallWatchdog = setInterval(() => {
-        if (cancelled || terminalAudioFailure || starting) return;
+        if (cancelled || terminalAudioFailure) return;
+        if (starting) {
+          if (performance.now() - preparationStartedAt >= 30_000) {
+            ++engineVersion;
+            starting = false;
+            recoverTransport(activeAttempt, activeMode);
+          }
+          return;
+        }
         if (mediaElement.paused && !mediaElement.ended) { lastProgressAt = performance.now(); healthyProgressSince = null; return; }
         handleTimeUpdate();
         if (progressTimedOut()) {

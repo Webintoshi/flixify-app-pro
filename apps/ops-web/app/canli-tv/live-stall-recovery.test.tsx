@@ -81,6 +81,25 @@ describe("live stream stall recovery", () => {
     await progress();
   }
 
+  it("bounds a pending engine import and preserves the newly authorized source when the retired chunk resolves", async () => {
+    let release!:()=>void;state.hlsImportGate=new Promise<void>(done=>release=done);
+    const renewed="https://edge.test/live/personal/test-password/274.mp4";
+    playback.mockResolvedValueOnce({url,expiresAt}).mockResolvedValue({url:renewed,expiresAt});
+    try {
+      await act(async()=>root.render(<LiveTvPage/>));
+      await act(async()=>{await vi.advanceTimersByTimeAsync(0);});
+      expect(playback).toHaveBeenCalledTimes(1);expect(state.engines).toHaveLength(0);
+      await act(async()=>{await vi.advanceTimersByTimeAsync(29000);});
+      expect(playback).toHaveBeenCalledTimes(1);
+      await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+      expect(playback).toHaveBeenCalledTimes(2);
+      expect(video().src).toBe(renewed);
+      release();state.hlsImportGate=null;await settle();
+      expect(state.engines).toHaveLength(0);
+      expect(video().src).toBe(renewed);
+    } finally {release();state.hlsImportGate=null;await settle();}
+  });
+
   it("attaches supported native HLS without waiting for the optional JavaScript engine download", async () => {
     let release!:()=>void;state.hlsImportGate=new Promise<void>(done=>release=done);
     Object.defineProperty(window.HTMLElement.prototype,"canPlayType",{configurable:true,value:()=>"probably"});
@@ -99,6 +118,30 @@ describe("live stream stall recovery", () => {
     expect(state.engines).toHaveLength(1);
     expect(state.engines[0].source).toBe(url);
     expect(playback).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the current engine when delayed EPG metadata and favorite presentation update", async () => {
+    const pending: Array<(value: unknown)=>void> = [];
+    state.platform.personalProvider.shortEpg = () => new Promise(resolve => pending.push(resolve));
+    await mount();const engine=state.engines[0];const media=video();
+    await settle(()=>pending.forEach(resolve=>resolve({status:"ready",programmes:[{title:"Fixture programme",description:"",start:Date.now()-1000,end:Date.now()+60000}]})));
+    state.platform={...state.platform,favorites:[{id:"channel-a",kind:"live"}]};
+    await settle(()=>root.render(<LiveTvPage/>));
+    expect(state.engines).toHaveLength(1);expect(state.engines[0]).toBe(engine);expect(engine.destroyed).toBe(false);
+    expect(video()).toBe(media);expect(playback).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds pending recovery authorization independently of the previous playback stall and ignores its late result", async () => {
+    await mount();let resolveOld!:(value:unknown)=>void;
+    const renewed=url+"?fresh=1";
+    playback.mockImplementationOnce(()=>new Promise(resolve=>resolveOld=resolve)).mockResolvedValue({url:renewed,expiresAt});
+    await settle(()=>state.engines[0].networkError());await tick(4100);
+    expect(playback).toHaveBeenCalledTimes(2);expect(state.engines[0].destroyed).toBe(true);
+    await tick(29000);expect(playback).toHaveBeenCalledTimes(2);
+    await tick(8000);expect(playback).toHaveBeenCalledTimes(3);expect(state.engines).toHaveLength(2);
+    expect(state.engines[1].source).toBe(renewed);
+    await settle(()=>resolveOld({url:url+"?retired=1",expiresAt}));
+    expect(state.engines).toHaveLength(2);expect(state.engines[1].source).toBe(renewed);expect(state.engines[1].destroyed).toBe(false);
   });
 
   it("preserves a slow first-frame connection for its thirty-second preparation budget", async () => {
