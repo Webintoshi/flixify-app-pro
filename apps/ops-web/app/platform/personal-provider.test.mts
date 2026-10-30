@@ -199,3 +199,69 @@ test('a credential change invalidates cached live membership even if the source 
  await client.catalog('live');current={...current,username:'replacement'};await assert.rejects(client.playback({source:'personal',sourceVersion:'v1',kind:'live',id:'7'}));assert.equal(requests,4);
  const response=await client.playback({source:'personal',sourceVersion:'v1',kind:'live',id:'8'});assert.ok(response.url.includes('/replacement/'));assert.equal(requests,4);client.clear();
 });
+
+for(const first of ['playback','metadata'] as const){
+ test(`fresh live access survives overlapping ${first}-first authorization`,async()=>{
+  let hold=false,loads=0,requests=0;const pending:Array<(value:unknown)=>void>=[];
+  const client=createPersonalProviderClient({loadBootstrap:()=>{loads++;return hold?new Promise(resolve=>pending.push(resolve)):Promise.resolve({...bootstrap});},fetch:async raw=>{
+   requests++;const action=new URL(String(raw)).searchParams.get('action');return new Response(JSON.stringify(action==='get_live_categories'?[]:[{stream_id:7,name:'Channel',container_extension:'m3u8'}]));
+  }});
+  const liveRef={source:'personal',sourceVersion:'v1',kind:'live',id:'7'};
+  try{
+   await client.catalog('live');hold=true;
+   const selection=first==='playback'?client.playback(liveRef):undefined;
+   const metadata=client.refreshMetadata();
+   const outcomes=Promise.allSettled([selection??client.playback(liveRef),metadata]);
+   for(const resolve of pending)resolve({...bootstrap,expiresAt:'2031-01-01T00:00:00Z'});
+   const results=await outcomes;
+   assert.deepEqual(results.map(result=>result.status),['fulfilled','fulfilled'],'a background refresh must not supersede valid playback authorization');
+   assert.equal(loads,2,'overlapping fresh authorization must share one request');assert.equal(requests,2,'verified live membership must remain cached');
+   assert.deepEqual((results[0] as PromiseFulfilledResult<unknown>).value,{url:'https://provider.test/live/u%2Fa/p%3F%23/7.m3u8',expiresAt:'2031-01-01T00:00:00Z'});
+  }finally{client.clear();}
+ });
+}
+
+test('fresh playback cannot join a cached nonforced bootstrap',async()=>{
+ let loads=0;let current={...bootstrap};
+ const client=createPersonalProviderClient({loadBootstrap:async()=>{loads++;return {...current};},fetch:async raw=>new Response(JSON.stringify(new URL(String(raw)).searchParams.get('action')==='get_live_categories'?[]:[{stream_id:7,name:'Channel'}]))});
+ try{
+  await client.catalog('live');current={...bootstrap,expiresAt:'2031-01-01T00:00:00Z'};
+  const cached=client.catalog('live');const selection=client.playback({source:'personal',sourceVersion:'v1',kind:'live',id:'7'});
+  await cached;assert.equal((await selection).expiresAt,'2031-01-01T00:00:00Z');assert.equal(loads,2);
+ }finally{client.clear();}
+});
+
+test('clear invalidates all shared fresh callers before a replacement account can authorize',async()=>{
+ let hold=false,requests=0;let current={...bootstrap};const pending:Array<{resolve:(value:unknown)=>void;signal:AbortSignal}>=[];
+ const client=createPersonalProviderClient({loadBootstrap:signal=>hold?new Promise(resolve=>pending.push({resolve,signal})):Promise.resolve({...current}),fetch:async raw=>{
+  requests++;const url=new URL(String(raw));return new Response(JSON.stringify(url.searchParams.get('action')==='get_live_categories'?[]:[{stream_id:url.searchParams.get('username')==='replacement'?8:7,name:'Channel'}]));
+ }});
+ try{
+  await client.catalog('live');hold=true;
+  const old=Promise.allSettled([client.playback({source:'personal',sourceVersion:'v1',kind:'live',id:'7'}),client.refreshMetadata()]);
+  const stale=[...pending];client.clear();
+  current={...bootstrap,accountId:'replacement-account',sourceVersion:'v2',username:'replacement'};
+  const replacement=client.refreshMetadata();
+  for(const call of stale){assert.equal(call.signal.aborted,true);call.resolve({...bootstrap});}
+  pending[pending.length-1].resolve({...current});
+  assert.deepEqual((await old).map(result=>result.status),['rejected','rejected']);assert.equal((await replacement).accountId,'replacement-account');
+  hold=false;await assert.rejects(client.playback({source:'personal',sourceVersion:'v1',kind:'live',id:'7'}));
+  assert.equal(requests,2,'the revoked account cannot fetch or reuse its catalog');
+  assert.equal((await client.playback({source:'personal',sourceVersion:'v2',kind:'live',id:'8'})).url,'https://provider.test/live/replacement/p%3F%23/8.m3u8');assert.equal(requests,4);
+ }finally{client.clear();}
+});
+
+test('a shared failed fresh authorization refuses cached access and allows a fresh retry',async()=>{
+ let hold=false,loads=0,requests=0;const pending:Array<(error:Error)=>void>=[];
+ const client=createPersonalProviderClient({loadBootstrap:()=>{loads++;return hold?new Promise((_,reject)=>pending.push(reject)):Promise.resolve({...bootstrap});},fetch:async raw=>{
+  requests++;return new Response(JSON.stringify(new URL(String(raw)).searchParams.get('action')==='get_live_categories'?[]:[{stream_id:7,name:'Channel'}]));
+ }});
+ try{
+  await client.catalog('live');hold=true;
+  const liveRef={source:'personal',sourceVersion:'v1',kind:'live',id:'7'};
+  const failed=Promise.allSettled([client.playback(liveRef),client.refreshMetadata()]);
+  for(const reject of pending)reject(new Error('fresh access denied'));
+  assert.deepEqual((await failed).map(result=>result.status),['rejected','rejected']);assert.equal(loads,2);assert.equal(requests,2);
+  hold=false;assert.equal((await client.playback(liveRef)).url,'https://provider.test/live/u%2Fa/p%3F%23/7.m3u8');assert.equal(loads,3);assert.equal(requests,2);
+ }finally{client.clear();}
+});

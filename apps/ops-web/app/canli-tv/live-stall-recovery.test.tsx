@@ -19,13 +19,16 @@ vi.mock("hls.js", async () => {
   handlers = new Map<string, Function>();
   destroyed = false;
   source = "";
+  media: any = null;
+  mediaRecoveries = 0;
   constructor() { state.engines.push(this); }
   on(event: string, listener: Function) { this.handlers.set(event, listener); }
   loadSource(source: string) { this.source = source; }
-  attachMedia() {}
-  recoverMediaError() {}
+  attachMedia(media: any) { this.media = media; }
+  recoverMediaError() { this.mediaRecoveries++; this.media?.load(); }
   destroy() { this.destroyed = true; }
   networkError() { this.handlers.get("error")?.("error", { fatal: true, type: "network" }); }
+  mediaError() { this.handlers.get("error")?.("error", { fatal: true, type: "media" }); }
 } };
 });
 
@@ -119,6 +122,76 @@ describe("live stream stall recovery", () => {
     expect(state.engines[0].source).toBe(url);
     expect(playback).toHaveBeenCalledTimes(1);
   });
+
+  it("lets HLS preserve playing state during its first repair without forcing another play request", async () => {
+    await mount();const engine=state.engines[0];const play=vi.spyOn(video(),"play");
+    await settle(()=>engine.mediaError());
+    expect(engine.mediaRecoveries).toBe(1);expect(play).not.toHaveBeenCalled();expect(video().paused).toBe(false);
+    expect(state.engines).toHaveLength(1);expect(playback).toHaveBeenCalledTimes(1);
+  });
+
+  it("limits in-place fatal media recovery per engine before existing fresh authorization and reconnect", async () => {
+    await mount();const engine=state.engines[0];
+    await settle(()=>engine.mediaError());
+    await settle(()=>{Object.defineProperty(video(),"paused",{configurable:true,writable:true,value:false});engine.mediaError();engine.mediaError();});
+    expect(engine.mediaRecoveries).toBe(1);
+    await tick(4100);expect(playback).toHaveBeenCalledTimes(2);expect(state.engines).toHaveLength(2);
+    expect(engine.destroyed).toBe(true);expect(state.engines[1].destroyed).toBe(false);
+  });
+
+  it("does not resume a user-paused stream during media repair and surfaces repeated decoder failure without autoplay", async () => {
+    await mount();const engine=state.engines[0];
+    await settle(()=>video().pause());const play=vi.spyOn(video(),"play");
+    await settle(()=>engine.mediaError());expect(play).not.toHaveBeenCalled();expect(video().paused).toBe(true);
+    await settle(()=>engine.mediaError());
+    expect(engine.mediaRecoveries).toBe(1);expect(container.textContent).toContain("Yayın kesildi");
+    expect(engine.destroyed).toBe(true);await tick(30000);
+    expect(playback).toHaveBeenCalledTimes(1);expect(play).not.toHaveBeenCalled();
+  });
+
+  for(const mode of ["hls","native-hls","native-mp4"]) {
+    it(`${mode} preserves a user pause racing a pending play instead of reconnecting`, async () => {
+      let rejectPlay!:(error:Error)=>void;
+      const play=vi.fn(function(){Object.defineProperty(video(),"paused",{configurable:true,writable:true,value:false});return new Promise<void>((_resolve,reject)=>rejectPlay=reject);});
+      Object.defineProperty(window.HTMLElement.prototype,"play",{configurable:true,value:play});
+      if(mode==="native-hls")Object.defineProperty(window.HTMLElement.prototype,"canPlayType",{configurable:true,value:()=>"probably"});
+      if(mode==="native-mp4")playback.mockResolvedValue({url:"https://edge.test/live/personal/test-password/274.mp4",expiresAt});
+      await settle(()=>root.render(<LiveTvPage/>));await settle();expect(play).toHaveBeenCalledOnce();
+      await settle(()=>{video().pause();rejectPlay(new DOMException("The play request was interrupted by pause", "AbortError"));});
+      await tick(45000);expect(video().paused).toBe(true);expect(playback).toHaveBeenCalledTimes(1);expect(play).toHaveBeenCalledOnce();
+      expect(state.engines).toHaveLength(mode==="hls"?1:0);
+    });
+  }
+
+  it("ignores a late rejected play after absolute expiry closes the stream", async () => {
+    expiresAt=new Date(Date.now()+5000).toISOString();let rejectPlay!:(error:Error)=>void;
+    const play=vi.fn(function(){Object.defineProperty(video(),"paused",{configurable:true,writable:true,value:false});return new Promise<void>((_resolve,reject)=>rejectPlay=reject);});
+    Object.defineProperty(window.HTMLElement.prototype,"play",{configurable:true,value:play});
+    await settle(()=>root.render(<LiveTvPage/>));await settle();const engine=state.engines[0];expect(play).toHaveBeenCalledOnce();await tick(6000);
+    expect(container.querySelector("video")).toBeNull();expect(engine.destroyed).toBe(true);
+    await settle(()=>rejectPlay(new DOMException("Retired media","NotSupportedError")));expect(container.querySelector("video")).toBeNull();expect(state.engines).toHaveLength(1);
+  });
+
+  for(const mode of ["hls","native-hls","native-mp4"]) {
+    for(const blocked of [false,true]) {
+      it(`${mode} ${blocked?"keeps policy-blocked autoplay available for manual play":"does not swallow unsupported media play failures"}`, async () => {
+        const play=vi.fn(function():Promise<void>{Object.defineProperty(video(),"paused",{configurable:true,writable:true,value:true});return Promise.reject(new DOMException(blocked?"Gesture required":"Unsupported media",blocked?"NotAllowedError":"NotSupportedError"));});
+        Object.defineProperty(window.HTMLElement.prototype,"play",{configurable:true,value:play});
+        if(mode==="native-hls")Object.defineProperty(window.HTMLElement.prototype,"canPlayType",{configurable:true,value:()=>"probably"});
+        if(mode==="native-mp4")playback.mockResolvedValue({url:"https://edge.test/live/personal/test-password/274.mp4",expiresAt});
+        await settle(()=>root.render(<LiveTvPage/>));await settle();
+        await tick(blocked?30000:4100);
+        expect(playback).toHaveBeenCalledTimes(blocked?1:2);
+        expect(play).toHaveBeenCalledTimes(blocked?1:2);
+        if(blocked) {
+          expect(container.textContent).not.toContain("Yayın kesildi");
+          play.mockImplementation(function(){Object.defineProperty(video(),"paused",{configurable:true,writable:true,value:false});return Promise.resolve();});
+          await settle(()=>{void video().play();video().dispatchEvent(new Event("playing"));});
+          expect(video().paused).toBe(false);expect(playback).toHaveBeenCalledTimes(1);
+        }
+      });
+    }
+  }
 
   it("keeps the current engine when delayed EPG metadata and favorite presentation update", async () => {
     const pending: Array<(value: unknown)=>void> = [];

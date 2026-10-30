@@ -268,6 +268,17 @@ function LiveVideo({
       mediaElement.load();
     };
 
+    const playMedia = async () => {
+      try {
+        await mediaElement.play();
+        return true;
+      } catch (error) {
+        const name = error && typeof error === "object" && "name" in error ? error.name : "";
+        if (name === "NotAllowedError" || name === "AbortError") return false;
+        throw error;
+      }
+    };
+
     const markHealthy = () => {
       if (cancelled || terminalAudioFailure) return;
       clearReconnect();
@@ -371,8 +382,8 @@ function LiveVideo({
           mediaElement.src = playbackUrl;
           cleanupCurrent = resetMedia;
           starting = false;
-          await mediaElement.play();
-          if (currentEngine()) {
+          const played = await playMedia();
+          if (currentEngine() && played) {
             setConnectionState("live");
             reportDirectEvent("playing");
           }
@@ -385,8 +396,8 @@ function LiveVideo({
             mediaElement.src = playbackUrl;
             cleanupCurrent = resetMedia;
             starting = false;
-            await mediaElement.play();
-            if (currentEngine()) setConnectionState("live");
+            const played = await playMedia();
+            if (currentEngine() && played) setConnectionState("live");
           };
           // Safari's direct HLS path needs no optional MSE engine or chunk fetch.
           if (shouldUseNativeHls(playback.deliveryMode, canPlayNativeHls, true)) {
@@ -404,10 +415,23 @@ function LiveVideo({
 
           if (!hlsJsSupported) throw new Error("Bu tarayıcı HLS canlı yayını desteklemiyor.");
           const hls = new Hls(createHlsPlaybackConfig());
+          let mediaRecoveryAttempted = false;
           hls.on(Hls.Events.ERROR, (_event, data) => {
             if (!data.fatal || !currentEngine()) return;
             if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-              hls.recoverMediaError();
+              const resume = !mediaElement.paused && !mediaElement.ended;
+              if (mediaRecoveryAttempted) {
+                if (resume) recoverTransport(activeAttempt, mode);
+                else failUnsupportedAudio("Yayın oynatılamadı. Tekrar deneyebilirsiniz.");
+                return;
+              }
+              mediaRecoveryAttempted = true;
+              try {
+                hls.recoverMediaError();
+              } catch {
+                if (resume) recoverTransport(activeAttempt, mode);
+                else failUnsupportedAudio("Yayın oynatılamadı. Tekrar deneyebilirsiniz.");
+              }
               return;
             }
             recoverTransport(activeAttempt, mode);
@@ -416,8 +440,8 @@ function LiveVideo({
           hls.attachMedia(mediaElement);
           cleanupCurrent = () => hls.destroy();
           starting = false;
-          await mediaElement.play().catch(() => undefined);
-          if (currentEngine()) setConnectionState("live");
+          const played = await playMedia();
+          if (currentEngine() && played) setConnectionState("live");
           return;
         }
 
