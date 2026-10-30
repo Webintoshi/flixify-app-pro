@@ -33,5 +33,5 @@ Files: version/README, new build/release/test-tv-startup-web.py, immutableAPK, s
 
 - [x] Guard tests RED/GREEN for exact current runtime/native source freeze/APK A+JSON M/previouspublic preservation.
 - [x] Freeze1.4.1/code9 native tree; signed build, exact identity/digest/no fixtures, compatible upgrade.
-- [ ] Pin accepted source/artifact; protected bounded web build and web-only rollout.
-- [ ] PublicHTTP/manifest/browser/unchanged service checks, commit verification and clean owned test/access resources.
+- [x] Pin accepted source/artifact; protected bounded web build and web-only rollout.
+- [x] PublicHTTP/manifest/browser/unchanged service checks, commit verification and clean owned test/access resources.
