@@ -8,9 +8,10 @@ describe("live player control visibility", () => {
   let root: Root;
   let container: HTMLElement;
   let focused: Element | null;
-  function Player({ kind = "live" }: { kind?: "live" | "vod" }) {
+  let focusCalls: Array<{ element: Element; options?: FocusOptions }>;
+  function Player({ kind = "live", guide = false, favorite }: { kind?: "live" | "vod"; guide?: boolean; favorite?: () => void }) {
     const videoRef = useRef<HTMLVideoElement>(null);
-    return <section data-surface><div><video ref={videoRef}/><PlayerChrome videoRef={videoRef} kind={kind} title="Test channel"/></div></section>;
+    return <section data-surface><div><video ref={videoRef}/><PlayerChrome videoRef={videoRef} kind={kind} title="Test channel" actions={favorite ? <button type="button" aria-label="Test kanalı: favorilere ekle" onClick={favorite}>Favori</button> : undefined} guide={guide ? <p>Fixture programme from supplied EPG</p> : undefined}/></div></section>;
   }
   async function settle(action: () => void = () => {}) { await act(async () => { action(); }); }
   async function tick(ms: number) { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); }
@@ -36,6 +37,7 @@ describe("live player control visibility", () => {
     vi.stubGlobal("Event", dom.window.Event); vi.stubGlobal("React", React);
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     focused = document.body;
+    focusCalls = [];
     Object.defineProperty(document, "activeElement", { configurable: true, get: () => focused });
     Object.defineProperties(dom.window.HTMLElement.prototype, {
       paused: { configurable: true, writable: true, value: false },
@@ -43,6 +45,9 @@ describe("live player control visibility", () => {
       volume: { configurable: true, writable: true, value: 1 },
       currentTime: { configurable: true, writable: true, value: 10 },
       duration: { configurable: true, writable: true, value: 120 },
+      focus: { configurable: true, value(options?: FocusOptions) { focusCalls.push({ element: this, options }); focus(this); } },
+      play: { configurable: true, value() { this.paused = false; this.dispatchEvent(new Event("play")); return Promise.resolve(); } },
+      pause: { configurable: true, value() { this.paused = true; this.dispatchEvent(new Event("pause")); } },
       requestFullscreen: { configurable: true, value() {
         Object.defineProperty(document, "fullscreenElement", { configurable: true, value: this });
         document.dispatchEvent(new Event("fullscreenchange"));
@@ -119,5 +124,50 @@ describe("live player control visibility", () => {
     await tick(6000);
     expect(visible()).toBe("true");
     expect(container.querySelector("input[aria-label='İlerleme']")).not.toBeNull();
+  });
+
+  it("holds an open guide for reading and hides two seconds after a pointer close", async () => {
+    await settle(() => root.render(<Player guide/>));
+    const trigger = container.querySelector<HTMLButtonElement>("button[aria-label='Yayın akışı']");
+    expect(trigger).not.toBeNull();
+    await settle(() => { trigger!.dispatchEvent(new Event("pointerdown", { bubbles: true })); trigger!.click(); });
+    const dialog = container.querySelector("[role='dialog']");
+    expect(dialog?.textContent).toContain("Fixture programme from supplied EPG");
+    expect(focusCalls.at(-1)?.options).toEqual({ preventScroll: true });
+    await tick(10000); expect(visible()).toBe("true");
+    expect(container.querySelector("input[aria-label='İlerleme']")).toBeNull();
+    await settle(() => container.querySelector<HTMLButtonElement>("button[aria-label='Yayın akışını kapat']")!.click());
+    expect(container.querySelector("[role='dialog']")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(focusCalls.at(-1)).toEqual({ element: trigger, options: { preventScroll: true } });
+    await tick(1999); expect(visible()).toBe("true");
+    await tick(1); expect(visible()).toBe("false");
+  });
+
+  it("closes guide with Escape and restores keyboard focus to its owner", async () => {
+    await settle(() => root.render(<Player guide/>));
+    const trigger = container.querySelector<HTMLButtonElement>("button[aria-label='Yayın akışı']");
+    expect(trigger).not.toBeNull();
+    await settle(() => { keyboard("Tab"); focus(trigger!); trigger!.click(); });
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Yayın akışını kapat");
+    await settle(() => keyboard("Escape"));
+    expect(container.querySelector("[role='dialog']")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    await tick(6000); expect(visible()).toBe("true");
+  });
+
+  it("hosts the existing favorite action and preserves playback, volume and fullscreen controls", async () => {
+    const favorite = vi.fn();
+    await settle(() => root.render(<Player favorite={favorite}/>));
+    const saved = container.querySelector<HTMLButtonElement>("button[aria-label='Test kanalı: favorilere ekle']");
+    expect(saved).not.toBeNull();
+    await settle(() => saved!.click()); expect(favorite).toHaveBeenCalledOnce();
+    await settle(() => container.querySelector<HTMLButtonElement>("button[aria-label='Duraklat']")!.click());
+    expect(container.querySelector("video")!.paused).toBe(true);
+    await settle(() => container.querySelector<HTMLButtonElement>("button[aria-label='Oynat']")!.click());
+    expect(container.querySelector("video")!.paused).toBe(false);
+    expect(container.querySelector("input[aria-label='Ses düzeyi']")).not.toBeNull();
+    expect(fullscreenButton()).not.toBeNull();
+    expect(container.querySelector("input[aria-label='İlerleme']")).toBeNull();
   });
 });

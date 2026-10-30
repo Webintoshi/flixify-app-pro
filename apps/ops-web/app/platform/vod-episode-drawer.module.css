@@ -213,3 +213,35 @@
 @media (prefers-reduced-motion: reduce) {
   .episode { transition: none; }
 }
+
+.drawer { width: var(--vod-drawer-width, min(360px, 90vw)); background: var(--tv-background); color: var(--tv-text); border-color: var(--tv-line); box-shadow: none; }
+.header { gap: 12px; padding: 25px 22px 18px; background: transparent; }
+.eyebrow { color: var(--tv-text); font-size: 20px; font-weight: 700; letter-spacing: -.03em; text-transform: none; }
+.heading h2 { color: var(--tv-muted); font-size: 13px; font-weight: 500; letter-spacing: 0; }
+.close { border-color: transparent; background: transparent; color: var(--tv-text); }
+.seasonNav { padding: 0 22px 18px; background: transparent; border-color: var(--tv-line); }
+.seasonNav button { background: transparent; color: var(--tv-muted); border-color: var(--tv-line); border-radius: 10px; }
+.seasonNav button[aria-pressed="true"] { background: var(--tv-panel); border-color: rgba(245, 246, 248, .4); color: var(--tv-text); }
+.content { padding: 18px 12px 24px; }
+.seasonHeading { margin: 0 10px 12px; }
+.seasonHeading h3 { font-size: 14px; }
+.seasonHeading span,.episodeIndex,.status,.empty { color: var(--tv-muted); }
+.episodeList { gap: 0; }
+.episode { grid-template-columns: 104px minmax(0, 1fr); gap: 12px; min-height: 92px; padding: 12px 10px; border: 0; border-bottom: 1px solid var(--tv-line); border-radius: 0; color: var(--tv-text); }
+.episode[data-active="true"] { background: rgba(245, 246, 248, .04); box-shadow: inset 3px 0 var(--tv-accent); }
+.thumbnail { height: auto; aspect-ratio: 16/9; align-self: center; background: var(--tv-panel); }
+.thumbnail img { aspect-ratio: 16/9; }
+.thumbNumber { font-weight: 650; }
+.thumbPlay { opacity: 0; transition: opacity .15s ease; }
+.episode:hover:not(:disabled) .thumbPlay,.episode:focus-visible .thumbPlay { opacity: 1; border-color: var(--tv-text); background: rgba(7, 9, 12, .7); }
+.status[data-status="active"] { color: var(--tv-accent); }
+.status[data-status="watched"] { color: var(--tv-text); }
+.close:focus-visible,.seasonNav button:focus-visible,.episode:focus-visible { outline-color: var(--tv-accent); }
+@media (max-width: 800px) {
+  .header { padding: 20px 17px 14px; }
+  .seasonNav { padding: 0 17px 13px; }
+  .content { padding-inline: 9px; }
+  .episode { grid-template-columns: 96px minmax(0, 1fr); gap: 10px; }
+  .thumbnail { height: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .thumbPlay { transition: none; } }

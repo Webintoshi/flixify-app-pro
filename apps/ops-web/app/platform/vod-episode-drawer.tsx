@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { episodeDisplayTitle } from "./episode-presentation";
 import type { Episode, MediaItem } from "./types";
 import styles from "./vod-episode-drawer.module.css";
@@ -25,6 +25,9 @@ function PlayIcon() {
 
 export function VodEpisodeDrawer({ seriesTitle, seasons, currentEpisode, posterUrl, watchedIds, onSelectEpisode, onClose }: VodEpisodeDrawerProps) {
   const [seasonChoice, setSeasonChoice] = useState(currentEpisode?.seasonNumber ?? seasons?.[0]?.seasonNumber ?? 1);
+  const closeButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => { closeButton.current?.focus(); }, []);
 
   useEffect(() => {
     setSeasonChoice(currentEpisode?.seasonNumber ?? seasons?.[0]?.seasonNumber ?? 1);
@@ -32,13 +35,20 @@ export function VodEpisodeDrawer({ seriesTitle, seasons, currentEpisode, posterU
 
   const visibleSeason = seasons?.find(season => season.seasonNumber === seasonChoice) ?? seasons?.[0];
 
-  return <aside className={styles.drawer} aria-label={`${seriesTitle} bölümleri`}>
+  return <aside className={styles.drawer} role="dialog" aria-modal="true" aria-label={`${seriesTitle} bölümleri`} onKeyDown={event => {
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+    if (event.key !== "Tab") return;
+    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+    const first = controls[0], last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  }}>
     <header className={styles.header}>
       <div className={styles.heading}>
         <span className={styles.eyebrow}>Bölümler</span>
         <h2>{seriesTitle}</h2>
       </div>
-      <button type="button" className={styles.close} onClick={onClose} aria-label="Bölümleri kapat" title="Bölümleri kapat"><CloseIcon /></button>
+      <button ref={closeButton} type="button" className={styles.close} onClick={onClose} aria-label="Bölümleri kapat" title="Bölümleri kapat"><CloseIcon /></button>
     </header>
 
     {seasons && seasons.length > 0 && <nav className={styles.seasonNav} aria-label="Sezon seçimi">

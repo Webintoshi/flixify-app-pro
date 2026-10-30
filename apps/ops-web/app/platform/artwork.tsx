@@ -9,9 +9,9 @@ export function Artwork({ item, hero = false }: { item: MediaItem; hero?: boolea
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(hero);
   const [failed, setFailed] = useState(false);
-  const url = item.posterUrl ?? item.logoUrl;
+  const url = item.posterUrl?.trim() || item.logoUrl?.trim();
   useEffect(() => { setFailed(false); if (hero) { setVisible(true); return; } if (!("IntersectionObserver" in window)) { setVisible(true); return; } const observer = new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) { setVisible(true); observer.disconnect(); } }, { rootMargin: "250px" }); if (ref.current) observer.observe(ref.current); return () => observer.disconnect(); }, [url, hero]);
-  return <div ref={ref} className={`${s.artwork} ${hero ? s.heroArtwork : ""} ${item.kind === "live" ? s.channelArtwork : ""}`}>
+  return <div ref={ref} data-artwork-kind={item.kind} className={`${s.artwork} ${hero ? s.heroArtwork : ""} ${item.kind === "live" ? s.channelArtwork : ""}`}>
     {url && visible && !failed ? <img src={url} alt={hero ? "" : item.title} decoding="async" loading={hero ? "eager" : "lazy"} fetchPriority={hero ? "high" : "low"} onError={() => setFailed(true)}/> : <div className={s.artworkFallback}><Icon name={item.kind}/><span>{item.title}</span></div>}
   </div>;
 }

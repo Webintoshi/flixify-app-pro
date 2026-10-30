@@ -226,3 +226,112 @@
   .bottom,
   .episodeDrawer { transition: none; }
 }
+
+.cinema {
+  --vod-drawer-width: min(360px, 30vw);
+  background: var(--tv-background);
+}
+.cinema video { transition: width .2s ease; }
+.cinema:has(.overlay[data-episodes-open="true"]) video { width: calc(100% - var(--vod-drawer-width)); }
+.overlay { color: var(--tv-text); }
+.header {
+  min-height: 84px;
+  gap: 22px;
+  padding: 20px clamp(20px, 4vw, 64px) 28px;
+  background: linear-gradient(180deg, rgba(7, 9, 12, .9), transparent);
+}
+.brand { display: block; width: 142px; height: auto; }
+.iconButton {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(245, 246, 248, .16);
+  background: linear-gradient(145deg, rgba(245, 246, 248, .08), rgba(19, 23, 30, .64));
+  color: var(--tv-text);
+}
+.iconButton svg { width: 22px; height: 22px; }
+.iconButton:hover,.iconButton[aria-expanded="true"] { border-color: rgba(245, 246, 248, .46); background: rgba(245, 246, 248, .15); }
+.iconButton:focus-visible,.seek:focus-visible,.volume:focus-visible,.menu button:focus-visible { outline-color: var(--tv-accent); }
+.backButton { display: flex; flex-basis: auto; width: auto; gap: 8px; padding: 0 14px; border-color: transparent; background: transparent; border-radius: 999px; }
+.backButton span { font-size: 14px; }
+.bottom {
+  padding: 112px clamp(20px, 4vw, 64px) 22px;
+  background: linear-gradient(0deg, rgba(7, 9, 12, .97), rgba(7, 9, 12, .67) 48%, transparent);
+}
+.featureRow { display: flex; align-items: flex-end; justify-content: space-between; gap: 26px; margin-bottom: 16px; }
+.heading { min-width: 0; flex: 1 1 260px; gap: 6px; }
+.heading span { color: var(--tv-muted); font-size: 13px; }
+.heading h2 { display: -webkit-box; overflow: hidden; margin: 0; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: clamp(24px, 3vw, 46px); font-weight: 720; letter-spacing: -.04em; line-height: 1.12; }
+.heading small { overflow: hidden; color: var(--tv-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.tools { display: flex; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.volumeGroup { display: flex; align-items: center; gap: 3px; }
+.volumeGroup .iconButton { border-color: transparent; background: transparent; }
+.volume { width: 64px; margin: 0 5px 0 0; accent-color: var(--tv-text); }
+.speedButton { flex-basis: 44px; width: 44px; }
+.favoriteAction { display: flex; flex: 0 0 44px; }
+.favoriteAction.favoriteAction > button {
+  position: static;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(245, 246, 248, .16);
+  border-radius: 50%;
+  background: linear-gradient(145deg, rgba(245, 246, 248, .08), rgba(19, 23, 30, .64));
+  color: var(--tv-text);
+  transform: none;
+  place-items: center;
+}
+.favoriteAction > button svg { width: 22px; height: 22px; }
+.favoriteAction.favoriteAction > button[aria-pressed="true"] { color: var(--tv-accent); }
+.favoriteAction.favoriteAction > button:hover { border-color: rgba(245, 246, 248, .46); background: rgba(245, 246, 248, .15); }
+.favoriteAction > button:disabled { opacity: .4; cursor: default; }
+.seek { height: 16px; margin-bottom: 3px; }
+.seek::-webkit-slider-runnable-track { height: 3px; background: linear-gradient(90deg, var(--tv-accent) var(--vod-progress), rgba(245, 246, 248, .3) var(--vod-progress)); }
+.seek::-moz-range-track { height: 3px; background: rgba(245, 246, 248, .3); }
+.seek::-moz-range-progress { height: 3px; background: var(--tv-accent); }
+.seek::-webkit-slider-thumb { width: 11px; height: 11px; border: 0; background: var(--tv-accent); box-shadow: none; }
+.seek::-moz-range-thumb { width: 11px; height: 11px; border: 0; background: var(--tv-accent); }
+.times { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--tv-text); font-size: 12px; font-variant-numeric: tabular-nums; }
+.menu { z-index: 4; max-height: min(340px, 50dvh); overflow-y: auto; border-color: var(--tv-line); background: var(--tv-panel); }
+.menu > span { color: var(--tv-muted); }
+.menu button { min-height: 36px; color: var(--tv-text); }
+.menu button:hover,.menu button[aria-pressed="true"] { background: rgba(var(--tv-accent-rgb), .13); color: var(--tv-text); }
+.overlay[data-episodes-open="true"] .header,.overlay[data-episodes-open="true"] .bottom { right: var(--vod-drawer-width); pointer-events: none; }
+.overlay[data-episodes-open="true"] .featureRow { flex-wrap: wrap; }
+.overlay[data-episodes-open="true"] .heading { flex-basis: 100%; }
+@media (max-width: 1100px) {
+  .featureRow { flex-wrap: wrap; gap: 14px; }
+  .heading { flex-basis: 100%; }
+  .tools { justify-content: flex-start; }
+}
+@media (max-width: 800px) {
+  .cinema { --vod-drawer-width: min(360px, 90vw); }
+  .cinema:has(.overlay[data-episodes-open="true"]) video { width: 100%; }
+  .overlay[data-episodes-open="true"] .header,.overlay[data-episodes-open="true"] .bottom { right: 0; opacity: 0; }
+  .header { min-height: 64px; gap: 10px; padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 20px; }
+  .brand { width: 112px; }
+  .bottom { padding: 66px 14px calc(14px + env(safe-area-inset-bottom, 0px)); }
+  .heading h2 { font-size: clamp(23px, 4.5vw, 32px); }
+  .heading span,.heading small { font-size: 11px; }
+  .featureRow { gap: 12px; margin-bottom: 12px; }
+  .tools { gap: 5px; }
+  .iconButton { flex-basis: 40px; width: 40px; height: 40px; }
+  .favoriteAction { flex-basis: 40px; }
+  .favoriteAction.favoriteAction > button { width: 40px; height: 40px; min-width: 40px; }
+  .iconButton svg,.favoriteAction > button svg { width: 20px; height: 20px; }
+  .volume { display: none; }
+  .speedButton { flex-basis: 40px; width: 40px; }
+  .backButton { flex-basis: auto; width: auto; }
+  .times { font-size: 11px; }
+}
+@media (max-height: 450px) and (min-width: 650px) {
+  .header { min-height: 52px; padding-top: 8px; padding-bottom: 8px; }
+  .bottom { padding-top: 30px; padding-bottom: 10px; }
+  .heading h2 { font-size: 25px; }
+  .heading small { display: none; }
+  .featureRow { gap: 8px; margin-bottom: 6px; }
+}
+@media (prefers-reduced-motion: reduce) { .cinema video { transition: none; } }

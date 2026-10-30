@@ -8,7 +8,7 @@ import { InstallProvider } from "./components/install/InstallProvider";
 import { installBootstrap } from "./components/install/install-bootstrap";
 
 export const viewport: Viewport = {
-  themeColor: "#060708",
+  themeColor: "#07090c",
   colorScheme: "dark",
   width: "device-width",
   initialScale: 1,

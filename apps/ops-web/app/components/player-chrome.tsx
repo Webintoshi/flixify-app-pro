@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { clampSeekTime, formatPlayerTime, playableDuration, shouldHidePlayerChrome, PLAYER_CHROME_IDLE_MS } from "./player-chrome-policy";
 import styles from "./player-chrome.module.css";
 
@@ -8,9 +8,11 @@ type PlayerChromeProps = {
   videoRef: RefObject<HTMLVideoElement | null>;
   kind: "live" | "vod";
   title: string;
+  actions?: ReactNode;
+  guide?: ReactNode;
 };
 
-type IconName = "play" | "pause" | "volume" | "muted" | "fullscreen" | "fullscreenExit" | "pictureInPicture";
+type IconName = "play" | "pause" | "volume" | "muted" | "fullscreen" | "fullscreenExit" | "pictureInPicture" | "guide" | "close";
 
 function ControlIcon({ name }: { name: IconName }) {
   const common = { width: 19, height: 19, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true as const };
@@ -20,10 +22,12 @@ function ControlIcon({ name }: { name: IconName }) {
   if (name === "muted") return <svg {...common}><path d="M4 9h4l5-4v14l-5-4H4V9Z" /><path d="m17 9 4 6m0-6-4 6" /></svg>;
   if (name === "fullscreen") return <svg {...common}><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" /></svg>;
   if (name === "fullscreenExit") return <svg {...common}><path d="M9 4v5H4M15 4v5h5M20 15h-5v5M4 15h5v5" /></svg>;
+  if (name === "guide") return <svg {...common}><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4M7 14h4M14 14h3M7 17h10"/></svg>;
+  if (name === "close") return <svg {...common}><path d="m6 6 12 12M18 6 6 18"/></svg>;
   return <svg {...common}><rect x="3" y="5" width="18" height="14" rx="2" /><rect x="11" y="11" width="8" height="6" rx="1" fill="currentColor" stroke="none" /></svg>;
 }
 
-export function PlayerChrome({ videoRef, kind, title }: PlayerChromeProps) {
+export function PlayerChrome({ videoRef, kind, title, actions, guide }: PlayerChromeProps) {
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
@@ -34,6 +38,30 @@ export function PlayerChrome({ videoRef, kind, title }: PlayerChromeProps) {
   const [canPictureInPicture, setCanPictureInPicture] = useState(false);
   const [chromeVisible, setChromeVisible] = useState(true);
   const chromeRef = useRef<HTMLDivElement>(null);
+  const guideId = useId();
+  const [guideOpen, setGuideOpen] = useState(false);
+  const guideOpenRef = useRef(false);
+  const guideButtonRef = useRef<HTMLButtonElement>(null);
+  const guideCloseRef = useRef<HTMLButtonElement>(null);
+  const activityRef = useRef<(() => void) | null>(null);
+
+  const closeGuide = () => {
+    guideOpenRef.current = false;
+    setGuideOpen(false);
+    guideButtonRef.current?.focus({ preventScroll: true });
+    activityRef.current?.();
+  };
+
+  useEffect(() => {
+    if (!guideOpen) return;
+    guideCloseRef.current?.focus({ preventScroll: true });
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault(); event.stopPropagation(); closeGuide();
+    };
+    document.addEventListener("keydown", escape, true);
+    return () => document.removeEventListener("keydown", escape, true);
+  }, [guideOpen]);
 
   useEffect(() => {
     if (kind !== "live") return;
@@ -45,12 +73,13 @@ export function PlayerChrome({ videoRef, kind, title }: PlayerChromeProps) {
     const scheduleHide = () => {
       clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
-        if (shouldHidePlayerChrome(kind, Date.now() - lastActivity, keyboardInteraction && Boolean(chromeRef.current?.contains(document.activeElement)))) {
+        if (!guideOpenRef.current && shouldHidePlayerChrome(kind, Date.now() - lastActivity, keyboardInteraction && Boolean(chromeRef.current?.contains(document.activeElement)))) {
           setChromeVisible(false);
         }
       }, PLAYER_CHROME_IDLE_MS);
     };
     const reveal = () => { lastActivity = Date.now(); setChromeVisible(true); scheduleHide(); };
+    activityRef.current = reveal;
     const onFocusOut = () => { lastActivity = Date.now(); scheduleHide(); };
     const onKeyboard = () => {
       keyboardInteraction = true;
@@ -73,6 +102,7 @@ export function PlayerChrome({ videoRef, kind, title }: PlayerChromeProps) {
     scheduleHide();
     return () => {
       clearTimeout(idleTimer);
+      activityRef.current = null;
       surface.removeEventListener("pointermove", onPointerMove);
       surface.removeEventListener("pointerdown", reveal);
       surface.removeEventListener("touchstart", reveal);
@@ -156,6 +186,11 @@ export function PlayerChrome({ videoRef, kind, title }: PlayerChromeProps) {
 
   return (
     <div ref={chromeRef} className={styles.chrome} data-kind={kind} data-visible={chromeVisible} role="group" aria-label={`${title} oynatıcı kontrolleri`}>
+      {guideOpen && guide ? <section id={guideId} className={styles.guidePanel} role="dialog" aria-modal="false" aria-label="Yayın akışı">
+        <div className={styles.guideHeading}><h2>Yayın akışı</h2><button ref={guideCloseRef} type="button" className={styles.iconButton} aria-label="Yayın akışını kapat" onClick={closeGuide}><ControlIcon name="close"/></button></div>
+        <div className={styles.guideBody} tabIndex={0} role="region" aria-label="Programlar">{guide}</div>
+      </section> : null}
+      <div className={styles.controlBar}>
       {kind === "vod" ? (
         <input
           className={styles.seek}
@@ -178,8 +213,6 @@ export function PlayerChrome({ videoRef, kind, title }: PlayerChromeProps) {
         <button type="button" className={styles.iconButton} onClick={togglePlayback} aria-label={playing ? "Duraklat" : "Oynat"} title={playing ? "Duraklat" : "Oynat"}>
           <ControlIcon name={playing ? "pause" : "play"} />
         </button>
-        {kind === "live" ? <span className={styles.liveBadge}><i /> CANLI</span> : <span className={styles.timeLabel}>{formatPlayerTime(currentTime)} <span>/ {formatPlayerTime(duration ?? 0)}</span></span>}
-        <span className={styles.spacer} />
         <button type="button" className={styles.iconButton} onClick={() => { const video = videoRef.current; if (video) video.muted = !video.muted; }} aria-label={muted || volume === 0 ? "Sesi aç" : "Sessize al"} title={muted || volume === 0 ? "Sesi aç" : "Sessize al"}>
           <ControlIcon name={muted || volume === 0 ? "muted" : "volume"} />
         </button>
@@ -189,10 +222,18 @@ export function PlayerChrome({ videoRef, kind, title }: PlayerChromeProps) {
           video.volume = Number(event.currentTarget.value);
           video.muted = video.volume === 0;
         }} />
+        {kind === "live" ? <span className={styles.liveBadge}><i /> Canlı</span> : <span className={styles.timeLabel}>{formatPlayerTime(currentTime)} <span>/ {formatPlayerTime(duration ?? 0)}</span></span>}
+        <span className={styles.spacer} />
+        {actions ? <span className={styles.actions}>{actions}</span> : null}
+        {guide ? <button ref={guideButtonRef} type="button" className={`${styles.iconButton} ${styles.utilityButton}`} aria-label="Yayın akışı" title="Yayın akışı" aria-expanded={guideOpen} aria-controls={guideOpen ? guideId : undefined} onClick={() => {
+          if (guideOpen) { closeGuide(); return; }
+          guideOpenRef.current = true; setGuideOpen(true); setChromeVisible(true); activityRef.current?.();
+        }}><ControlIcon name="guide"/></button> : null}
         {kind === "vod" && canPictureInPicture ? <button type="button" className={styles.iconButton} onClick={togglePictureInPicture} aria-label={pictureInPicture ? "Küçük pencereden çık" : "Küçük pencerede oynat"} title="Küçük pencerede oynat"><ControlIcon name="pictureInPicture" /></button> : null}
         <button type="button" className={styles.iconButton} onClick={toggleFullscreen} aria-label={fullscreen ? "Tam ekrandan çık" : "Tam ekran"} title={fullscreen ? "Tam ekrandan çık" : "Tam ekran"}>
           <ControlIcon name={fullscreen ? "fullscreenExit" : "fullscreen"} />
         </button>
+      </div>
       </div>
     </div>
   );

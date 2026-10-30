@@ -5,7 +5,7 @@ import type { PersonalRef, PersonalEpgResult } from "../platform/personal-provid
 import { selectLivePlaybackEngine } from "../platform/playback-transport";
 import { createDirectPlaybackDeadline } from "../platform/direct-playback-deadline";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { apiRequest } from "../../lib/api";
 import { CATEGORIES, COUNTRIES, classifyChannel, createCatalogMemoryCache, loadCatalogWithCache, type CatalogSnapshot } from "./live-channel-catalog";
 import { categorySelectOptions, categorySelectValue } from "./live-category-selector";
@@ -148,7 +148,7 @@ function ChannelLogo({ channel, active = false }: { channel: LiveChannel; active
   return (
     <span ref={containerRef} className={`${styles.logoBox}${active ? ` ${styles.activeLogo}` : ""}`} aria-hidden="true">
       {channel.logoUrl && shouldLoad && !failed ? (
-        <img src={channel.logoUrl} alt="" loading="lazy" decoding="async" fetchPriority="low" width={58} height={50} onError={() => setFailed(true)} />
+        <img src={channel.logoUrl} alt="" loading="lazy" decoding="async" fetchPriority="low" width={112} height={64} onError={() => setFailed(true)} />
       ) : (
         <span className={styles.logoFallback}>{monogram(channel.title)}</span>
       )}
@@ -163,7 +163,9 @@ function LiveVideo({
   onPlaybackChange,
   onNeedLowerQuality,
   refreshPersonalPlayback,
-  onAccessExpired
+  onAccessExpired,
+  actions,
+  guide
 }: {
   playback: PlaybackResponse;
   title: string;
@@ -172,6 +174,8 @@ function LiveVideo({
   onNeedLowerQuality: () => boolean;
   refreshPersonalPlayback?: () => Promise<PlaybackResponse>;
   onAccessExpired: () => void;
+  actions?: ReactNode;
+  guide?: ReactNode;
 }) {
   const verifiedExpiry = useProviderExpiry();
   const deadlineRef = useRef<ReturnType<typeof createDirectPlaybackDeadline> | null>(null);
@@ -581,7 +585,7 @@ function LiveVideo({
         playsInline
         aria-label={`${title} canlı yayın`}
       />
-      {!playerError ? <PlayerChrome videoRef={videoRef} kind="live" title={title} /> : null}
+      {!playerError ? <PlayerChrome videoRef={videoRef} kind="live" title={title} actions={actions} guide={guide} /> : null}
       {playerError ? (
         <div className={styles.playerMessage}>
           <strong>Yayın kesildi</strong>
@@ -864,15 +868,28 @@ export default function LiveTvPage() {
   }
 
   const displayedTotal = catalogTotal ?? channels.length;
+  const programmes = epg ? selectedProgrammes(epg.programmes) : [];
+  const programmeNow = Date.now();
+  const nextProgramme = programmes.findIndex(programme => programme.start > programmeNow);
+  const programmeContent = !epg ? <p>Program bilgisi yükleniyor…</p> : epg.status === "error" ? <p role="alert">{epg.error} <button type="button" onClick={() => setEpgRevision(value => value + 1)}>Tekrar Dene</button></p> : programmes.length ? programmes.map((programme, index) => {
+    const current = programme.start <= programmeNow && programme.end > programmeNow;
+    const progress = Math.max(0, Math.min(100, ((programmeNow - programme.start) / (programme.end - programme.start)) * 100));
+    return <article className={styles.programme} key={`${programme.start}-${index}`}>
+      <span className={`${styles.programmePhase}${current ? ` ${styles.currentProgramme}` : ""}`}>{current ? "Şimdi" : index === nextProgramme ? "Sıradaki" : "Sonra"}</span>
+      <div><strong>{programme.title}</strong><time dateTime={new Date(programme.start).toISOString()}>{new Date(programme.start).toLocaleTimeString("tr-TR", {hour:"2-digit",minute:"2-digit",timeZone:"Europe/Istanbul"})} – {new Date(programme.end).toLocaleTimeString("tr-TR", {hour:"2-digit",minute:"2-digit",timeZone:"Europe/Istanbul"})}</time>{programme.description ? <p>{programme.description}</p> : null}
+        {current ? <div className={styles.programmeProgress} role="progressbar" aria-label={`${programme.title} yayın ilerlemesi`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><span style={{width:`${progress}%`}}/></div> : null}
+      </div>
+    </article>;
+  }) : <p>Bu kanal için program bilgisi bulunmuyor.</p>;
 
   return (
     <main className={styles.page}>
-
+      <h1 className={styles.pageTitle}>Canlı TV</h1>
       <div className={styles.appBody}>
 
         <section className={styles.playerColumn} aria-live="polite">
           <div className={styles.playerStage}>
-            {playback && selectedChannel && session ? <LiveVideo playback={playback} title={selectedChannel.title} accessToken={session.accessToken} onAccessExpired={() => { requestVersionRef.current++; setChannels([]); setSelectedChannel(null); setPlayback(null); setEpg(null); epgScope.current.clear(); setError("İzleme süren doldu."); }} refreshPersonalPlayback={selectedChannel.personalRef && personalProvider ? async () => {
+            {playback && selectedChannel && session ? <LiveVideo playback={playback} title={selectedChannel.title} accessToken={session.accessToken} actions={<FavoriteButton item={{ ...selectedChannel, kind: "live", posterUrl: selectedChannel.logoUrl }}/>} guide={selectedChannel.personalRef ? <div className={styles.programmeContent}>{programmeContent}</div> : undefined} onAccessExpired={() => { requestVersionRef.current++; setChannels([]); setSelectedChannel(null); setPlayback(null); setEpg(null); epgScope.current.clear(); setError("İzleme süren doldu."); }} refreshPersonalPlayback={selectedChannel.personalRef && personalProvider ? async () => {
               const identity = identityRef.current;
               const result = await personalProvider.playback(selectedChannel.personalRef!);
               if (identity.personalProvider !== identityRef.current.personalProvider || identity.token !== identityRef.current.token || identity.providerMode !== identityRef.current.providerMode || identity.scope !== identityRef.current.scope) throw new Error("Oturum değişti");
@@ -884,7 +901,7 @@ export default function LiveTvPage() {
               return true;
             }} /> : (
               <div className={styles.playerEmpty}>
-                {playing ? <><div className={styles.loader} /><strong>Yayın hazırlanıyor…</strong></> : <><span className={styles.emptyPlay}>▶</span><strong>İzlemek için bir kanal seçin</strong><small>Güvenli canlı bağlantı otomatik olarak hazırlanır.</small></>}
+                {playing ? <><div className={styles.loader} /><strong>Yayın hazırlanıyor…</strong></> : <><span className={styles.emptyPlay} aria-hidden="true"><AppIcon name="tv"/></span><strong>İzlemek için bir kanal seçin</strong><small>Kanalları arama ve filtrelerle bulun.</small></>}
               </div>
             )}
             <div className={styles.playerTopbar}>
@@ -897,24 +914,23 @@ export default function LiveTvPage() {
             {selectedChannel ? (
               <>
                 <ChannelLogo channel={selectedChannel} active />
-                <div><span>Şu Anda</span><strong>{cleanChannelTitle(selectedChannel.title)}</strong><small>{selectedChannel.groupTitle ?? "Canlı TV"}</small></div>
-                <div className={styles.detailAction}><FavoriteButton item={{ ...selectedChannel, kind: "live", posterUrl: selectedChannel.logoUrl }}/><span>Favori</span></div>
+                <div><h2>{cleanChannelTitle(selectedChannel.title)}</h2><small>{selectedChannel.groupTitle ?? "Canlı TV"}</small></div>
               </>
             ) : (
-              <div className={styles.emptyProgramme}><span>Şu Anda</span><strong>Canlı yayın seçilmedi</strong><small>Sağdaki listeden izlemek istediğiniz kanala dokunun.</small></div>
+              <div className={styles.emptyProgramme}><strong>Canlı yayın seçilmedi</strong><small>Listeden izlemek istediğiniz kanalı seçin.</small></div>
             )}
           </div>
           {selectedChannel?.personalRef ? <section className={styles.epg} aria-label="Yayın akışı">
             <h2>Yayın Akışı</h2>
-            {!epg ? <p>Program bilgisi yükleniyor…</p> : epg.status === "error" ? <p role="alert">{epg.error} <button type="button" onClick={() => setEpgRevision(value => value + 1)}>Tekrar Dene</button></p> : selectedProgrammes(epg.programmes).length ? selectedProgrammes(epg.programmes).map((programme, index) => <article key={`${programme.start}-${index}`}><time>{new Date(programme.start).toLocaleTimeString("tr-TR", {hour:"2-digit",minute:"2-digit",timeZone:"Europe/Istanbul"})} – {new Date(programme.end).toLocaleTimeString("tr-TR", {hour:"2-digit",minute:"2-digit",timeZone:"Europe/Istanbul"})}</time><strong>{programme.start <= Date.now() ? "Şu Anda · " : "Sıradaki · "}{programme.title}</strong>{programme.description ? <p>{programme.description}</p> : null}</article>) : <p>Bu kanal için program bilgisi bulunmuyor.</p>}
+            <div className={styles.programmeContent}>{Array.isArray(programmeContent) ? programmeContent.slice(0, 3) : programmeContent}</div>
           </section> : null}
         </section>
 
         <aside className={styles.channelRail}>
           <div className={styles.directoryTabs} role="tablist" aria-label="Kanal listesi">
-            <button type="button" role="tab" aria-selected={directoryTab === "all"} className={directoryTab === "all" ? styles.activeTab : undefined} onClick={() => setDirectoryTab("all")}><AppIcon name="tv" /> Tüm Kanallar</button>
-            <button type="button" role="tab" aria-selected={directoryTab === "favorites"} className={directoryTab === "favorites" ? styles.activeTab : undefined} onClick={() => setDirectoryTab("favorites")}><AppIcon name="heart" /> Favorilerim</button>
-            <button type="button" role="tab" aria-selected={directoryTab === "recent"} className={directoryTab === "recent" ? styles.activeTab : undefined} onClick={() => setDirectoryTab("recent")}><AppIcon name="clock" /> Son İzlediklerim</button>
+            <button type="button" role="tab" aria-selected={directoryTab === "all"} className={directoryTab === "all" ? styles.activeTab : undefined} onClick={() => setDirectoryTab("all")}>Tüm Kanallar</button>
+            <button type="button" role="tab" aria-selected={directoryTab === "favorites"} className={directoryTab === "favorites" ? styles.activeTab : undefined} onClick={() => setDirectoryTab("favorites")}>Favorilerim</button>
+            <button type="button" role="tab" aria-selected={directoryTab === "recent"} className={directoryTab === "recent" ? styles.activeTab : undefined} onClick={() => setDirectoryTab("recent")}>Son İzlediklerim</button>
           </div>
 
           <div className={styles.filterDropdowns}>
@@ -931,7 +947,7 @@ export default function LiveTvPage() {
           <div className={styles.directoryHeader}>
             <label className={styles.searchLine}>
               <AppIcon name="search" />
-              <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Kanal adı ile ara…" aria-label="Kanal ara" />
+              <input id="live-channel-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Kanal ara…" aria-label="Kanal ara" />
             </label>
             <span className={styles.channelCount}>{visibleChannels.length.toLocaleString("tr-TR")} kanal</span>
           </div>
@@ -948,11 +964,10 @@ export default function LiveTvPage() {
             {renderedChannels.map((channel) => {
               const isSelected = selectedChannel?.id === channel.id;
               return (
-                <div key={channel.id} className={styles.favoriteRow}><button type="button" className={`${styles.channelRow}${isSelected ? ` ${styles.selectedChannel}` : ""}`} disabled={!channel.playbackAllowed} onClick={() => void playChannel(channel)}>
+                <div key={channel.id} className={styles.favoriteRow}><button type="button" className={`${styles.channelRow}${isSelected ? ` ${styles.selectedChannel}` : ""}`} aria-current={isSelected ? "true" : undefined} disabled={!channel.playbackAllowed} onClick={() => void playChannel(channel)}>
                   <ChannelLogo channel={channel} />
                   <span className={styles.channelInfo}><strong>{cleanChannelTitle(channel.title)}</strong><small>{channel.groupTitle ?? "Canlı TV"}</small></span>
-                  <span className={styles.rowLive}><i /> {isSelected && playback ? "OYNUYOR" : "CANLI"}</span>
-                </button><FavoriteButton item={{ ...channel, kind: "live", posterUrl: channel.logoUrl }}/></div>
+                </button></div>
               );
             })}
             {!visibleChannels.length ? <p className={styles.empty}>{directoryTab === "favorites" ? "Henüz favori kanalın yok." : directoryTab === "recent" ? "Henüz izlediğin kanal yok." : "Bu seçimde kanal bulunamadı."}</p> : null}
