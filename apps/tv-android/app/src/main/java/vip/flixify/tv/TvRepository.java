@@ -6,6 +6,8 @@ import vip.flixify.tv.TvModels.*;
 /** All callbacks run on the main thread. Stale account/source callbacks must fail STALE. */
 public interface TvRepository {
     interface Callback<T> { void onResult(T value); void onError(Failure failure); }
+    interface CatalogObserver {void onCatalog(Catalog catalog);}
+    default AutoCloseable observeCatalog(CatalogObserver observer) {return ()->{};}
     boolean hasSession();
     String currentScope();
     void login(String code,Callback<Account> callback);

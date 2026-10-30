@@ -111,6 +111,10 @@ public final class PlayerActivity extends Activity {
         state.putInt("recoveries",policy==null?0:policy.recoveryCount());
         super.onSaveInstanceState(state);
     }
+    @Override protected void onStart() {
+        super.onStart();
+        BackgroundWorkGate.beginPlayback(this);
+    }
     @Override protected void onResume() {
         super.onResume();
         active=true;resumed=true;
@@ -142,8 +146,12 @@ public final class PlayerActivity extends Activity {
         if(trackDialog!=null)trackDialog.dismiss();
         handler.removeCallbacksAndMessages(null);
         savePosition();
-        releaseEngine();
+        try {releaseEngine();} finally {BackgroundWorkGate.endPlayback(this);}
         super.onStop();
+    }
+    @Override protected void onDestroy() {
+        BackgroundWorkGate.endPlayback(this);
+        super.onDestroy();
     }
     @Override public void onWindowFocusChanged(boolean focused) {
         super.onWindowFocusChanged(focused);

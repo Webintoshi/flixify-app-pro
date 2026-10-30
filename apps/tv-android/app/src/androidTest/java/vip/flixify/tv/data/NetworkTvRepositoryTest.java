@@ -25,9 +25,11 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 import vip.flixify.tv.TvModels.*;
 import vip.flixify.tv.TvRepository.Callback;
+import vip.flixify.tv.BackgroundWorkGate;
 import static org.junit.Assert.*;
 
 /** All traffic terminates in an in-memory HttpURLConnection; no socket is opened. */
@@ -49,6 +51,7 @@ public class NetworkTvRepositoryTest {
     private static final class Fixture implements NetworkTvRepository.ConnectionFactory {
         volatile boolean eligible=true,denyLibrary=false;
         volatile boolean emptyEpisodes;
+        volatile boolean emptyLive;
         final List<String> watchedEpisodes=new ArrayList<>();
         volatile String source="source-a";
         volatile int bootstrapStatus=200;
@@ -57,6 +60,10 @@ public class NetworkTvRepositoryTest {
         final AtomicInteger seriesCategoryReads=new AtomicInteger(),seriesListReads=new AtomicInteger(),seriesDetailReads=new AtomicInteger();
         final CountDownLatch epgStarted=new CountDownLatch(1),releaseEpg=new CountDownLatch(1);
         volatile boolean holdEpg;
+        volatile boolean holdCatalog,holdSeriesDetail;
+        final CountDownLatch seriesDetailStarted=new CountDownLatch(1),releaseSeriesDetail=new CountDownLatch(1);
+        volatile String liveTitle="Fixture Kanal";
+        final CountDownLatch catalogStarted=new CountDownLatch(1),releaseCatalog=new CountDownLatch(1);
         final List<String> favoriteMethods=new ArrayList<>();
         volatile int libraryReads;
         @Override public HttpURLConnection open(URL url) {return new HttpURLConnection(url) {
@@ -97,16 +104,16 @@ public class NetworkTvRepositoryTest {
                         else if(query.contains("action=get_series_categories")) {
                             seriesCategoryReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("category_id","8").put("category_name","Diziler"));
                         } else if(query.contains("action=get_series_info")) {
-                            seriesDetailReads.incrementAndGet();
+                            seriesDetailReads.incrementAndGet();if(holdSeriesDetail){seriesDetailStarted.countDown();if(!releaseSeriesDetail.await(10,TimeUnit.SECONDS))throw new AssertionError("Series fixture was not released");}
                             JSONObject episodes=new JSONObject();if(!emptyEpisodes)episodes.put("2",new JSONArray().put(episode("63",2,1))).put("1",new JSONArray().put(episode("62",1,2)).put(episode("61",1,1)));
                             raw=new JSONObject().put("episodes",episodes);
                         } else if(query.contains("action=get_series")) {
                             seriesListReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("series_id","56").put("name","Fixture Dizi").put("category_id","8"));
                         }
                         else if(query.contains("action=get_live_categories")) {
-                            liveCategoryReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("category_id","7").put("category_name","Canlı"));
+                            liveCategoryReads.incrementAndGet();if(holdCatalog){catalogStarted.countDown();if(!releaseCatalog.await(10,TimeUnit.SECONDS))throw new AssertionError("Catalog fixture was not released");}raw=new JSONArray().put(new JSONObject().put("category_id","7").put("category_name","Canlı"));
                         } else if(query.contains("action=get_live_streams")) {
-                            liveStreamReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("stream_id","34").put("name","Fixture Kanal").put("category_id","7").put("container_extension","ts"));
+                            liveStreamReads.incrementAndGet();raw=emptyLive?new JSONArray():new JSONArray().put(new JSONObject().put("stream_id","34").put("name",liveTitle).put("category_id","7").put("container_extension","ts"));
                         } else if(query.contains("action=get_short_epg")) {
                             epgReads.incrementAndGet();epgStarted.countDown();
                             if(holdEpg && !releaseEpg.await(10,TimeUnit.SECONDS))throw new AssertionError("EPG fixture was not released");
@@ -147,6 +154,134 @@ public class NetworkTvRepositoryTest {
                 Result<Account> result=new Result<>();if(restored)h.repository.account(false,result);else h.repository.login("ABCD1234EFGH5678",result);
                 h.deliver();assertNull(result.error);assertNotNull(result.value);assertTrue(result.value.canPlay);assertEquals("fixture-account:source-a",h.repository.currentScope());
             }finally{h.repository.logout();}
+        }
+    }
+    @Test public void coldVerifiedScopeReadsCatalogFromDiskWithoutProviderRefetch() throws Exception {
+        Harness h=new Harness(true);NetworkTvRepository restored=null;
+        try {
+            Result<Catalog> first=new Result<>();h.repository.catalog(Kind.LIVE,false,first);h.deliver();assertNull(first.error);
+            Fixture fresh=new Fixture();restored=new NetworkTvRepository(h.context,fresh,h.clock,h.deliveries::add);
+            Result<Catalog> cached=new Result<>();restored.catalog(Kind.LIVE,false,cached);h.deliver();
+            assertNull(cached.error);assertEquals(first.value.items.get(0).id,cached.value.items.get(0).id);
+            assertEquals("Cold cache still needs current verified access",1,fresh.bootstrapReads.get());
+            assertEquals("Verified current-scope snapshot skips provider category download",0,fresh.liveCategoryReads.get());
+            assertEquals("Verified current-scope snapshot skips provider stream download",0,fresh.liveStreamReads.get());
+        }finally{if(restored!=null)restored.logout();h.repository.logout();}
+    }
+    @Test public void coldSeriesDetailUsesPrivateSnapshotButPlaybackStillRevalidatesEverything() throws Exception {
+        Harness h=new Harness(true);NetworkTvRepository restored=null;
+        try {
+            SeriesDetail first=warmSeries(h);Fixture fresh=new Fixture();restored=new NetworkTvRepository(h.context,fresh,h.clock,h.deliveries::add);
+            Result<SeriesDetail> cached=new Result<>();restored.series(seriesCandidate("fixture-account:source-a"),cached);h.deliver();assertNull(cached.error);assertEquals(first.seasons.size(),cached.value.seasons.size());
+            assertEquals(0,fresh.seriesDetailReads.get());assertEquals(0,fresh.seriesCategoryReads.get());assertEquals(0,fresh.seriesListReads.get());
+            Result<Playback> playback=new Result<>();restored.playback(cached.value.seasons.get(0).episodes.get(0),playback);h.deliver();assertNull(playback.error);assertNotNull(playback.value);
+            assertEquals("Playback still freshly verifies the parent catalog",1,fresh.seriesListReads.get());assertEquals(1,fresh.seriesDetailReads.get());assertEquals(2,fresh.bootstrapReads.get());
+        }finally{if(restored!=null)restored.logout();h.repository.logout();}
+    }
+    @Test public void forcedRefreshBypassesDiskAndStoredExpiryCannotBeExtendedByNewBootstrap() throws Exception {
+        Harness h=new Harness(true);NetworkTvRepository restored=null;
+        try {
+            warmLive(h);h.fixture.liveTitle="Refreshed";Result<Catalog> force=new Result<>();h.repository.catalog(Kind.LIVE,true,force);h.deliver();assertEquals("Refreshed",force.value.items.get(0).title);assertEquals(2,h.fixture.liveStreamReads.get());
+            Fixture fresh=new Fixture();h.clock.value=NOW+600001;fresh.leaseExpiry=NOW+1200000;restored=new NetworkTvRepository(h.context,fresh,h.clock,h.deliveries::add);
+            Result<Catalog> afterExpiry=new Result<>();restored.catalog(Kind.LIVE,false,afterExpiry);h.deliver();assertNull(afterExpiry.error);assertEquals(1,fresh.liveStreamReads.get());
+        }finally{if(restored!=null)restored.logout();h.repository.logout();}
+    }
+    @Test public void staleRefreshUsesOptionalLaneAndPublishesOnlyAfterInitialCachedResult() throws Exception {
+        Harness h=new Harness(true);AutoCloseable subscription=null;
+        try {
+            h.fixture.leaseExpiry=NOW+10L*86400000;Item live=warmLive(h);h.clock.value+=MetadataDiskCache.FRESH_MS;
+            h.fixture.holdCatalog=true;h.fixture.liveTitle="Updated channel";BlockingQueue<Catalog> updates=new LinkedBlockingQueue<>();subscription=h.repository.observeCatalog(updates::add);
+            Result<Catalog> cached=new Result<>();h.repository.catalog(Kind.LIVE,false,cached);h.deliver();assertEquals("Fixture Kanal",cached.value.items.get(0).title);
+            assertTrue(h.fixture.catalogStarted.await(5,TimeUnit.SECONDS));
+            Result<Playback> playback=new Result<>();h.repository.playback(live,playback);h.deliver();assertNull(playback.error);assertNotNull(playback.value);assertNull(updates.peek());
+            h.fixture.releaseCatalog.countDown();h.deliver();assertEquals("Updated channel",updates.poll(1,TimeUnit.SECONDS).items.get(0).title);
+            assertEquals(2,h.fixture.liveCategoryReads.get());assertEquals(2,h.fixture.liveStreamReads.get());
+        }finally{h.fixture.releaseCatalog.countDown();if(subscription!=null)subscription.close();h.repository.logout();}
+    }
+    @Test public void optionalCatalogYieldsBeforeAndBetweenIoWhenPlaybackBecomesActive() throws Exception {
+        Harness h=new Harness(true);Object player=new Object();AutoCloseable subscription=null;
+        try {
+            h.fixture.leaseExpiry=NOW+10L*86400000;warmLive(h);h.clock.value+=MetadataDiskCache.FRESH_MS;
+            BlockingQueue<Catalog> updates=new LinkedBlockingQueue<>();subscription=h.repository.observeCatalog(updates::add);
+            BackgroundWorkGate.beginPlayback(player);Result<Catalog> cached=new Result<>();h.repository.catalog(Kind.LIVE,false,cached);h.deliver();Thread.sleep(150);assertEquals(1,h.fixture.liveCategoryReads.get());
+            BackgroundWorkGate.endPlayback(player);h.fixture.holdCatalog=true;h.repository.catalog(Kind.LIVE,false,new Result<>());h.deliver();assertTrue(h.fixture.catalogStarted.await(5,TimeUnit.SECONDS));
+            BackgroundWorkGate.beginPlayback(player);h.fixture.releaseCatalog.countDown();Thread.sleep(200);
+            assertEquals("Gate changed during first read: second provider read must not begin",1,h.fixture.liveStreamReads.get());assertNull(updates.peek());
+        }finally{BackgroundWorkGate.endPlayback(player);h.fixture.releaseCatalog.countDown();if(subscription!=null)subscription.close();h.repository.logout();}
+    }
+    @Test public void lateOptionalRefreshCannotWriteOrNotifyAfterLogout() throws Exception {
+        Harness h=new Harness(true);AutoCloseable subscription=null;
+        try {
+            h.fixture.leaseExpiry=NOW+10L*86400000;warmLive(h);h.clock.value+=MetadataDiskCache.FRESH_MS;h.fixture.holdCatalog=true;
+            BlockingQueue<Catalog> updates=new LinkedBlockingQueue<>();subscription=h.repository.observeCatalog(updates::add);
+            h.repository.catalog(Kind.LIVE,false,new Result<>());h.deliver();assertTrue(h.fixture.catalogStarted.await(5,TimeUnit.SECONDS));
+            h.repository.logout();h.fixture.releaseCatalog.countDown();Thread.sleep(200);
+            while(!h.deliveries.isEmpty())h.deliver();assertNull(updates.peek());
+            MetadataDiskCache disk=new MetadataDiskCache(new java.io.File(h.context.getFilesDir(),"catalog-cache-v1"));assertNull(disk.readCatalog("fixture-account:source-a",Kind.LIVE,h.fixture.leaseExpiry,h.clock.value));
+        }finally{h.fixture.releaseCatalog.countDown();if(subscription!=null)subscription.close();h.repository.logout();}
+    }
+    private static Object field(Object owner,String name)throws Exception {
+        java.lang.reflect.Field field=owner.getClass().getDeclaredField(name);field.setAccessible(true);return field.get(owner);
+    }
+    private static ThreadPoolExecutor holdMetadataLane(Harness h,CountDownLatch started,CountDownLatch release)throws Exception {
+        ThreadPoolExecutor lane=(ThreadPoolExecutor)field(h.repository,"metadataWorker");
+        lane.execute(()->{started.countDown();try{release.await(5,TimeUnit.SECONDS);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}});
+        assertTrue("Metadata lane did not start",started.await(5,TimeUnit.SECONDS));return lane;
+    }
+    @Test public void expiryDoesNotHoldRepositoryLockWhileWaitingForMetadataWriter()throws Exception {
+        Harness h=new Harness(true);CountDownLatch writerEntered=new CountDownLatch(1),releaseWriter=new CountDownLatch(1),writerDone=new CountDownLatch(1),expired=new CountDownLatch(1),repositoryAvailable=new CountDownLatch(1);
+        try {
+            Item item=warmLive(h);MetadataDiskCache disk=(MetadataDiskCache)field(h.repository,"metadataDisk");Object repositoryLock=field(h.repository,"lock");Runnable expiry=(Runnable)field(h.repository,"expiryTimer");
+            Thread writer=new Thread(()->{try{disk.writeCatalog(item.scope,h.fixture.leaseExpiry,NOW,new Catalog(Kind.LIVE,java.util.Collections.singletonList(item),java.util.Collections.emptyList()),()->{writerEntered.countDown();try{releaseWriter.await(5,TimeUnit.SECONDS);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}return false;});}finally{writerDone.countDown();}},"metadata-expiry-writer");writer.setDaemon(true);writer.start();assertTrue(writerEntered.await(5,TimeUnit.SECONDS));
+            h.clock.value=h.fixture.leaseExpiry;Thread timer=new Thread(()->{try{expiry.run();}finally{expired.countDown();}},"metadata-expiry-timer");timer.setDaemon(true);timer.start();
+            long wait=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);while(timer.getState()!=Thread.State.BLOCKED && expired.getCount()!=0 && System.nanoTime()<wait)Thread.sleep(5);
+            assertEquals("Expiry should be waiting for the held disk writer",Thread.State.BLOCKED,timer.getState());
+            Thread reader=new Thread(()->{synchronized(repositoryLock){repositoryAvailable.countDown();}},"metadata-expiry-reader");reader.setDaemon(true);reader.start();
+            assertTrue("Expiry must release the repository lock before waiting for disk; writers validate that lock",repositoryAvailable.await(500,TimeUnit.MILLISECONDS));
+        }finally{releaseWriter.countDown();assertTrue(writerDone.await(5,TimeUnit.SECONDS));assertTrue(expired.await(5,TimeUnit.SECONDS));h.repository.logout();}
+    }
+    @Test public void queuedOptionalCatalogCannotSupersedeNewerForegroundRefresh()throws Exception {
+        for(boolean forceCompleted:new boolean[]{false,true})for(boolean scheduleDuringForeground:new boolean[]{false,true}) {
+            Harness h=new Harness(true);CountDownLatch laneStarted=new CountDownLatch(1),releaseLane=new CountDownLatch(1),laneDrained=new CountDownLatch(1);
+            try {
+                h.fixture.leaseExpiry=NOW+10L*86400000;warmLive(h);h.clock.value+=MetadataDiskCache.FRESH_MS;
+                ThreadPoolExecutor lane=holdMetadataLane(h,laneStarted,releaseLane);h.repository.catalog(Kind.LIVE,false,new Result<>());if(scheduleDuringForeground)h.awaitQueued(1);else h.deliver();
+                h.fixture.holdCatalog=!forceCompleted;h.fixture.liveTitle="Foreground catalog";Result<Catalog> fresh=new Result<>();h.repository.catalog(Kind.LIVE,true,fresh);
+                if(forceCompleted)h.awaitQueued(scheduleDuringForeground?2:1);else assertTrue(h.fixture.catalogStarted.await(5,TimeUnit.SECONDS));
+                if(scheduleDuringForeground)h.deliver();if(forceCompleted){h.deliver();assertNull(fresh.error);}
+                lane.execute(laneDrained::countDown);releaseLane.countDown();assertTrue("Older queued optional catalog must yield before I/O",laneDrained.await(2,TimeUnit.SECONDS));
+                assertEquals("Only the newer foreground fetch may read categories",2,h.fixture.liveCategoryReads.get());
+                h.fixture.releaseCatalog.countDown();if(!forceCompleted)h.deliver();assertNull("Queued optional work must not invalidate foreground result",fresh.error);assertEquals("Foreground catalog",fresh.value.items.get(0).title);
+            }finally{releaseLane.countDown();h.fixture.releaseCatalog.countDown();h.repository.logout();}
+        }
+    }
+    @Test public void queuedOptionalSeriesCannotSupersedeNewerPlaybackValidation()throws Exception {
+        for(boolean forceCompleted:new boolean[]{false,true})for(boolean scheduleDuringForeground:new boolean[]{false,true}) {
+            Harness h=new Harness(true);CountDownLatch laneStarted=new CountDownLatch(1),releaseLane=new CountDownLatch(1),laneDrained=new CountDownLatch(1);
+            try {
+                h.fixture.leaseExpiry=NOW+10L*86400000;SeriesDetail detail=warmSeries(h);h.clock.value+=MetadataDiskCache.FRESH_MS;
+                ThreadPoolExecutor lane=holdMetadataLane(h,laneStarted,releaseLane);h.repository.series(detail.series,new Result<>());if(scheduleDuringForeground)h.awaitQueued(1);else h.deliver();
+                h.fixture.holdSeriesDetail=!forceCompleted;Result<Playback> playback=new Result<>();h.repository.playback(detail.seasons.get(0).episodes.get(0),playback);
+                if(forceCompleted)h.awaitQueued(scheduleDuringForeground?2:1);else assertTrue(h.fixture.seriesDetailStarted.await(5,TimeUnit.SECONDS));
+                if(scheduleDuringForeground)h.deliver();if(forceCompleted){h.deliver();assertNull(playback.error);}
+                lane.execute(laneDrained::countDown);releaseLane.countDown();assertTrue("Older queued optional detail must yield before I/O",laneDrained.await(2,TimeUnit.SECONDS));
+                assertEquals("Only the newer playback validation may read detail",2,h.fixture.seriesDetailReads.get());
+                h.fixture.releaseSeriesDetail.countDown();if(!forceCompleted)h.deliver();assertNull("Queued optional work must not invalidate playback validation",playback.error);assertNotNull(playback.value);
+            }finally{releaseLane.countDown();h.fixture.releaseSeriesDetail.countDown();h.repository.logout();}
+        }
+    }
+    @Test public void queuedFreshCatalogObserverChecksCurrentSourceAndExpiryIncludingEmptyCatalog() throws Exception {
+        for(boolean expire:new boolean[]{false,true}) {
+            Harness h=new Harness(true);AutoCloseable subscription=null;
+            try {
+                h.fixture.leaseExpiry=NOW+10L*86400000;warmLive(h);h.clock.value+=MetadataDiskCache.FRESH_MS;
+                h.fixture.emptyLive=true;
+                BlockingQueue<Catalog> updates=new LinkedBlockingQueue<>();subscription=h.repository.observeCatalog(updates::add);
+                h.repository.catalog(Kind.LIVE,false,new Result<>());h.deliver();h.awaitQueued(1);
+                if(expire)h.clock.value=h.fixture.leaseExpiry;
+                else {h.fixture.source="source-b";h.repository.refreshAccess(new Result<>());h.awaitQueued(2);}
+                h.deliver();assertNull("Observer must validate when dispatched, not only when fetched",updates.peek());
+            }finally{if(subscription!=null)subscription.close();h.repository.logout();}
         }
     }
     @Test public void queuedPlayableAccountCannotPublishAfterAbsoluteExpiry() throws Exception {

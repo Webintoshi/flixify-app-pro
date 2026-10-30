@@ -13,9 +13,12 @@ final class FakeTvRepository implements TvRepository {
     boolean delayCatalog;
     boolean bootstrapOnCatalog;
     boolean bootstrapped=true;
+    boolean lastCatalogForced;
+    CatalogObserver catalogObserver;
     Callback<Catalog> delayedCatalog;
     final Set<String> saved = new HashSet<>();
-    final String scope = "fixture-account:fixture-source";
+    String scope = "fixture-account:fixture-source";
+    final Map<Kind,Catalog> catalogOverrides=new EnumMap<>(Kind.class);
     final Item movie = item(Kind.MOVIE,"101","Uzay Yolculuğu","1","Bilim Kurgu","",0,0);
     final Item movie2 = item(Kind.MOVIE,"102","Sessiz Deniz","2","Drama","",0,0);
     final Item show = item(Kind.SERIES,"201","Yıldız Günlükleri","3","Macera","",0,0);
@@ -42,10 +45,17 @@ final class FakeTvRepository implements TvRepository {
         if(cb!=null)account(true,cb);
     }
     public void refreshAccess(Callback<Account> cb) { cb.onResult(user()); }
+    public AutoCloseable observeCatalog(CatalogObserver observer) {
+        catalogObserver=observer;
+        return ()->{if(catalogObserver==observer)catalogObserver=null;};
+    }
+    void publishCatalog(Catalog catalog) {if(catalogObserver!=null)catalogObserver.onCatalog(catalog);}
     public void catalog(Kind kind,boolean force,Callback<Catalog> cb) {
+        lastCatalogForced=force;
         if(bootstrapOnCatalog)bootstrapped=true;
         if (delayCatalog) { delayedCatalog=cb; return; }
         if (failCatalog) { cb.onError(new Failure(Failure.Code.NETWORK,"Bağlantı kurulamadı")); return; }
+        if(catalogOverrides.containsKey(kind)){cb.onResult(catalogOverrides.get(kind));return;}
         List<Item> rows = kind==Kind.SERIES?Arrays.asList(show):kind==Kind.LIVE?Arrays.asList(live):Arrays.asList(movie,movie2);
         List<Category> categories = kind==Kind.MOVIE?Arrays.asList(new Category("1","Bilim Kurgu"),new Category("2","Drama")):Arrays.asList(new Category(rows.get(0).categoryId,rows.get(0).categoryName));
         cb.onResult(new Catalog(kind,rows,categories));

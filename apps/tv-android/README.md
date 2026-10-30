@@ -1,6 +1,6 @@
 # Flixify Pro for Android TV
 
-Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.3.2`, code7, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
+Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.4.0`, code8, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
 
 ## Build
 
@@ -41,3 +41,11 @@ API origin is `https://api.flixify.vip`. App uses login/refresh, `/me`, `/me/pro
 LIVE playback revalidates access before using its already verified scoped catalog, avoiding a full channel-list download for each selection. Optional EPG provider I/O has its own bounded worker after serialized context preparation; token rotation remains on the original serialized lane. Actual first-frame rendering distinguishes the30second initial preparation budget from a12second established playback stall. These changes remove avoidable client work; provider/network/physical-TV startup time still needs real-device feedback.
 
 Web delivery is a new versioned public APK under `/downloads/`, linked from anonymous and signed-in homepages and `/indir`. Existing Qt desktop and old download files remain separate. APK signature, SHA256, launcher/banner/minSdk, published MIME/HEAD/range/GET bytes and protected web-only deployment are release gates. Physical TV/box testing is performed by the user; automated emulator results do not claim every firmware/media codec works.
+
+## Device cache and updates
+
+Catalog and series metadata are kept in a bounded64MiB private cache, partitioned by verified account/source and access expiry. Fresh snapshots are reused for6hours; older snapshots may be displayed for up to7days within the verified access period while optional background work refreshes them. Logout, source replacement or revoked access discards that scope. No bootstrap credentials or playable media URLs are stored in these snapshots. Playback still performs its existing access checks.
+
+Artwork uses8MiB RAM and64MiB private evictable disk storage, with7day expiry and2MiB response limits. Both caches stop writing below32MiB available storage and tolerate eviction or corrupt files. Images are downloaded only as needed; no whole catalog image prefetch or video download is performed. Optional background metadata/artwork/update network work yields while the player is active. Remote focus and open search drafts survive catalog refreshes.
+
+Hesabım → Güncellemeleri kontrol et reads the separate Android manifest at `https://flixify.vip/downloads/flixify-tv-update.json`. The user explicitly chooses download and installation. The client checks the fixed HTTPS download host/path, package, newer version, supported Android version, exact size/SHA256 and the installed app's signing identity before opening the standard Android permission/installer flow. Android still asks for installation approval. Existing1.3.2 users install1.4.0 once from the website to gain this in-app update feature. APK files are immutable per version; the static manifest advances only with a verified published APK.
