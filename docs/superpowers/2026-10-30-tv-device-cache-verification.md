@@ -1,0 +1,29 @@
+# Android TV device cache and verified updates
+
+## Accepted behavior
+
+Version1.4.0/code8 preserves the existing native layout, remote/player behavior, sounds, favorites and fresh playback authorization. Verified scoped catalog/series metadata now persists privately with a64MiB bound,6hour freshness and7day maximum display age constrained by verified expiry. Artwork uses8MiB RAM/64MiB evictable disk,7day TTL,2MiB responses and lazy downloads. Both disk caches retain a32MiB free-space floor. Explicit logout/source replacement/revocation invalidates scoped work. Optional metadata/artwork/update network work yields while the player is active. No full video, playable URL or provider bootstrap credential is embedded in metadata snapshots.
+
+Hesabım provides explicit update check/download/install through a separate static Android manifest. HTTPS host/path, exact size/hash, package/version/minSdk and installed signing identity are checked before standard Android permission/installer UI. No silent permission grant or installation is attempted. Current1.3.2 users install1.4.0 from the website once to obtain this feature.
+
+## Native tests and review
+
+Full final source regression:149/149 Android instrumentation and71/71 JVM unit tests,0skipped,0failures,0errors. Lint0errors/41warnings. Optimized release assembled successfully. Log `/tmp/flixify-tv-device-final-native.log` (6m52s). Owned API36 AndroidTV arm64 emulator only, fake accounts/local media fixtures, no provider stream requests. Android6 compatibility is minSdk/lint/build verified; physical TV/codec behavior remains user verification.
+
+Observed RED→GREEN includes disk persistence/corruption/isolation and limits; actual artwork decoding, recycled views and playback gate; three gate ownership cases; updater URL/hash/identity/version/cancellation/permission recovery; UI cold nonforced load and explicit forced refresh. Fresh review identified metadata expiry/disk-monitor lock inversion and optional refresh invalidating a newer foreground ticket; deterministic tests failed before the fixes and passed after.
+
+Six new UI cases reproduced five real failures for account recreation, previous-source page reuse, empty deferred catalog after source replacement, offscreen poster identity after insertion and ordinary-dialog refresh drain; all9device UI cases pass in the149case suite. Open search draft behavior remains covered. A real Android6000-depth JSON input (~12KiB) produced a caught StackOverflowError before correction; the linear flat-object scanner now rejects nesting before Android JSONTokener and preserves escaped note text. Updater11Android cases and policy tests pass.
+
+Native freeze `1f547e7cb9e06fdf2e210744201284aca7e6f348`. Rebuilt every release task after this commit (`/tmp/flixify-tv-device-frozen-release.log`,49s); no native source changed afterward. AGP's packaged VCS metadata reports NO_SUPPORTED_VCS_FOUND, so source provenance is enforced externally by frozen Git tree checks, not claimed from that metadata.
+
+## Signed artifact
+
+APK1,342,402bytes, SHA256`f156382b4cfebe891945cc6430087d56d2f1c32fdc924ea0709c2ebb287789d1`. Packagevip.flixify.tv, version1.4.0/code8, min23/target35, TV launcher/banner, optimized/not debuggable, no native ABI libraries. apksigner verifiesv1/v2 and the same1.3.2 signer SHA256`158ded464486435f9479db84d1eeb9af82e14338e0b4a494c4297c70ae15e594`. Optimized archive contains no debug injection hooks, fake account fixtures, gallery or testMP4. Existing298ms poster WAV hash is unchanged. Compatible `adb install -r` from published1.3.2 succeeded and firstInstallTime stayed equal; real release launch succeeded. Proof `/tmp/flixify-device-apk-proof.json`, badging/signature/upgrade/launch files and `/tmp/flixify-device-signed-release.png`.
+
+## Publication preparation
+
+Static manifest and immutable `/downloads/flixify-pro-1.4.0.apk` are generated from these accepted bytes; only the shared TV download descriptor changes website runtime source. New adapter pins runtime996d4e4/imagebd2e428..., base0de3a95 and the accepted native tree; public addition allowlist is exactly APK+JSON. Previous APK/assets remain immutable.39focused guard cases pass after freeze pin. Agent historical aggregate488guards passed before the final client-equivalent notes2048UTF16/control validation. That mismatch was reproducedRED and corrected.
+
+Capacity initially8,520,318,976B, below unchanged8GiB gate. User's prior explicit unused shared build-cache cleanup authorization applied to58exact previewed/revalidated reclaimable IDs; newly created IDs excluded by anchored union. SSH waiter timed out after60seconds; no second prune was sent. Independent state read then verified11,919,118,336B free, the full image ID set unchanged and all container identities/images retained. All four Flixify identities/restarts unchanged. Unrelated existing Keycloak container auto-restart counter rose334→337 during the window; its identity/image were unchanged and no service action was issued. No image/volume/data deletion, daemon restart, host/network or unrelated configuration change.
+
+Production candidate/rollout/public verification pending.
