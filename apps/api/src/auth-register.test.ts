@@ -3,10 +3,13 @@ import * as repository from "./repository.js";
 import { pool } from "./db.js";
 import { buildServer } from "./server.js";
 
+const createUserArgumentCount = repository.createUser.length;
+
 describe("POST /auth/register-anon", () => {
   const app = buildServer();
 
   beforeAll(async () => {
+    expect([6, 7]).toContain(createUserArgumentCount);
     await app.ready();
   });
 
@@ -60,10 +63,13 @@ describe("POST /auth/register-anon", () => {
     });
 
     expect(response.statusCode).toBe(429);
-    expect(repository.createUser).toHaveBeenCalledWith(
+    const identity = [
       expect.any(String), expect.any(String), expect.any(String), expect.any(String),
-      "install-daily-quota-abc123", "203.0.113.99"
-    );
+      "install-daily-quota-abc123"
+    ];
+    const expected = createUserArgumentCount === 7 ? [...identity, null, "203.0.113.99"] : [...identity, "203.0.113.99"];
+    expect(repository.createUser).toHaveBeenCalledTimes(1);
+    expect(repository.createUser).toHaveBeenCalledWith(...expected);
   });
 
   it("keeps the API unhealthy until trial schema migration exists", async () => {

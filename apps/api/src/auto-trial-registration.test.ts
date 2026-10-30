@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHmac } from "node:crypto";
 
 const db = vi.hoisted(() => {
   const state = { users: [] as string[], jobs: [] as { userId: string; username: string; password: string }[], statements: [] as string[], quotaParameters: [] as unknown[], failJobInsert: false, quotaAllowed: true, hashedIp: "" };
   return {
     state,
+    pool: { query: vi.fn(async () => { throw new Error("Unexpected pool I/O in automatic-trial fixture."); }) },
     query: vi.fn(async (): Promise<{ rows: unknown[]; rowCount: number }> => ({ rows: [], rowCount: 0 })),
     withTransaction: vi.fn(async (handler: (client: { query: (sql: string, params?: unknown[]) => Promise<unknown> }) => Promise<unknown>) => {
       const usersBefore = [...state.users];
@@ -39,12 +41,30 @@ const db = vi.hoisted(() => {
   };
 });
 
-vi.mock("./db.js", () => ({ query: db.query, withTransaction: db.withTransaction }));
+vi.mock("./db.js", () => ({ pool: db.pool, query: db.query, withTransaction: db.withTransaction }));
 
 import { AutoTrialRegistrationRateLimitError, createUser, getUserContext, updateAppSettings } from "./repository.js";
 import { env } from "./env.js";
 
 const originalDailyLimit = env.AUTO_TRIAL_DAILY_IP_LIMIT;
+const registrationIp = "203.0.113.7";
+
+function createTrialFixture(registration = createUser) {
+  const createUserArgumentCount = registration.length;
+  if (createUserArgumentCount !== 6 && createUserArgumentCount !== 7) {
+    throw new Error(`Unsupported createUser fixture signature: ${createUserArgumentCount}`);
+  }
+  const identity = ["lookup", "hash", "5678", "ABCD1234EFGH5678", "installation-1"];
+  // The production referral argument is optional data, not the final client IP.
+  const args = createUserArgumentCount === 7 ? [...identity, null, registrationIp] : [...identity, registrationIp];
+  return Reflect.apply(registration, undefined, args) as ReturnType<typeof createUser>;
+}
+
+function registrationIpHash() {
+  return createHmac("sha256", env.APP_JWT_SECRET)
+    .update(`auto-trial-registration-ip:v1:${registrationIp}`)
+    .digest("hex");
+}
 
 describe("new account automatic trial enqueue", () => {
   beforeEach(() => {
@@ -63,8 +83,14 @@ describe("new account automatic trial enqueue", () => {
     env.AUTO_TRIAL_DAILY_IP_LIMIT = originalDailyLimit;
   });
 
+  it("rejects an unreviewed registration signature before invoking it", () => {
+    const unsupported = vi.fn(async () => "unexpected-user");
+    expect(() => createTrialFixture(unsupported)).toThrow("Unsupported createUser fixture signature: 0");
+    expect(unsupported).not.toHaveBeenCalled();
+  });
+
   it("creates exactly one durable trial job with the new account in the same transaction", async () => {
-    const userId = await createUser("lookup", "hash", "5678", "ABCD1234EFGH5678", "installation-1", "203.0.113.7");
+    const userId = await createTrialFixture();
     expect(userId).toBe("user-1");
     expect(db.state.users).toEqual(["user-1"]);
     expect(db.state.jobs).toHaveLength(1);
@@ -74,14 +100,15 @@ describe("new account automatic trial enqueue", () => {
     expect(db.state.jobs[0]?.username).not.toBe("ABCD1234EFGH5678");
     expect(db.state.jobs[0]?.password).not.toBe("ABCD1234EFGH5678");
     expect(db.state.jobs[0]?.username).not.toBe(db.state.jobs[0]?.password);
-    expect(db.state.hashedIp).toMatch(/^[0-9a-f]{64}$/);
-    expect(db.state.hashedIp).not.toContain("203.0.113.7");
+    expect(db.state.hashedIp).toBe(registrationIpHash());
+    expect(db.state.hashedIp).not.toContain(registrationIp);
+    expect(db.pool.query).not.toHaveBeenCalled();
     expect(db.withTransaction).toHaveBeenCalledTimes(1);
   });
 
   it("does not leave a registered account without a trial job if the queue insert fails", async () => {
     db.state.failJobInsert = true;
-    await expect(createUser("lookup", "hash", "5678", "ABCD1234EFGH5678", "installation-1", "203.0.113.7"))
+    await expect(createTrialFixture())
       .rejects.toThrow("job insert failed");
     expect(db.state.users).toEqual([]);
     expect(db.state.jobs).toEqual([]);
@@ -89,7 +116,7 @@ describe("new account automatic trial enqueue", () => {
 
   it("rejects a registration at the daily IP quota before creating the account", async () => {
     db.state.quotaAllowed = false;
-    await expect(createUser("lookup", "hash", "5678", "ABCD1234EFGH5678", "installation-1", "203.0.113.7"))
+    await expect(createTrialFixture())
       .rejects.toBeInstanceOf(AutoTrialRegistrationRateLimitError);
     expect(db.state.users).toEqual([]);
     expect(db.state.jobs).toEqual([]);
@@ -97,9 +124,9 @@ describe("new account automatic trial enqueue", () => {
 
   it.each([1000, 2500])("binds the configured %i registration cap to the atomic IP quota write", async (limit) => {
     env.AUTO_TRIAL_DAILY_IP_LIMIT = limit;
-    await createUser("lookup", "hash", "5678", "ABCD1234EFGH5678", "installation-1", "203.0.113.7");
+    await createTrialFixture();
 
-    expect(db.state.quotaParameters).toEqual([expect.stringMatching(/^[0-9a-f]{64}$/), limit]);
+    expect(db.state.quotaParameters).toEqual([registrationIpHash(), limit]);
     const quotaWrites = db.state.statements.filter((sql) => sql.includes("insert into public.registration_trial_ip_quota"));
     expect(quotaWrites).toHaveLength(1);
     expect(quotaWrites[0]).toMatch(/on conflict\s*\(ip_hash\)\s*do update/i);
