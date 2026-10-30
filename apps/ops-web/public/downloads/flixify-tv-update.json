@@ -1,10 +1,10 @@
 {
   "packageName": "vip.flixify.tv",
-  "versionName": "1.4.0",
-  "versionCode": 8,
+  "versionName": "1.4.1",
+  "versionCode": 9,
   "minSdk": 23,
-  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.0.apk",
-  "sha256": "f156382b4cfebe891945cc6430087d56d2f1c32fdc924ea0709c2ebb287789d1",
-  "sizeBytes": 1342402,
-  "notes": "Katalog ve afişler cihazda saklanır, eski veriler arka planda yenilenir. Hesabım bölümünden uygulama güncellemeleri kontrol edilebilir."
+  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.1.apk",
+  "sha256": "92e7d671d90d7d674422ee8f66cd3dd7f2664826567fa44f7cf56abceff9f9ab",
+  "sizeBytes": 1344444,
+  "notes": "Açılışta Flixify logosu ve yükleme göstergesi, ilk ekran hazır olana kadar görünür."
 }
