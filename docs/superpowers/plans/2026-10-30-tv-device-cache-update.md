@@ -76,5 +76,5 @@ Manifest schema: packageName, versionName, versionCode, minSdk, apkUrl, sha256, 
 - [x] Verify signature/package/minSDK/version/absence of fixtures and compatible upgrade from1.3.2.
 - [x] Pin source APK SHA/size and generate static manifest from the actual accepted artifact.
 - [x] Add exact web-only publication guards based on observed current996d4e4 image; keep all existing public assets and protected services unchanged.
-- [ ] Run guard contracts, bounded candidate build/preflight, scoped web rollout and public APK/JSON HEAD/range/hash/browser checks.
-- [ ] Commit verification and report actual results and physical-TV limitations.
+- [x] Run guard contracts, bounded candidate build/preflight, scoped web rollout and public APK/JSON HEAD/range/hash/browser checks.
+- [x] Commit verification and report actual results and physical-TV limitations.
