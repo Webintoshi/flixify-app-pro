@@ -8,6 +8,7 @@ vi.hoisted(() => {
   process.env.APP_DEMO_MODE = "false";
 });
 import * as repository from "./repository.js";
+import * as livePolicy from "./live-channel-policy.js";
 import { signAccessToken } from "./security.js";
 import { buildServer } from "./server.js";
 
@@ -29,6 +30,7 @@ describe("GET /me/provider-session", () => {
     vi.spyOn(repository, "getSessionById").mockResolvedValue({ id: "session-a", user_id: "user-a", expires_at: deadline, revoked_at: null } as never);
     vi.spyOn(repository, "touchDeviceSession").mockResolvedValue(undefined);
     vi.spyOn(repository, "getUserContext").mockImplementation(async () => context);
+    vi.spyOn(livePolicy, "loadLiveChannelPolicy").mockResolvedValue(undefined);
     vi.stubGlobal("fetch", vi.fn(() => { throw new Error("Forbidden server fetch"); }));
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -53,6 +55,19 @@ describe("GET /me/provider-session", () => {
     expect((await request(`Bearer ${nextToken}`)).json().sourceVersion).toBe(response.json().sourceVersion);
     expect(repository.getUserContext).toHaveBeenCalledWith("user-a");
   });
+  it("refreshes source-scoped exclusions without changing personal library identity", async () => {
+    const original = (await request()).json();
+    const policy = { revision: "a".repeat(64), excludedIds: ["90", "102"] };
+    vi.mocked(livePolicy.loadLiveChannelPolicy).mockResolvedValue(policy);
+    const excluded = await request();
+    expect(excluded.statusCode).toBe(200);
+    expect(excluded.json()).toEqual({ ...original, livePolicy: policy });
+    expect(livePolicy.loadLiveChannelPolicy).toHaveBeenLastCalledWith("https://provider.example", expect.any(Object));
+    const restored = { revision: "b".repeat(64), excludedIds: [] };
+    vi.mocked(livePolicy.loadLiveChannelPolicy).mockResolvedValue(restored);
+    expect((await request()).json()).toEqual({ ...original, livePolicy: restored });
+    privateResponse(excluded);
+  });
   it.each(["identity", "shared", "missing", "deadline", "expired", "denied", "unverified-trial", "overlong-trial", "http", "path"])("denies %s with private generic error", async variant => {
     if (variant === "identity") context.summary.id = "other-user";
     if (variant === "shared") context.iptvCredentials = context.sharedReferenceCredentials;
@@ -67,6 +82,7 @@ describe("GET /me/provider-session", () => {
     const response = await request();
     expect(response.statusCode).toBe(403);
     expect(response.body).not.toMatch(/personal|shared|provider\.example|other-user/);
+    expect(livePolicy.loadLiveChannelPolicy).not.toHaveBeenCalled();
     privateResponse(response);
   });
   it("returns the earlier verified trial expiry", async () => {
@@ -84,6 +100,7 @@ describe("GET /me/provider-session", () => {
     const response = await request(variant === "missing" ? "" : authorization);
     expect(response.statusCode).toBe(variant === "blocked" ? 403 : 401);
     expect(repository.getUserContext).not.toHaveBeenCalled();
+    expect(livePolicy.loadLiveChannelPolicy).not.toHaveBeenCalled();
     privateResponse(response);
   });
   it("does not expose or log repository exception secrets", async () => {

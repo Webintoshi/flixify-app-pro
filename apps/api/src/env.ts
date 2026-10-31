@@ -15,6 +15,7 @@ config({
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   APP_JWT_SECRET: z.string().min(32),
+  REGISTRATION_GUARD_SECRET: z.string().min(32),
   APP_DEMO_MODE: z
     .enum(["true", "false"])
     .optional()
@@ -23,7 +24,8 @@ const envSchema = z.object({
   ADMIN_EMAILS: z.string().min(3),
   API_PORT: z.coerce.number().int().positive().default(4000),
   TRUSTED_PROXY_CIDRS: z.string().optional().transform(parseTrustedProxyCidrs),
-  AUTO_TRIAL_DAILY_IP_LIMIT: z.coerce.number().int().min(1).max(10000).default(1000),
+  // Legacy setting name; it now bounds the permanent registration ledger.
+  AUTO_TRIAL_DAILY_IP_LIMIT: z.coerce.number().int().min(1).max(2).default(2),
   FFMPEG_BINARY: z.string().trim().min(1).optional(),
   FFPROBE_BINARY: z.string().trim().min(1).optional(),
   VOD_PLAYBACK_TTL_SECONDS: z.coerce.number().int().positive().optional().default(900),

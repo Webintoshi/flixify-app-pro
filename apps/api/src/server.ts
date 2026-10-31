@@ -26,6 +26,7 @@ import {
 import { canUseClientIpPlayback } from "./client-playback-access.js";
 import { registerPersonalLibrary } from "./personal-library.js";
 import { derivePersonalProviderSession } from "./personal-provider-session.js";
+import { loadLiveChannelPolicy } from "./live-channel-policy.js";
 import type {
   LiveChannel,
   LiveHealthStatus,
@@ -44,6 +45,7 @@ import {
   createUser,
   findUserByCodeLookup,
   AutoTrialRegistrationRateLimitError,
+  RegistrationInstallationLimitError,
   findActiveUserByInstallationId,
   getEpisodeForPlayback,
   getAdminDashboard,
@@ -197,7 +199,7 @@ const LOCAL_APP_UPDATE_MANIFEST_PATH = new URL("../../../data/app-update-manifes
 const isDemoMode = env.APP_DEMO_MODE;
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 const MULTI_ACCOUNT_BLOCK_MESSAGE =
-  "Bu cihazda zaten bir hesabınız bulunmaktadır. Yeni hesap oluşturmak için mevcut hesabın sistemden silinmesi gerekir.";
+  "Bu cihaz veya tarayıcıda yalnızca bir kez hesap oluşturabilirsiniz. Mevcut hesabınızla giriş yapın veya destekle iletişime geçin.";
 const appUpdateManifestCache: {
   expiresAt: number;
   value: AppUpdateManifest | null;
@@ -1353,11 +1355,13 @@ export function buildServer() {
     }
 
     try {
-      const schema = await pool.query<{ trial_jobs: string | null; trial_ip_quota: string | null }>(`
+      const schema = await pool.query<{ trial_jobs: string | null; trial_ip_quota: string | null; lifetime_ip: string | null; lifetime_installations: string | null }>(`
         select to_regclass('public.auto_trial_provision_jobs')::text as trial_jobs,
-               to_regclass('public.registration_trial_ip_quota')::text as trial_ip_quota
+               to_regclass('public.registration_trial_ip_quota')::text as trial_ip_quota,
+               to_regclass('public.registration_ip_lifetime_quota')::text as lifetime_ip,
+               to_regclass('public.registration_installation_claims')::text as lifetime_installations
       `);
-      if (!schema.rows[0]?.trial_jobs || !schema.rows[0]?.trial_ip_quota) {
+      if (!schema.rows[0]?.trial_jobs || !schema.rows[0]?.trial_ip_quota || !schema.rows[0]?.lifetime_ip || !schema.rows[0]?.lifetime_installations) {
         throw new Error("Automatic trial database schema is missing.");
       }
       return {
@@ -1449,8 +1453,11 @@ export function buildServer() {
             requestIp
           );
         } catch (error) {
+          if (error instanceof RegistrationInstallationLimitError) {
+            return reply.status(409).send({ message: MULTI_ACCOUNT_BLOCK_MESSAGE });
+          }
           if (error instanceof AutoTrialRegistrationRateLimitError) {
-            return reply.status(429).send({ message: "Gunluk deneme kayit limiti doldu. Lutfen 24 saat sonra tekrar deneyin." });
+            return reply.status(429).send({ message: "Bu internet bağlantısı üzerinden en fazla 2 hesap oluşturulabilir." });
           }
           const databaseCode = getDatabaseErrorCode(error);
           const constraint = getDatabaseConstraint(error);
@@ -1653,7 +1660,8 @@ export function buildServer() {
       if (!session) {
         return reply.status(403).send({ message: "Kisisel yayin erisimi kullanilamiyor." });
       }
-      return session;
+      const livePolicy = await loadLiveChannelPolicy(session.providerOrigin, request.log);
+      return livePolicy ? { ...session, livePolicy } : session;
     } catch (error) {
       // Repository errors may contain provider credentials. Classify without serializing the error.
       const classified = classifyUserRouteError(error);

@@ -27,6 +27,8 @@ import { buildPlaylistUrl, buildStreamUrl, parsePlaylistUrl, type PlaylistConfig
 import { filterStoredMovieCatalogRows, filterStoredSeriesCatalogRows } from "./vod-catalog-filter.js";
 import { query, withTransaction } from "./db.js";
 import { env } from "./env.js";
+import { claimRegistrationSlots } from "./registration-limits.js";
+export { AutoTrialRegistrationRateLimitError, RegistrationInstallationLimitError } from "./registration-limits.js";
 import { addPackageDuration, calculateRemainingDays } from "./time.js";
 
 type UserContextRow = QueryResultRow & {
@@ -720,7 +722,7 @@ export async function findActiveUserByInstallationId(installationId: string) {
   return result.rows[0] ?? null;
 }
 
-export class AutoTrialRegistrationRateLimitError extends Error {}
+
 
 export async function createUser(
   codeLookup: string,
@@ -732,26 +734,12 @@ export async function createUser(
 ) {
   await ensureUserInstallationGuardSchema();
   return withTransaction(async (client) => {
-    const ipHash = createHmac("sha256", env.APP_JWT_SECRET)
-      .update(`auto-trial-registration-ip:v1:${requestIp.trim() || "unknown"}`)
-      .digest("hex");
-    const quota = await client.query(`
-      insert into public.registration_trial_ip_quota (ip_hash, window_started_at, count)
-      values ($1, now(), 1)
-      on conflict (ip_hash) do update
-      set count = case
-            when registration_trial_ip_quota.window_started_at <= now() - interval '24 hours' then 1
-            else registration_trial_ip_quota.count + 1
-          end,
-          window_started_at = case
-            when registration_trial_ip_quota.window_started_at <= now() - interval '24 hours' then now()
-            else registration_trial_ip_quota.window_started_at
-          end
-      where registration_trial_ip_quota.window_started_at <= now() - interval '24 hours'
-         or registration_trial_ip_quota.count < $2::integer
-      returning count
-    `, [ipHash, env.AUTO_TRIAL_DAILY_IP_LIMIT]);
-    if (quota.rowCount !== 1) throw new AutoTrialRegistrationRateLimitError("Daily trial registration limit reached.");
+    await claimRegistrationSlots(client, {
+      installationId: registrationInstallationId,
+      requestIp,
+      guardSecret: env.REGISTRATION_GUARD_SECRET,
+      ipLimit: env.AUTO_TRIAL_DAILY_IP_LIMIT
+    });
     const providerAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     const createProviderCredential = () =>
       Array.from({ length: 16 }, () => providerAlphabet[randomInt(providerAlphabet.length)]).join("");

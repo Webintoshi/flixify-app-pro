@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
 
 const db = vi.hoisted(() => {
-  const state = { users: [] as string[], jobs: [] as { userId: string; username: string; password: string }[], statements: [] as string[], quotaParameters: [] as unknown[], failJobInsert: false, quotaAllowed: true, hashedIp: "" };
+  const state = { users: [] as string[], jobs: [] as { userId: string; username: string; password: string }[], statements: [] as string[], quotaParameters: [] as unknown[], failJobInsert: false, quotaAllowed: true, installationAllowed: true, installationParameters: [] as unknown[], hashedIp: "" };
   return {
     state,
     pool: { query: vi.fn(async () => { throw new Error("Unexpected pool I/O in automatic-trial fixture."); }) },
@@ -13,7 +13,11 @@ const db = vi.hoisted(() => {
       const client = {
         async query(sql: string, params: unknown[] = []) {
           state.statements.push(sql);
-          if (sql.includes("insert into public.registration_trial_ip_quota")) {
+          if (sql.includes("insert into public.registration_installation_claims")) {
+            state.installationParameters = [...params];
+            return { rows: state.installationAllowed ? [{ installation_hash: params[0] }] : [], rowCount: state.installationAllowed ? 1 : 0 };
+          }
+          if (sql.includes("insert into public.registration_ip_lifetime_quota")) {
             state.hashedIp = String(params[0]);
             state.quotaParameters = [...params];
             return { rows: state.quotaAllowed ? [{ count: 1 }] : [], rowCount: state.quotaAllowed ? 1 : 0 };
@@ -43,7 +47,7 @@ const db = vi.hoisted(() => {
 
 vi.mock("./db.js", () => ({ pool: db.pool, query: db.query, withTransaction: db.withTransaction }));
 
-import { AutoTrialRegistrationRateLimitError, createUser, getUserContext, updateAppSettings } from "./repository.js";
+import { AutoTrialRegistrationRateLimitError, RegistrationInstallationLimitError, createUser, getUserContext, updateAppSettings } from "./repository.js";
 import { env } from "./env.js";
 
 const originalDailyLimit = env.AUTO_TRIAL_DAILY_IP_LIMIT;
@@ -61,7 +65,7 @@ function createTrialFixture(registration = createUser) {
 }
 
 function registrationIpHash() {
-  return createHmac("sha256", env.APP_JWT_SECRET)
+  return createHmac("sha256", env.REGISTRATION_GUARD_SECRET)
     .update(`auto-trial-registration-ip:v1:${registrationIp}`)
     .digest("hex");
 }
@@ -74,8 +78,10 @@ describe("new account automatic trial enqueue", () => {
     db.state.quotaParameters = [];
     db.state.failJobInsert = false;
     db.state.quotaAllowed = true;
+    db.state.installationAllowed = true;
+    db.state.installationParameters = [];
     db.state.hashedIp = "";
-    env.AUTO_TRIAL_DAILY_IP_LIMIT = 1000;
+    env.AUTO_TRIAL_DAILY_IP_LIMIT = 2;
     db.withTransaction.mockClear();
   });
 
@@ -114,7 +120,7 @@ describe("new account automatic trial enqueue", () => {
     expect(db.state.jobs).toEqual([]);
   });
 
-  it("rejects a registration at the daily IP quota before creating the account", async () => {
+  it("rejects a registration at the permanent IP quota before creating the account", async () => {
     db.state.quotaAllowed = false;
     await expect(createTrialFixture())
       .rejects.toBeInstanceOf(AutoTrialRegistrationRateLimitError);
@@ -122,19 +128,32 @@ describe("new account automatic trial enqueue", () => {
     expect(db.state.jobs).toEqual([]);
   });
 
-  it.each([1000, 2500])("binds the configured %i registration cap to the atomic IP quota write", async (limit) => {
+  it("rejects a permanently claimed installation before consuming IP quota or creating a trial", async () => {
+    db.state.installationAllowed = false;
+    await expect(createTrialFixture()).rejects.toBeInstanceOf(RegistrationInstallationLimitError);
+    expect(db.state.installationParameters).toEqual([
+      createHmac("sha256", env.REGISTRATION_GUARD_SECRET).update("auto-registration-installation:v1:installation-1").digest("hex")
+    ]);
+    expect(db.state.statements).toHaveLength(1);
+    expect(db.state.quotaParameters).toEqual([]);
+    expect(db.state.users).toEqual([]);
+    expect(db.state.jobs).toEqual([]);
+  });
+
+  it.each([1, 2])("binds the configured %i registration cap to the atomic IP quota write", async (limit) => {
     env.AUTO_TRIAL_DAILY_IP_LIMIT = limit;
     await createTrialFixture();
 
     expect(db.state.quotaParameters).toEqual([registrationIpHash(), limit]);
-    const quotaWrites = db.state.statements.filter((sql) => sql.includes("insert into public.registration_trial_ip_quota"));
+    const quotaWrites = db.state.statements.filter((sql) => sql.includes("insert into public.registration_ip_lifetime_quota"));
     expect(quotaWrites).toHaveLength(1);
     expect(quotaWrites[0]).toMatch(/on conflict\s*\(ip_hash\)\s*do update/i);
-    expect(quotaWrites[0]).toMatch(/registration_trial_ip_quota\.count\s*<\s*\$2::integer/);
-    expect(quotaWrites[0]).not.toMatch(/registration_trial_ip_quota\.count\s*<\s*\d/);
-    expect(quotaWrites[0]).toMatch(/window_started_at\s*<=\s*now\(\)\s*-\s*interval '24 hours' then 1/);
-    expect(quotaWrites[0]).toMatch(/else registration_trial_ip_quota\.count\s*\+\s*1/);
-    expect(db.state.statements[0]).toBe(quotaWrites[0]);
+    expect(quotaWrites[0]).toMatch(/registration_ip_lifetime_quota\.count\s*<\s*\$2::integer/);
+    expect(quotaWrites[0]).not.toMatch(/registration_ip_lifetime_quota\.count\s*<\s*\d/);
+    expect(quotaWrites[0]).not.toMatch(/window_started_at|interval|24 hours/i);
+    expect(quotaWrites[0]).toMatch(/registration_ip_lifetime_quota\.count\s*\+\s*1/);
+    expect(db.state.statements[0]).toContain("insert into public.registration_installation_claims");
+    expect(db.state.statements[1]).toBe(quotaWrites[0]);
     expect(db.withTransaction).toHaveBeenCalledTimes(1);
   });
 
