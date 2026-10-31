@@ -1,6 +1,7 @@
 "use client";
 
 import { mapPersonalLive, liveTransport, selectedProgrammes, createLiveRequestScope } from "./personal-live";
+import { liveChannelDirectoryInfo, compareLiveChannelOrder, normalizeLiveChannelSearch } from "../platform/live-channel-lineup";
 import { sessionIdentity } from "../platform/personal-integration";
 import { loadLegacyLiveCatalog } from "../platform/legacy-live-catalog";
 import { curateLiveChannels } from "../platform/live-channel-presentation";
@@ -774,7 +775,7 @@ export default function LiveTvPage() {
   }, [session, personalProvider, providerMode, providerScope, livePolicyRevision]);
 
   const enrichedChannels = useMemo(
-    () => channels.map((channel) => ({ channel, ...classifyChannel(channel) })),
+    () => channels.map((channel) => ({ channel, ...liveChannelDirectoryInfo(channel) })),
     [channels]
   );
 
@@ -806,7 +807,7 @@ export default function LiveTvPage() {
   }, [enrichedChannels, selectedCountry]);
 
   const visibleChannels = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase("tr-TR");
+    const query = normalizeLiveChannelSearch(search);
     const favoriteIds = new Set(favorites.filter((item) => item.kind === "live").map((item) => item.id));
     const resolvedRecent = resolveRecentChannelIds(recentIds,id=>(providerMode === "personal" ? personalProvider?.resolveLiveItemId(id) : liveProjection.canonicalById.get(id)));
     const recentOrder = new Map(resolvedRecent.map((id, index) => [id, index]));
@@ -814,12 +815,14 @@ export default function LiveTvPage() {
       .filter((item) => {
         const matchesCountry = item.countryId === selectedCountry;
         const matchesCategory = selectedCategory === "all" || item.categoryId === selectedCategory;
-        const matchesSearch = !query || `${item.channel.title} ${item.channel.groupTitle ?? ""}`.toLocaleLowerCase("tr-TR").includes(query);
+        const matchesSearch = !query || normalizeLiveChannelSearch(`${item.channel.title} ${item.channel.groupTitle ?? ""}`).includes(query);
         const matchesTab = directoryTab === "all" || (directoryTab === "favorites" ? favoriteIds.has(item.channel.id) : recentOrder.has(item.channel.id));
         return matchesCountry && matchesCategory && matchesSearch && matchesTab;
       })
-      .map((item) => item.channel)
-      .sort((a, b) => directoryTab === "recent" ? (recentOrder.get(a.id) ?? 99) - (recentOrder.get(b.id) ?? 99) : 0);
+      .sort((a, b) => directoryTab === "recent"
+        ? (recentOrder.get(a.channel.id) ?? 99) - (recentOrder.get(b.channel.id) ?? 99)
+        : selectedCountry === "tr" ? compareLiveChannelOrder(a.order,b.order) : 0)
+      .map((item) => item.channel);
   }, [directoryTab, enrichedChannels, favorites, recentIds, search, selectedCategory, selectedCountry, personalProvider, liveProjection, providerMode]);
 
   const renderedChannels = visibleChannels.slice(0, renderLimit);

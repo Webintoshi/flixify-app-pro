@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LiveTvPage from "./page";
+import {recentStorageKey} from "./live-recent";
 
 const state = vi.hoisted(() => ({ platform: {} as any, query:"" }));
 vi.mock("../platform/session", () => ({ usePlatform: () => state.platform, useProviderExpiry: () => state.platform.providerExpiresAt }));
@@ -65,6 +66,22 @@ describe("live directory presentation and player tools", () => {
     expect(container.textContent).toContain("1 kanal");expect(container.textContent).not.toContain("Atv 4K");
     await settle(()=>button("Son İzlediklerim").click());
     expect([...container.querySelectorAll('button strong')].filter(node=>node.textContent==='ATV')).toHaveLength(1);
+  });
+  it("puts the Turkish national lineup in the first36 rows instead of burying TRT1 and Star behind thematic feeds",async()=>{
+    const national=["Trt 1","Kanal D","ATV","Show Tv","Now","Star Tv","Kanal 7","TV8"];
+    const rows=national.map((title,index)=>({...channel,id:`national-${index}`,title:`TR • ${title} ${index===0?'RAW':'FHD'}`,groupTitle:index===0?"TR:RAW":"TR:ULUSAL",personalRef:{...ref,id:String(1000+index)}}));
+    const filler=Array.from({length:45},(_,index)=>({...channel,id:`artist-${index}`,title:`TR • AAA Artist ${index}`,groupTitle:"TR:MUZIK",personalRef:{...ref,id:String(2000+index)}}));
+    state.platform.personalProvider.catalog=async()=>[...filler,...rows,{...channel,id:"albania",title:"ALB: Tring Turkish",groupTitle:"ALBANIA",personalRef:{...ref,id:"8463"}}];
+    state.platform.favorites=rows.map(row=>({...row,kind:"live"})).reverse();
+    window.localStorage.setItem(recentStorageKey(undefined,"fixture-token"),JSON.stringify([rows[5].id,rows[0].id]));
+    await settle(()=>root.render(<LiveTvPage/>));await settle();
+    const names=()=>[...container.querySelectorAll('[aria-label="Canlı kanallar"] strong')].map(node=>node.textContent!.replace(/\s/g,'').toUpperCase());
+    expect(names().slice(0,8)).toEqual(national.map(name=>name.replace(/\s/g,'').toUpperCase()));
+    expect(names()).not.toContain("ALB:TRINGTURKISH");expect(playback).not.toHaveBeenCalled();
+    await settle(()=>button("Favorilerim").click());expect(names()).toEqual(national.map(name=>name.replace(/\s/g,'').toUpperCase()));
+    await settle(()=>button("Son İzlediklerim").click());expect(names()).toEqual(["STARTV","TRT1"]);
+    await settle(()=>button("Star Tv").click());await settle();
+    expect(playback).toHaveBeenCalledExactlyOnceWith(rows[5].personalRef);
   });
   afterEach(async () => { await settle(() => root.unmount()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 

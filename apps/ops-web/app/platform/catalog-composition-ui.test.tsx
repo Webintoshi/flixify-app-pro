@@ -104,6 +104,18 @@ it("uses the same complete legacy live selection for the homepage rail", async (
   await settle(() => atv.click()); expect(state.push).toHaveBeenCalledWith("/canli-tv?channel=42");
 });
 
+it.each(["personal","legacy"])("starts the homepage live rail with Turkish national channels before any slice: %s",async mode=>{
+ const live=[{id:"foreign",kind:"live",title:"ALB: Tring Turkish",groupTitle:"ALBANIA"},...Array.from({length:48},(_,i)=>({id:`music-${i}`,kind:"live",title:`AAA music ${i}`,groupTitle:"TR:MUZIK"})),{id:"star",kind:"live",title:"Star TV",groupTitle:"TR:ULUSAL"},{id:"trt",kind:"live",title:"TRT 1",groupTitle:"TR:RAW"}];
+ if(mode==="personal")state.platform.personalProvider.catalog=async(kind:string)=>kind==="live"?live:items(kind as any);
+ else {
+  legacyLiveFixture("lineup-home-legacy");const previous=state.api.getMockImplementation()!;
+  state.api.mockImplementation(async(path:string)=>path.startsWith("/me/catalog/live")?{items:live,total:live.length}:previous(path));
+ }
+ await settle(()=>root.render(<CatalogPage kind="movie" overview/>));
+ const rail=[...container.querySelectorAll("section")].find(section=>section.querySelector("h2")?.textContent==="Canlı TV")!;
+ expect([...rail.querySelectorAll("strong")].slice(0,2).map(node=>node.textContent)).toEqual(["TRT 1","Star TV"]);
+});
+
 it("keeps the exact signed APK download in the header without a separate home notice", async () => {
   await settle(() => root.render(<AppShell publicAccess><div>Library</div></AppShell>));
   const download = container.querySelector<HTMLAnchorElement>("header a[download]");

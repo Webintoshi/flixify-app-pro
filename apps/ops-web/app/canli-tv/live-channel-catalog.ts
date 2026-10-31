@@ -1,3 +1,5 @@
+import { liveChannelDirectoryInfo } from "../platform/live-channel-lineup";
+
 export type ChannelLike = {
   id?: string;
   title: string;
@@ -37,36 +39,16 @@ export const CATEGORIES = [
   { id: "news", label: "Haber", icon: "▤" },
   { id: "sports", label: "Spor", icon: "⚽" },
   { id: "kids", label: "Çocuk", icon: "★" },
-  { id: "documentary", label: "Belgesel", icon: "◎" }
+  { id: "documentary", label: "Belgesel", icon: "◎" },
+  { id: "music", label: "Müzik", icon: "♪" },
+  { id: "local", label: "Yerel", icon: "◉" },
+  { id: "themed", label: "7/24", icon: "▦" },
+  { id: "radio", label: "Radyo", icon: "♫" }
 ] as const;
 
-function normalize(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase();
-}
-
-function classifyCategory(searchable: string) {
-  if (/BELGESEL|DOCUMENTA(?:RY|IRE)|NATURE|DISCOVERY|NAT GEO/.test(searchable)) return "documentary";
-  if (/COCUK|KIDS?|CHILD|CARTOON|NICK(?:ELODEON)?|MINIKA/.test(searchable)) return "kids";
-  if (/HABER|NEWS|CNN|BBC WORLD|BULTEN/.test(searchable)) return "news";
-  if (/SPOR|SPORT|FUTBOL|FOOTBALL|BEIN|DAZN|NFL|NBA|LALIGA|LIGA DE CAMPEONES|EUROSPORT/.test(searchable)) return "sports";
-  return "national";
-}
-
 export function classifyChannel(channel: Pick<ChannelLike, "title" | "groupTitle" | "sourceTitle">): ChannelClassification {
-  const normalizedGroup = normalize(channel.groupTitle ?? "");
-  const normalizedTitle = normalize(channel.sourceTitle ?? channel.title);
-  const searchable = `${normalizedGroup} ${normalizedTitle}`;
-  const recognizedCountries = COUNTRIES.filter((item) => item.id !== "other");
-  const countryFromGroup = recognizedCountries.find((item) => item.patterns.some((pattern) => pattern.test(normalizedGroup)));
-  const countryFromTitle = recognizedCountries.find((item) => item.patterns.some((pattern) => pattern.test(normalizedTitle)));
-
-  return {
-    countryId: countryFromGroup?.id ?? countryFromTitle?.id ?? "other",
-    categoryId: classifyCategory(searchable)
-  };
+  const {countryId,categoryId}=liveChannelDirectoryInfo(channel);
+  return {countryId,categoryId};
 }
 
 export function mergeChannelPages<T extends { id: string }>(current: T[], incoming: T[]) {

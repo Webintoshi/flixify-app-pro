@@ -163,3 +163,15 @@ test("aborted catalog load does not continue to later pages", async () => {
  assert.deepEqual(catalog.classifyChannel({title:"ATV",sourceTitle:"TR • Atv FHD",groupTitle:null}),{countryId:"tr",categoryId:"national"});
  assert.deepEqual(catalog.classifyChannel({title:"BBC World",sourceTitle:"UK • BBC World HD",groupTitle:null}),{countryId:"gb",categoryId:"news"});
  });
+
+test("explicit foreign country metadata wins over the word Turkish in a station title",()=>{
+ assert.equal(catalog.classifyChannel({title:"ALB: Tring Turkish",groupTitle:"ALBANIA"}).countryId,"other");
+ assert.equal(catalog.classifyChannel({title:"The French Mans",groupTitle:"TR:YABANCI DIZI",sourceTitle:"TR • The French Mans 7/24"}).countryId,"tr");
+ assert.equal(catalog.classifyChannel({title:"Turkish Pop",groupTitle:"GERMANY"}).countryId,"de");
+});
+
+test("radio, music, local and continuous themed feeds do not masquerade as national stations",()=>{
+ for(const [groupTitle,categoryId] of [["TR:RADIO","radio"],["TR:MUZIK","music"],["TR:YORESEL TV","local"],["TR:7/24 YABANCI DIZI","themed"]])
+  assert.equal(catalog.classifyChannel({title:"Fixture",groupTitle}).categoryId,categoryId);
+ assert.equal(catalog.classifyChannel({title:"Trt 1",sourceTitle:"TR • Trt 1 RAW",groupTitle:"TR:RAW"}).categoryId,"national");
+});

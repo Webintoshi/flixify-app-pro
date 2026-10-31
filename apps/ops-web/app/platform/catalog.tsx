@@ -17,6 +17,7 @@ import { pagePersonalCatalog, sessionIdentity, resolvePersonalDetail } from "./p
 import { buildShowcaseRails, orderShowcaseCatalog, showcaseDayKey } from "./catalog-showcase";
 import { buildHomepageShowcase, selectHomepageCatalog } from "./homepage-showcase";
 import { HomepageHero } from "./homepage-hero";
+import { pageLiveChannelCatalog } from "./live-channel-lineup";
 import { loadLegacyLiveCatalog } from "./legacy-live-catalog";
 import { itemKey, type Catalog, type Kind, type MediaItem } from "./types";
 import s from "./platform.module.css";
@@ -189,8 +190,9 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
           }
           return { items: selected, total: selected.length };
         }
+        if (kind === "live") return pageLiveChannelCatalog(items,page,search,group);
         const original = pagePersonalCatalog(items, page, search, group);
-        if (kind === "live" || search || group) return original;
+        if (search || group) return original;
         const key = `${kind}:${acquisitionDay}`;
         let ordered = snapshot.daily.get(key);
         if (!ordered) {
@@ -204,7 +206,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     if (providerMode !== "legacy") return Promise.reject(new Error("Provider loading"));
     if (kind === "live") return loadLegacyLiveCatalog({ accountId: identity, accessToken: session?.accessToken ?? "", sourceScope: providerScope, signal }).then(data => {
       signal?.throwIfAborted();
-      return pagePersonalCatalog(data.items, page, search, group);
+      return pageLiveChannelCatalog(data.items, page, search, group);
     });
     if (overview && !search && !group) return getHomepageCatalog(kind, account, revision, session?.accessToken ?? "", signal).then(data => {
       const items = selectHomepageCatalog(data.items, kind, "");
