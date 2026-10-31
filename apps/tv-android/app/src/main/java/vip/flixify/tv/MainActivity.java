@@ -62,8 +62,13 @@ public final class MainActivity extends Activity {
     private RecyclerView grid;
     private Page page;
     private long generation;
-    private boolean stopped,destroyed,initialized,resumeReload,playerLaunching;
+    private boolean stopped,destroyed,initialized,resumeReload,playerLaunching,searchPlayerReturn;
     private Dialog dialog,catalogDialog;
+    private static final class SearchSelection {
+        final Page owner;final Catalog snapshot;final long ticket;final String scope,query;final Item item;
+        SearchSelection(Page owner,Catalog snapshot,long ticket,String scope,String query,Item item){this.owner=owner;this.snapshot=snapshot;this.ticket=ticket;this.scope=scope;this.query=query;this.item=item;}
+    }
+    private SearchSelection searchSelection;
     private boolean resizeAfterCatalog;
     private EditText loginCode;
     private LinearLayout loginForm;
@@ -111,7 +116,7 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onResume() {
         super.onResume();playerLaunching=false;posterSound.resume();updatePanel.resumed(); if(!initialized)return;
-        boolean returning=resumeReload; resumeReload=false;
+        boolean returning=resumeReload || searchPlayerReturn; resumeReload=false;if(searchPlayerReturn)resizeAfterCatalog=false;searchPlayerReturn=false;
         if(!repository.hasSession()) { if(returning)showLogin(""); return; }
         discardPreviousSource();
         if(body==null) { page=pages.get(Section.HOME);showPage(false,false); }
@@ -133,15 +138,15 @@ public final class MainActivity extends Activity {
     @Override protected void onPause() {posterSound.pause();super.onPause();}
     @Override protected void onStop() {
         startup.cancelPendingFrame();
-        captureGrid();stopped=true;resumeReload=true;generation++;observationEpoch++;clearPendingCatalogs();
+        if(!searchPlayerReturn)captureGrid();stopped=true;resumeReload=true;generation++;observationEpoch++;clearPendingCatalogs();searchSelection=null;
         if(catalogObservation!=null){try{catalogObservation.close();}catch(Exception ignored){}catalogObservation=null;}
         updatePanel.cancel();if(dialog!=null)dialog.dismiss();super.onStop();
     }
     @Override protected void onDestroy() { destroyed=true; generation++;if(startup!=null)startup.close();if(posterSound!=null)posterSound.close();if(artwork!=null)artwork.close();if(updatePanel!=null)updatePanel.close();super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle out) {
-        captureGrid(); out.putString("section",page.section.name()); out.putString("query",page.query); out.putString("category",page.category);
+        if(!searchPlayerReturn)captureGrid(); out.putString("section",page.section.name()); out.putString("query",page.query); out.putString("category",page.category);
         out.putString("categoryTitle",page.categoryTitle); out.putString("focusKey",page.focusKey); out.putInt("scroll",page.scroll);
-        out.putString("controlFocus",focusIdentity(getCurrentFocus()));
+        out.putString("controlFocus",searchPlayerReturn?"poster:"+page.focusKey:focusIdentity(getCurrentFocus()));
         startup.saveInstanceState(out);
         super.onSaveInstanceState(out);
     }
@@ -179,6 +184,7 @@ public final class MainActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
     private boolean screenAlive(long ticket) { return !destroyed && !stopped && !isFinishing() && ticket==generation; }
+    @Override public void onWindowFocusChanged(boolean focused) {super.onWindowFocusChanged(focused);if(focused)openSearchSelection();}
     private boolean valid(long ticket,String scope) {
         // A remembered session bootstraps its first source inside the repository operation.
         // The repository rejects stale auth/source generations before delivering this callback.
@@ -206,7 +212,7 @@ public final class MainActivity extends Activity {
         if(stopped || destroyed || isFinishing() || !repository.hasSession() || !catalogMatchesCurrentSource(catalog))return;
         pendingCatalogUpdates.put(catalog.kind,catalog);
         pendingCatalogScopes.put(catalog.kind,repository.currentScope());
-        if(dialog==null || !dialog.isShowing())applyPendingCatalogs(true);
+        if(!searchHandoffPending() && (dialog==null || !dialog.isShowing()))applyPendingCatalogs(true);
     }
     private void applyPendingCatalogs(boolean redraw) {
         if(stopped || destroyed || !repository.hasSession() || (dialog!=null && dialog.isShowing()))return;
@@ -254,7 +260,7 @@ public final class MainActivity extends Activity {
     private void resizeScreen() {
         // A native IME may resize the Activity behind its dialog. Keep the owning
         // catalogue and the same editor alive until the draft is closed/submitted.
-        if(catalogDialog!=null && catalogDialog.isShowing()){resizeAfterCatalog=true;return;}
+        if(searchHandoffPending() || searchPlayerReturn || (catalogDialog!=null && catalogDialog.isShowing())){resizeAfterCatalog=true;return;}
         if(!repository.hasSession()) {
             // Resize existing views: replacing the editor would detach the IME and invalidate a pending login.
             sizing=TvLayout.measure(this);
@@ -456,6 +462,7 @@ public final class MainActivity extends Activity {
         return screenAlive(ticket) && repository.hasSession() && page==owner && owner.catalog==snapshot
                 && scope.equals(repository.currentScope());
     }
+    private boolean searchHandoffPending(){return searchSelection!=null && searchSelection.scope.equals(repository.currentScope());}
     private void catalogDismissed(Dialog dismissed,Page owner,Catalog snapshot,long ticket,String scope,String opener,boolean[] committed) {
         if(dialog==dismissed)dialog=null;
         if(catalogDialog!=dismissed)return;
@@ -464,6 +471,7 @@ public final class MainActivity extends Activity {
         if(stopped || destroyed || isFinishing())return;
         findViewById(android.R.id.content).post(()->{
             if(stopped || destroyed || isFinishing())return;
+            if(searchSelection!=null || playerLaunching){openSearchSelection();if(searchSelection!=null || playerLaunching)return;}
             if(catalogDialog!=null && catalogDialog.isShowing()){if(resize)resizeAfterCatalog=true;return;}
             if(!committed[0] && catalogOwner(owner,snapshot,ticket,scope)) {
                 View control=findFocus(findViewById(android.R.id.content),opener);
@@ -483,8 +491,28 @@ public final class MainActivity extends Activity {
                     if(!catalogOwner(owner,snapshot,ticket,scope)){panel[0].dismiss();return;}
                     owner.query=text.trim();owner.scroll=0;owner.focusKey="";
                     panel[0].dismiss();showPage(false,true);
+                },(item,text)->{
+                    committed[0]=true;
+                    if(catalogOwner(owner,snapshot,ticket,scope))searchSelection=new SearchSelection(owner,snapshot,ticket,scope,text.trim(),item);
+                    panel[0].dismiss();
                 },()->catalogDismissed(panel[0],owner,snapshot,ticket,scope,"catalog:search",committed));
         dialog=catalogDialog=panel[0];panel[0].show();
+    }
+    private void openSearchSelection() {
+        SearchSelection selection=searchSelection;
+        // The dialog owns focus until dismissal; keep the normal player launch guard intact.
+        if(selection==null || !hasWindowFocus() || dialog!=null || catalogDialog!=null)return;
+        searchSelection=null;resizeAfterCatalog=false;
+        if(!catalogOwner(selection.owner,selection.snapshot,selection.ticket,selection.scope)){applyPendingCatalogs(true);return;}
+        applyPendingCatalogs(false);
+        if(!screenAlive(selection.ticket) || page!=selection.owner || !selection.scope.equals(repository.currentScope()) || page.catalog==null)return;
+        Item selected=null;
+        for(Item item:page.catalog.items)if(item.key().equals(selection.item.key()) && item.scope.equals(selection.scope) && CatalogFilterData.matches(item,page.category,selection.query)){selected=item;break;}
+        if(selected==null){showPage(false,true);return;}
+        page.query=selection.query;page.scroll=0;page.focusKey=selected.key();
+        searchPlayerReturn=true;
+        play(selected);
+        if(!playerLaunching)searchPlayerReturn=false;
     }
     private void categories() {
         if(page.catalog==null)return;

@@ -18,7 +18,14 @@ public class CatalogFilterDataTest {
         List<Item> rows=new ArrayList<>();for(int n=0;n<40;n++)rows.add(item(""+n,"Film "+n,"a","Drama"));Catalog c=new Catalog(Kind.MOVIE,rows,Collections.emptyList());
         CatalogFilterData.SearchPreview p=CatalogFilterData.preview(c,"","");assertEquals(40,p.count);assertEquals(3,p.titles.size());
         try{p.titles.add("x");fail("Immutable preview");}catch(UnsupportedOperationException expected){}
+        try{p.items.clear();fail("Immutable preview identities");}catch(UnsupportedOperationException expected){}
         try{CatalogFilterData.categories(c,"").clear();fail("Immutable categories");}catch(UnsupportedOperationException expected){}
+    }
+    @Test public void sameTitleInDifferentCategoriesKeepsTheMatchingItemIdentity(){
+        Item first=item("one","Avengers","a","Drama"),second=item("two","Avengers","b","Belgesel");
+        Catalog c=new Catalog(Kind.MOVIE,Arrays.asList(first,second),Collections.emptyList());
+        CatalogFilterData.SearchPreview preview=CatalogFilterData.preview(c,"b","Avengers");
+        assertEquals(1,preview.count);assertEquals(1,preview.items.size());assertSame(second,preview.items.get(0));
     }
     @Test public void emptyAndUncategorizedCatalogKeepsAllOptionAndCorrectMatching(){
         Catalog empty=new Catalog(Kind.MOVIE,Collections.emptyList(),Collections.emptyList());List<CatalogFilterData.CategoryOption> r=CatalogFilterData.categories(empty,"");assertEquals(1,r.size());assertEquals(0,r.get(0).count);

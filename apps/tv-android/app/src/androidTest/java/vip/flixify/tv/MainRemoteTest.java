@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.widget.EditText;
 import android.widget.TextView;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -20,6 +21,8 @@ import org.junit.rules.TestName;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import android.graphics.Bitmap;
 import static org.junit.Assert.*;
 
@@ -132,6 +135,36 @@ public class MainRemoteTest {
         } while(!ready && SystemClock.uptimeMillis()<deadline);
         assertTrue("Focused dialog window with safe focused control: "+label,ready);idle();
     }
+    private void waitForFocusedCategoryList() {
+        String appPackage=instrumentation.getTargetContext().getPackageName();boolean ready=false;long deadline=SystemClock.uptimeMillis()+5000;
+        do {
+            for(AccessibilityWindowInfo window:instrumentation.getUiAutomation().getWindows()) {
+                if(!window.isFocused())continue;AccessibilityNodeInfo root=window.getRoot();
+                if(root==null || !appPackage.contentEquals(root.getPackageName()))continue;
+                AccessibilityNodeInfo focus=root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+                if(focus!=null && focus.isVisibleToUser() && "android.widget.ListView".contentEquals(focus.getClassName())){ready=true;break;}
+            }
+            if(!ready)SystemClock.sleep(30);
+        }while(!ready && SystemClock.uptimeMillis()<deadline);
+        assertTrue("Category dialog owns remote focus before navigation",ready);idle();
+    }
+    private void waitForNativeSearchAfterIme() {
+        boolean[] ready={false};long deadline=SystemClock.uptimeMillis()+5000;int stableFrames=0;
+        do {
+            CountDownLatch frame=new CountDownLatch(1);
+            instrumentation.runOnMainSync(()->{
+                try {
+                    java.lang.reflect.Field field=MainActivity.class.getDeclaredField("catalogDialog");field.setAccessible(true);android.app.Dialog dialog=(android.app.Dialog)field.get(activity);
+                    View decor=dialog==null || dialog.getWindow()==null?null:dialog.getWindow().getDecorView();View editor=decor==null?null:decor.findViewWithTag("tv_search_input");WindowInsets insets=decor==null?null:decor.getRootWindowInsets();
+                    ready[0]=decor!=null && decor.hasWindowFocus() && editor!=null && editor.hasFocus() && editor.hasWindowFocus() && !decor.isLayoutRequested() && !editor.isLayoutRequested() && insets!=null && !insets.isVisible(WindowInsets.Type.ime()) && insets.getInsets(WindowInsets.Type.ime()).bottom==0 && find(decor,"1 sonuç")!=null;
+                    if(decor!=null)decor.postOnAnimation(frame::countDown);else frame.countDown();
+                }catch(ReflectiveOperationException failure){throw new AssertionError(failure);}
+            });
+            stableFrames=ready[0]?stableFrames+1:0;if(stableFrames>=2){idle();return;}
+            try{assertTrue("Native dialog produces a frame",frame.await(2,TimeUnit.SECONDS));}catch(InterruptedException failure){Thread.currentThread().interrupt();throw new AssertionError(failure);}
+        }while(SystemClock.uptimeMillis()<deadline);
+        fail("IME insets hidden and current search/editor/window focus stable before remote navigation");
+    }
     private void enterNativeDialog(String value) {
         // The OS owns TV keyboard character selection; inject text at its documented editable boundary.
         AccessibilityNodeInfo field=dialogEditor();assertNotNull("Native dialog editor",field);
@@ -183,14 +216,14 @@ public class MainRemoteTest {
         launch(true); down(2); click(); key(KeyEvent.KEYCODE_DPAD_RIGHT); focused("Ara"); click();
         // Dialog attachment/window focus is asynchronous; send one real OK only after its editor owns focus.
         waitForFocusedDialogEditor();key(KeyEvent.KEYCODE_DPAD_CENTER); waitForIme(true); enterNativeDialog("Deniz");
-        key(KeyEvent.KEYCODE_BACK); waitForIme(false); waitForFocusedDialogEditor();
-        down(1); waitForFocusedDialogControl("Ara"); click();
+        key(KeyEvent.KEYCODE_BACK); waitForIme(false); waitForFocusedDialogEditor();waitForNativeSearchAfterIme();
+        down(1); waitForFocusedDialogControl("Sessiz Deniz");down(1);waitForFocusedDialogControl("Ara"); click();
         visible("Arama: Deniz · 1 sonuç"); visible("Sessiz Deniz"); absent("Uzay Yolculuğu");
         key(KeyEvent.KEYCODE_BACK); visible("Uzay Yolculuğu");
     }
     @Test public void remoteCategoryNarrowsGridAndBackRestoresAllItems() {
         launch(true); down(2); click(); key(KeyEvent.KEYCODE_DPAD_RIGHT); key(KeyEvent.KEYCODE_DPAD_RIGHT); focused("Kategori: Tümü"); click();
-        down(2); click(); visible("Sessiz Deniz"); absent("Uzay Yolculuğu");
+        waitForFocusedCategoryList();down(2); click(); visible("Sessiz Deniz"); absent("Uzay Yolculuğu");
         key(KeyEvent.KEYCODE_BACK); visible("Uzay Yolculuğu");
     }
     @Test public void failedLoadHasRemoteRetryAndLateResultsCannotReplaceAccount() {

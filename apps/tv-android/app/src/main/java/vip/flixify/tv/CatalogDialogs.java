@@ -43,17 +43,19 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import vip.flixify.tv.TvModels.Item;
 
 /** Native, local catalogue tools. Construction is separate from showing so the Activity owns dismissal. */
 final class CatalogDialogs {
     interface PreviewProvider { CatalogFilterData.SearchPreview preview(String query); }
     interface SearchAction { void apply(String query); }
+    interface SearchSelection { void select(Item item,String query); }
     interface CategoryAction { void select(CatalogFilterData.CategoryOption option); }
     private static final Locale TURKISH=Locale.forLanguageTag("tr-TR");
     private CatalogDialogs() {}
 
     static Dialog search(Activity activity,String section,String query,String categoryTitle,
-                         PreviewProvider preview,SearchAction apply,Runnable dismissed) {
+                         PreviewProvider preview,SearchAction apply,SearchSelection select,Runnable dismissed) {
         Dialog dialog=dialog(activity);
         Handler handler=new Handler(Looper.getMainLooper());
         boolean[] closed={false};
@@ -95,9 +97,19 @@ final class CatalogDialogs {
         result.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         previewBox.addView(result,new LinearLayout.LayoutParams(-1,dp(activity,26)));
         TextView[] examples=new TextView[3];
+        Item[] selectedItems=new Item[examples.length];String[] shownQuery={null};
         for(int n=0;n<examples.length;n++) {
-            examples[n]=text(activity,"",14,TvUi.MUTED);
-            previewBox.addView(examples[n],new LinearLayout.LayoutParams(-1,dp(activity,25)));
+            examples[n]=action(activity,"",false);examples[n].setTextSize(14);examples[n].setTextColor(TvUi.MUTED);examples[n].setSingleLine(true);examples[n].setEllipsize(TextUtils.TruncateAt.END);
+            examples[n].setId(View.generateViewId());examples[n].setTag("tv_search_result_"+n);
+            examples[n].setGravity(Gravity.CENTER_VERTICAL);examples[n].setPadding(dp(activity,10),0,dp(activity,10),0);
+            examples[n].setBackground(buttonSurface(activity,false));
+            final int index=n;
+            examples[n].setOnClickListener(v->{
+                if(closed[0] || selectedItems[index]==null || !input.getText().toString().trim().equals(shownQuery[0]))return;
+                hideKeyboard(input);
+                try{select.select(selectedItems[index],shownQuery[0]);}finally{dialog.dismiss();}
+            });
+            previewBox.addView(examples[n],new LinearLayout.LayoutParams(-1,dp(activity,40)));
         }
         scroll.examples=examples;
         LinearLayout.LayoutParams previewSpace=new LinearLayout.LayoutParams(-1,-2);previewSpace.topMargin=dp(activity,14);content.addView(previewBox,previewSpace);
@@ -120,7 +132,7 @@ final class CatalogDialogs {
         });
         input.setOnKeyListener((v,key,event)->{
             if(event.getAction()!=KeyEvent.ACTION_DOWN)return false;
-            if(key==KeyEvent.KEYCODE_DPAD_DOWN){search.requestFocus();return true;}
+            if(key==KeyEvent.KEYCODE_DPAD_DOWN){searchResultFocus(examples,0,1,search).requestFocus();return true;}
             if(key==KeyEvent.KEYCODE_DPAD_UP){close.requestFocus();return true;}
             return false;
         });
@@ -129,6 +141,19 @@ final class CatalogDialogs {
         clear.setNextFocusLeftId(input.getId());clear.setNextFocusDownId(cancel.getId());clear.setNextFocusUpId(close.getId());
         search.setNextFocusUpId(input.getId());search.setNextFocusLeftId(cancel.getId());search.setNextFocusRightId(search.getId());
         cancel.setNextFocusRightId(search.getId());cancel.setNextFocusLeftId(cancel.getId());
+        for(int n=0;n<examples.length;n++) {
+            final int index=n;
+            examples[n].setOnKeyListener((v,key,event)->{
+                if(event.getAction()!=KeyEvent.ACTION_DOWN)return false;
+                if(key==KeyEvent.KEYCODE_DPAD_UP){searchResultFocus(examples,index-1,-1,input).requestFocus();return true;}
+                if(key==KeyEvent.KEYCODE_DPAD_DOWN){searchResultFocus(examples,index+1,1,search).requestFocus();return true;}
+                if(key==KeyEvent.KEYCODE_DPAD_LEFT){input.requestFocus();return true;}
+                if(key==KeyEvent.KEYCODE_DPAD_RIGHT){search.requestFocus();return true;}
+                return false;
+            });
+        }
+        search.setOnKeyListener((v,key,event)->{if(event.getAction()==KeyEvent.ACTION_DOWN && key==KeyEvent.KEYCODE_DPAD_UP){searchResultFocus(examples,examples.length-1,-1,input).requestFocus();return true;}return false;});
+        clear.setOnKeyListener((v,key,event)->{if(event.getAction()==KeyEvent.ACTION_DOWN && key==KeyEvent.KEYCODE_DPAD_DOWN){searchResultFocus(examples,0,1,search).requestFocus();return true;}return false;});
         Runnable update=()->{
             if(closed[0])return;
             String value=input.getText().toString().trim();
@@ -136,11 +161,12 @@ final class CatalogDialogs {
             if(closed[0])return;
             int count=summary==null?0:summary.count;
             result.setText(value.isEmpty()?"Katalogda "+count+" içerik":count+" sonuç");
-            List<String> titles=summary==null?null:summary.titles;
+            List<Item> items=summary==null?null:summary.items;shownQuery[0]=value;
             for(int n=0;n<examples.length;n++) {
-                boolean exists=titles!=null && n<titles.size();
+                boolean exists=items!=null && n<items.size();selectedItems[n]=exists?items.get(n):null;
                 examples[n].setVisibility(exists || (n==0 && count==0)?View.VISIBLE:View.GONE);
-                examples[n].setText(exists?titles.get(n):(count==0?"Farklı bir içerik adı deneyebilirsin.":""));
+                examples[n].setText(exists?items.get(n).title:(count==0?"Farklı bir içerik adı deneyebilirsin.":""));
+                examples[n].setEnabled(exists);examples[n].setFocusable(exists);examples[n].setFocusableInTouchMode(exists);
             }
             boolean hasQuery=input.length()>0;
             clear.setEnabled(hasQuery);clear.setFocusable(hasQuery);clear.setAlpha(hasQuery?1f:.3f);
@@ -158,6 +184,11 @@ final class CatalogDialogs {
             if(closed[0])return;closed[0]=true;handler.removeCallbacksAndMessages(null);input.removeTextChangedListener(watcher);hideKeyboard(input);dismissed.run();
         });
         return dialog;
+    }
+
+    private static View searchResultFocus(TextView[] rows,int start,int step,View fallback) {
+        for(int n=start;n>=0 && n<rows.length;n+=step)if(rows[n].isShown() && rows[n].isEnabled() && rows[n].isFocusable())return rows[n];
+        return fallback;
     }
 
     static Dialog categories(Activity activity,String section,List<CatalogFilterData.CategoryOption> rows,

@@ -16,8 +16,12 @@ final class CatalogFilterData {
         CategoryOption(String id,String title,int count){this.id=id;this.title=title;this.count=count;}
     }
     static final class SearchPreview {
-        final int count;final List<String> titles;
-        SearchPreview(int count,List<String> titles){this.count=count;this.titles=Collections.unmodifiableList(new ArrayList<>(titles));}
+        final int count;final List<Item> items;final List<String> titles;
+        SearchPreview(int count,List<Item> items){
+            this.count=count;this.items=Collections.unmodifiableList(new ArrayList<>(items));
+            List<String> labels=new ArrayList<>(items.size());for(Item item:items)labels.add(item.title);
+            this.titles=Collections.unmodifiableList(labels);
+        }
     }
     private CatalogFilterData(){}
     private static String normalized(String value){return value==null?"":value.trim().toLowerCase(TURKISH);}
@@ -29,8 +33,8 @@ final class CatalogFilterData {
         return result;
     }
     static SearchPreview preview(Catalog catalog,String category,String query){
-        String text=normalized(query);int count=0;List<String> samples=new ArrayList<>(3);
-        for(Item item:catalog.items)if(match(item,category,text)){count++;if(samples.size()<3)samples.add(item.title);}
+        String text=normalized(query);int count=0;List<Item> samples=new ArrayList<>(3);
+        for(Item item:catalog.items)if(match(item,category,text)){count++;if(samples.size()<3)samples.add(item);}
         return new SearchPreview(count,samples);
     }
     static List<CategoryOption> categories(Catalog catalog,String query){

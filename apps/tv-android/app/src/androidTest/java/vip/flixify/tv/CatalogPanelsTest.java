@@ -45,13 +45,14 @@ public class CatalogPanelsTest {
     void openSearch(ActivityScenario<MainActivity> s){key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_CENTER);await(s,"Native search input focus",a->tag(a,"tv_search_input")!=null && tag(a,"tv_search_input").hasFocus());}
     void openCategories(ActivityScenario<MainActivity> s){key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_CENTER);await(s,"Native category list focus",a->tag(a,"tv_categories_list")!=null && tag(a,"tv_categories_list").hasFocus());}
     void draft(ActivityScenario<MainActivity> s,String tag,String value){s.onActivity(a->((EditText)tag(a,tag)).setText(value));}
-    void applySearch(ActivityScenario<MainActivity> s){key(KeyEvent.KEYCODE_DPAD_DOWN);s.onActivity(a->assertTrue(tag(a,"tv_search_apply").hasFocus()));key(KeyEvent.KEYCODE_DPAD_CENTER);}
+    void focusSearchApply(ActivityScenario<MainActivity> s){AtomicBoolean focused=new AtomicBoolean();for(int n=0;n<5;n++){key(KeyEvent.KEYCODE_DPAD_DOWN);s.onActivity(a->focused.set(tag(a,"tv_search_apply").hasFocus()));if(focused.get())return;}fail("Ara remains reachable after preview results");}
+    void applySearch(ActivityScenario<MainActivity> s){focusSearchApply(s);key(KeyEvent.KEYCODE_DPAD_CENTER);}
     @Test public void searchPreviewIsDraftUntilApplyAndCancelRestoresOpener(){
         try(ActivityScenario<MainActivity> s=launch()){
             openSearch(s);draft(s,"tv_search_input","Deniz");
             await(s,"Live local preview",a->text(tag(a,"tv_search_preview"),"1 sonuç")!=null);
             s.onActivity(a->{assertNotNull(text(a.findViewById(android.R.id.content),repository.movie.title));assertNotNull(text(a.findViewById(android.R.id.content),repository.movie2.title));});
-            key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_LEFT);key(KeyEvent.KEYCODE_DPAD_CENTER);
+            focusSearchApply(s);key(KeyEvent.KEYCODE_DPAD_LEFT);key(KeyEvent.KEYCODE_DPAD_CENTER);
             await(s,"Cancel returns to Ara",a->panel(a)==null && a.hasWindowFocus() && a.getCurrentFocus() instanceof TextView && "Ara".contentEquals(((TextView)a.getCurrentFocus()).getText()));
             key(KeyEvent.KEYCODE_DPAD_CENTER);await(s,"Reopened search",a->tag(a,"tv_search_input")!=null);
             s.onActivity(a->assertEquals("",((EditText)tag(a,"tv_search_input")).getText().toString()));
