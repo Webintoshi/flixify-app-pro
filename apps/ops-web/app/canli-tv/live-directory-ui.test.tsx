@@ -83,6 +83,13 @@ describe("live directory presentation and player tools", () => {
     await settle(()=>button("Star Tv").click());await settle();
     expect(playback).toHaveBeenCalledExactlyOnceWith(rows[5].personalRef);
   });
+  it("hides provider category labels in the directory and playing summary while keeping channel metadata",async()=>{
+    await settle(()=>root.render(<LiveTvPage/>));await settle();
+    expect(container.querySelector('[aria-label="Canlı kanallar"]')?.textContent).not.toContain("TR-GENEL");
+    await select();expect(container.textContent).not.toContain("TR-GENEL");
+    expect(container.textContent).toContain("Fixture Haber");expect(channel.groupTitle).toBe("TR-GENEL");
+    expect(playback).toHaveBeenCalledExactlyOnceWith(ref);
+  });
   afterEach(async () => { await settle(() => root.unmount()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
   it("keeps favorite ownership in the player and tabs filtering the same catalog", async () => {

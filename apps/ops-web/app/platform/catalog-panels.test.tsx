@@ -165,3 +165,12 @@ it("uses the latest close callback for Escape without reopening the native dialo
   await settle(() => input.dispatchEvent(escape));
   expect(escape.defaultPrevented).toBe(true); expect(first).not.toHaveBeenCalled(); expect(latest).toHaveBeenCalledOnce();
 });
+
+it.each(['live','movie','series'] as const)('shows content categories only for VOD search results: %s',async kind=>{
+ const item={id:'label-fixture',kind,title:'Fixture',groupTitle:kind==='live'?'TR:BEINSPORT':'Drama'};
+ await settle(()=>root.render(<CatalogSearchDialog title="Katalog" initialQuery="Fixture" scope="Kategori: Tümü" preview={async()=>({items:[item],total:1})} onSelect={()=>{}} onSubmit={()=>{}} onClose={()=>{}}/>));
+ await act(async()=>{await vi.advanceTimersByTimeAsync(180);});
+ const result=container.querySelector('li button')!;expect(result.textContent).toContain('Fixture');
+ expect(Boolean(result.querySelector('small'))).toBe(kind!=='live');
+ if(kind!=='live')expect(result.textContent).toContain('Drama');
+});

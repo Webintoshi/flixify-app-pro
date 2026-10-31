@@ -116,6 +116,15 @@ it.each(["personal","legacy"])("starts the homepage live rail with Turkish natio
  expect([...rail.querySelectorAll("strong")].slice(0,2).map(node=>node.textContent)).toEqual(["TRT 1","Star TV"]);
 });
 
+it("hides provider categories on live homepage cards while keeping movie categories",async()=>{
+ const previous=state.platform.personalProvider.catalog;
+ state.platform.personalProvider.catalog=async(kind:string)=>kind==="live"?items("live").map(item=>({...item,groupTitle:"TR:BEINSPORT"})):previous(kind);
+ await settle(()=>root.render(<CatalogPage kind="movie" overview/>));
+ const rail=[...container.querySelectorAll("section")].find(section=>section.querySelector("h2")?.textContent==="Canlı TV")!;
+ expect(rail.textContent).not.toContain("TR:BEINSPORT");
+ expect(container.textContent).toContain("Gerçek katalog kategorisi");
+});
+
 it("keeps the exact signed APK download in the header without a separate home notice", async () => {
   await settle(() => root.render(<AppShell publicAccess><div>Library</div></AppShell>));
   const download = container.querySelector<HTMLAnchorElement>("header a[download]");

@@ -957,7 +957,7 @@ export default function LiveTvPage() {
               </div>
             )}
             <div className={styles.playerTopbar}>
-              <div><span className={styles.livePill}>CANLI</span>{selectedChannel ? <span className={styles.playerTitle}><strong>{cleanChannelTitle(selectedChannel.title)}</strong><small>{selectedChannel.groupTitle ?? "Canlı TV"}</small></span> : null}</div>
+              <div><span className={styles.livePill}>CANLI</span>{selectedChannel ? <span className={styles.playerTitle}><strong>{cleanChannelTitle(selectedChannel.title)}</strong></span> : null}</div>
               {selectedChannel ? <button type="button" className={styles.closeButton} onClick={closePlayer} aria-label="Oynatıcıyı kapat"><AppIcon name="close" /></button> : null}
             </div>
           </div>
@@ -966,7 +966,7 @@ export default function LiveTvPage() {
             {selectedChannel ? (
               <>
                 <ChannelLogo channel={selectedChannel} active />
-                <div><h2>{cleanChannelTitle(selectedChannel.title)}</h2><small>{selectedChannel.groupTitle ?? "Canlı TV"}</small></div>
+                <div><h2>{cleanChannelTitle(selectedChannel.title)}</h2></div>
               </>
             ) : (
               <div className={styles.emptyProgramme}><strong>Canlı yayın seçilmedi</strong><small>Listeden izlemek istediğiniz kanalı seçin.</small></div>
@@ -1018,7 +1018,7 @@ export default function LiveTvPage() {
               return (
                 <div key={channel.id} className={styles.favoriteRow}><button type="button" className={`${styles.channelRow}${isSelected ? ` ${styles.selectedChannel}` : ""}`} aria-current={isSelected ? "true" : undefined} disabled={!channel.playbackAllowed} onClick={() => void playChannel(channel)}>
                   <ChannelLogo channel={channel} />
-                  <span className={styles.channelInfo}><strong>{cleanChannelTitle(channel.title)}</strong><small>{channel.groupTitle ?? "Canlı TV"}</small></span>
+                  <span className={styles.channelInfo}><strong>{cleanChannelTitle(channel.title)}</strong></span>
                 </button></div>
               );
             })}
