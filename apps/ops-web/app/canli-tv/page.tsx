@@ -156,6 +156,9 @@ function ChannelLogo({ channel, active = false }: { channel: LiveChannel; active
   );
 }
 
+type FirstPicture = {ms:number;method:"requestVideoFrameCallback" | "loadeddata-fallback" | "playing-fallback"};
+type SelectionTiming = {startedAt:number;isCurrent:()=>boolean;picture?:FirstPicture};
+
 function LiveVideo({
   playback,
   title,
@@ -165,7 +168,8 @@ function LiveVideo({
   refreshPersonalPlayback,
   onAccessExpired,
   actions,
-  guide
+  guide,
+  selectionTiming
 }: {
   playback: PlaybackResponse;
   title: string;
@@ -176,6 +180,7 @@ function LiveVideo({
   onAccessExpired: () => void;
   actions?: ReactNode;
   guide?: ReactNode;
+  selectionTiming: SelectionTiming | null;
 }) {
   const verifiedExpiry = useProviderExpiry();
   const deadlineRef = useRef<ReturnType<typeof createDirectPlaybackDeadline> | null>(null);
@@ -183,6 +188,26 @@ function LiveVideo({
   const expiryRef = useRef(effectiveExpiry); expiryRef.current = effectiveExpiry;
   useEffect(() => { deadlineRef.current?.update(effectiveExpiry); }, [effectiveExpiry]);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [firstPicture,setFirstPicture]=useState<FirstPicture | undefined>(selectionTiming?.picture);
+  useEffect(()=>{
+    const media=videoRef.current;if(!media || !selectionTiming)return;
+    const timing=selectionTiming;let cancelled=false;let frame:number | null=null;
+    setFirstPicture(timing.picture);
+    const record=(method:FirstPicture["method"])=>{
+      const expiry=Date.parse(expiryRef.current ?? "");
+      if(cancelled || !timing.isCurrent() || timing.picture || (Number.isFinite(expiry) && expiry<=Date.now()))return;
+      const picture={ms:Math.max(0,Math.round((performance.now()-timing.startedAt)*10)/10),method};
+      timing.picture=picture;setFirstPicture(picture);
+    };
+    if(timing.picture)return;
+    const loaded=()=>record("loadeddata-fallback"),playing=()=>record("playing-fallback");
+    let frameCallback=false;
+    if(typeof media.requestVideoFrameCallback==="function") {
+      try{frame=media.requestVideoFrameCallback(()=>{frame=null;record("requestVideoFrameCallback");});frameCallback=true;}catch{}
+    }
+    if(!frameCallback){media.addEventListener("loadeddata",loaded);media.addEventListener("playing",playing);}
+    return()=>{cancelled=true;if(frame!==null)media.cancelVideoFrameCallback?.(frame);media.removeEventListener("loadeddata",loaded);media.removeEventListener("playing",playing);};
+  },[selectionTiming]);
   const lowerQualityRef = useRef(onNeedLowerQuality);
   lowerQualityRef.current = onNeedLowerQuality;
   const [playerError, setPlayerError] = useState<string | null>(null);
@@ -612,7 +637,7 @@ function LiveVideo({
   }, [accessToken, onPlaybackChange, playback, revision]);
 
   return (
-    <div className={styles.playerShell} data-playback-mode={activePlaybackMode} data-reconnect-attempt={activeReconnectAttempt}>
+    <div className={styles.playerShell} data-playback-mode={activePlaybackMode} data-reconnect-attempt={activeReconnectAttempt} data-first-picture-ms={firstPicture?.ms} data-measurement-method={firstPicture?.method}>
       <video
         ref={videoRef}
         className={styles.video}
@@ -652,6 +677,7 @@ export default function LiveTvPage() {
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestVersionRef = useRef(0);
+  const [selectionTiming,setSelectionTiming]=useState<SelectionTiming | null>(null);
   const identityRef = useRef({ personalProvider, providerMode, token: platformSession?.accessToken, scope: providerScope });
   identityRef.current = { personalProvider, providerMode, token: platformSession?.accessToken, scope: providerScope };
   const epgScope = useRef(createLiveRequestScope());
@@ -660,7 +686,7 @@ export default function LiveTvPage() {
   useEffect(() => { setSession(platformSession); }, [platformSession]);
   useEffect(() => {
     requestVersionRef.current += 1;
-    setChannels([]); setSelectedChannel(null); setPlayback(null); setPlaying(false); setError(null);
+    setChannels([]); setSelectedChannel(null); setPlayback(null); setSelectionTiming(null); setPlaying(false); setError(null);
     openedChannel.current = null; setRecentIds([]);
     return () => { requestVersionRef.current += 1; };
   }, [personalProvider, providerMode, providerScope, platformSession?.accessToken]);
@@ -814,13 +840,14 @@ export default function LiveTvPage() {
 
   useEffect(() => setRenderLimit(initialRenderLimit), [directoryTab, search, selectedCategory, selectedCountry]);
 
-  async function playChannel(channel: LiveChannel) {
+  async function playChannel(channel: LiveChannel, inheritedTiming?: SelectionTiming | null) {
     if (!session || !channel.playbackAllowed || providerMode === "loading") return;
     if (providerMode === "personal" && (!personalProvider || !channel.personalRef)) return;
     const identity = identityRef.current;
     if (selectedChannel?.id === channel.id && playback) return;
     const previousReleaseUrl = !playback?.personalRef && playback?.url ? buildLiveReleaseUrl(playback.url) : null;
     const requestVersion = ++requestVersionRef.current;
+    setSelectionTiming({startedAt:inheritedTiming?.startedAt ?? performance.now(),isCurrent:()=>requestVersion===requestVersionRef.current,picture:inheritedTiming?.picture});
     setSelectedChannel(channel);
     setPlayback(null);
     setPlaying(true);
@@ -869,6 +896,7 @@ export default function LiveTvPage() {
 
   function closePlayer() {
     requestVersionRef.current += 1;
+    setSelectionTiming(null);
     setSelectedChannel(null);
     setPlayback(null);
     setPlaying(false);
@@ -923,7 +951,7 @@ export default function LiveTvPage() {
 
         <section className={styles.playerColumn} aria-live="polite">
           <div className={styles.playerStage}>
-            {playback && selectedChannel && session ? <LiveVideo playback={playback} title={selectedChannel.title} accessToken={session.accessToken} actions={<FavoriteButton item={{ ...selectedChannel, kind: "live", posterUrl: selectedChannel.logoUrl }}/>} guide={selectedChannel.personalRef ? <div className={styles.programmeContent}>{programmeContent}</div> : undefined} onAccessExpired={() => { requestVersionRef.current++; setChannels([]); setSelectedChannel(null); setPlayback(null); setEpg(null); epgScope.current.clear(); setError("İzleme süren doldu."); }} refreshPersonalPlayback={selectedChannel.personalRef && personalProvider ? async () => {
+            {playback && selectedChannel && session ? <LiveVideo playback={playback} selectionTiming={selectionTiming} title={selectedChannel.title} accessToken={session.accessToken} actions={<FavoriteButton item={{ ...selectedChannel, kind: "live", posterUrl: selectedChannel.logoUrl }}/>} guide={selectedChannel.personalRef ? <div className={styles.programmeContent}>{programmeContent}</div> : undefined} onAccessExpired={() => { requestVersionRef.current++; setSelectionTiming(null); setChannels([]); setSelectedChannel(null); setPlayback(null); setEpg(null); epgScope.current.clear(); setError("İzleme süren doldu."); }} refreshPersonalPlayback={selectedChannel.personalRef && personalProvider ? async () => {
               const identity = identityRef.current;
               const result = await personalProvider.playback(selectedChannel.personalRef!);
               if (identity.personalProvider !== identityRef.current.personalProvider || identity.token !== identityRef.current.token || identity.providerMode !== identityRef.current.providerMode || identity.scope !== identityRef.current.scope) throw new Error("Oturum değişti");
@@ -931,7 +959,7 @@ export default function LiveTvPage() {
             } : undefined} onPlaybackChange={setPlayback} onNeedLowerQuality={() => {
               const lower = findLowerBandwidthVariant(channels, selectedChannel);
               if (!lower) return false;
-              void playChannel(lower);
+              void playChannel(lower,selectionTiming);
               return true;
             }} /> : (
               <div className={styles.playerEmpty}>

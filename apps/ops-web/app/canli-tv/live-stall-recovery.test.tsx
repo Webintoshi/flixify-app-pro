@@ -4,7 +4,8 @@ import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LiveTvPage from "./page";
 
-const state = vi.hoisted(() => ({ platform: {} as any, engines: [] as any[], hlsImportGate:null as Promise<void>|null }));
+const state = vi.hoisted(() => ({ platform: {} as any, engines: [] as any[], hlsImportGate:null as Promise<void>|null,api:vi.fn() }));
+vi.mock("../../lib/api",()=>({apiRequest:(...args:any[])=>state.api(...args)}));
 vi.mock("../platform/session", () => ({ usePlatform: () => state.platform, useProviderExpiry: () => state.platform.providerExpiresAt }));
 vi.mock("../platform/artwork", () => ({ FavoriteButton: () => null }));
 vi.mock("../components/player-chrome", () => ({ PlayerChrome: () => null }));
@@ -56,6 +57,8 @@ describe("live stream stall recovery", () => {
     vi.stubGlobal("localStorage", storage);
     Object.defineProperty(dom.window, "localStorage", { configurable: true, value: storage });
     Object.defineProperties(dom.window.HTMLElement.prototype, {
+      requestVideoFrameCallback: {configurable:true,value:undefined},
+      cancelVideoFrameCallback: {configurable:true,value:undefined},
       currentTime: { configurable: true, writable: true, value: 0 },
       src: { configurable: true, get() { return this.getAttribute("src") ?? ""; }, set(value: string) { this.setAttribute("src",value); } },
       readyState: { configurable: true, writable: true, value: 4 },
@@ -69,7 +72,7 @@ describe("live stream stall recovery", () => {
     });
     expiresAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
     playback = vi.fn(async () => ({ url, expiresAt }));
-    state.engines = [];state.hlsImportGate=null;
+    state.engines = [];state.hlsImportGate=null;state.api.mockReset().mockRejectedValue(new Error("Unexpected fixture API call"));
     state.platform = { session: { accessToken: "test-token" }, favorites: [], providerMode: "personal", providerScope: "line-a",
       personalProvider: { catalog: async () => [{ id: "channel-a", title: "ATV HD", groupTitle: "TR", personalRef: ref }],
         playback, shortEpg: async () => ({ status: "empty", programmes: [] }) } };
@@ -389,4 +392,71 @@ describe("live stream stall recovery", () => {
       expect(state.engines).toHaveLength(interruption + 2);
     }
   });
+  function firstPictureSurface() { return container.querySelector("[data-playback-mode]")!; }
+  function frameObserver() {
+    const frames:Array<{id:number;callback:VideoFrameRequestCallback}>=[];
+    const cancel=vi.fn();
+    Object.defineProperties(window.HTMLElement.prototype,{
+      requestVideoFrameCallback:{configurable:true,value(callback:VideoFrameRequestCallback){const id=frames.length+1;frames.push({id,callback});return id;}},
+      cancelVideoFrameCallback:{configurable:true,value:cancel}
+    });
+    return {frames,cancel,fire:(index:number)=>frames[index].callback(performance.now(),{mediaTime:0,presentedFrames:1} as VideoFrameCallbackMetadata)};
+  }
+  it("measures accepted selection through delayed authorization until a presented frame",async()=>{
+    const observer=frameObserver();let authorize!:(value:{url:string;expiresAt:string})=>void;
+    playback.mockImplementationOnce(()=>new Promise(resolve=>authorize=resolve));
+    await settle(()=>root.render(<LiveTvPage/>));await tick(1400);expect(container.querySelector("video")).toBeNull();
+    await settle(()=>authorize({url,expiresAt}));expect(observer.frames).toHaveLength(1);
+    await tick(400);await settle(()=>video().dispatchEvent(new Event("playing")));
+    expect(firstPictureSurface().getAttribute("data-first-picture-ms")).toBeNull();
+    await settle(()=>observer.fire(0));
+    expect(Number(firstPictureSurface().getAttribute("data-first-picture-ms"))).toBe(1800);
+    expect(firstPictureSurface().getAttribute("data-measurement-method")).toBe("requestVideoFrameCallback");
+    expect(firstPictureSurface().textContent).not.toContain("1800");
+  });
+  it("includes the single-connection release wait and rejects retired channel frame callbacks",async()=>{
+    const observer=frameObserver();const catalog=await state.platform.personalProvider.catalog();
+    state.platform.personalProvider.catalog=async()=>[...catalog,{...catalog[0],id:"channel-b",title:"Second channel",personalRef:{...ref,id:"275"}}];
+    await mount();expect(observer.frames).toHaveLength(1);
+    await tick(200);await settle(()=>[...container.querySelectorAll<HTMLButtonElement>("button")].find(button=>button.textContent?.includes("Second channel"))!.click());
+    expect(observer.cancel).toHaveBeenCalledWith(observer.frames[0].id);
+    await tick(800);await tick(100);expect(observer.frames).toHaveLength(2);
+    await settle(()=>observer.fire(0));expect(firstPictureSurface().getAttribute("data-first-picture-ms")).toBeNull();
+    await settle(()=>observer.fire(1));expect(Number(firstPictureSurface().getAttribute("data-first-picture-ms"))).toBe(900);
+  });
+  it("keeps the original click across recovery and records the first picture only once",async()=>{
+    const observer=frameObserver();await mount();await tick(200);
+    await settle(()=>state.engines[0].networkError());await tick(4100);
+    expect(playback).toHaveBeenCalledTimes(2);expect(observer.frames).toHaveLength(1);
+    await settle(()=>observer.fire(0));expect(Number(firstPictureSurface().getAttribute("data-first-picture-ms"))).toBe(4300);
+    await tick(400);await settle(()=>observer.fire(0));expect(Number(firstPictureSurface().getAttribute("data-first-picture-ms"))).toBe(4300);
+  });
+  it("cancels first-picture observation on access expiry and ignores a late callback",async()=>{
+    const observer=frameObserver();await mount();
+    state.platform={...state.platform,providerExpiresAt:new Date(Date.now()).toISOString()};
+    await settle(()=>root.render(<LiveTvPage/>));expect(observer.cancel).toHaveBeenCalledWith(observer.frames[0].id);
+    await settle(()=>observer.fire(0));expect(container.querySelector("[data-first-picture-ms]")).toBeNull();expect(container.querySelector("video")).toBeNull();
+  });
+  it.each(["loadeddata","playing"])("labels %s as a fallback when presented-frame callbacks are unavailable",async event=>{
+    await mount();await tick(300);await settle(()=>video().dispatchEvent(new Event(event)));
+    expect(firstPictureSurface().getAttribute("data-measurement-method")).toBe(event+"-fallback");
+    expect(Number(firstPictureSurface().getAttribute("data-first-picture-ms"))).toBe(300);
+  });
+
+  it.each([false,true])("keeps legacy automatic variant timing but resets a manual selection (first picture already seen: %s)",async seen=>{
+    const observer=frameObserver();
+    const channels=[{id:"channel-a",title:"Fixture FHD",groupTitle:"TR",variantGroupKey:"fixture-timing",playbackAllowed:true,transport:"hls"},{id:"channel-b",title:"Fixture HD",groupTitle:"TR",variantGroupKey:"fixture-timing",playbackAllowed:true,transport:"hls"}];
+    state.platform={...state.platform,session:{accessToken:"legacy-timing-"+seen},personalProvider:null,providerMode:"legacy",providerScope:""};
+    state.api.mockImplementation(async(path:string)=>path.startsWith("/me/catalog/live")?{items:channels,total:2}:path.includes("/playback")?{url:"https://edge.test/"+(path.includes("channel-b")?"lower":"initial")+".m3u8",channelId:path.includes("channel-b")?"channel-b":"channel-a",canPlay:true,errorMessage:null,deliveryMode:"direct_provider",transport:"hls",expiresAt}:{ok:true});
+    await mount();await tick(200);if(seen)await settle(()=>observer.fire(0));
+    await settle(()=>state.engines[0].networkError());await tick(4100);
+    await settle(()=>state.engines[1].networkError());await tick(800);await tick(100);
+    expect(state.engines.at(-1).source).toBe("https://edge.test/lower.m3u8");
+    if(!seen)await settle(()=>observer.fire(1));
+    expect(Number(firstPictureSurface().getAttribute("data-first-picture-ms"))).toBe(seen?200:5200);
+    await settle(()=>[...container.querySelectorAll<HTMLButtonElement>("button")].find(button=>button.textContent?.includes("Fixture FHD"))!.click());
+    await tick(800);await tick(100);await settle(()=>observer.fire(observer.frames.length-1));
+    expect(Number(firstPictureSurface().getAttribute("data-first-picture-ms"))).toBe(900);
+  });
+
 });
