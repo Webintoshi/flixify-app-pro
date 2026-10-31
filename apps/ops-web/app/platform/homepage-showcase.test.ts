@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildHomepageShowcase, selectHomepageCatalog } from "./homepage-showcase";
+import { buildShowcaseRails } from "./catalog-showcase";
 import { itemKey, type Kind, type MediaItem } from "./types";
 
 const item = (id: number, kind: Kind = "movie", year = 2026): MediaItem => ({
@@ -73,5 +74,38 @@ describe("2026 homepage composition", () => {
   it("retains genuine entries without artwork in rails while excluding them from the hero", () => {
     const withoutArt = { ...item(1), posterUrl: null };
     expect(buildHomepageShowcase([withoutArt], "day")).toEqual({ hero: [], movies: [withoutArt], series: [], total: 1 });
+  });
+
+  it("fills rails with genuine artwork before coverless entries without losing the full catalog", () => {
+    const rows = (["movie", "series"] as const).flatMap(kind => [
+      ...Array.from({ length: 90 }, (_, i) => ({ ...item(i, kind), posterUrl: i % 2 ? null : "  " })),
+      ...Array.from({ length: 40 }, (_, i) => item(i + 100, kind))
+    ]);
+    const result = buildHomepageShowcase(rows, "2026-10-31");
+    expect(result.total).toBe(260);
+    const excluded = new Set(result.hero.map(itemKey));
+    const fullPool = [...selectHomepageCatalog(rows, "movie", "2026-10-31"), ...selectHomepageCatalog(rows, "series", "2026-10-31")];
+    for (const kind of ["movie", "series"] as const) {
+      const dailyCatalog = selectHomepageCatalog(rows, kind, "2026-10-31");
+      expect(dailyCatalog).toHaveLength(130);
+      expect(dailyCatalog.some(row => !row.posterUrl?.trim())).toBe(true);
+      const rail = kind === "movie" ? result.movies : result.series;
+      expect(rail).toHaveLength(18);
+      expect(rail.every(row => Boolean(row.posterUrl?.trim()))).toBe(true);
+      const originalRails = buildShowcaseRails(fullPool, kind, excluded);
+      const originalOrder = [...originalRails.primary, ...originalRails.categories.flatMap(([, entries]) => entries), ...originalRails.other];
+      expect(rail).toEqual(originalOrder.filter(row => row.posterUrl?.trim()).slice(0, 18));
+    }
+  });
+
+  it("accepts actual logo artwork and retains coverless fallback when inventory is scarce", () => {
+    const logoOnly = { ...item(1), posterUrl: "  ", logoUrl: " /genuine-logo.jpg " };
+    const missing = [{ ...item(2), posterUrl: null }, { ...item(3), posterUrl: " ", logoUrl: "  " }];
+    const result = buildHomepageShowcase([...missing, logoOnly], "day");
+    expect(result.hero).toEqual([]);
+    expect(result.movies[0]).toBe(logoOnly);
+    const dailyFallback = selectHomepageCatalog([...missing, logoOnly], "movie", "day").filter(row => row !== logoOnly);
+    expect(result.movies).toEqual([logoOnly, ...dailyFallback]);
+    expect(result.total).toBe(3);
   });
 });

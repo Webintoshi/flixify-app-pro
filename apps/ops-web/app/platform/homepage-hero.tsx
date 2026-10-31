@@ -25,7 +25,7 @@ export function HomepageHero({ items, onOpen }: {
   ].filter(Boolean).join(" · ");
 
   return <section className={`${s.hero} ${items.length === 1 ? s.single : ""}`} aria-label="Günün öne çıkan içeriği" data-homepage-hero>
-    {artwork && <div className={s.ambient} aria-hidden="true"><img src={artwork} alt="" decoding="async"/></div>}
+    {artwork && <div className={s.ambient} data-homepage-poster={itemKey(featured)} aria-hidden="true"><img src={artwork} alt="" decoding="async"/></div>}
     <div className={s.copy}>
       <p className={s.metadata}>2026 · {featured.kind === "series" ? "Dizi" : "Film"}</p>
       <h1>{displayTitle(featured)}</h1>
@@ -37,9 +37,9 @@ export function HomepageHero({ items, onOpen }: {
         <div className={s.favoriteAction}><FavoriteButton item={featured}/></div>
       </div>
     </div>
-    <button type="button" className={s.poster} aria-label={`${featured.title} oynat`} onClick={() => onOpen(featured, true)}><Artwork item={featured} hero/></button>
+    <button type="button" className={s.poster} data-homepage-poster={itemKey(featured)} aria-label={`${featured.title} oynat`} onClick={() => onOpen(featured, true)}><Artwork item={featured} hero/></button>
     {items.length > 1 && <div className={s.selectors} role="group" aria-label="Öne çıkan içerikler">
-      {items.map((item, index) => <button key={itemKey(item)} type="button" className={s.selector} aria-label={`${index + 1}. içerik: ${item.title}`} aria-pressed={itemKey(featured) === itemKey(item)} onClick={() => setSelected(itemKey(item))}>
+      {items.map((item, index) => <button key={itemKey(item)} type="button" className={s.selector} data-homepage-poster={itemKey(item)} aria-label={`${index + 1}. içerik: ${item.title}`} aria-pressed={itemKey(featured) === itemKey(item)} onClick={() => setSelected(itemKey(item))}>
         <span className={s.selectorImage}><Artwork item={item}/></span>
         <span className={s.selectorTitle}>{displayTitle(item)}</span>
       </button>)}

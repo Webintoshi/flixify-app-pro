@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import { apiRequest } from "../../lib/api";
 import { accountState, type AccountUser } from "../../lib/account-model";
@@ -25,6 +25,7 @@ import homeStyles from "./homepage.module.css";
 
 const cache = new Map<string, { at: number; data: Catalog }>();
 let cacheAccount = "";
+const noPosterFailures: ReadonlySet<string> = new Set();
 const routes = { live: "live", movie: "movies", series: "series" };
 type CatalogRequest = { signal?: AbortSignal; accessToken?: string; skipAuthRefresh?: boolean };
 function getCatalog(kind: Kind, page: number, search: string, group: string, account: string, movieRevision = 0, pageSize = 48, request?: CatalogRequest): Promise<Catalog> {
@@ -90,7 +91,7 @@ function MediaTile({ item, open }: { item: MediaItem; open: (item: MediaItem, au
   }, [preview]);
   useEffect(() => () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); }, []);
   const details = [item.kind === "series" ? "Dizi" : item.kind === "movie" ? "Film" : "Canlı TV", item.groupTitle, item.seasonCount ? `${item.seasonCount} sezon` : null, item.episodeCount ? `${item.episodeCount} bölüm` : null].filter(Boolean).join(" · ");
-  return <div ref={tileRef} className={`${s.tile} ${item.kind === "live" ? s.channelTile : ""}`} onMouseEnter={() => showPreview()} onMouseLeave={scheduleClose}>
+  return <div ref={tileRef} data-homepage-poster={itemKey(item)} className={`${s.tile} ${item.kind === "live" ? s.channelTile : ""}`} onMouseEnter={() => showPreview()} onMouseLeave={scheduleClose}>
     <button className={s.tileOpen} onFocus={event => showPreview(event.currentTarget.matches(":focus-visible"))} onClick={() => { hidePreview(); open(item); }} disabled={item.available === false} aria-label={`${item.title} oynat`}><div className={s.posterFrame}><Artwork item={item}/><span className={s.tilePlay} aria-hidden="true"><Icon name={item.kind === "live" ? "live" : "play"}/></span></div><strong>{item.title}</strong>{item.available === false ? <small>{item.lookupFailed ? "Geçici olarak doğrulanamıyor" : "Şu anda kullanılamıyor"}</small> : <small>{item.groupTitle}</small>}</button><FavoriteButton item={item}/>
     {preview && createPortal(<div ref={previewRef} className={s.expandedPreview} data-media-preview role="group" aria-label={`${item.title} hızlı önizleme`} style={{ top: preview.top, left: preview.left, width: preview.width, height: preview.height }} onMouseEnter={cancelClose} onMouseLeave={scheduleClose}>
       <button type="button" className={s.expandedPreviewPlay} aria-label={`${item.title} önizlemeden oynat`} onClick={() => { hidePreview(); open(item); }}/>
@@ -158,6 +159,8 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const [day, setDay] = useState(showcaseDayKey);
   // A view owns a frozen raw snapshot, even when playback refreshes provider caches.
   const personalSnapshot = useMemo(() => ({ raw: new Map<Kind, Promise<MediaItem[]>>(), daily: new Map<string, MediaItem[]>() }), [account, personalProvider]);
+  const [posterFailures, setPosterFailures] = useState<{ owner: object | null; ids: ReadonlySet<string> }>({ owner: null, ids: noPosterFailures });
+  const failedPosters = posterFailures.owner === personalSnapshot ? posterFailures.ids : noPosterFailures;
   const [catalogSnapshot, setCatalogSnapshot] = useState<typeof personalSnapshot | null>(null);
   const [rowsSnapshot, setRowsSnapshot] = useState<typeof personalSnapshot | null>(null);
   // Legacy day changes only re-present loaded rows; personal paging needs a new cached daily slice.
@@ -328,8 +331,18 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     const series = overview ? currentOtherRows.find(row => row.kind === "series")?.data.items ?? [] : [];
     return providerMode === "legacy" ? [...orderShowcaseCatalog(movies, "movie", day), ...orderShowcaseCatalog(series, "series", day)] : [...movies, ...series];
   }, [shownCatalog.items, overview, currentOtherRows, providerMode, day]);
-  const homepage = useMemo(() => buildHomepageShowcase(dailyPool, day), [dailyPool, day]);
+  const homepage = useMemo(() => buildHomepageShowcase(dailyPool.filter(item => !failedPosters.has(itemKey(item))), day), [dailyPool, day, failedPosters]);
   const homeView = overview && !search;
+  const hideFailedPoster = (event: SyntheticEvent<HTMLElement>) => {
+    const image = event.target as HTMLElement;
+    if (image.tagName !== "IMG" || !image.isConnected) return;
+    const key = image.closest<HTMLElement>("[data-homepage-poster]")?.dataset.homepagePoster;
+    if (!key || key.startsWith("live:")) return;
+    setPosterFailures(previous => {
+      const ids = previous.owner === personalSnapshot ? previous.ids : noPosterFailures;
+      return ids.has(key) ? previous : { owner: personalSnapshot, ids: new Set([...ids, key]) };
+    });
+  };
   const seriesCatalog = kind === "series" && !overview && !favoritesOnly;
   // Preserve the legacy provider prefix as pages append; only complete personal pools are daily-ranked.
   const discoveryRows = useMemo(() => !favoritesOnly && !overview && !group && !search && kind !== "live" ? buildShowcaseRails(items, kind) : null, [favoritesOnly, overview, group, search, kind, items]);
@@ -379,7 +392,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
       <div className={s.empty} role="status"><Icon name="settings"/><h2>{accessCopy.heading}</h2><p>{accessCopy.body}</p>{accessCopy.action && <Link className={s.primary} href={accessCopy.action.href}>{accessCopy.action.label}</Link>}</div>
     </div>
   </main>;
-  return <main className={`${s.catalog} ${seriesCatalog ? seriesStyles.seriesPage : ""} ${homeView ? homeStyles.page : ""}`}>
+  return <main className={`${s.catalog} ${seriesCatalog ? seriesStyles.seriesPage : ""} ${homeView ? homeStyles.page : ""}`} onErrorCapture={homeView ? hideFailedPoster : undefined}>
     <div className={s.catalogContent} data-catalog-results>
     {homeView && <HomepageHero key={`${account}:${day}`} items={homepage.hero} onOpen={open}/>}
     <div className={`${s.catalogToolbar} ${homeView ? homeStyles.homeToolbar : ""} ${seriesCatalog ? seriesStyles.toolbar : ""}`}><div className={s.catalogHeading} id="kesfet"><h1>{title}</h1>{(!favoritesOnly || favoritesReady) && <span>{favoritesOnly ? favorites.length : shownCatalog.total.toLocaleString("tr-TR")} içerik</span>}</div>
@@ -394,7 +407,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     {(error || providerError) && <div className={s.inlineError} role="alert">{providerError || error}<button onClick={() => { setReload(v => v+1); if(providerMode === "loading") reloadFavorites(); }}>Tekrar Dene</button></div>}
     {favoritesOnly && favoritesError && <div className={s.inlineError} role="alert">{favoritesError}<button disabled={favoritesLoading} onClick={reloadFavorites}>{favoritesLoading ? "Yükleniyor…" : "Tekrar Dene"}</button></div>}
     {homeView ? <>
-      {(loading || otherVodLoading) && !homepage.total ? <Skeletons/> : !homepage.total ? <section className={homeStyles.empty} role="status"><span>2026</span><h1>{error ? "Vitrin şu anda yüklenemiyor" : "2026 seçkisi hazırlanıyor"}</h1><p>{error ? "İçerikleri yeniden yükleyebilir veya tüm kataloğa göz atabilirsin." : "Katalogda yılı doğrulanmış 2026 içerikleri burada görünecek."}</p><div><Link href="/filmler">Tüm filmler</Link><Link href="/diziler">Tüm diziler</Link></div></section> : null}
+      {(loading || otherVodLoading) && !homepage.total ? <Skeletons/> : !homepage.total ? <section className={homeStyles.empty} role="status"><span>2026</span><h1>{error ? "Vitrin şu anda yüklenemiyor" : failedPosters.size ? "2026 afişleri yüklenemiyor" : "2026 seçkisi hazırlanıyor"}</h1><p>{error ? "İçerikleri yeniden yükleyebilir veya tüm kataloğa göz atabilirsin." : failedPosters.size ? "İçeriklere film ve dizi arşivlerinden ulaşabilirsin." : "Katalogda yılı doğrulanmış 2026 içerikleri burada görünecek."}</p><div><Link href="/filmler">Tüm filmler</Link><Link href="/diziler">Tüm diziler</Link></div></section> : null}
       {homepage.movies.length > 0 && <MediaRail label="2026 Filmleri" row={homepage.movies} href="/filmler" className={homeStyles.posterRail} open={open}/>}
       {homepage.series.length > 0 && <MediaRail label="2026 Dizileri" row={homepage.series} href="/diziler" className={homeStyles.posterRail} open={open}/>}
       {currentOtherRows.filter(row => row.kind === "live" && row.data.items.length).map(row => <MediaRail key={row.kind} label="Canlı TV" row={row.data.items.slice(0,12)} href="/canli-tv" open={open}/>)}

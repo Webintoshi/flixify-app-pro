@@ -81,6 +81,18 @@ it("presents disjoint 2026 movie and series selections as portrait poster rails"
   expect(state.platform.personalProvider.catalog.mock.calls).toHaveLength(3);
   expect(container.textContent).not.toContain("İzlemeye devam et");
 });
+it("backfills a failed homepage poster while retaining the content in the movie archive", async () => {
+  await settle(() => root.render(<CatalogPage kind="movie" overview/>));
+  const movies = () => [...container.querySelectorAll("section")].find(section => section.querySelector("h2")?.textContent === "2026 Filmleri")!;
+  const first = movies().querySelector<HTMLButtonElement>('button[aria-label$=" oynat"]')!;
+  const failedTitle = first.querySelector("strong")!.textContent!;
+  const image = first.querySelector("img")!;
+  await settle(() => image.dispatchEvent(new Event("error", { bubbles: true })));
+  expect([...movies().querySelectorAll("strong")].map(node => node.textContent)).not.toContain(failedTitle);
+  expect(movies().querySelectorAll("strong")).toHaveLength(18);
+  await settle(() => root.render(<CatalogPage kind="movie"/>));
+  expect([...container.querySelectorAll("strong")].map(node => node.textContent)).toContain(failedTitle);
+});
 it("opens expanded artwork from keyboard focus even on a coarse pointer device and closes on Escape", async () => {
   await settle(() => root.render(<CatalogPage kind="movie"/>));
   const tile = container.querySelector<HTMLButtonElement>('button[aria-label$="oynat"]')!;

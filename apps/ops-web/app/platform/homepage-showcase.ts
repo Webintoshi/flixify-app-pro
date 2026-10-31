@@ -15,6 +15,14 @@ export function selectHomepageCatalog(items: readonly MediaItem[], kind: Kind, d
   return uniqueRows(orderShowcaseCatalog(current, kind, dayKey), kind);
 }
 
+function artworkFirstRail(items: readonly MediaItem[]): MediaItem[] {
+  const covered: MediaItem[] = [], missing: MediaItem[] = [];
+  for (const item of items) {
+    (item.posterUrl?.trim() || item.logoUrl?.trim() ? covered : missing).push(item);
+  }
+  return [...covered, ...missing].slice(0, 18);
+}
+
 export function buildHomepageShowcase(items: readonly MediaItem[], dayKey: string): HomepageShowcase {
   const pool = [...selectHomepageCatalog(items, "movie", dayKey), ...selectHomepageCatalog(items, "series", dayKey)];
   const heroLimit = Math.min(5, Math.max(1, Math.floor(pool.length / 3)));
@@ -22,8 +30,8 @@ export function buildHomepageShowcase(items: readonly MediaItem[], dayKey: strin
   const excluded = new Set(hero.map(itemKey));
   return {
     hero,
-    movies: uniqueRows(pool, "movie", excluded).slice(0, 18),
-    series: uniqueRows(pool, "series", excluded).slice(0, 18),
+    movies: artworkFirstRail(uniqueRows(pool, "movie", excluded)),
+    series: artworkFirstRail(uniqueRows(pool, "series", excluded)),
     total: pool.length
   };
 }
