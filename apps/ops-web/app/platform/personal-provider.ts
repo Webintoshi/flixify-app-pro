@@ -1,5 +1,6 @@
 import { isJunkVodCatalogTitle, isValidMovieCatalogEntry, isValidSeriesEpisodeCatalogEntry } from '@flixify/contracts';
 import type { MediaItem, Episode, Kind } from './types';
+import { catalogReleaseYear } from './catalog-release-year';
 
 export type PersonalLivePolicy = { revision: string; excludedIds: string[] };
 export type PersonalProviderBootstrap = { livePolicy?: PersonalLivePolicy; accountId: string; sourceVersion: string; providerOrigin: string; username: string; password: string; expiresAt: string; moviePolicy: 'general-audience-only' };
@@ -65,7 +66,7 @@ export function normalizeCatalog(kind: Kind, raw: unknown, categories: unknown, 
   const extension = ext(r.container_extension) ?? (kind === 'live' ? (missingExtension ? liveDefaultExtension : 'm3u8') : undefined);
   if (kind === 'movie' && (!groupTitle || !SAFE_MOVIE_NAMES.has(label(groupTitle)) || !extension || !isValidMovieCatalogEntry({title,groupTitle,source:`/movie/${providerId}.${extension}`}))) continue;
   const personalRef: PersonalRef = {source:'personal',sourceVersion,kind,id:providerId,...(extension ? {extension} : {})};
-  seen.add(providerId); result.push({id:personalItemId(personalRef),title,kind,groupTitle,posterUrl:art(r.stream_icon ?? r.cover),logoUrl:kind === 'live' ? art(r.stream_icon) : null,playbackAllowed:true,available:true,personalRef});
+  seen.add(providerId); result.push({id:personalItemId(personalRef),title,kind,groupTitle,posterUrl:art(r.stream_icon ?? r.cover),logoUrl:kind === 'live' ? art(r.stream_icon) : null,...(kind !== 'live' ? {releaseYear:catalogReleaseYear(r,title)} : {}),playbackAllowed:true,available:true,personalRef});
  }
  return result;
 }

@@ -14,26 +14,44 @@ import { emptyCatalogCopy } from "./catalog-empty";
 import { Icon } from "./icons";
 import { usePlatform } from "./session";
 import { pagePersonalCatalog, sessionIdentity, resolvePersonalDetail } from "./personal-integration";
-import { buildShowcaseRails, orderShowcaseCatalog, selectShowcaseHero, showcaseDayKey } from "./catalog-showcase";
+import { buildShowcaseRails, orderShowcaseCatalog, showcaseDayKey } from "./catalog-showcase";
+import { buildHomepageShowcase, selectHomepageCatalog } from "./homepage-showcase";
+import { HomepageHero } from "./homepage-hero";
 import { itemKey, type Catalog, type Kind, type MediaItem } from "./types";
 import s from "./platform.module.css";
 import seriesStyles from "./series-catalog.module.css";
 import panelStyles from "./catalog-panels.module.css";
+import homeStyles from "./homepage.module.css";
 
 const cache = new Map<string, { at: number; data: Catalog }>();
 let cacheAccount = "";
 const routes = { live: "live", movie: "movies", series: "series" };
-function getCatalog(kind: Kind, page: number, search: string, group: string, account: string, movieRevision = 0): Promise<Catalog> {
+type CatalogRequest = { signal?: AbortSignal; accessToken?: string; skipAuthRefresh?: boolean };
+function getCatalog(kind: Kind, page: number, search: string, group: string, account: string, movieRevision = 0, pageSize = 48, request?: CatalogRequest): Promise<Catalog> {
+  request?.signal?.throwIfAborted();
   if (cacheAccount !== account) { cache.clear(); cacheAccount = account; }
-  const params = new URLSearchParams({ page: String(page), pageSize: "48", search, group });
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize), search, group });
   const key = `${kind}?${params}${kind === "movie" ? `&revision=${movieRevision}` : ""}`;
   const saved = cache.get(key);
   if (saved && Date.now() - saved.at < 60000) return Promise.resolve(saved.data);
-  return apiRequest<Catalog>(`/me/catalog/${routes[kind]}?${params}`).then(data => {
+  return apiRequest<Catalog>(`/me/catalog/${routes[kind]}?${params}`, request).then(data => {
+    request?.signal?.throwIfAborted();
     const normalized = { ...data, items: data.items.map(item => ({ ...item, kind })) };
     if (cacheAccount === account) { if (cache.size > 24) cache.delete(cache.keys().next().value!); cache.set(key, { at: Date.now(), data: normalized }); }
     return normalized;
   });
+}
+async function getHomepageCatalog(kind: Kind, account: string, movieRevision: number, accessToken: string, signal?: AbortSignal): Promise<Catalog> {
+  const request = { signal, accessToken, skipAuthRefresh: true };
+  const first = await getCatalog(kind, 1, "2026", "", account, movieRevision, 300, request);
+  const items = [...first.items];
+  const pages = Math.ceil(Math.min(first.total, 50_000) / 300);
+  for (let page = 2; page <= pages && first.items.length; page++) {
+    const next = await getCatalog(kind, page, "2026", "", account, movieRevision, 300, request);
+    if (!next.items.length) break;
+    items.push(...next.items);
+  }
+  return { ...first, items, total: items.length };
 }
 function MediaTile({ item, open }: { item: MediaItem; open: (item: MediaItem, autoPlay?: boolean) => void }) {
   const tileRef = useRef<HTMLDivElement>(null);
@@ -84,6 +102,12 @@ function Skeletons() { return <div className={s.grid} aria-busy="true" aria-labe
 function MediaRail({ label, row, href, open, className, landscape = false }: { label: string; row: MediaItem[]; href?: string; open: (item: MediaItem, autoPlay?: boolean) => void; className?: string; landscape?: boolean }) {
   const rail = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ start: true, end: false });
+  const move = (direction: number) => {
+    const element = rail.current;
+    if (!element) return;
+    const reducedMotion = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    element.scrollBy({ left: direction * element.clientWidth * .8, behavior: reducedMotion ? "auto" : "smooth" });
+  };
   useEffect(() => {
     const element = rail.current;
     if (!element) return;
@@ -95,7 +119,14 @@ function MediaRail({ label, row, href, open, className, landscape = false }: { l
       return () => observer.disconnect();
     }
   }, [row.length]);
-  return <section className={`${s.mediaSection} ${landscape ? s.landscapeRail : ""} ${className ?? ""}`} data-media-layout={landscape ? "landscape" : "poster"}><div className={s.sectionHeading}><h2>{label}</h2><div className={s.railActions}>{href && <Link href={href}>Tümünü Gör <Icon name="arrow"/></Link>}<button type="button" aria-label={`${label} önceki içerikler`} disabled={position.start} onClick={() => rail.current?.scrollBy({ left: -rail.current.clientWidth * .8, behavior: "smooth" })}>‹</button><button type="button" aria-label={`${label} sonraki içerikler`} disabled={position.end} onClick={() => rail.current?.scrollBy({ left: rail.current.clientWidth * .8, behavior: "smooth" })}>›</button></div></div><div ref={rail} className={s.horizontalRail} onScroll={() => { const element = rail.current; if (element) setPosition({ start: element.scrollLeft <= 2, end: element.scrollLeft + element.clientWidth >= element.scrollWidth - 2 }); }}>{row.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div></section>;
+  return <section className={`${s.mediaSection} ${landscape ? s.landscapeRail : ""} ${className ?? ""}`} data-media-layout={landscape ? "landscape" : "poster"}>
+    <div className={s.sectionHeading}><h2>{label}</h2><div className={s.railActions}>
+      {href && <Link href={href}>Tümünü Gör <Icon name="arrow"/></Link>}
+      <button type="button" aria-label={`${label} önceki içerikler`} disabled={position.start} onClick={() => move(-1)}><span style={{ display: "flex", transform: "rotate(180deg)" }}><Icon name="arrow"/></span></button>
+      <button type="button" aria-label={`${label} sonraki içerikler`} disabled={position.end} onClick={() => move(1)}><Icon name="arrow"/></button>
+    </div></div>
+    <div ref={rail} className={s.horizontalRail} onScroll={() => { const element = rail.current; if (element) setPosition({ start: element.scrollLeft <= 2, end: element.scrollLeft + element.clientWidth >= element.scrollWidth - 2 }); }}>{row.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div>
+  </section>;
 }
 export default function CatalogPage({ kind, overview = false, favoritesOnly = false }: { kind: Kind; overview?: boolean; favoritesOnly?: boolean }) {
   const { session, personalProvider, providerMode, providerError, providerScope, livePolicyRevision, favorites, favoritesReady, favoritesLoading, favoritesError, invalidateFavorites, reload: reloadFavorites } = usePlatform();
@@ -106,7 +137,6 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const [search, setSearch] = useState(query);
   const [group, setGroup] = useState("");
   const hasCategories = !favoritesOnly && !overview;
-  const [heroIndex, setHeroIndex] = useState(0);
   const [filter, setFilter] = useState<Kind | "all">("all");
   const [page, setPage] = useState(1);
   const [catalog, setCatalog] = useState<Catalog>({ items: [], total: 0 });
@@ -115,6 +145,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const [categoryGroups, setCategoryGroups] = useState<{ account: string; kind: Kind; groups: NonNullable<Catalog["groups"]> }>({ account: "", kind, groups: [] });
   const [otherRows, setOtherRows] = useState<{ kind: Kind; data: Catalog }[]>([]);
   const [otherRowsAccount, setOtherRowsAccount] = useState("");
+  const [otherVodLoading, setOtherVodLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
@@ -131,7 +162,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const [rowsSnapshot, setRowsSnapshot] = useState<typeof personalSnapshot | null>(null);
   // Legacy day changes only re-present loaded rows; personal paging needs a new cached daily slice.
   const acquisitionDay = providerMode === "personal" ? day : "";
-  const loadCatalog = useCallback((kind: Kind, page: number, search: string, group: string, account: string, revision = 0): Promise<Catalog> => {
+  const loadCatalog = useCallback((kind: Kind, page: number, search: string, group: string, account: string, revision = 0, signal?: AbortSignal): Promise<Catalog> => {
     if (personalProvider && providerMode === "personal") {
       const snapshot = personalSnapshot;
       let raw = kind === "live" ? personalProvider.catalog(kind) : snapshot.raw.get(kind);
@@ -142,6 +173,17 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
         raw.catch(() => { if (snapshot.raw.get(kind) === pending) snapshot.raw.delete(kind); });
       }
       return raw.then(items => {
+        signal?.throwIfAborted();
+        if (overview && kind !== "live" && !search && !group) {
+          const key = `home:${kind}:${acquisitionDay}`;
+          let selected = snapshot.daily.get(key);
+          if (!selected) {
+            selected = selectHomepageCatalog(items, kind, acquisitionDay);
+            if (snapshot.daily.size >= 6) snapshot.daily.delete(snapshot.daily.keys().next().value!);
+            snapshot.daily.set(key, selected);
+          }
+          return { items: selected, total: selected.length };
+        }
         const original = pagePersonalCatalog(items, page, search, group);
         if (kind === "live" || search || group) return original;
         const key = `${kind}:${acquisitionDay}`;
@@ -154,8 +196,13 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
         return { ...original, items: ordered.slice((page - 1) * 48, page * 48) };
       });
     }
-    return providerMode === "legacy" ? getCatalog(kind, page, search, group, account, revision) : Promise.reject(new Error("Provider loading"));
-  }, [personalProvider, providerMode, acquisitionDay, personalSnapshot, livePolicyRevision]);
+    if (providerMode !== "legacy") return Promise.reject(new Error("Provider loading"));
+    if (overview && kind !== "live" && !search && !group) return getHomepageCatalog(kind, account, revision, session?.accessToken ?? "", signal).then(data => {
+      const items = selectHomepageCatalog(data.items, kind, "");
+      return { ...data, items, total: items.length };
+    });
+    return getCatalog(kind, page, search, group, account, revision, 48, { signal });
+  }, [personalProvider, providerMode, acquisitionDay, personalSnapshot, livePolicyRevision, overview, session?.accessToken]);
   const hasSession = Boolean(session);
   const currentMovieRevision = movieRevision.account === account ? movieRevision.revision : 0;
   const selectedId = params.get("item");
@@ -166,7 +213,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const activePanel = panel?.owner === panelOwner ? panel.type : null;
   const [categoryPreview, setCategoryPreview] = useState<{ owner: object; groups: NonNullable<Catalog["groups"]>; total: number } | null>(null);
   useEffect(() => { setPanel(null); }, [panelOwner]);
-  const catalogOwner = JSON.stringify([account, kind, search, group, acquisitionDay]);
+  const catalogOwner = JSON.stringify([account, kind, search, group, acquisitionDay, overview]);
   const rowsOwner = JSON.stringify([account, search, acquisitionDay]);
   useEffect(() => {
     const refresh = () => {
@@ -203,24 +250,30 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", onVisible); };
   }, [accessAccount, account]);
   useEffect(() => { setGroup(""); }, [account, kind]);
-  useEffect(() => { setPage(1); setHeroIndex(0); setCatalog(previous => ({ ...previous, items: [], total: 0 })); setDetail(null); }, [account, kind, group, search]);
+  useEffect(() => { setPage(1); setCatalog(previous => ({ ...previous, items: [], total: 0 })); setDetail(null); }, [account, kind, group, search]);
   useEffect(() => {
     if (!session || providerMode === "loading" || favoritesOnly) { setLoading(false); return; }
-    let cancelled = false; setLoading(true); setError("");
-    loadCatalog(kind, page, search, group, account, currentMovieRevision).then(data => {
+    let cancelled = false; const controller = new AbortController(); setLoading(true); setError("");
+    loadCatalog(kind, page, search, group, account, currentMovieRevision, controller.signal).then(data => {
       if (cancelled) return;
       setCatalog(previous => ({ ...data, items: page === 1 || catalogAccount !== catalogOwner ? data.items : Array.from(new Map([...previous.items, ...data.items].map(i => [itemKey(i), i])).values()) }));
       if (!group && data.groups?.length) setCategoryGroups({ account, kind, groups: data.groups });
       setCatalogAccount(catalogOwner);
       setCatalogSnapshot(personalSnapshot);
     }).catch(() => { if (!cancelled) setError("İçerikler yüklenemedi. Tekrar deneyebilirsin."); }).finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; controller.abort(); };
   }, [session, account, kind, page, search, group, favoritesOnly, reload, currentMovieRevision, loadCatalog]);
   useEffect(() => {
     if (!overview || !session || providerMode === "loading") return;
-    let cancelled = false;
-    Promise.all((["series", "live"] as Kind[]).map(async rowKind => ({ kind: rowKind, data: await loadCatalog(rowKind, 1, search, "", account) }))).then(rows => { if (!cancelled) { setOtherRows(rows); setOtherRowsAccount(rowsOwner); setRowsSnapshot(personalSnapshot); } }).catch(() => { if (!cancelled) setError("Bazı içerikler yüklenemedi. Tekrar deneyebilirsin."); });
-    return () => { cancelled = true; };
+    let cancelled = false; const controller = new AbortController(); setOtherVodLoading(true);
+    setOtherRows([]); setOtherRowsAccount(rowsOwner); setRowsSnapshot(personalSnapshot);
+    for (const rowKind of ["series", "live"] as Kind[]) {
+      void loadCatalog(rowKind, 1, search, "", account, 0, controller.signal).then(data => {
+        if (!cancelled) setOtherRows(previous => cancelled ? previous : [...previous.filter(row => row.kind !== rowKind), { kind: rowKind, data }].sort((a, b) => a.kind === b.kind ? 0 : a.kind === "series" ? -1 : 1));
+      }).catch(() => { if (!cancelled) setError("Bazı içerikler yüklenemedi. Tekrar deneyebilirsin."); })
+        .finally(() => { if (!cancelled && rowKind === "series") setOtherVodLoading(false); });
+    }
+    return () => { cancelled = true; controller.abort(); };
   }, [overview, session, account, search, reload, currentMovieRevision, loadCatalog]);
   useEffect(() => {
     if (!selectedId || !["movie", "series"].includes(selectedKind ?? "")) { setDetail(null); return; }
@@ -275,11 +328,8 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     const series = overview ? currentOtherRows.find(row => row.kind === "series")?.data.items ?? [] : [];
     return providerMode === "legacy" ? [...orderShowcaseCatalog(movies, "movie", day), ...orderShowcaseCatalog(series, "series", day)] : [...movies, ...series];
   }, [shownCatalog.items, overview, currentOtherRows, providerMode, day]);
-  const heroOptions = useMemo(() => overview ? selectShowcaseHero(dailyPool, day) : [], [overview, dailyPool, day]);
-  const featured = heroOptions[heroIndex % heroOptions.length];
-  const heroExclusions = useMemo(() => new Set(heroOptions.map(itemKey)), [heroOptions]);
-  // Include the full combined pool so excluded hero aliases seed both row selectors.
-  const overviewRails = useMemo(() => ({ movie: buildShowcaseRails(dailyPool, "movie", heroExclusions).primary, series: buildShowcaseRails(dailyPool, "series", heroExclusions).primary }), [dailyPool, heroExclusions]);
+  const homepage = useMemo(() => buildHomepageShowcase(dailyPool, day), [dailyPool, day]);
+  const homeView = overview && !search;
   const seriesCatalog = kind === "series" && !overview && !favoritesOnly;
   // Preserve the legacy provider prefix as pages append; only complete personal pools are daily-ranked.
   const discoveryRows = useMemo(() => !favoritesOnly && !overview && !group && !search && kind !== "live" ? buildShowcaseRails(items, kind) : null, [favoritesOnly, overview, group, search, kind, items]);
@@ -329,10 +379,10 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
       <div className={s.empty} role="status"><Icon name="settings"/><h2>{accessCopy.heading}</h2><p>{accessCopy.body}</p>{accessCopy.action && <Link className={s.primary} href={accessCopy.action.href}>{accessCopy.action.label}</Link>}</div>
     </div>
   </main>;
-  return <main className={`${s.catalog} ${seriesCatalog ? seriesStyles.seriesPage : ""}`}>
+  return <main className={`${s.catalog} ${seriesCatalog ? seriesStyles.seriesPage : ""} ${homeView ? homeStyles.page : ""}`}>
     <div className={s.catalogContent} data-catalog-results>
-    {overview && featured && !search && <section className={s.hero} aria-label="Günün öne çıkan içeriği"><Artwork item={featured} hero/><div className={s.heroFade}/><div className={s.heroCopy}><span>{featured.groupTitle || (featured.kind === "series" ? "Dizi" : "Film")}</span><h1>{featured.title}</h1><p>{[featured.kind === "series" ? "Dizi" : "Film", featured.seasonCount ? `${featured.seasonCount} sezon` : null, featured.episodeCount ? `${featured.episodeCount} bölüm` : null].filter(Boolean).join(" · ")}</p><div className={s.heroActions}><button type="button" className={s.heroDiscover} onClick={() => open(featured, false)}><Icon name="arrow"/>İncele</button><FavoriteButton item={featured} expanded/></div></div>{heroOptions.length > 1 && <div className={s.heroSlides} role="group" aria-label="Öne çıkan içerikler">{heroOptions.map((item, index) => <button key={itemKey(item)} type="button" aria-label={`${index + 1}. içerik: ${item.title}`} aria-pressed={heroIndex === index} onClick={() => setHeroIndex(index)}/>)}</div>}</section>}
-    <div className={`${s.catalogToolbar} ${overview && featured && !search ? s.overviewToolbar : ""} ${seriesCatalog ? seriesStyles.toolbar : ""}`}><div className={s.catalogHeading} id="kesfet"><h1>{title}</h1>{(!favoritesOnly || favoritesReady) && <span>{favoritesOnly ? favorites.length : shownCatalog.total.toLocaleString("tr-TR")} içerik</span>}</div>
+    {homeView && <HomepageHero key={`${account}:${day}`} items={homepage.hero} onOpen={open}/>}
+    <div className={`${s.catalogToolbar} ${homeView ? homeStyles.homeToolbar : ""} ${seriesCatalog ? seriesStyles.toolbar : ""}`}><div className={s.catalogHeading} id="kesfet"><h1>{title}</h1>{(!favoritesOnly || favoritesReady) && <span>{favoritesOnly ? favorites.length : shownCatalog.total.toLocaleString("tr-TR")} içerik</span>}</div>
       <div className={`${s.filters} ${panelStyles.toolbarControls}`}>
         <button type="button" className={panelStyles.trigger} data-catalog-search-trigger data-active={Boolean(search)} aria-label={`${title} içinde ara`} aria-haspopup="dialog" aria-controls="catalog-search-dialog" aria-expanded={activePanel === "search"} onClick={() => setPanel({ owner: panelOwner, type: "search" })}><Icon name="search"/><span>{search ? "Aramayı düzenle" : "Ara"}</span></button>
         {hasCategories && <button type="button" className={`${panelStyles.trigger} ${panelStyles.categoryTrigger}`} data-active={Boolean(group)} aria-haspopup="dialog" aria-controls="category-drawer" aria-expanded={activePanel === "categories"} onClick={() => setPanel({ owner: panelOwner, type: "categories" })}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="M4 6h16M4 12h11M4 18h6"/></svg><span>Kategori: {group || "Tümü"}</span><span className={panelStyles.chevron}><Icon name="chevron"/></span></button>}
@@ -343,13 +393,17 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     {favoritesOnly && <div className={s.chips}>{(["all","live","movie","series"] as const).map(value => <button key={value} className={filter === value ? s.selectedChip : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>{({all:"Tümü",live:"Canlı TV",movie:"Filmler",series:"Diziler"})[value]}</button>)}</div>}
     {(error || providerError) && <div className={s.inlineError} role="alert">{providerError || error}<button onClick={() => { setReload(v => v+1); if(providerMode === "loading") reloadFavorites(); }}>Tekrar Dene</button></div>}
     {favoritesOnly && favoritesError && <div className={s.inlineError} role="alert">{favoritesError}<button disabled={favoritesLoading} onClick={reloadFavorites}>{favoritesLoading ? "Yükleniyor…" : "Tekrar Dene"}</button></div>}
-    {favoritesOnly && !favoritesReady ? (favoritesError && !favoritesLoading ? null : <Skeletons/>) : (loading && !items.length) ? <Skeletons/> : !items.length ? (favoritesOnly && favoritesError ? null : <div className={s.empty}><Icon name={favoritesOnly ? "heart" : "search"}/><h2>{emptyCopy?.heading ?? (favoritesOnly && !search ? "Henüz favori eklemediniz" : "İçerik bulunamadı")}</h2><p>{emptyCopy?.body ?? (favoritesOnly && !search ? "Beğendiğin içeriklerin kalbine dokun; hepsi burada bir araya gelsin." : "Başka bir arama veya kategori deneyebilirsin.")}</p>{favoritesOnly && <Link className={s.primary} href="/filmler">Filmlere Git</Link>}</div>) : favoritesOnly ? (["live","movie","series"] as Kind[]).map(rowKind => {
+    {homeView ? <>
+      {(loading || otherVodLoading) && !homepage.total ? <Skeletons/> : !homepage.total ? <section className={homeStyles.empty} role="status"><span>2026</span><h1>{error ? "Vitrin şu anda yüklenemiyor" : "2026 seçkisi hazırlanıyor"}</h1><p>{error ? "İçerikleri yeniden yükleyebilir veya tüm kataloğa göz atabilirsin." : "Katalogda yılı doğrulanmış 2026 içerikleri burada görünecek."}</p><div><Link href="/filmler">Tüm filmler</Link><Link href="/diziler">Tüm diziler</Link></div></section> : null}
+      {homepage.movies.length > 0 && <MediaRail label="2026 Filmleri" row={homepage.movies} href="/filmler" className={homeStyles.posterRail} open={open}/>}
+      {homepage.series.length > 0 && <MediaRail label="2026 Dizileri" row={homepage.series} href="/diziler" className={homeStyles.posterRail} open={open}/>}
+      {currentOtherRows.filter(row => row.kind === "live" && row.data.items.length).map(row => <MediaRail key={row.kind} label="Canlı TV" row={row.data.items.slice(0,12)} href="/canli-tv" open={open}/>)}
+    </> : favoritesOnly && !favoritesReady ? (favoritesError && !favoritesLoading ? null : <Skeletons/>) : (loading && !items.length) ? <Skeletons/> : !items.length ? (favoritesOnly && favoritesError ? null : <div className={s.empty}><Icon name={favoritesOnly ? "heart" : "search"}/><h2>{emptyCopy?.heading ?? (favoritesOnly && !search ? "Henüz favori eklemediniz" : "İçerik bulunamadı")}</h2><p>{emptyCopy?.body ?? (favoritesOnly && !search ? "Beğendiğin içeriklerin kalbine dokun; hepsi burada bir araya gelsin." : "Başka bir arama veya kategori deneyebilirsin.")}</p>{favoritesOnly && <Link className={s.primary} href="/filmler">Filmlere Git</Link>}</div>) : favoritesOnly ? (["live","movie","series"] as Kind[]).map(rowKind => {
       const row = items.filter(item => item.kind === rowKind);
       return row.length ? <MediaRail key={rowKind} label={({live:"Canlı TV",movie:"Filmler",series:"Diziler"})[rowKind]} row={row} open={open}/> : null;
     }) : overview ? <>
-      {!search && overviewRails.movie.length > 0 && <MediaRail label="Günün Seçkisi" row={overviewRails.movie.slice(0,4)} href="/filmler" open={open} landscape/>}
-      {(search || overviewRails.movie.length > 4) && <MediaRail label="Filmler" row={search ? items.slice(0,12) : overviewRails.movie.slice(4)} href="/filmler" open={open}/>}
-      {currentOtherRows.map(row => <MediaRail key={row.kind} label={row.kind === "series" ? "Diziler" : "Canlı TV"} row={row.kind === "series" && !search ? overviewRails.series : row.data.items.slice(0,12)} href={row.kind === "series" ? "/diziler" : "/canli-tv"} open={open}/>)}
+      <MediaRail label="Filmler" row={items.slice(0,12)} href="/filmler" open={open}/>
+      {currentOtherRows.filter(row => row.data.items.length).map(row => <MediaRail key={row.kind} label={row.kind === "series" ? "Diziler" : "Canlı TV"} row={row.data.items.slice(0,12)} href={row.kind === "series" ? "/diziler" : "/canli-tv"} open={open}/>)}
     </> : kind === "live" && !group && !search ? <MediaRail label="Canlı TV" row={items} open={open}/> : discoveryRows ? <>
       <MediaRail label="Günün Seçkisi" row={discoveryRows.primary} className={seriesCatalog ? seriesStyles.firstRail : undefined} open={open}/>
       {discoveryRows.categories.map(([label, row]) => <MediaRail key={label} label={label} row={row} className={seriesCatalog ? seriesStyles.categoryRail : undefined} open={open}/>)}

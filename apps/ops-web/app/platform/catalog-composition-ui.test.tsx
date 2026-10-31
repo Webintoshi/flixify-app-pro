@@ -18,7 +18,7 @@ vi.mock("./adult-movie-toggle", () => ({ AdultMovieToggle: () => null }));
 
 let root: Root, container: HTMLElement, focus: HTMLElement | null;
 const items = (kind: "movie" | "series" | "live") => Array.from({ length: 48 }, (_, index) => ({
-  id: `${kind}-${index}`, kind, title: `${kind} ${index}`, groupTitle: "Gerçek katalog kategorisi", posterUrl: "/fixture-poster.jpg"
+  id: `${kind}-${index}`, kind, title: `${kind} ${index}`, releaseYear: 2026, groupTitle: "Gerçek katalog kategorisi", posterUrl: "/fixture-poster.jpg"
 } as MediaItem));
 const settle = async (action = () => {}) => { await act(async () => { action(); }); };
 beforeEach(() => {
@@ -69,15 +69,15 @@ it("uses a real featured title and opens its existing detail deep link honestly"
   expect(state.push).toHaveBeenCalledWith(`?item=${selected.id}&kind=${selected.kind}`, { scroll: false });
   expect(hero.textContent).not.toContain("Oynat");
 });
-it("presents the same unique daily film selection in a landscape row and a portrait row", async () => {
+it("presents disjoint 2026 movie and series selections as portrait poster rails", async () => {
   await settle(() => root.render(<CatalogPage kind="movie" overview/>));
   const rails = [...container.querySelectorAll("section")];
-  const daily = rails.find(section => section.querySelector("h2")?.textContent === "Günün Seçkisi")!;
-  const movies = rails.find(section => section.querySelector("h2")?.textContent === "Filmler")!;
-  expect(daily?.getAttribute("data-media-layout")).toBe("landscape"); expect(daily?.querySelectorAll("strong")).toHaveLength(4);
-  expect(movies?.getAttribute("data-media-layout")).toBe("poster"); expect(movies?.querySelectorAll("strong")).toHaveLength(8);
+  const series = rails.find(section => section.querySelector("h2")?.textContent === "2026 Dizileri")!;
+  const movies = rails.find(section => section.querySelector("h2")?.textContent === "2026 Filmleri")!;
+  expect(series?.getAttribute("data-media-layout")).toBe("poster"); expect(series?.querySelectorAll("strong")).toHaveLength(18);
+  expect(movies?.getAttribute("data-media-layout")).toBe("poster"); expect(movies?.querySelectorAll("strong")).toHaveLength(18);
   const filmTitles = [...container.querySelectorAll("strong")].map(node => node.textContent!).filter(title => title.startsWith("movie "));
-  expect(filmTitles).toHaveLength(12); expect(new Set(filmTitles).size).toBe(12);
+  expect(filmTitles).toHaveLength(18); expect(new Set(filmTitles).size).toBe(18);
   expect(state.platform.personalProvider.catalog.mock.calls).toHaveLength(3);
   expect(container.textContent).not.toContain("İzlemeye devam et");
 });

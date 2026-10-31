@@ -4,6 +4,7 @@ export type Episode = { personalRef?: PersonalRef; id: string; title: string; se
 export type MediaItem = {
   personalRef?: PersonalRef;
   id: string; title: string; kind: Kind; posterUrl?: string | null; logoUrl?: string | null;
+  releaseYear?: number | null;
   groupTitle?: string | null; playbackAllowed?: boolean; available?: boolean; lookupFailed?: boolean;
   seasons?: { seasonNumber: number; title: string; episodes: Episode[] }[];
   seasonCount?: number; episodeCount?: number;

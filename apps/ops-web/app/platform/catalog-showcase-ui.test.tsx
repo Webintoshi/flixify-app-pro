@@ -7,14 +7,14 @@ import { orderShowcaseCatalog } from "./catalog-showcase";
 import type { MediaItem } from "./types";
 const state = vi.hoisted(() => ({ platform: {} as any, params: new URLSearchParams(), api: vi.fn(), preference: null as null | ((revision: number, visible: boolean) => void) }));
 vi.mock("./session", () => ({ usePlatform: () => state.platform }));
-vi.mock("../../lib/api", () => ({ apiRequest: (path: string) => state.api(path) }));
+vi.mock("../../lib/api", () => ({ apiRequest: (path: string, options?: unknown) => state.api(path, options) }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => state.params, useRouter: () => ({ push: vi.fn(), back: vi.fn(), replace: vi.fn() }) }));
 vi.mock("next/link", () => ({ default: (props: any) => <a {...props}/> }));
 vi.mock("./artwork", () => ({ Artwork: () => null, FavoriteButton: () => null }));
 vi.mock("./detail", () => ({ Detail: ({ item }: any) => <div data-detail>{item.title}</div> }));
 vi.mock("./adult-movie-toggle", () => ({ AdultMovieToggle: ({ onChanged }: any) => { state.preference = onChanged; return null; } }));
 let root: Root, container: HTMLElement;
-const items = (kind = "movie", version = "v1") => Array.from({ length: 120 }, (_, i) => ({ id: `${version}-${i}`, kind, title: `${kind} Title ${i}`, groupTitle: `Group ${i % 8}`, posterUrl: "/poster", personalRef: { kind, id: String(i), sourceVersion: version } } as MediaItem));
+const items = (kind = "movie", version = "v1") => Array.from({ length: 120 }, (_, i) => ({ id: `${version}-${i}`, kind, title: `${kind} Title ${i}`, releaseYear: 2026, groupTitle: `Group ${i % 8}`, posterUrl: "/poster", personalRef: { kind, id: String(i), sourceVersion: version } } as MediaItem));
 const titles = () => [...container.querySelectorAll("strong")].map(n => n.textContent);
 const settle = async (fn = () => {}) => { await act(async () => { fn(); }); };
 const render = async (props = {}) => settle(() => root.render(<CatalogPage kind="movie" {...props}/>));
@@ -98,6 +98,57 @@ it("drops an open search when a pending movie-visibility preference changes its 
 });
 it("keeps every hero candidate out of recommendation rails", async () => {
   await render({ overview: true }); const heroes = [...container.querySelectorAll('[aria-label^="Öne çıkan"] button')].map(b => b.getAttribute("aria-label")!.split(": ")[1]); expect(heroes).toHaveLength(5); expect(titles().filter(t => heroes.includes(t!))).toEqual([]);
+});
+it("builds the homepage from 2026 titles beyond the original first page", async () => {
+  const pool = items().map((item, index) => ({ ...item, title: `${index < 90 ? 'Older' : 'New'} ${index}`, releaseYear: index < 90 ? 2016 : 2026 }));
+  state.platform.personalProvider.catalog.mockImplementation(async (kind: string) => kind === "movie" ? pool : []);
+  await render({ overview: true });
+  expect(container.textContent).toContain("2026 Filmleri");
+  expect(titles().length).toBeGreaterThan(0);
+  expect(titles().every(title => title?.startsWith("New "))).toBe(true);
+  expect(container.querySelector('[aria-label="Günün öne çıkan içeriği"]')?.textContent).not.toContain("Older");
+  expect(state.platform.personalProvider.catalog.mock.calls.filter(([kind]: [string]) => kind === "movie")).toHaveLength(1);
+});
+it("shows a 2026 series-only homepage when no movies exist", async () => {
+  state.platform.personalProvider.catalog.mockImplementation(async (kind: string) => kind === "series" ? items("series") : []);
+  await render({ overview: true });
+  expect(container.textContent).toContain("2026 Dizileri");
+  expect(container.textContent).not.toContain("İçerik bulunamadı");
+  expect(titles().length).toBeGreaterThan(0);
+});
+it("publishes ready 2026 series without waiting for the live channel catalog", async () => {
+  state.platform.personalProvider.catalog.mockImplementation((kind: string) => kind === "live" ? new Promise(() => {}) : Promise.resolve(kind === "series" ? items("series") : []));
+  await render({ overview: true });
+  expect(container.textContent).toContain("2026 Dizileri");
+  expect(container.querySelector('[aria-label="İçerikler yükleniyor"]')).toBeNull();
+});
+it("keeps older titles searchable from the 2026 homepage", async () => {
+  const old = { ...items()[0], title: "Arşiv filmi", releaseYear: 2016 };
+  state.platform.personalProvider.catalog.mockImplementation(async (kind: string) => kind === "movie" ? [old] : []);
+  state.params = new URLSearchParams("q=Arşiv");
+  await render({ overview: true });
+  expect(titles()).toContain("Arşiv filmi");
+  expect(container.querySelector('[aria-label="Günün öne çıkan içeriği"]')).toBeNull();
+});
+it("cancels old-owner legacy pagination before another page can use a new account", async () => {
+  let finishOld!: (value: any) => void;
+  let owner = "A";
+  const old = new Promise(done => { finishOld = done; });
+  state.platform = { ...state.platform, session: { accessToken: "legacy-A" }, providerMode: "legacy", providerScope: "owned-legacy-A", personalProvider: null };
+  state.api.mockImplementation(async (path: string) => {
+    if (!path.startsWith("/me/catalog/")) return { user: { status: "active", hasAssignedLink: true, hasActiveSubscription: true, activePackage: { endsAt: "2099-01-01" } } };
+    if (!path.includes("/movies?")) return { items: [], total: 0 };
+    if (owner === "A" && path.includes("page=1&")) return old;
+    return { items: [{ ...items()[0], title: `${owner} movie` }], total: 1 };
+  });
+  await render({ overview: true });
+  owner = "B";
+  state.platform = { ...state.platform, session: { accessToken: "legacy-B" }, providerScope: "owned-legacy-B" };
+  await render({ overview: true });
+  await settle(() => finishOld({ items: [{ ...items()[0], title: "A movie" }], total: 600 }));
+  expect(state.api.mock.calls.filter(call => String(call[0]).includes("/movies?") && String(call[0]).includes("page=2&"))).toHaveLength(0);
+  expect(container.textContent).toContain("B movie");
+  expect(container.textContent).not.toContain("A movie");
 });
 it("evicts a failed promise so retry can load", async () => {
   state.platform.personalProvider.catalog.mockRejectedValueOnce(new Error("failed")); await render(); expect(container.textContent).toContain("İçerikler yüklenemedi"); await click("Tekrar Dene"); expect(titles()).toHaveLength(48); expect(state.platform.personalProvider.catalog).toHaveBeenCalledTimes(2);

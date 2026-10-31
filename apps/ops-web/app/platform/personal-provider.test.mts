@@ -10,6 +10,22 @@ test('movie categories are exact and missing/unknown/adult fail closed; IDs and 
  assert.equal(items.length,1); assert.equal(items[0].posterUrl,null); assert.equal(items[0].personalRef.id,'12'); assert.ok(!JSON.stringify(items).includes('evil')); assert.deepEqual(normalizeCatalog('movie',rows,[],'v1'),[]);
  assert.equal(normalizeCatalog('series',[{series_id:3,name:'Show'}],[],'v1').length,1);
 });
+test('catalog release metadata is preserved without changing IDs, entitlement or provider membership',()=>{
+ const categories=[{category_id:'1',category_name:'Aile'}];
+ const movie=normalizeCatalog('movie',[{stream_id:12,name:'Film',category_id:'1',container_extension:'mp4',year:'2026',added:'2016-01-01'}],categories,'v1')[0];
+ assert.equal(movie.releaseYear,2026);assert.equal(movie.id,'personal:v1:movie:12');assert.equal(movie.playbackAllowed,true);assert.equal(movie.personalRef.extension,'mp4');
+ const shows=normalizeCatalog('series',[
+  {series_id:1,name:'Series',releaseDate:'2026-10-31'},
+  {series_id:2,name:'Old title (2026)',year:2025},
+  {series_id:3,name:'Unknown (2026)',year:2025,release_date:'2026-01-01'},
+  {series_id:4,name:'New series [2026]'},
+  {series_id:5,name:'Unknown',added:'2026-01-01',last_modified:'2026-01-01'},
+  {series_id:6,name:'Invalid (2026)',releaseDate:'2026-02-30'}
+ ],[],'v1');
+ assert.deepEqual(shows.map(show=>show.releaseYear),[2026,2025,null,2026,null,null]);
+ assert.equal(shows.length,6);assert.ok(shows.every(show=>show.playbackAllowed && show.available));
+ assert.equal(normalizeCatalog('live',[{stream_id:7,name:'Channel (2026)',year:2026}],[],'v1')[0].releaseYear,undefined);
+});
 test('media URL encodes credentials and rejects arbitrary IDs/extensions/origins',()=>{
  assert.equal(buildPersonalMediaUrl(bootstrap,ref),'https://provider.test/movie/u%2Fa/p%3F%23/12.mp4');
  for(const bad of [{...ref,id:'../12'},{...ref,extension:'mp4?evil'},{...ref,sourceVersion:'old'}]) assert.throws(()=>buildPersonalMediaUrl(bootstrap,bad));
