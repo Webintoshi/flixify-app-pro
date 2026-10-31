@@ -184,7 +184,7 @@ def decode_probe(credentials, channel, timeout=15, ffmpeg="ffmpeg"):
     result = {"status": "unverified", "httpStatus": None, "firstDecodedFrameMs": None, "decodedFrames": 0}
     started = time.monotonic()
     try:
-        process = run_bounded([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-protocol_whitelist", "https,tls,tcp,crypto", "-user_agent", USER_AGENT, "-rw_timeout", str(int(timeout*1000000)), "-i", url, "-map", "0:v:0", "-frames:v", "1", "-an", "-progress", "pipe:1", "-f", "null", "-"], timeout)
+        process = run_bounded([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-protocol_whitelist", "https,tls,tcp,crypto", "-user_agent", USER_AGENT, "-rw_timeout", str(int(timeout*1000000)), "-analyzeduration", "1000000", "-i", url, "-map", "0:v:0", "-frames:v", "1", "-an", "-progress", "pipe:1", "-f", "null", "-"], timeout)
         frames = [int(value) for value in re.findall(rb"(?m)^frame=(\d+)\s*$", process.stdout)]
         if process.returncode == 0 and frames and max(frames) >= 1:
             result.update(status="working", firstDecodedFrameMs=round((time.monotonic()-started)*1000), decodedFrames=max(frames))

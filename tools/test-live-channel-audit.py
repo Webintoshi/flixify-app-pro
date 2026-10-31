@@ -49,7 +49,7 @@ class AuditTests(unittest.TestCase):
         self.assertNotIn("password", json.dumps(report))
 
     def test_auth_geography_connection_and_transient_errors_never_exclude(self):
-        for status, code in [("blocked", 401), ("blocked", 403), ("blocked", 429), ("unverified", 500), ("timeout", None)]:
+        for status, code in [("blocked", 401), ("blocked", 403), ("blocked", 429), ("unverified", 500), ("unverified", 503), ("timeout", None)]:
             with self.subTest(code=code):
                 self.path.unlink(missing_ok=True)
                 report = self.scan(lambda channel: probe_result("working") if channel["streamId"] == "1" else probe_result(status, code), limit=1)
@@ -145,6 +145,23 @@ class AuditTests(unittest.TestCase):
             result = audit.decode_probe(credentials, CHANNELS[1])
             self.assertEqual(result["status"], "undecodable")
             self.assertNotIn("fixture-p", json.dumps(result))
+
+    def test_one_second_analysis_is_an_input_option_and_does_not_shorten_decode_deadline(self):
+        credentials = {"providerOrigin": ORIGIN, "username": "fixture-u", "password": "fixture-p"}
+        with patch.object(audit, "run_bounded", return_value=SimpleNamespace(returncode=0, stdout=b"frame=1\nprogress=end\n", stderr=b"")) as child:
+            result = audit.decode_probe(credentials, CHANNELS[1], timeout=15)
+        args, timeout = child.call_args.args
+        self.assertEqual(args.count("-analyzeduration"), 1)
+        self.assertEqual(args[args.index("-analyzeduration")+1], "1000000")
+        self.assertLess(args.index("-analyzeduration"), args.index("-i"))
+        self.assertNotIn("-probesize", args)
+        self.assertNotIn("nobuffer", args)
+        self.assertEqual(timeout, 15)
+        self.assertEqual(args[args.index("-rw_timeout")+1], "15000000")
+        self.assertEqual(args[args.index("-frames:v")+1], "1")
+        self.assertEqual(result["status"], "working")
+        self.assertEqual(result["decodedFrames"], 1)
+        self.assertIsNone(result["httpStatus"])
 
     def test_blocked_http_does_not_launch_a_second_media_connection(self):
         credentials = {"providerOrigin": ORIGIN, "username": "fixture-u", "password": "fixture-p"}
