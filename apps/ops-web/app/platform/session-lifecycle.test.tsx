@@ -8,6 +8,9 @@ import { useAccountResource } from "../account/components";
 import { AccessBoundary } from "./onboarding";
 import { sessionKey, type Session } from "./types";
 
+const transport=vi.hoisted(()=>({mseLive:true}));
+vi.mock("mpegts.js",()=>({default:{getFeatureList:()=>({mseLivePlayback:transport.mseLive})}}));
+
 vi.mock("next/navigation", () => ({ usePathname: () => "/filmler" }));
 vi.mock("next/image", () => ({ default: ({ unoptimized, fill, priority, ...props }: any) => React.createElement("img", props) }));
 vi.mock("next/link", () => ({ default: (props: any) => React.createElement("a", props) }));
@@ -78,7 +81,7 @@ describe("personal provider session recovery", () => {
     Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
     localStorage.setItem(sessionKey, JSON.stringify(session()));
     localStorage.setItem("flixify-welcome:v1:account-a", "seen");
-    allowed = false; active = false; bootstrapRequests = [];
+    allowed = false; active = false; bootstrapRequests = [];transport.mseLive=true;
     loadBootstrap = async () => allowed ? json(bootstrap()) : denied();
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input));
@@ -295,6 +298,60 @@ describe("personal provider session recovery", () => {
     await act(async()=>{await vi.advanceTimersByTimeAsync(15000);});expect(resource!.error).toBe(true);
     await act(async()=>{await vi.advanceTimersByTimeAsync(45000);});
     expect(resource!.data?.user.hasActiveSubscription).toBe(true);expect(resource!.loading).toBe(false);expect(resource!.error).toBe(false);
+  });
+
+  it("applies a policy refresh to visible favorites and restores them without source or stored reference changes", async () => {
+    allowed=true;let policy:unknown={revision:"a".repeat(64),excludedIds:[]};let liveReads=0;let libraryWrites=0;
+    loadBootstrap=async()=>json({...bootstrap(),livePolicy:policy});
+    const previous=vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async(input,init)=>{
+      const url=new URL(String(input));
+      if(url.pathname==="/me/personal-library")return json({favorites:[{source:"personal",sourceVersion:"line-account-a",kind:"live",id:"7"}]});
+      if(url.pathname==="/me/personal-library/favorites"){libraryWrites++;return json({ok:true});}
+      if(url.pathname==="/player_api.php") {if(url.searchParams.get("action")==="get_live_streams"){liveReads++;return json([{stream_id:7,name:"Saved channel"}]);}return json([]);}
+      return previous(input,init);
+    });
+    await mount();await settle();expect(platform.favorites).toHaveLength(1);
+    const client=platform.personalProvider;
+    policy={revision:"b".repeat(64),excludedIds:["7"]};await settle(()=>platform.refreshProvider());await settle();
+    expect(platform.favorites).toEqual([]);expect(platform.livePolicyRevision).toBe("b".repeat(64));
+    expect(platform.providerScope).toBe("line-account-a");expect(platform.personalProvider).toBe(client);
+    policy=undefined;await settle(()=>platform.refreshProvider());await settle();expect(platform.favorites).toEqual([]);
+    policy={revision:"c".repeat(64),excludedIds:[]};await settle(()=>platform.refreshProvider());await settle();
+    expect(platform.favorites).toHaveLength(1);expect(libraryWrites).toBe(0);expect(liveReads).toBe(1);
+  });
+
+  it("retries policy favorite hydration after an overlapping favorite mutation completes", async () => {
+    allowed=true;let excluded=true;const write=deferred<Response>();
+    loadBootstrap=async()=>json({...bootstrap(),livePolicy:{revision:(excluded?"a":"b").repeat(64),excludedIds:excluded?["7"]:[]}});
+    const previous=vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async(input,init)=>{
+      const url=new URL(String(input));
+      if(url.pathname==="/me/personal-library")return json({favorites:[{source:"personal",sourceVersion:"line-account-a",kind:"live",id:"7"}]});
+      if(url.pathname==="/me/personal-library/favorites")return write.promise;
+      if(url.pathname==="/player_api.php")return json(url.searchParams.get("action")==="get_live_streams"?[{stream_id:7,name:"Saved channel"}]:[]);
+      return previous(input,init);
+    });
+    await mount();await settle();expect(platform.favorites).toHaveLength(0);
+    let mutation!:Promise<void>;
+    await settle(()=>{mutation=platform.toggle({id:"new-film",kind:"movie",title:"Movie",personalRef:{source:"personal",sourceVersion:"line-account-a",kind:"movie",id:"12",extension:"mp4"}});});
+    excluded=false;await settle(()=>platform.refreshProvider());await settle();
+    await settle(()=>write.resolve(json({ok:true})));await mutation;await settle();
+    expect(platform.favorites.some(item=>item.kind==="live")).toBe(true);
+  });
+
+  it.each([{nativeHls:false,mse:true,extension:"ts"},{nativeHls:true,mse:true,extension:"ts"},{nativeHls:false,mse:false,extension:"m3u8"},{nativeHls:true,mse:true,mpegtsLive:false,extension:"m3u8"}])("uses the verified browser default for implicit LIVE metadata: %j",async capabilities=>{
+    allowed=true;transport.mseLive=capabilities.mpegtsLive!==false;
+    Object.defineProperty(window.HTMLElement.prototype,"canPlayType",{configurable:true,value:()=>capabilities.nativeHls?"probably":""});
+    Object.defineProperty(window,"MediaSource",{configurable:true,value:{isTypeSupported:()=>capabilities.mse}});
+    const previous=vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async(input,init)=>{
+      const url=new URL(String(input));if(url.pathname==="/player_api.php")return json(url.searchParams.get("action")==="get_live_streams"?[{stream_id:7,name:"Implicit live"}]:[]);
+      return previous(input,init);
+    });
+    await mount();await act(async()=>{await vi.dynamicImportSettled();});await settle();
+    const items=await platform.personalProvider!.catalog("live");expect(items[0].personalRef.extension).toBe(capabilities.extension);
+    expect(items[0].id).toBe("personal:line-account-a:live:7");
   });
 
 });

@@ -82,4 +82,17 @@ public final class LiveCardsRemoteTest {
             });
         }finally{instrumentation.removeMonitor(monitor);}
     }
+
+    @Test public void visibleFavoritesApplyLivePolicyAndRestoreSavedChannelWithoutChangingNonLiveItems(){
+        repository.saved.add(repository.movie.key());repository.saved.add(repository.live.key());launch();openSection(4);
+        instrumentation.runOnMainSync(()->assertEquals(2,grid(activity.getWindow().getDecorView()).getAdapter().getItemCount()));
+        instrumentation.runOnMainSync(()->repository.publishCatalog(new vip.flixify.tv.TvModels.Catalog(vip.flixify.tv.TvModels.Kind.LIVE,java.util.Collections.emptyList(),java.util.Collections.emptyList())));idle();
+        instrumentation.runOnMainSync(()->{
+            RecyclerView list=grid(activity.getWindow().getDecorView());assertEquals("Excluded live favorite leaves the visible grid",1,list.getAdapter().getItemCount());
+            assertEquals("Stored favorites are not deleted",2,repository.saved.size());
+            assertTrue(repository.saved.contains(repository.movie.key()));assertTrue(repository.saved.contains(repository.live.key()));
+        });
+        instrumentation.runOnMainSync(()->repository.publishCatalog(new vip.flixify.tv.TvModels.Catalog(vip.flixify.tv.TvModels.Kind.LIVE,java.util.Collections.singletonList(repository.live),java.util.Collections.emptyList())));idle();
+        instrumentation.runOnMainSync(()->assertEquals("Removing exclusion restores the saved channel",2,grid(activity.getWindow().getDecorView()).getAdapter().getItemCount()));
+    }
 }

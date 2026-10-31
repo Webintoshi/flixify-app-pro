@@ -171,9 +171,22 @@ public final class NetworkTvRepository implements TvRepository {
                     boolean inactiveResult=issue==null && needsLease && (!guard.active(completedSource,completedScope,clock.now()) || (playableAccount && ((Account)value).expiresAtMs<=clock.now()));
                     if(operation.auth!=authGeneration || wrongInitialSource || wrongPreparedSource || inactiveResult)delivered=failure(new Problem(Failure.Code.STALE));
                 }
-                if(delivered==null)cb.onResult(value);else cb.onError(delivered);
+                if(delivered==null && value instanceof Playback && ProviderParser.liveExcluded(((Playback)value).item,guard.current()))delivered=failure(new Problem(Failure.Code.INVALID));
+                if(delivered==null)cb.onResult(policyResult(value,key.startsWith("favorites@")));else cb.onError(delivered);
             }
         });
+    }
+    private Catalog currentLiveCatalog(Catalog value) { synchronized(lock) { return ProviderParser.filterLiveCatalog(value,guard.current()); } }
+    @SuppressWarnings("unchecked") private <T> T policyResult(T value,boolean favorites) {
+        synchronized(lock) {
+            if(value instanceof Catalog){Catalog raw=catalogs.get(((Catalog)value).kind);return (T)currentLiveCatalog(raw==null?(Catalog)value:raw);}
+            if(favorites && value instanceof List) {
+                List<Item> items=new ArrayList<>();
+                for(Kind kind:new Kind[]{Kind.LIVE,Kind.MOVIE,Kind.SERIES}){Catalog raw=catalogs.get(kind);if(raw!=null)for(Item item:currentLiveCatalog(raw).items)if(favoriteRefs.contains(refKey(item)))items.add(item);}
+                return (T)Collections.unmodifiableList(items);
+            }
+            return value;
+        }
     }
     private void checkAuth(long auth) throws Problem { synchronized(lock) { if(auth!=authGeneration) throw new Problem(Failure.Code.STALE); } }
     private TokenStore.Session requireTokens(long auth) throws Problem {
@@ -265,12 +278,18 @@ public final class NetworkTvRepository implements TvRepository {
         catch(ProviderParser.Invalid invalid) { clearProvider();throw invalid; }
         checkAuth(auth); TokenStore.Session t=requireTokens(auth);
         if(!t.accountId.isEmpty() && !t.accountId.equals(incoming.accountId)) {clearProvider();throw new Problem(Failure.Code.STALE);}
+        Catalog policyCatalog=null;long policySource=-1;
         synchronized(lock) {
             checkAuth(auth);
             if(!incoming.sameIdentity(old)) clearMetadataLocked();
+            incoming=ProviderParser.retainLivePolicy(incoming,old);
             guard.install(incoming);bootstrapCheckedAt=clock.now();scheduleAccessLocked(auth,incoming);
+            String previousPolicy=old==null || old.livePolicy==null?"":old.livePolicy.revision;
+            String nextPolicy=incoming.livePolicy==null?"":incoming.livePolicy.revision;
+            if(!previousPolicy.equals(nextPolicy)){policyCatalog=catalogs.get(Kind.LIVE);policySource=guard.generation();}
         }
         if(old!=null && !incoming.sameIdentity(old))metadataDisk.clear();
+        if(policyCatalog!=null)publishPolicyCatalog(policyCatalog,auth,policySource,incoming.scope());
         return incoming;
     }
     private void scheduleAccessLocked(long auth,ProviderParser.Bootstrap b) {
@@ -332,10 +351,10 @@ public final class NetworkTvRepository implements TvRepository {
     }
     private Catalog catalogFor(long auth,ProviderParser.Bootstrap b,Kind kind,boolean force) throws Exception {
         long source=guard.generation();active(auth,source,b.scope()); if(kind==null || kind==Kind.EPISODE)throw new ProviderParser.Invalid();
-        synchronized(lock) {if(!force && catalogs.containsKey(kind) && cacheAgeValid(catalogSavedAt.get(kind),catalogValidUntil.get(kind)))return catalogs.get(kind);}
+        synchronized(lock) {if(!force && catalogs.containsKey(kind) && cacheAgeValid(catalogSavedAt.get(kind),catalogValidUntil.get(kind)))return currentLiveCatalog(catalogs.get(kind));}
         if(!force) {
             MetadataDiskCache.Snapshot<Catalog> cached=metadataDisk.readCatalog(b.scope(),kind,b.expiresAtMs,clock.now());active(auth,source,b.scope());
-            if(cached!=null){synchronized(lock){active(auth,source,b.scope());catalogs.put(kind,cached.value);catalogSavedAt.put(kind,cached.savedAt);catalogValidUntil.put(kind,cached.expiresAt);}return cached.value;}
+            if(cached!=null){synchronized(lock){active(auth,source,b.scope());catalogs.put(kind,cached.value);catalogSavedAt.put(kind,cached.savedAt);catalogValidUntil.put(kind,cached.expiresAt);}return currentLiveCatalog(cached.value);}
         }
         return fetchCatalog(auth,b,source,kind,false,-1);
     }
@@ -358,7 +377,7 @@ public final class NetworkTvRepository implements TvRepository {
             long saved=clock.now();
             synchronized(lock) {catalogFetchActive(auth,source,b.scope(),kind,ticket,optional);catalogs.put(kind,result);catalogSavedAt.put(kind,saved);catalogValidUntil.put(kind,b.expiresAtMs);}
             metadataDisk.writeCatalog(b.scope(),b.expiresAtMs,saved,result,()->catalogWriteLease(auth,source,b.scope(),kind,ticket));
-            catalogFetchActive(auth,source,b.scope(),kind,ticket,optional);if(optional)publishCatalog(result,auth,source,b.scope(),ticket);return result;
+            catalogFetchActive(auth,source,b.scope(),kind,ticket,optional);if(optional)publishCatalog(result,auth,source,b.scope(),ticket);return currentLiveCatalog(result);
         } finally {
             if(!optional)synchronized(lock){Long current=foregroundCatalogFetches.get(kind);if(current!=null && current==ticket)foregroundCatalogFetches.remove(kind);}
         }
@@ -374,11 +393,19 @@ public final class NetworkTvRepository implements TvRepository {
         try{metadataWorker.execute(()->{try{fetchCatalog(auth,b,source,kind,true,queuedTicket);}catch(Exception ignored){}finally{synchronized(lock){metadataRefreshes.remove(key);}}});}
         catch(RejectedExecutionException ignored){synchronized(lock){metadataRefreshes.remove(key);}}
     }
+    private void publishPolicyCatalog(Catalog value,long auth,long source,String scope) {
+        synchronized(lock){if(catalogObservers.isEmpty())return;}
+        callbacks.execute(()->{
+            List<CatalogObserver> observers;
+            synchronized(lock){if(auth!=authGeneration || !guard.active(source,scope,clock.now()) || catalogs.get(Kind.LIVE)!=value)return;observers=new ArrayList<>(catalogObservers);}
+            for(CatalogObserver observer:observers){synchronized(lock){if(!catalogObservers.contains(observer) || auth!=authGeneration || !guard.active(source,scope,clock.now()) || catalogs.get(Kind.LIVE)!=value)continue;}observer.onCatalog(currentLiveCatalog(value));}
+        });
+    }
     private void publishCatalog(Catalog value,long auth,long source,String scope,long ticket){
         callbacks.execute(()->{
             if(!catalogWriteLease(auth,source,scope,value.kind,ticket))return;List<CatalogObserver> observers;
             synchronized(lock){observers=new ArrayList<>(catalogObservers);}
-            for(CatalogObserver observer:observers){synchronized(lock){if(!catalogObservers.contains(observer) || catalogs.get(value.kind)!=value)continue;}if(!catalogWriteLease(auth,source,scope,value.kind,ticket))return;observer.onCatalog(value);}
+            for(CatalogObserver observer:observers){synchronized(lock){if(!catalogObservers.contains(observer) || catalogs.get(value.kind)!=value)continue;}if(!catalogWriteLease(auth,source,scope,value.kind,ticket))return;observer.onCatalog(currentLiveCatalog(value));}
         });
     }
     private Item safeArtwork(Item item,ProviderParser.Bootstrap b) throws ProviderParser.Invalid {

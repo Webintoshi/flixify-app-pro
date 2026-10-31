@@ -1,12 +1,12 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { apiRequest } from "../../lib/api";
-import { createPersonalProviderClient, validatePersonalBootstrap, type PersonalProviderBootstrap, type PersonalRef } from "./personal-provider";
+import { createPersonalProviderClient, selectPersonalLiveExtension, validatePersonalBootstrap, type PersonalProviderBootstrap, type PersonalRef } from "./personal-provider";
 import { sessionIdentity, hydratePersonalFavorites, createScopedBootstrapLoader } from "./personal-integration";
 import { createDirectPlaybackDeadline } from "./direct-playback-deadline";
 import { itemKey, sessionKey, type MediaItem, type Session } from "./types";
 
-type Value = { providerExpiresAt: string | null | undefined; providerRevision: number; personalProvider: ReturnType<typeof createPersonalProviderClient> | null; providerMode: "loading" | "personal" | "legacy"; providerError: string; providerScope: string; session: Session | null; ready: boolean; favorites: MediaItem[]; favoritesReady: boolean; favoritesLoading: boolean; favoritesError: string; error: string; pending: Set<string>; toggle: (item: MediaItem) => Promise<void>; reload: () => void; refreshProvider: () => void; invalidateFavorites: () => void; dismissError: () => void; saveSession: (s: Session) => void; logout: () => void };
+type Value = { livePolicyRevision: string; providerExpiresAt: string | null | undefined; providerRevision: number; personalProvider: ReturnType<typeof createPersonalProviderClient> | null; providerMode: "loading" | "personal" | "legacy"; providerError: string; providerScope: string; session: Session | null; ready: boolean; favorites: MediaItem[]; favoritesReady: boolean; favoritesLoading: boolean; favoritesError: string; error: string; pending: Set<string>; toggle: (item: MediaItem) => Promise<void>; reload: () => void; refreshProvider: () => void; invalidateFavorites: () => void; dismissError: () => void; saveSession: (s: Session) => void; logout: () => void };
 type BootstrapRequest = { identity: string; controller?: AbortController; retryRequested: boolean };
 const Context = createContext<Value | null>(null);
 export function readSession(): Session | null {
@@ -15,6 +15,7 @@ export function readSession(): Session | null {
 export function PlatformProvider({ children }: { children: ReactNode }) {
   const [providerExpiresAt, setProviderExpiresAt] = useState<string | null | undefined>(undefined);
   const [providerRevision, setProviderRevision] = useState(0);
+  const [livePolicyRevision, setLivePolicyRevision] = useState("");
   const metadataRefresh = useRef<(() => void) | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [personalProvider, setPersonalProvider] = useState<ReturnType<typeof createPersonalProviderClient> | null>(null);
@@ -32,6 +33,8 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
   const [favoritesLoading, setFavoritesLoading] = useState(false);
   const [favoritesError, setFavoritesError] = useState("");
   const loadingGeneration = useRef<number | null>(null);
+  const favoritesPolicyDirty = useRef(false);
+  const reloadFavoritesRef = useRef<()=>void>(()=>{});
   const [error, setError] = useState("");
   const [pending, setPending] = useState(new Set<string>());
   const pendingRef = useRef(new Set<string>());
@@ -119,7 +122,16 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
         if (seed) { const value = seed; seed = null; return value; }
         return apiRequest("/me/provider-session", {signal:AbortSignal.any([signal, AbortSignal.timeout(15000)])}).catch(cause => { if (!disposed && identityRef.current === identity && cause instanceof Error && cause.message === "Kisisel yayin erisimi kullanilamiyor.") revoke(); throw cause; });
       }, publish, () => !disposed && identityRef.current === identity);
-      const client = createPersonalProviderClient({loadBootstrap});
+      const video = document.createElement("video");let nativeHls=false;let mseH264=false;
+      try { nativeHls=Boolean(video.canPlayType?.("application/vnd.apple.mpegurl"));const mse=window.MediaSource ?? (window as unknown as {ManagedMediaSource?:typeof MediaSource}).ManagedMediaSource;mseH264=Boolean(mse?.isTypeSupported('video/mp4; codecs="avc1.42E01E"')); } catch { mseH264=false; }
+      let mpegtsMseLive=false;
+      if(mseH264) {
+        let timer:ReturnType<typeof setTimeout> | undefined;
+        try { mpegtsMseLive=await Promise.race([import("mpegts.js").then(module=>Boolean(module.default.getFeatureList().mseLivePlayback)),new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),1500);})]); }
+        catch { mpegtsMseLive=false; } finally { if(timer)clearTimeout(timer); }
+      }
+      if(disposed || controller.signal.aborted || identityRef.current!==identity)return;
+      const client = createPersonalProviderClient({loadBootstrap,liveDefaultExtension:selectPersonalLiveExtension({nativeHls,mseH264,mpegtsMseLive}),onLivePolicyChange:revision=>{if(!disposed && identityRef.current===identity){favoritesPolicyDirty.current=true;setLivePolicyRevision(revision);}}});
       await client.refreshMetadata();
       if (disposed || identityRef.current !== identity) { client.clear(); return; }
       providerRef.current = client; setPersonalProvider(client); setProviderMode("personal"); setProviderError("");
@@ -140,12 +152,13 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     if (providerMode === "loading") return;
     if (!identity || pendingRef.current.size || loadingGeneration.current === generation.current) return;
     const g = generation.current;
+    favoritesPolicyDirty.current=false;
     loadingGeneration.current = g; setFavoritesLoading(true);
     const load = personalProvider && providerMode === "personal"
       ? apiRequest<{favorites:PersonalRef[]}>("/me/personal-library", {signal:AbortSignal.timeout(15000)}).then(async library => {
         const kinds = Array.from(new Set(library.favorites.filter(ref=>ref.kind !== "episode").map(ref=>ref.kind as MediaItem["kind"])));
         const rows = await Promise.all(kinds.map(kind=>personalProvider.catalog(kind)));
-        return {items:hydratePersonalFavorites(library.favorites,rows.flat()),partial:false};
+        return {items:hydratePersonalFavorites(library.favorites,rows.flat(),personalProvider.isLiveExcluded),partial:false};
       })
       : apiRequest<{items:MediaItem[];partial?:boolean}>("/me/favorites", {signal:AbortSignal.timeout(60000)});
     load.then(r => {
@@ -157,9 +170,10 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       if (g === generation.current) setFavoritesError("Favoriler güncellenemedi. Kayıtlı favorilerin silinmedi; tekrar deneyebilirsin.");
     }).finally(() => {
       if (loadingGeneration.current === g) loadingGeneration.current = null;
-      if (g === generation.current) setFavoritesLoading(false);
+      if (g === generation.current) {setFavoritesLoading(false);if(favoritesPolicyDirty.current)reloadFavoritesRef.current();}
     });
-  }, [identity, personalProvider, providerMode, providerScope]);
+  }, [identity, personalProvider, providerMode, providerScope, livePolicyRevision]);
+  reloadFavoritesRef.current=reloadFavorites;
   const reload = useCallback(() => { refreshProvider(); reloadFavorites(); }, [refreshProvider, reloadFavorites]);
   const invalidateFavorites = useCallback(() => {
     generation.current++;
@@ -185,9 +199,9 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       else throw new Error("Unavailable session");
     }
     catch { if (g === generation.current) { setFavorites(list => existing ? [existing, ...list.filter(f => itemKey(f) !== key)] : list.filter(f => itemKey(f) !== key)); setError("Favori değişikliği kaydedilemedi. Lütfen tekrar dene."); } }
-    finally { if(g === generation.current) {pendingRef.current.delete(key); setPending(new Set(pendingRef.current));} }
+    finally { if(g === generation.current) {pendingRef.current.delete(key); setPending(new Set(pendingRef.current));if(favoritesPolicyDirty.current)reloadFavoritesRef.current();} }
   };
-  return <Context.Provider value={{ providerExpiresAt, providerRevision, personalProvider, providerMode, providerError, providerScope, session, ready, favorites, favoritesReady, favoritesLoading, favoritesError, error, pending, toggle, reload, refreshProvider, invalidateFavorites, dismissError: () => setError(""), saveSession, logout }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ livePolicyRevision, providerExpiresAt, providerRevision, personalProvider, providerMode, providerError, providerScope, session, ready, favorites:personalProvider ? personalProvider.filterLiveItems(favorites) : favorites, favoritesReady, favoritesLoading, favoritesError, error, pending, toggle, reload, refreshProvider, invalidateFavorites, dismissError: () => setError(""), saveSession, logout }}>{children}</Context.Provider>;
 }
 export function usePlatform() { const value = useContext(Context); if (!value) throw new Error("PlatformProvider missing"); return value; }
 

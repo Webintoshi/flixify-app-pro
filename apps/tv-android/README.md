@@ -1,6 +1,6 @@
 # Flixify Pro for Android TV
 
-Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.4.1`, code9, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
+Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.4.2`, code 10, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
 
 ## Build
 
@@ -23,7 +23,7 @@ The connected tests require an Android TV emulator. Repository fixtures use no r
 
 ## Remote
 
-Cold launch shows the existing Flixify logo in the Android starting window, followed by a full-screen logo, native spinner and Yükleniyor… while the first target screen loads. The cover leaves on the first ready frame, including login, empty catalog or recoverable error, without a fixed delay or waiting for all artwork. It keeps the underlying remote focus, blocks hidden navigation and allows Back to exit. Later refresh/navigation/player or Settings return does not repeat it; completed state survives same-process Activity recreation; a task restored after process death shows its loading cover again. Player theme and playback remain unchanged.
+Cold launch shows the existing Flixify logo in the Android starting window, followed by a full-screen logo, native spinner and Yükleniyor… while the first target screen loads. The cover leaves on the first ready frame, including login, empty catalog or recoverable error, without a fixed delay or waiting for all artwork. It keeps the underlying remote focus, blocks hidden navigation and allows Back to exit. Later refresh/navigation/player or Settings return does not repeat it; completed state survives same-process Activity recreation; a task restored after process death shows its loading cover again. Player theme and controls remain unchanged.
 
 - Direction keys move visible focus; OK selects. Back closes input/dialogs, hides active playback controls before leaving the player, restores catalog focus, then returns to navigation and exits at the root.
 - Search uses a focused panel with live local result counts and sample titles; edits stay as drafts until Ara. Categories use a virtualized side panel, local finder, per-category counts and a selected mark independent of focus. Search and category remain intersected, Turkish-aware, and scoped to the current account/catalog. Native keyboard resize preserves the editor; Back/cancel restores the opener. Short screens simplify optional context so the action stays visible.
@@ -39,6 +39,10 @@ Cold launch shows the existing Flixify logo in the Android starting window, foll
 ## Existing services
 
 API origin is `https://api.flixify.vip`. App uses login/refresh, `/me`, `/me/provider-session` and `/me/personal-library`. Personal provider metadata/media are fetched from the TV's IP using the verified HTTPS origin. It never switches to shared credentials, legacy native relay endpoints or cancelled proxies. Tokens are encrypted through AndroidKeyStore; provider credentials are memory-only. Account/source changes discard stale work and caches. Absolute access expiry is checked before playback and on resume; metadata is refreshed every60seconds and before opening media. Provider extension changes the cutoff without restarting a running engine.
+
+LIVE metadata without a declared container format uses progressive MPEG-TS; valid explicit formats stay unchanged. The repository supplies `video/mp2t` to Media3 for TS and HLS MIME for HLS. Player buffers, frame handling, controls and sounds are unchanged. The LIVE disk-cache normalization key advances once for this release so older implicit-HLS snapshots are refetched; movie/series caches and saved favorite identities remain compatible.
+
+Optional live exclusions arrive with verified provider-session metadata. A revision filters current, memory-cached and disk-cached LIVE catalogs, favorite display and playback membership without changing sourceVersion or deleting saved references. A temporarily missing/malformed policy retains the last valid policy for the same verified identity; source replacement clears it. Removing an exclusion restores raw cached channels, including an already-visible Favorites page.
 
 LIVE playback revalidates access before using its already verified scoped catalog, avoiding a full channel-list download for each selection. Optional EPG provider I/O has its own bounded worker after serialized context preparation; token rotation remains on the original serialized lane. Actual first-frame rendering distinguishes the30second initial preparation budget from a12second established playback stall. These changes remove avoidable client work; provider/network/physical-TV startup time still needs real-device feedback.
 

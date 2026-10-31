@@ -265,3 +265,62 @@ test('a shared failed fresh authorization refuses cached access and allows a fre
   hold=false;assert.equal((await client.playback(liveRef)).url,'https://provider.test/live/u%2Fa/p%3F%23/7.m3u8');assert.equal(loads,3);assert.equal(requests,2);
  }finally{client.clear();}
 });
+
+const liveRef={source:'personal',sourceVersion:'v1',kind:'live',id:'7'} as const;
+const livePolicy=(ids:string[],revision='a'.repeat(64))=>({revision,excludedIds:ids});
+function livePolicyFixture(initial:unknown) {
+ let current:unknown=initial;let calls=0;
+ const client=createPersonalProviderClient({loadBootstrap:async()=>({...bootstrap,livePolicy:current}),fetch:async raw=>{
+  calls++;const action=new URL(String(raw)).searchParams.get('action');return new Response(JSON.stringify(action?.endsWith('categories')?[]:[{stream_id:7,name:'One'},{stream_id:8,name:'Two'}]));
+ }});
+ return {client,update:(policy:unknown)=>{current=policy;},calls:()=>calls};
+}
+test('live policy filters warm catalog and fresh playback without changing source identity',async()=>{
+ const f=livePolicyFixture(undefined);await f.client.catalog('live');f.update(livePolicy(['7']));await f.client.refreshMetadata();
+ assert.deepEqual((await f.client.catalog('live')).map(i=>i.personalRef.id),['8']);
+ await assert.rejects(f.client.playback(liveRef));assert.equal(f.calls(),2);f.client.clear();
+});
+test('policy removal restores raw cached channel without provider refetch',async()=>{
+ const f=livePolicyFixture(livePolicy(['7']));assert.equal((await f.client.catalog('live')).length,1);
+ f.update(livePolicy([],'b'.repeat(64)));await f.client.refreshMetadata();assert.equal((await f.client.catalog('live')).length,2);assert.equal(f.calls(),2);f.client.clear();
+});
+test('missing or malformed optional policy retains the last valid policy for same identity',async()=>{
+ for(const invalid of [undefined,null,{},livePolicy(['01']),livePolicy([7] as unknown as string[]),livePolicy(['7'],'invalid'),livePolicy(Array(50001).fill('7'))]){
+  const f=livePolicyFixture(livePolicy(['7']));await f.client.catalog('live');f.update(invalid);await f.client.refreshMetadata();assert.deepEqual((await f.client.catalog('live')).map(i=>i.personalRef.id),['8']);f.client.clear();
+ }
+});
+test('identity replacement clears retained policy even when its new response has none',async()=>{
+ let current={...bootstrap,livePolicy:livePolicy(['7'])} as Record<string,unknown>;
+ const client=createPersonalProviderClient({loadBootstrap:async()=>({...current}),fetch:async raw=>new Response(JSON.stringify(new URL(String(raw)).searchParams.get('action')?.endsWith('categories')?[]:[{stream_id:7,name:'One'}]))});
+ assert.equal((await client.catalog('live')).length,0);current={...bootstrap,providerOrigin:'https://replacement.test'};await client.refreshMetadata();assert.equal((await client.catalog('live')).length,1);client.clear();
+});
+test('an in-flight catalog applies the newest policy when returning and caches raw rows',async()=>{
+ let release!:(v:Response)=>void;let entered!:()=>void;const pending=new Promise<void>(r=>entered=r);let current:unknown;
+ const client=createPersonalProviderClient({loadBootstrap:async()=>({...bootstrap,livePolicy:current}),fetch:async raw=>{
+  if(new URL(String(raw)).searchParams.get('action')==='get_live_categories')return new Response('[]');entered();return new Promise<Response>(r=>release=r);
+ }});
+ const catalog=client.catalog('live');await pending;current=livePolicy(['7']);await client.refreshMetadata();release(new Response('[{"stream_id":7,"name":"One"},{"stream_id":8,"name":"Two"}]'));
+ assert.deepEqual((await catalog).map(i=>i.personalRef.id),['8']);current=livePolicy([],'b'.repeat(64));await client.refreshMetadata();assert.equal((await client.catalog('live')).length,2);client.clear();
+});
+test('policy affects only live IDs and direct media URL generation rejects an excluded ref',()=>{
+ const b={...bootstrap,livePolicy:livePolicy(['12','7'])};assert.equal(buildPersonalMediaUrl(b,ref),'https://provider.test/movie/u%2Fa/p%3F%23/12.mp4');
+ assert.throws(()=>buildPersonalMediaUrl(b,liveRef));assert.equal(adapter.validatePersonalBootstrap(b).livePolicy?.revision,'a'.repeat(64));
+});
+
+test('MSE live prefers proven TS even if the browser also advertises native HLS',()=>{
+ assert.equal(adapter.selectPersonalLiveExtension({nativeHls:false,mseH264:true}),'ts');
+ assert.equal(adapter.selectPersonalLiveExtension({nativeHls:true,mseH264:true}),'ts');
+ assert.equal(adapter.selectPersonalLiveExtension({nativeHls:true,mseH264:true,mpegtsMseLive:false}),'m3u8');
+ assert.equal(adapter.selectPersonalLiveExtension({nativeHls:true,mseH264:true,mpegtsMseLive:true}),'ts');
+ for(const capabilities of [{nativeHls:true,mseH264:false},{nativeHls:false,mseH264:false}])assert.equal(adapter.selectPersonalLiveExtension(capabilities),'m3u8');
+});
+test('live TS preference changes only missing or empty provider extensions and keeps reference IDs',()=>{
+ const rows=[{stream_id:7,name:'Missing'},{stream_id:8,name:'Empty',container_extension:''},{stream_id:9,name:'Explicit HLS',container_extension:'m3u8'},{stream_id:10,name:'Explicit MP4',container_extension:'mp4'}];
+ const ts=normalizeCatalog('live',rows,[],'v1','ts');const hls=normalizeCatalog('live',rows,[],'v1','m3u8');
+ assert.deepEqual(ts.map(i=>i.personalRef.extension),['ts','ts','m3u8','mp4']);assert.deepEqual(ts.map(i=>i.id),hls.map(i=>i.id));
+ assert.equal(normalizeCatalog('movie',[{stream_id:7,name:'Movie',category_id:1,container_extension:'mp4'}],[{category_id:1,category_name:'Filmler'}],'v1','ts')[0].personalRef.extension,'mp4');
+});
+test('saved HLS references resolve by ID to freshly verified implicit TS metadata',async()=>{
+ const client=createPersonalProviderClient({liveDefaultExtension:'ts',loadBootstrap:async()=>bootstrap,fetch:async raw=>new Response(JSON.stringify(new URL(String(raw)).searchParams.get('action')?.endsWith('categories')?[]:[{stream_id:7,name:'Missing'}]))});
+ const record=await client.playback({...liveRef,extension:'m3u8'});assert.equal(record.url,'https://provider.test/live/u%2Fa/p%3F%23/7.ts');client.clear();
+});

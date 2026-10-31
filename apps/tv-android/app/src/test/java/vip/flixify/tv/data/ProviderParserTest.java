@@ -104,4 +104,49 @@ public class ProviderParserTest {
         Item parent = new Item(Kind.SERIES, "17", "Series", "", "", "", "", "a:v", "", 0, 0, "");
         rejects(() -> ProviderParser.series(new JSONObject().put("episodes", new JSONObject().put("1", rows)), parent));
     }
+
+    private JSONObject policy(String revision,String... ids) throws Exception {
+        JSONArray excluded=new JSONArray();for(String value:ids)excluded.put(value);
+        return new JSONObject().put("revision",revision).put("excludedIds",excluded);
+    }
+    @Test public void livePolicyFiltersOnlyLiveAndDoesNotMutateRawCache() throws Exception {
+        ProviderParser.Bootstrap b=ProviderParser.bootstrap(bootstrap().put("livePolicy",policy("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","7")),NOW);
+        JSONArray rows=new JSONArray().put(row("7","m3u8")).put(row("8","m3u8"));
+        Catalog raw=ProviderParser.catalog(Kind.LIVE,rows,categories("Canlı"),b.scope());
+        Catalog filtered=ProviderParser.filterLiveCatalog(raw,b);
+        assertEquals(2,raw.items.size());assertEquals(1,filtered.items.size());assertEquals("8",filtered.items.get(0).id);
+        rejects(()->ProviderParser.mediaUrl(b,raw.items.get(0),NOW));
+        Catalog movies=ProviderParser.catalog(Kind.MOVIE,new JSONArray().put(row("7","mp4")),categories("Filmler"),b.scope());
+        assertSame(movies,ProviderParser.filterLiveCatalog(movies,b));
+        assertFalse(ProviderParser.mediaUrl(b,movies.items.get(0),NOW).isEmpty());
+    }
+    @Test public void missingAndMalformedPolicyRetainsLastValidForSameIdentityAndRestoresWhenEmpty() throws Exception {
+        ProviderParser.Bootstrap old=ProviderParser.bootstrap(bootstrap().put("livePolicy",policy("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","7")),NOW);
+        for(Object invalid:new Object[]{JSONObject.NULL,new JSONObject(),policy("bad","7"),policy("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","01"),new JSONObject().put("revision","aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").put("excludedIds",new JSONArray().put(7))}) {
+            ProviderParser.Bootstrap incoming=ProviderParser.retainLivePolicy(ProviderParser.bootstrap(bootstrap().put("livePolicy",invalid),NOW),old);
+            assertTrue(incoming.livePolicy.excludedIds.contains("7"));
+        }
+        ProviderParser.Bootstrap restored=ProviderParser.retainLivePolicy(ProviderParser.bootstrap(bootstrap().put("livePolicy",policy("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")),NOW),old);
+        assertTrue(restored.livePolicy.excludedIds.isEmpty());
+        try { restored.livePolicy.excludedIds.add("9"); fail("Policy must be immutable"); } catch (UnsupportedOperationException expected) {}
+    }
+    @Test public void changedOriginOrCredentialsCannotInheritOldPolicyAndGenerationStaysIdentityOnly() throws Exception {
+        ProviderParser.Bootstrap old=ProviderParser.bootstrap(bootstrap().put("livePolicy",policy("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","7")),NOW);
+        for(String field:new String[]{"providerOrigin","password","sourceVersion","accountId"}) {
+            JSONObject raw=bootstrap().put(field,field.equals("providerOrigin")?"https://replacement.test":"replacement");
+            assertNull(ProviderParser.retainLivePolicy(ProviderParser.bootstrap(raw,NOW),old).livePolicy);
+        }
+        SourceGuard guard=new SourceGuard();long generation=guard.install(old);
+        ProviderParser.Bootstrap refreshed=ProviderParser.retainLivePolicy(ProviderParser.bootstrap(bootstrap(),NOW),old);
+        assertEquals(generation,guard.install(refreshed));assertTrue(guard.active(generation,old.scope(),NOW));
+    }
+
+    @Test public void missingAndEmptyLiveExtensionsDefaultToTsButExplicitHlsAndVodStayUnchanged() throws Exception {
+        JSONArray rows=new JSONArray().put(new JSONObject().put("stream_id","7").put("name","Missing"))
+            .put(row("8","" )).put(row("9","m3u8")).put(row("10","mp4"));
+        Catalog live=ProviderParser.catalog(Kind.LIVE,rows,categories("Canlı"),"account-a:source-a");
+        assertEquals("ts",live.items.get(0).extension);assertEquals("ts",live.items.get(1).extension);
+        assertEquals("m3u8",live.items.get(2).extension);assertEquals("mp4",live.items.get(3).extension);
+        assertEquals("mp4",ProviderParser.catalog(Kind.MOVIE,new JSONArray().put(row("7","mp4")),categories("Filmler"),"account-a:source-a").items.get(0).extension);
+    }
 }

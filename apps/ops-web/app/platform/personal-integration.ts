@@ -14,9 +14,9 @@ export function pagePersonalCatalog(items: MediaItem[], page: number, search = '
  const filtered = items.filter(item => (!group || item.groupTitle === group) && item.title.toLocaleLowerCase('tr').includes(needle));
  return {items:filtered.slice((page-1)*48,page*48), total:filtered.length,groups:Array.from(groups,([title,count])=>({title,count}))};
 }
-export function hydratePersonalFavorites(refs: PersonalRef[], catalogs: MediaItem[]): MediaItem[] {
+export function hydratePersonalFavorites(refs: PersonalRef[], catalogs: MediaItem[], isExcluded: (ref: PersonalRef)=>boolean = ()=>false): MediaItem[] {
  const current = new Map(catalogs.filter(i=>i.personalRef).map(i=>[personalRefKey(i.personalRef!),i]));
- return refs.flatMap(value=> { try { const ref = validatePersonalRef(value); if(ref.kind === 'episode') return []; const id = personalRefKey(ref); return [current.get(id) ?? {id,kind:ref.kind,title:'Kullanılamayan favori',personalRef:ref,available:false}]; } catch { return []; } });
+ return refs.flatMap(value=> { try { const ref = validatePersonalRef(value); if(ref.kind === 'episode' || (ref.kind === 'live' && isExcluded(ref))) return []; const id = personalRefKey(ref); return [current.get(id) ?? {id,kind:ref.kind,title:'Kullanılamayan favori',personalRef:ref,available:false}]; } catch { return []; } });
 }
 export function hydratePersonalWatched(refs: PersonalRef[], episodes: Episode[]): Set<string> {
  const keys = new Set(refs.flatMap(ref=> {try {return [personalRefKey(ref)];} catch {return [];}}));

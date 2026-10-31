@@ -43,9 +43,10 @@ final class MetadataDiskCache {
         this.root=root;this.budget=budget;this.maxEntry=maxEntry;this.floor=floor;this.free=free;
         File[] abandoned=root.listFiles(file->file.getName().endsWith(".tmp"));if(abandoned!=null)for(File file:abandoned)file.delete();
     }
+    private static String catalogKey(Kind kind){return kind==Kind.LIVE?"catalog:LIVE:ts-default-v2":"catalog:"+kind.name();}
     Snapshot<Catalog> readCatalog(String scope,Kind kind,long expiry,long now){
         if(kind==null || kind==Kind.EPISODE)return null;
-        return read(scope,"catalog:"+kind.name(),expiry,now,input->{
+        return read(scope,catalogKey(kind),expiry,now,input->{
             List<Category> categories=new ArrayList<>();int groups=count(input,MAX_ROWS);
             for(int i=0;i<groups;i++)categories.add(new Category(string(input,15),string(input,256)));
             List<Item> items=new ArrayList<>();Set<String> ids=new HashSet<>();int size=count(input,MAX_ROWS);
@@ -68,7 +69,7 @@ final class MetadataDiskCache {
     }
     void writeCatalog(String scope,long expiry,long now,Catalog value,Valid valid){
         if(value==null || value.kind==null || value.kind==Kind.EPISODE)return;
-        write(scope,"catalog:"+value.kind.name(),expiry,now,valid,output->{
+        write(scope,catalogKey(value.kind),expiry,now,valid,output->{
             count(output,value.categories.size(),MAX_ROWS);for(Category category:value.categories){if(!id(category.id))throw new IOException();string(output,category.id,15);string(output,display(category.title),256);}
             count(output,value.items.size(),MAX_ROWS);Set<String> seen=new HashSet<>();
             for(Item entry:value.items){if(entry.kind!=value.kind || !seen.add(entry.id))throw new IOException();item(output,entry,scope);}

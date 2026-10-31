@@ -633,7 +633,7 @@ function LiveVideo({
 
 export default function LiveTvPage() {
   const searchParams = useSearchParams();
-  const { favorites, session: platformSession, personalProvider, providerMode, providerScope, providerExpiresAt } = usePlatform();
+  const { favorites, session: platformSession, personalProvider, providerMode, providerScope, providerExpiresAt, livePolicyRevision } = usePlatform();
   const openedChannel = useRef<string | null>(null);
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [channels, setChannels] = useState<LiveChannel[]>([]);
@@ -760,7 +760,7 @@ export default function LiveTvPage() {
     });
 
     return () => controller.abort();
-  }, [session, personalProvider, providerMode, providerScope]);
+  }, [session, personalProvider, providerMode, providerScope, livePolicyRevision]);
 
   const enrichedChannels = useMemo(
     () => channels.map((channel) => ({ channel, ...classifyChannel(channel) })),

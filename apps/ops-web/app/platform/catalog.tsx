@@ -97,7 +97,7 @@ function MediaRail({ label, row, href, open, className, landscape = false }: { l
   return <section className={`${s.mediaSection} ${landscape ? s.landscapeRail : ""} ${className ?? ""}`} data-media-layout={landscape ? "landscape" : "poster"}><div className={s.sectionHeading}><h2>{label}</h2><div className={s.railActions}>{href && <Link href={href}>Tümünü Gör <Icon name="arrow"/></Link>}<button type="button" aria-label={`${label} önceki içerikler`} disabled={position.start} onClick={() => rail.current?.scrollBy({ left: -rail.current.clientWidth * .8, behavior: "smooth" })}>‹</button><button type="button" aria-label={`${label} sonraki içerikler`} disabled={position.end} onClick={() => rail.current?.scrollBy({ left: rail.current.clientWidth * .8, behavior: "smooth" })}>›</button></div></div><div ref={rail} className={s.horizontalRail} onScroll={() => { const element = rail.current; if (element) setPosition({ start: element.scrollLeft <= 2, end: element.scrollLeft + element.clientWidth >= element.scrollWidth - 2 }); }}>{row.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div></section>;
 }
 export default function CatalogPage({ kind, overview = false, favoritesOnly = false }: { kind: Kind; overview?: boolean; favoritesOnly?: boolean }) {
-  const { session, personalProvider, providerMode, providerError, providerScope, favorites, favoritesReady, favoritesLoading, favoritesError, invalidateFavorites, reload: reloadFavorites } = usePlatform();
+  const { session, personalProvider, providerMode, providerError, providerScope, livePolicyRevision, favorites, favoritesReady, favoritesLoading, favoritesError, invalidateFavorites, reload: reloadFavorites } = usePlatform();
   const params = useSearchParams();
   const router = useRouter();
   const [query, setQuery] = useState(params.get("q") ?? "");
@@ -133,7 +133,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const loadCatalog = useCallback((kind: Kind, page: number, search: string, group: string, account: string, revision = 0): Promise<Catalog> => {
     if (personalProvider && providerMode === "personal") {
       const snapshot = personalSnapshot;
-      let raw = snapshot.raw.get(kind);
+      let raw = kind === "live" ? personalProvider.catalog(kind) : snapshot.raw.get(kind);
       if (!raw) {
         raw = personalProvider.catalog(kind).then(items => [...items]);
         snapshot.raw.set(kind, raw);
@@ -154,7 +154,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
       });
     }
     return providerMode === "legacy" ? getCatalog(kind, page, search, group, account, revision) : Promise.reject(new Error("Provider loading"));
-  }, [personalProvider, providerMode, acquisitionDay, personalSnapshot]);
+  }, [personalProvider, providerMode, acquisitionDay, personalSnapshot, livePolicyRevision]);
   const hasSession = Boolean(session);
   const currentMovieRevision = movieRevision.account === account ? movieRevision.revision : 0;
   const selectedId = params.get("item");

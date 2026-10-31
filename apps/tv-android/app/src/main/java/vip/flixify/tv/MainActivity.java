@@ -28,6 +28,8 @@ import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.Date;
 import java.util.EnumMap;
 import java.util.List;
@@ -217,7 +219,19 @@ public final class MainActivity extends Activity {
             if(!repository.currentScope().equals(pendingCatalogScopes.get(catalog.kind)) || !catalogMatchesCurrentSource(catalog))continue;
             for(Page target:pages.values()) {
                 Kind kind=target.section==Section.LIVE?Kind.LIVE:target.section==Section.SERIES?Kind.SERIES:Kind.MOVIE;
-                if(target.section==Section.ACCOUNT || target.section==Section.FAVORITES || kind!=catalog.kind)continue;
+                if(target.section==Section.FAVORITES) {
+                    if(catalog.kind!=Kind.LIVE || target.catalog==null || !repository.currentScope().equals(target.catalogScope))continue;
+                    List<Item> merged=new ArrayList<>();Map<String,Item> liveFavorites=new LinkedHashMap<>();
+                    for(Item current:catalog.items)if(repository.isFavorite(current))liveFavorites.put(current.key(),current);
+                    for(Item previous:target.catalog.items) {
+                        if(previous.kind!=Kind.LIVE){merged.add(previous);continue;}
+                        Item current=liveFavorites.remove(previous.key());if(current!=null)merged.add(current);
+                    }
+                    merged.addAll(liveFavorites.values());
+                    if(target==page){visibleChanged=true;captureGrid();if(resizeFocus==null)resizeFocus=focusIdentity(getCurrentFocus());}
+                    target.catalog=new Catalog(Kind.MOVIE,merged,target.catalog.categories);continue;
+                }
+                if(target.section==Section.ACCOUNT || kind!=catalog.kind)continue;
                 if(target==page){visibleChanged=true;captureGrid();if(resizeFocus==null)resizeFocus=focusIdentity(getCurrentFocus());}
                 target.catalog=catalog;target.catalogScope=repository.currentScope();
             }

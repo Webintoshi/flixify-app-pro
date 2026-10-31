@@ -1,7 +1,8 @@
 import { isJunkVodCatalogTitle, isValidMovieCatalogEntry, isValidSeriesEpisodeCatalogEntry } from '@flixify/contracts';
 import type { MediaItem, Episode, Kind } from './types';
 
-export type PersonalProviderBootstrap = { accountId: string; sourceVersion: string; providerOrigin: string; username: string; password: string; expiresAt: string; moviePolicy: 'general-audience-only' };
+export type PersonalLivePolicy = { revision: string; excludedIds: string[] };
+export type PersonalProviderBootstrap = { livePolicy?: PersonalLivePolicy; accountId: string; sourceVersion: string; providerOrigin: string; username: string; password: string; expiresAt: string; moviePolicy: 'general-audience-only' };
 export type PersonalRef = { source: 'personal'; sourceVersion: string; kind: Kind | 'episode'; id: string; extension?: string; seriesId?: string };
 export type PersonalMediaItem = MediaItem & { personalRef: PersonalRef };
 export type PersonalEpisode = Episode & { personalRef: PersonalRef };
@@ -28,21 +29,31 @@ export function validatePersonalRef(value: unknown): PersonalRef {
  if (r.source !== 'personal' || (!text(r.sourceVersion, 256) || text(r.sourceVersion, 256) !== r.sourceVersion) || !['live','movie','series','episode'].includes(String(r.kind)) || !id(r.id) || (r.extension !== undefined && !ext(r.extension)) || (r.kind === 'episode' ? !id(r.seriesId) : r.seriesId !== undefined)) fail();
  return {source:'personal',sourceVersion:r.sourceVersion as string,kind:r.kind as PersonalRef['kind'],id:r.id as string,...(r.extension ? {extension:ext(r.extension)} : {}),...(r.kind === 'episode' ? {seriesId:r.seriesId as string} : {})};
 }
+function validateLivePolicy(value: unknown): PersonalLivePolicy | undefined {
+ if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+ const p = value as Record<string,unknown>;
+ if (typeof p.revision !== 'string' || !/^[a-f0-9]{64}$/.test(p.revision) || !Array.isArray(p.excludedIds) || p.excludedIds.length > 50000 || p.excludedIds.some(value=>typeof value !== 'string' || !id(value))) return;
+ return {revision:p.revision,excludedIds:[...new Set(p.excludedIds as string[])]};
+}
 export function validatePersonalBootstrap(value: unknown, now = Date.now()): PersonalProviderBootstrap {
  const b = record(value);
  for (const key of ['accountId','sourceVersion','username','password']) if (typeof b[key] !== 'string' || !(b[key] as string).length || (b[key] as string).length > (key === 'password' ? 2048 : 256) || /[\u0000-\u001f\u007f]/.test(b[key] as string)) fail();
  let origin: URL; try { origin = new URL(String(b.providerOrigin)); } catch { return fail(); }
  if (origin.protocol !== 'https:' || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash || origin.origin !== b.providerOrigin) fail();
  if (b.moviePolicy !== 'general-audience-only' || typeof b.expiresAt !== 'string' || b.expiresAt.length > 64 || !Number.isFinite(Date.parse(b.expiresAt)) || Date.parse(b.expiresAt) <= now) fail();
- return {accountId:b.accountId as string,sourceVersion:b.sourceVersion as string,providerOrigin:origin.origin,username:b.username as string,password:b.password as string,expiresAt:b.expiresAt as string,moviePolicy:'general-audience-only'};
+ const livePolicy = validateLivePolicy(b.livePolicy);
+ return {...(livePolicy ? {livePolicy} : {}),accountId:b.accountId as string,sourceVersion:b.sourceVersion as string,providerOrigin:origin.origin,username:b.username as string,password:b.password as string,expiresAt:b.expiresAt as string,moviePolicy:'general-audience-only'};
 }
 export function buildPersonalMediaUrl(bootstrap: unknown, value: unknown, now = Date.now()): string {
  const b = validatePersonalBootstrap(bootstrap, now); const r = validatePersonalRef(value);
- if (r.sourceVersion !== b.sourceVersion || r.kind === 'series' || (r.kind !== 'live' && !r.extension)) fail();
+ if ((r.kind === 'live' && b.livePolicy?.excludedIds.includes(r.id)) || r.sourceVersion !== b.sourceVersion || r.kind === 'series' || (r.kind !== 'live' && !r.extension)) fail();
  const path = r.kind === 'episode' ? 'series' : r.kind;
  return `${b.providerOrigin}/${path}/${encodeURIComponent(b.username)}/${encodeURIComponent(b.password)}/${r.id}.${r.extension ?? 'm3u8'}`;
 }
-export function normalizeCatalog(kind: Kind, raw: unknown, categories: unknown, sourceVersion: string): PersonalMediaItem[] {
+export function selectPersonalLiveExtension(capabilities: {nativeHls:boolean;mseH264:boolean;mpegtsMseLive?:boolean}): 'ts' | 'm3u8' {
+ return (capabilities.mpegtsMseLive ?? capabilities.mseH264) ? 'ts' : 'm3u8';
+}
+export function normalizeCatalog(kind: Kind, raw: unknown, categories: unknown, sourceVersion: string, liveDefaultExtension: 'ts' | 'm3u8' = 'm3u8'): PersonalMediaItem[] {
  const groups = new Map<string,string>();
  for (const row of list(categories)) { try { const c = record(row); const key = id(c.category_id); const name = text(c.category_name,256); if (key && name) { if (groups.has(key) && groups.get(key) !== name) fail(); groups.set(key,name); } } catch { return fail(); } }
  const result: PersonalMediaItem[] = []; const seen = new Set<string>();
@@ -50,7 +61,8 @@ export function normalizeCatalog(kind: Kind, raw: unknown, categories: unknown, 
   if (!rawRow || typeof rawRow !== 'object' || Array.isArray(rawRow)) continue;
   const r = record(rawRow); const providerId = id(kind === 'series' ? r.series_id : r.stream_id); const title = text(r.name); const groupTitle = groups.get(id(r.category_id) ?? '') ?? null;
   if (!providerId || !title || isJunkVodCatalogTitle(title) || seen.has(providerId)) continue;
-  const extension = ext(r.container_extension) ?? (kind === 'live' ? 'm3u8' : undefined);
+  const missingExtension = r.container_extension === undefined || r.container_extension === null || r.container_extension === '';
+  const extension = ext(r.container_extension) ?? (kind === 'live' ? (missingExtension ? liveDefaultExtension : 'm3u8') : undefined);
   if (kind === 'movie' && (!groupTitle || !SAFE_MOVIE_NAMES.has(label(groupTitle)) || !extension || !isValidMovieCatalogEntry({title,groupTitle,source:`/movie/${providerId}.${extension}`}))) continue;
   const personalRef: PersonalRef = {source:'personal',sourceVersion,kind,id:providerId,...(extension ? {extension} : {})};
   seen.add(providerId); result.push({id:personalItemId(personalRef),title,kind,groupTitle,posterUrl:art(r.stream_icon ?? r.cover),logoUrl:kind === 'live' ? art(r.stream_icon) : null,playbackAllowed:true,available:true,personalRef});
@@ -87,12 +99,13 @@ export function normalizeEpg(raw: unknown): PersonalProgramme[] {
  return out.sort((a,b)=>a.start-b.start);
 }
 
-export function createPersonalProviderClient(options: { loadBootstrap: (signal: AbortSignal) => Promise<unknown>; fetch?: typeof fetch; now?: ()=>number }) {
+export function createPersonalProviderClient(options: { loadBootstrap: (signal: AbortSignal) => Promise<unknown>; fetch?: typeof fetch; now?: ()=>number; onLivePolicyChange?: (revision:string)=>void; liveDefaultExtension?: 'ts' | 'm3u8' }) {
  const fetcher = options.fetch ?? globalThis.fetch; const now = options.now ?? Date.now;
  let pendingRefresh: Promise<{b:PersonalProviderBootstrap;g:number}> | undefined;
  let generation = 0; let bootstrapSequence = 0; let pendingBootstrap: Promise<{b:PersonalProviderBootstrap;g:number}> | undefined; let pendingBootstrapForced = false; let session: PersonalProviderBootstrap | undefined; let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+ let excludedIds = new Set<string>();
  const controllers = new Set<AbortController>(); const cache = new Map<Kind, PersonalMediaItem[]>();
- function clear() { pendingRefresh = undefined; generation++; bootstrapSequence++; pendingBootstrap = undefined; pendingBootstrapForced = false; session = undefined; cache.clear(); if (expiryTimer) clearTimeout(expiryTimer); expiryTimer = undefined; for (const c of controllers) c.abort(); controllers.clear(); }
+ function clear() { pendingRefresh = undefined; generation++; bootstrapSequence++; pendingBootstrap = undefined; pendingBootstrapForced = false; session = undefined; excludedIds.clear(); options.onLivePolicyChange?.(''); cache.clear(); if (expiryTimer) clearTimeout(expiryTimer); expiryTimer = undefined; for (const c of controllers) c.abort(); controllers.clear(); }
  function active(g: number, b: PersonalProviderBootstrap) { if (g !== generation || !session || session !== b) fail(); if (Date.parse(b.expiresAt) <= now()) { clear(); fail(); } }
  async function bootstrapRaw(force = false) {
   if (session && Date.parse(session.expiresAt) <= now()) clear();
@@ -102,8 +115,10 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
    let b = validatePersonalBootstrap(await options.loadBootstrap(controller.signal),now()); if (g !== generation || sequence !== bootstrapSequence || controller.signal.aborted) fail();
    if (session && (session.accountId !== b.accountId || session.sourceVersion !== b.sourceVersion || session.providerOrigin !== b.providerOrigin || session.username !== b.username || session.password !== b.password)) clear();
    // Keep active operations on the same identity; refreshed access may shorten or extend its deadline.
-   if (session) { session.expiresAt = b.expiresAt; b = session; }
-   session = b; if (expiryTimer) clearTimeout(expiryTimer);
+   const previousRevision = session?.livePolicy?.revision;
+   if (session) { session.expiresAt = b.expiresAt; if (b.livePolicy) session.livePolicy = b.livePolicy; b = session; }
+   excludedIds = new Set(b.livePolicy?.excludedIds ?? []);
+   session = b; if (previousRevision !== b.livePolicy?.revision) options.onLivePolicyChange?.(b.livePolicy?.revision ?? ''); if (expiryTimer) clearTimeout(expiryTimer);
    const schedule = () => { if (session !== b) return; const remaining = Date.parse(b.expiresAt)-now(); if (remaining <= 0) clear(); else { expiryTimer = setTimeout(schedule,Math.min(remaining,2147483647)); (expiryTimer as unknown as {unref?:()=>void}).unref?.(); } }; schedule();
    return {b,g:generation};
   } catch { return fail(); } finally { controllers.delete(controller); }
@@ -130,11 +145,13 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
    active(g,b); return JSON.parse(body) as unknown;
   } catch { return fail(); } finally { clearTimeout(timeout);signal?.removeEventListener('abort',abort);controllers.delete(controller); }
  }
+ function isLiveExcluded(ref: PersonalRef) { return ref.kind === 'live' && ref.sourceVersion === session?.sourceVersion && excludedIds.has(ref.id); }
+ function filterLiveItems<T extends {personalRef?:PersonalRef}>(items:T[]):T[] { return items.filter(item=>!item.personalRef || !isLiveExcluded(item.personalRef)); }
  async function catalogFor(kind: Kind,b: PersonalProviderBootstrap,g: number,force = false) {
-  active(g,b); if (!['live','movie','series'].includes(kind)) fail(); if (!force && cache.has(kind)) return structuredClone(cache.get(kind)!);
+  active(g,b); if (!['live','movie','series'].includes(kind)) fail(); if (!force && cache.has(kind)) return structuredClone(filterLiveItems(cache.get(kind)!));
   const prefix = kind === 'movie' ? 'vod' : kind;
   const [categories,rows] = await Promise.all([request(b,g,`get_${prefix}_categories`),request(b,g,kind === 'series' ? 'get_series' : `get_${prefix}_streams`)]);
-  const items = normalizeCatalog(kind,rows,categories,b.sourceVersion);active(g,b);cache.set(kind,items);return structuredClone(items);
+  const items = normalizeCatalog(kind,rows,categories,b.sourceVersion,options.liveDefaultExtension === 'ts' ? 'ts' : 'm3u8');active(g,b);cache.set(kind,items);return structuredClone(filterLiveItems(items));
  }
  async function seriesFor(ref: PersonalRef,b: PersonalProviderBootstrap,g: number,force = false) {
   if (ref.sourceVersion !== b.sourceVersion || ref.kind !== 'series') fail();
@@ -144,9 +161,9 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
   return {...parent,seasons,episodeCount:episodes.length,seasonCount:seasons.length};
  }
  return {
-  clear,
+  clear, isLiveExcluded, filterLiveItems,
   refreshMetadata() { if (pendingRefresh) return pendingRefresh.then(({b})=>b); const promise = bootstrap(true); pendingRefresh = promise; void promise.then(()=>{if(pendingRefresh===promise)pendingRefresh=undefined;},()=>{if(pendingRefresh===promise)pendingRefresh=undefined;}); return promise.then(({b})=>b); },
-  async catalog(kind: Kind) { const {b,g} = await bootstrap();return catalogFor(kind,b,g); },
+  async catalog(kind: Kind) { const {b,g} = await bootstrap();const items=await catalogFor(kind,b,g);active(g,b);return structuredClone(filterLiveItems(cache.get(kind) ?? items)); },
   async series(value: unknown) {const ref=validatePersonalRef(value);const {b,g}=await bootstrap();return seriesFor(ref,b,g);},
   async shortEpg(value: unknown, signal?: AbortSignal): Promise<PersonalEpgResult> {
    try {
@@ -167,7 +184,7 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
    // catalog already verified for this exact source; on identity changes clear()
    // discards it before a new source can authorize a stream.
    else if(ref.kind !== 'series') verified=(await catalogFor(ref.kind,b,g,ref.kind !== 'live')).find(i=>i.personalRef.id===ref.id)?.personalRef;
-   if(!verified) fail();active(g,b);return {url:buildPersonalMediaUrl(b,verified,now()),expiresAt:b.expiresAt};
+   if(!verified || isLiveExcluded(verified)) fail();active(g,b);return {url:buildPersonalMediaUrl(b,verified,now()),expiresAt:b.expiresAt};
   }
  };
 }

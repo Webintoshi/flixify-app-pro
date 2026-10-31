@@ -96,11 +96,26 @@ public final class ProviderParser {
         }
         return 0;
     }
+    public static final class LivePolicy {
+        final String revision;
+        final Set<String> excludedIds;
+        LivePolicy(String revision,Set<String> ids) { this.revision=revision;this.excludedIds=Collections.unmodifiableSet(new HashSet<>(ids)); }
+    }
+    private static LivePolicy livePolicy(Object value) {
+        if(!(value instanceof JSONObject))return null;
+        JSONObject raw=(JSONObject)value;Object revision=raw.opt("revision"),rows=raw.opt("excludedIds");
+        if(!(revision instanceof String) || !((String)revision).matches("[a-f0-9]{64}") || !(rows instanceof JSONArray) || ((JSONArray)rows).length()>MAX_ROWS)return null;
+        Set<String> ids=new HashSet<>();JSONArray entries=(JSONArray)rows;
+        for(int i=0;i<entries.length();i++){Object entry=entries.opt(i);if(!(entry instanceof String) || id(entry).isEmpty())return null;ids.add((String)entry);}
+        return new LivePolicy((String)revision,ids);
+    }
     public static final class Bootstrap {
         final String accountId, sourceVersion, origin, username, password;
         final long expiresAtMs;
-        Bootstrap(String accountId, String sourceVersion, String origin, String username, String password, long expiry) {
-            this.accountId=accountId; this.sourceVersion=sourceVersion; this.origin=origin; this.username=username; this.password=password; this.expiresAtMs=expiry;
+        final LivePolicy livePolicy;
+        Bootstrap(String accountId, String sourceVersion, String origin, String username, String password, long expiry) { this(accountId,sourceVersion,origin,username,password,expiry,null); }
+        Bootstrap(String accountId, String sourceVersion, String origin, String username, String password, long expiry,LivePolicy policy) {
+            this.accountId=accountId; this.sourceVersion=sourceVersion; this.origin=origin; this.username=username; this.password=password; this.expiresAtMs=expiry;this.livePolicy=policy;
         }
         String scope() { return accountId + ":" + sourceVersion; }
         boolean sameIdentity(Bootstrap other) {
@@ -120,7 +135,22 @@ public final class ProviderParser {
         } catch (Invalid invalid) { throw invalid; } catch (Exception ignored) { throw new Invalid(); }
         long expiry = date(raw.opt("expiresAt"));
         if (!"general-audience-only".equals(raw.opt("moviePolicy")) || expiry <= now) throw new Invalid();
-        return new Bootstrap(account,version,origin,username,password,expiry);
+        return new Bootstrap(account,version,origin,username,password,expiry,livePolicy(raw.opt("livePolicy")));
+    }
+    static Bootstrap retainLivePolicy(Bootstrap incoming,Bootstrap previous) {
+        if(incoming.livePolicy!=null || !incoming.sameIdentity(previous) || previous.livePolicy==null)return incoming;
+        return new Bootstrap(incoming.accountId,incoming.sourceVersion,incoming.origin,incoming.username,incoming.password,incoming.expiresAtMs,previous.livePolicy);
+    }
+    static boolean liveExcluded(Item item,Bootstrap bootstrap) {
+        return bootstrap!=null && item!=null && item.kind==Kind.LIVE && item.scope.equals(bootstrap.scope()) && bootstrap.livePolicy!=null && bootstrap.livePolicy.excludedIds.contains(item.id);
+    }
+    static Catalog filterLiveCatalog(Catalog catalog,Bootstrap bootstrap) {
+        if(catalog.kind!=Kind.LIVE || bootstrap==null || bootstrap.livePolicy==null || bootstrap.livePolicy.excludedIds.isEmpty())return catalog;
+        List<Item> items=new ArrayList<>();Set<String> categoryIds=new HashSet<>();
+        for(Item item:catalog.items)if(!liveExcluded(item,bootstrap)){items.add(item);categoryIds.add(item.categoryId);}
+        if(items.size()==catalog.items.size())return catalog;
+        List<Category> categories=new ArrayList<>();for(Category category:catalog.categories)if(categoryIds.contains(category.id))categories.add(category);
+        return new Catalog(catalog.kind,items,categories);
     }
     static String secret(Object value, int max) throws Invalid {
         if (!(value instanceof String) || ((String)value).isEmpty() || ((String)value).length() > max || ((String)value).matches("(?s).*[\\x00-\\x1f\\x7f].*")) throw new Invalid();
@@ -154,7 +184,9 @@ public final class ProviderParser {
             String key = id(row.opt(kind == Kind.SERIES ? "series_id" : "stream_id")), title = text(row.opt("name"),512);
             String groupId = id(row.opt("category_id")), group = groups.containsKey(groupId) ? groups.get(groupId) : "";
             if (key.isEmpty() || junk(title) || seen.contains(key)) continue;
-            String ext = extension(row.opt("container_extension")); if (ext.isEmpty() && kind == Kind.LIVE) ext="m3u8";
+            Object declaredExtension=row.opt("container_extension");
+            boolean missingExtension=declaredExtension==null || declaredExtension==JSONObject.NULL || "".equals(declaredExtension);
+            String ext = extension(declaredExtension); if (ext.isEmpty() && kind == Kind.LIVE) ext=missingExtension?"ts":"m3u8";
             if (kind == Kind.MOVIE && (group.isEmpty() || !SAFE_MOVIE_NAMES.contains(label(group)) || ext.isEmpty())) continue;
             Object art = row.isNull("stream_icon") ? row.opt("cover") : row.opt("stream_icon");
             result.add(new Item(kind,key,title,groupId,group,artwork(art),ext,scope,"",0,0,text(row.opt("plot"),8192)));
@@ -200,6 +232,7 @@ public final class ProviderParser {
         } catch(Exception ignored) { throw new Invalid(); }
     }
     public static String mediaUrl(Bootstrap b,Item item,long now) throws Invalid {
+        if(liveExcluded(item,b))throw new Invalid();
         reference(item,b.scope()); if(b.expiresAtMs<=now || item.kind==Kind.SERIES || (item.kind!=Kind.LIVE && extension(item.extension).isEmpty())) throw new Invalid();
         String ext=item.extension.isEmpty()?"m3u8":extension(item.extension); if(ext.isEmpty()) throw new Invalid();
         return b.origin + "/" + (item.kind==Kind.EPISODE?"series":item.kind.name().toLowerCase(Locale.ROOT)) + "/" + encode(b.username) + "/" + encode(b.password) + "/" + item.id + "." + ext;

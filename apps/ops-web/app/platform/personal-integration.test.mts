@@ -76,3 +76,10 @@ test('failed optimistic completion preserves later hydrated confirmation',()=>{
  newer=updateWatchedState(newer,{type:'failure',id:'ep',attempt:1});
  assert.equal(watchedIds(newer).has('ep'),true);
 });
+
+test('excluded live favorites stay stored but do not become unavailable placeholders',()=>{
+ const live={...ref,kind:'live' as const,id:'7'};const saved=[live,ref];
+ const hidden=hydratePersonalFavorites(saved,[],candidate=>candidate.kind==='live' && candidate.id==='7');
+ assert.equal(hidden.length,1);assert.equal(hidden[0].kind,'movie');assert.equal(saved.length,2);
+ assert.equal(hydratePersonalFavorites(saved,[],()=>false).length,2);
+});

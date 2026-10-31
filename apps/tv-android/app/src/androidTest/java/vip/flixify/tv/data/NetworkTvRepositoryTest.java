@@ -52,6 +52,8 @@ public class NetworkTvRepositoryTest {
         volatile boolean eligible=true,denyLibrary=false;
         volatile boolean emptyEpisodes;
         volatile boolean emptyLive;
+        volatile JSONObject livePolicy;
+        volatile boolean includeLiveFavorite;
         final List<String> watchedEpisodes=new ArrayList<>();
         volatile String source="source-a";
         volatile int bootstrapStatus=200;
@@ -85,13 +87,15 @@ public class NetworkTvRepositoryTest {
                     } else if(path.equals("/me"))raw=new JSONObject().put("user",user);
                     else if(path.equals("/me/provider-session")) {
                         bootstrapReads.incrementAndGet();status=bootstrapStatus;
-                        raw=new JSONObject().put("accountId","fixture-account").put("sourceVersion",source).put("providerOrigin","https://provider.test").put("username","fixture-user").put("password","fixture-password").put("expiresAt",date(leaseExpiry)).put("moviePolicy","general-audience-only");
+                        raw=new JSONObject().put("accountId","fixture-account").put("sourceVersion",source).put("providerOrigin","https://provider.test").put("username","fixture-user").put("password","fixture-password").put("expiresAt",date(leaseExpiry)).put("moviePolicy","general-audience-only").put("livePolicy",livePolicy);
                     }
                     else if(path.equals("/me/personal-library")) {
                         libraryReads++;if(denyLibrary){status=401;raw=new JSONObject();}
                         else {
                             JSONArray watched=new JSONArray();for(String id:watchedEpisodes)watched.put(new JSONObject().put("source","personal").put("sourceVersion",source).put("kind","episode").put("seriesId","56").put("id",id));
-                            raw=new JSONObject().put("favorites",new JSONArray().put(new JSONObject().put("source","personal").put("sourceVersion",source).put("kind","movie").put("id","12"))).put("watched",watched);
+                            JSONArray favorites=new JSONArray().put(new JSONObject().put("source","personal").put("sourceVersion",source).put("kind","movie").put("id","12"));
+                            if(includeLiveFavorite)favorites.put(new JSONObject().put("source","personal").put("sourceVersion",source).put("kind","live").put("id","34"));
+                            raw=new JSONObject().put("favorites",favorites).put("watched",watched);
                         }
                     } else if(path.equals("/me/personal-library/favorites")) {
                         JSONObject ref=new JSONObject(body.toString("UTF-8")).getJSONObject("ref");
@@ -501,5 +505,55 @@ public class NetworkTvRepositoryTest {
             assertNull(wrongKind.value);assertNotNull(wrongKind.error);assertEquals(Failure.Code.INVALID,wrongKind.error.code);
             assertNull(wrongScope.value);assertNotNull(wrongScope.error);assertEquals(Failure.Code.INVALID,wrongScope.error.code);
         }finally{h.repository.logout();}
+    }
+
+    private JSONObject livePolicy(boolean excluded) throws Exception {
+        return new JSONObject().put("revision",excluded?"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").put("excludedIds",excluded?new JSONArray().put("34"):new JSONArray());
+    }
+    @Test public void livePolicyRefreshFiltersWarmFavoritesAndRestoresWithoutDeletingReferences() throws Exception {
+        Harness h=new Harness(true);try {
+            h.fixture.includeLiveFavorite=true;
+            Result<Catalog> first=new Result<>();h.repository.catalog(Kind.LIVE,false,first);h.deliver();Item item=first.value.items.get(0);
+            assertTrue(h.repository.isFavorite(item));String scope=h.repository.currentScope();
+            h.fixture.livePolicy=livePolicy(true);Result<Account> refreshed=new Result<>();h.repository.refreshAccess(refreshed);h.deliver();assertNull(refreshed.error);
+            Result<Catalog> hidden=new Result<>();h.repository.catalog(Kind.LIVE,false,hidden);h.deliver();assertTrue(hidden.value.items.isEmpty());
+            Result<List<Item>> favorites=new Result<>();h.repository.favorites(favorites);h.deliver();assertEquals(1,favorites.value.size());assertEquals(Kind.MOVIE,favorites.value.get(0).kind);
+            assertTrue("Saved ref is retained while excluded",h.repository.isFavorite(item));
+            h.fixture.livePolicy=null;h.repository.refreshAccess(new Result<Account>());h.deliver();
+            Result<Catalog> retained=new Result<>();h.repository.catalog(Kind.LIVE,false,retained);h.deliver();assertTrue(retained.value.items.isEmpty());
+            h.fixture.livePolicy=livePolicy(false);h.repository.refreshAccess(new Result<Account>());h.deliver();
+            Result<List<Item>> restored=new Result<>();h.repository.favorites(restored);h.deliver();assertEquals(2,restored.value.size());
+            assertEquals(scope,h.repository.currentScope());assertEquals(1,h.fixture.liveStreamReads.get());assertTrue(h.fixture.favoriteMethods.isEmpty());
+        } finally {h.repository.logout();}
+    }
+    @Test public void currentPolicyFiltersDiskSnapshotAndEmptyPolicyRestoresRawRows() throws Exception {
+        Harness h=new Harness(true);NetworkTvRepository restored=null;try {
+            Result<Catalog> first=new Result<>();h.repository.catalog(Kind.LIVE,false,first);h.deliver();assertEquals(1,first.value.items.size());
+            Fixture fresh=new Fixture();fresh.livePolicy=livePolicy(true);restored=new NetworkTvRepository(h.context,fresh,h.clock,h.deliveries::add);
+            Result<Catalog> hidden=new Result<>();restored.catalog(Kind.LIVE,false,hidden);h.deliver();assertTrue(hidden.value.items.isEmpty());assertEquals(0,fresh.liveStreamReads.get());
+            fresh.livePolicy=livePolicy(false);restored.refreshAccess(new Result<Account>());h.deliver();
+            Result<Catalog> visible=new Result<>();restored.catalog(Kind.LIVE,false,visible);h.deliver();assertEquals(1,visible.value.items.size());assertEquals(0,fresh.liveStreamReads.get());
+        } finally {if(restored!=null)restored.logout();h.repository.logout();}
+    }
+    @Test public void queuedCatalogAndPlaybackAreCheckedAgainstLatestPolicyBeforeDelivery() throws Exception {
+        for(boolean playback:new boolean[]{false,true}) {
+            Harness h=new Harness(true);try {
+                Result<Catalog> first=new Result<>();h.repository.catalog(Kind.LIVE,false,first);h.deliver();Item item=first.value.items.get(0);
+                Result<Catalog> catalog=new Result<>();Result<Playback> record=new Result<>();
+                if(playback)h.repository.playback(item,record);else h.repository.catalog(Kind.LIVE,false,catalog);
+                h.awaitQueued(1);h.fixture.livePolicy=livePolicy(true);h.repository.refreshAccess(new Result<Account>());h.awaitQueued(2);
+                h.deliver();if(playback){assertNull(record.value);assertNotNull(record.error);}else{assertNull(catalog.error);assertTrue(catalog.value.items.isEmpty());}
+                h.deliver();
+            } finally {h.repository.logout();}
+        }
+    }
+    @Test public void livePolicyRefreshNotifiesCurrentCatalogObserversWithoutProviderRefetch() throws Exception {
+        Harness h=new Harness(true);AutoCloseable subscription=null;try {
+            Result<Catalog> first=new Result<>();h.repository.catalog(Kind.LIVE,false,first);h.deliver();
+            BlockingQueue<Catalog> observed=new LinkedBlockingQueue<>();subscription=h.repository.observeCatalog(observed::add);
+            h.fixture.livePolicy=livePolicy(true);Result<Account> refreshed=new Result<>();h.repository.refreshAccess(refreshed);h.deliver();h.deliver();
+            Catalog hidden=observed.poll(1,TimeUnit.SECONDS);assertNotNull(hidden);assertTrue(hidden.items.isEmpty());assertEquals(1,h.fixture.liveStreamReads.get());
+            assertNull(refreshed.error);
+        } finally {if(subscription!=null)subscription.close();h.repository.logout();}
     }
 }

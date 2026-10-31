@@ -101,4 +101,16 @@ describe("live directory presentation and player tools", () => {
     expect(shortEpg).toHaveBeenCalledTimes(epgReads + 1); expect(playback).toHaveBeenCalledOnce(); expect(starts).toBe(1);
     expect(container.querySelector("video")).toBe(video);
   });
+  it("reloads the current live list on a policy revision without source changes or opening playback", async () => {
+    const catalog=vi.fn(async()=>[channel,second]);state.platform.personalProvider.catalog=catalog;
+    state.platform.livePolicyRevision="a".repeat(64);
+    await settle(()=>root.render(<LiveTvPage/>));await settle();
+    expect(container.querySelector("[aria-label='Canlı kanallar']")!.textContent).toContain("Fixture Haber");
+    catalog.mockResolvedValue([second]);state.platform={...state.platform,livePolicyRevision:"b".repeat(64)};
+    await settle(()=>root.render(<LiveTvPage/>));await settle();
+    expect(container.querySelector("[aria-label='Canlı kanallar']")!.textContent).not.toContain("Fixture Haber");
+    expect(container.querySelector("[aria-label='Canlı kanallar']")!.textContent).toContain("Fixture Sinema");
+    expect(playback).not.toHaveBeenCalled();expect(state.platform.providerScope).toBe("fixture-line");
+  });
+
 });

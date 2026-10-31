@@ -104,4 +104,22 @@ public class MetadataDiskCacheTest {
         }
         assertTrue("Small metadata must have a count bound as well as a byte bound",root.listFiles().length<=128);
     }
+
+    @Test public void liveNormalizationRevisionCannotReuseLegacyImplicitHlsButOtherCachesRemainCompatible() throws Exception {
+        File root=directory();MetadataDiskCache cache=new MetadataDiskCache(root);
+        byte[] payload=new byte[8];
+        byte[] identity=java.security.MessageDigest.getInstance("SHA-256").digest((SCOPE+"\u0000catalog:LIVE").getBytes(StandardCharsets.UTF_8));
+        StringBuilder filename=new StringBuilder();for(byte value:identity)filename.append(String.format(java.util.Locale.ROOT,"%02x",value&255));
+        File legacy=new File(root,filename+".bin");
+        try(java.io.DataOutputStream output=new java.io.DataOutputStream(new java.io.FileOutputStream(legacy))){
+            output.writeInt(0x46434d31);output.write(identity);output.writeLong(NOW);output.writeLong(EXPIRY);output.writeInt(payload.length);
+            output.write(java.security.MessageDigest.getInstance("SHA-256").digest(payload));output.write(payload);
+        }
+        cache.writeCatalog(SCOPE,EXPIRY,NOW,catalog(SCOPE),()->true);
+        assertNull("Old LIVE normalization must refetch; explicit and implicit HLS were indistinguishable",cache.readCatalog(SCOPE,Kind.LIVE,EXPIRY,NOW+1));
+        assertNotNull("Movie cache remains compatible",cache.readCatalog(SCOPE,Kind.MOVIE,EXPIRY,NOW+1));
+        Catalog live=new Catalog(Kind.LIVE,Collections.singletonList(new Item(Kind.LIVE,"34","Live","7","Canlı","","ts",SCOPE,"",0,0,"")),Collections.emptyList());
+        cache.writeCatalog(SCOPE,EXPIRY,NOW,live,()->true);
+        assertEquals("ts",cache.readCatalog(SCOPE,Kind.LIVE,EXPIRY,NOW+1).value.items.get(0).extension);
+    }
 }
