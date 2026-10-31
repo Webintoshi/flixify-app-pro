@@ -76,9 +76,10 @@ describe("live directory presentation and player tools", () => {
     window.localStorage.setItem(recentStorageKey(undefined,"fixture-token"),JSON.stringify([rows[5].id,rows[0].id]));
     await settle(()=>root.render(<LiveTvPage/>));await settle();
     const names=()=>[...container.querySelectorAll('[aria-label="Canlı kanallar"] strong')].map(node=>node.textContent!.replace(/\s/g,'').toUpperCase());
-    expect(names().slice(0,8)).toEqual(national.map(name=>name.replace(/\s/g,'').toUpperCase()));
+    const expected=["TRT1","KANALD","STARTV","ATV","SHOWTV","NOW","TV8","KANAL7"];
+    expect(names().slice(0,8)).toEqual(expected);
     expect(names()).not.toContain("ALB:TRINGTURKISH");expect(playback).not.toHaveBeenCalled();
-    await settle(()=>button("Favorilerim").click());expect(names()).toEqual(national.map(name=>name.replace(/\s/g,'').toUpperCase()));
+    await settle(()=>button("Favorilerim").click());expect(names()).toEqual(expected);
     await settle(()=>button("Son İzlediklerim").click());expect(names()).toEqual(["STARTV","TRT1"]);
     await settle(()=>button("Star Tv").click());await settle();
     expect(playback).toHaveBeenCalledExactlyOnceWith(rows[5].personalRef);
