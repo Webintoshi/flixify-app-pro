@@ -332,7 +332,7 @@ export function VodPlayer({ onRetry, playback, title, resumeAt = 0, onProgress, 
   }, [playback.url, playback.transport, playback.deliveryMode, retry]);
   return <div className={`${s.vodPlayer} ${player.cinema}`}><video ref={ref} autoPlay playsInline preload="metadata" aria-label={title}/><VodControls videoRef={ref} title={title} seriesTitle={seriesTitle} currentEpisode={currentEpisode} seasons={seasons} posterUrl={posterUrl} watchedIds={watchedIds} nextEpisode={nextEpisode} onBack={onBack} onSelectEpisode={onSelectEpisode} onNextEpisode={onNextEpisode} favoriteItem={favoriteItem}/>{needsPlayGesture && !error && !endPrompt && <div style={{ position: "absolute", inset: 0, zIndex: 3, display: "grid", placeItems: "center", pointerEvents: "none" }}><button className={s.primary} style={{ width: 72, height: 72, padding: 0, borderRadius: "50%", pointerEvents: "auto" }} aria-label="Oynat" onClick={() => { const video = ref.current; if (!video) return; gestureAttemptHandler.current(); void video.play().catch(cause => manualPlayFailureHandler.current(cause)); }}><Icon name="play" filled/></button></div>}{error && <div className={s.playerError} role="alert"><p>{error}</p><button className={s.primary} onClick={() => onRetry ? onRetry() : setRetry(v => v+1)}>Tekrar Dene</button></div>}{endPrompt && <div className={s.nextEpisodePrompt} role="status"><span>{endPrompt.onPlay ? "Sıradaki bölüm" : "Tamamlandı"}</span><h3>{endPrompt.title}</h3>{endPrompt.onPlay && <p>{endPrompt.seconds} saniye içinde otomatik başlayacak.</p>}<div>{endPrompt.onPlay && <button className={s.primary} onClick={endPrompt.onPlay}>Şimdi Oynat</button>}<button className={s.secondary} onClick={endPrompt.onCancel}>{endPrompt.onPlay ? "İptal" : "Kapat"}</button></div></div>}</div>;
 }
-export function Detail({ item, onClose }: { item: MediaItem; onClose: () => void }) {
+export function Detail({ item, onClose, autoPlay = false }: { item: MediaItem; onClose: () => void; autoPlay?: boolean }) {
   const {personalProvider, providerMode, providerScope} = usePlatform();
   const ref = useRef<HTMLDialogElement>(null);
   const [playback, setPlayback] = useState<Playback | null>(null);
@@ -348,14 +348,18 @@ export function Detail({ item, onClose }: { item: MediaItem; onClose: () => void
   const request = useRef(0);
   const activeEpisode = useRef<Episode | null>(null);
   const resumeAt = useRef(0);
+  const autoplayStarted = useRef(false);
+  const [progressReady, setProgressReady] = useState(providerMode !== "personal" || !item.personalRef);
   useEffect(() => { ref.current?.showModal(); const previous = document.body.style.overflow; document.body.style.overflow = "hidden"; return () => { request.current++; document.body.style.overflow = previous; }; }, []);
   useEffect(() => {
-    if(providerMode !== "personal" || !item.personalRef) return;
+    if(providerMode !== "personal" || !item.personalRef) { setProgressReady(true); return; }
     let cancelled = false;
-    apiRequest<{watched:PersonalRef[]}>("/me/personal-library", {signal:AbortSignal.timeout(15000)}).then(library=> { if(!cancelled) setWatchedState(previous => updateWatchedState(previous, {type:"hydrate", ids:hydratePersonalWatched(library.watched,item.seasons?.flatMap(season=>season.episodes) ?? [])})); }).catch(()=> { if(!cancelled) setProgressError("İzlendi bilgisi yüklenemedi."); });
+    setProgressReady(false);
+    apiRequest<{watched:PersonalRef[]}>("/me/personal-library", {signal:AbortSignal.timeout(15000)}).then(library=> { if(!cancelled) setWatchedState(previous => updateWatchedState(previous, {type:"hydrate", ids:hydratePersonalWatched(library.watched,item.seasons?.flatMap(season=>season.episodes) ?? [])})); }).catch(()=> { if(!cancelled) setProgressError("İzlendi bilgisi yüklenemedi."); }).finally(()=> { if(!cancelled) setProgressReady(true); });
     return ()=> {cancelled = true;};
   }, [item, providerMode, providerScope]);
   const play = async (episode?: Episode, preserveResume = false) => {
+    autoplayStarted.current = true;
     const selection = { kind: episode ? "episode" as const : "movie" as const, id: episode?.id ?? item.id };
 
     activeEpisode.current = episode ?? null;
@@ -374,6 +378,19 @@ export function Detail({ item, onClose }: { item: MediaItem; onClose: () => void
     catch (error) { if (version === request.current) setError(providerMode === "personal" ? error instanceof Error && error.message === "Bu içerik tarayıcıda oynatılamıyor. Başka bir içerik seçebilirsin." ? error.message : "Bu içerik şu anda tarayıcıda açılamıyor. Yeniden dene veya başka bir içerik seç." : playbackErrorMessage(error, item.kind)); }
     finally { if (version === request.current) setBusy(false); }
   };
+  useEffect(() => {
+    if (!autoPlay || autoplayStarted.current || providerMode === "loading" || item.available === false || item.playbackAllowed === false) return;
+    if (item.kind === "series" && !progressReady) return;
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (cancelled || autoplayStarted.current) return;
+      if (item.kind === "series") {
+        const episode = firstUnwatchedEpisode(item.seasons ?? [], watched);
+        if (episode) void play(episode);
+      } else if (item.kind === "movie") void play();
+    });
+    return () => { cancelled = true; };
+  }, [autoPlay, item, providerMode, providerScope, progressReady, watchedState]);
   const persistWatched = async (episode: Episode, completionAttempt: number) => {
     for (let attempt = 0; attempt < (providerMode === "personal" ? 1 : 2); attempt++) {
       try {

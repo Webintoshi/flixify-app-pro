@@ -37,6 +37,10 @@ beforeEach(() => {
   };
   dom.window.HTMLElement.prototype.getBoundingClientRect = () => ({ top: 150, left: 300, right: 500, bottom: 450, width: 200, height: 300, x: 300, y: 150, toJSON() {} });
   dom.window.HTMLElement.prototype.scrollIntoView = vi.fn();
+  (dom.window.HTMLElement.prototype as any).showModal = function (this: HTMLElement) { this.setAttribute("open", ""); };
+  (dom.window.HTMLElement.prototype as any).close = function (this: HTMLElement) { this.removeAttribute("open"); };
+  (dom.window.HTMLElement.prototype as any).attachEvent = function () {};
+  (dom.window.HTMLElement.prototype as any).detachEvent = function () {};
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-30T12:00:00Z"));
   state.pathname = "/"; state.params = new URLSearchParams(); state.push.mockReset();
   state.api.mockReset().mockResolvedValue({ user: { status: "active", hasAssignedLink: true, hasActiveSubscription: true, activePackage: { endsAt: "2099-01-01" } } });
@@ -79,7 +83,7 @@ it("presents the same unique daily film selection in a landscape row and a portr
 });
 it("opens expanded artwork from keyboard focus even on a coarse pointer device and closes on Escape", async () => {
   await settle(() => root.render(<CatalogPage kind="movie"/>));
-  const tile = container.querySelector<HTMLButtonElement>('button[aria-label$="detayını aç"]')!;
+  const tile = container.querySelector<HTMLButtonElement>('button[aria-label$="oynat"]')!;
   await settle(() => tile.focus());
   expect(document.querySelector("[data-media-preview]")).not.toBeNull();
   const escape = new Event("keydown"); Object.defineProperty(escape, "key", { value: "Escape" });
@@ -89,4 +93,52 @@ it("opens expanded artwork from keyboard focus even on a coarse pointer device a
 it("uses the actual channel logo when its poster field is empty", async () => {
   await settle(() => root.render(<Artwork item={{ id: "live-logo", kind: "live", title: "Kanal", posterUrl: "", logoUrl: "/fixture-channel-logo.png" }}/>));
   expect(container.querySelector("img")?.getAttribute("src")).toBe("/fixture-channel-logo.png");
+});
+it("routes movie and series posters directly to playback while explicit more keeps detail navigation", async () => {
+  for (const kind of ["movie", "series"] as const) {
+    await settle(() => root.render(<CatalogPage kind={kind}/>));
+    const tile = container.querySelector<HTMLButtonElement>('button[aria-label$="oynat"]');
+    expect(tile).not.toBeNull();
+    const selected = items(kind).find(item => item.title === tile!.querySelector("strong")?.textContent)!;
+    await settle(() => tile!.click());
+    expect(state.push).toHaveBeenLastCalledWith(`?item=${selected.id}&kind=${kind}&play=1`, { scroll: false });
+    await settle(() => tile!.focus());
+    const more = [...document.querySelectorAll<HTMLButtonElement>("[data-media-preview] button")].find(button => button.textContent?.includes("Daha Fazla"))!;
+    await settle(() => more.click());
+    expect(state.push).toHaveBeenLastCalledWith(`?item=${selected.id}&kind=${kind}`, { scroll: false });
+  }
+});
+it("closes search and opens its canonical preview result directly without filtering the underlying catalog", async () => {
+  await settle(() => root.render(<CatalogPage kind="movie"/>));
+  await settle(() => container.querySelector<HTMLButtonElement>("[data-catalog-search-trigger]")!.click());
+  const input = container.querySelector<HTMLInputElement>("#catalog-search")!;
+  await settle(() => { input.value = "movie 12"; input.dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(180); });
+  const result = container.querySelector<HTMLButtonElement>("dialog li button");
+  expect(result).not.toBeNull();
+  await settle(() => result!.click());
+  expect(state.push).toHaveBeenLastCalledWith("?item=movie-12&kind=movie&play=1", { scroll: false });
+  expect(container.querySelector("#catalog-search-dialog")).toBeNull();
+  expect(container.querySelector('[aria-label="Aramayı temizle"]')).toBeNull();
+});
+it("plays from the expanded poster surface while its explicit more action still opens details", async () => {
+  await settle(() => root.render(<CatalogPage kind="movie"/>));
+  const tile = container.querySelector<HTMLButtonElement>('button[aria-label$="oynat"]')!;
+  const selected = items("movie").find(item => item.title === tile.querySelector("strong")?.textContent)!;
+  await settle(() => tile.focus());
+  const previewPlay = document.querySelector<HTMLButtonElement>('[data-media-preview] button[aria-label$="önizlemeden oynat"]');
+  expect(previewPlay).not.toBeNull(); expect(previewPlay?.type).toBe("button");
+  await settle(() => previewPlay!.focus()); expect(document.activeElement).toBe(previewPlay);
+  await settle(() => previewPlay!.click());
+  expect(state.push).toHaveBeenCalledTimes(1);
+  expect(state.push).toHaveBeenLastCalledWith(`?item=${selected.id}&kind=movie&play=1`, { scroll: false });
+  expect(document.querySelector("[data-media-preview]")).toBeNull();
+  await settle(() => tile.focus());
+  const more = [...document.querySelectorAll<HTMLButtonElement>("[data-media-preview] button")].find(button => button.textContent?.includes("Daha Fazla"))!;
+  await settle(() => more.click());
+  expect(state.push).toHaveBeenLastCalledWith(`?item=${selected.id}&kind=movie`, { scroll: false });
+  state.push.mockClear(); await settle(() => tile.focus());
+  const favorite = document.querySelector<HTMLButtonElement>('[data-media-preview] button[aria-label$="favorilere ekle"]')!;
+  await settle(() => favorite.click());
+  expect(state.push).not.toHaveBeenCalled(); expect(state.platform.toggle).toHaveBeenCalledExactlyOnceWith(selected);
 });

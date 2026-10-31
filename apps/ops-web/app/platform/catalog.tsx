@@ -35,7 +35,7 @@ function getCatalog(kind: Kind, page: number, search: string, group: string, acc
     return normalized;
   });
 }
-function MediaTile({ item, open }: { item: MediaItem; open: (item: MediaItem) => void }) {
+function MediaTile({ item, open }: { item: MediaItem; open: (item: MediaItem, autoPlay?: boolean) => void }) {
   const tileRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | null>(null);
@@ -73,14 +73,15 @@ function MediaTile({ item, open }: { item: MediaItem; open: (item: MediaItem) =>
   useEffect(() => () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); }, []);
   const details = [item.kind === "series" ? "Dizi" : item.kind === "movie" ? "Film" : "Canlı TV", item.groupTitle, item.seasonCount ? `${item.seasonCount} sezon` : null, item.episodeCount ? `${item.episodeCount} bölüm` : null].filter(Boolean).join(" · ");
   return <div ref={tileRef} className={`${s.tile} ${item.kind === "live" ? s.channelTile : ""}`} onMouseEnter={() => showPreview()} onMouseLeave={scheduleClose}>
-    <button className={s.tileOpen} onFocus={event => showPreview(event.currentTarget.matches(":focus-visible"))} onClick={() => { hidePreview(); open(item); }} disabled={item.available === false} aria-label={`${item.title} detayını aç`}><div className={s.posterFrame}><Artwork item={item}/><span className={s.tilePlay} aria-hidden="true"><Icon name={item.kind === "live" ? "live" : "play"}/></span></div><strong>{item.title}</strong>{item.available === false ? <small>{item.lookupFailed ? "Geçici olarak doğrulanamıyor" : "Şu anda kullanılamıyor"}</small> : <small>{item.groupTitle}</small>}</button><FavoriteButton item={item}/>
+    <button className={s.tileOpen} onFocus={event => showPreview(event.currentTarget.matches(":focus-visible"))} onClick={() => { hidePreview(); open(item); }} disabled={item.available === false} aria-label={`${item.title} oynat`}><div className={s.posterFrame}><Artwork item={item}/><span className={s.tilePlay} aria-hidden="true"><Icon name={item.kind === "live" ? "live" : "play"}/></span></div><strong>{item.title}</strong>{item.available === false ? <small>{item.lookupFailed ? "Geçici olarak doğrulanamıyor" : "Şu anda kullanılamıyor"}</small> : <small>{item.groupTitle}</small>}</button><FavoriteButton item={item}/>
     {preview && createPortal(<div ref={previewRef} className={s.expandedPreview} data-media-preview role="group" aria-label={`${item.title} hızlı önizleme`} style={{ top: preview.top, left: preview.left, width: preview.width, height: preview.height }} onMouseEnter={cancelClose} onMouseLeave={scheduleClose}>
-      <Artwork item={item}/><div className={s.expandedPreviewShade}/><div className={s.expandedPreviewQuick} style={{ left: preview.favoriteLeft, top: preview.favoriteTop }}><FavoriteButton item={item}/></div><div className={s.expandedPreviewCopy}><span className={s.expandedPreviewEyebrow}>{item.kind === "series" ? "DİZİ" : "FİLM"}</span><h3>{item.title}</h3><p>{details}</p><div className={s.expandedPreviewActions}><button type="button" className={s.expandedPreviewMore} onClick={() => { hidePreview(); open(item); }}>Daha Fazla <Icon name="arrow"/></button><FavoriteButton item={item} expanded/></div></div>
+      <button type="button" className={s.expandedPreviewPlay} aria-label={`${item.title} önizlemeden oynat`} onClick={() => { hidePreview(); open(item); }}/>
+      <Artwork item={item}/><div className={s.expandedPreviewShade}/><div className={s.expandedPreviewQuick} style={{ left: preview.favoriteLeft, top: preview.favoriteTop }}><FavoriteButton item={item}/></div><div className={s.expandedPreviewCopy}><span className={s.expandedPreviewEyebrow}>{item.kind === "series" ? "DİZİ" : "FİLM"}</span><h3>{item.title}</h3><p>{details}</p><div className={s.expandedPreviewActions}><button type="button" className={s.expandedPreviewMore} onClick={() => { hidePreview(); open(item, false); }}>Daha Fazla <Icon name="arrow"/></button><FavoriteButton item={item} expanded/></div></div>
     </div>, document.body)}
   </div>;
 }
 function Skeletons() { return <div className={s.grid} aria-busy="true" aria-label="İçerikler yükleniyor">{Array.from({ length: 12 }, (_, i) => <div className={s.skeleton} key={i}/>)}</div>; }
-function MediaRail({ label, row, href, open, className, landscape = false }: { label: string; row: MediaItem[]; href?: string; open: (item: MediaItem) => void; className?: string; landscape?: boolean }) {
+function MediaRail({ label, row, href, open, className, landscape = false }: { label: string; row: MediaItem[]; href?: string; open: (item: MediaItem, autoPlay?: boolean) => void; className?: string; landscape?: boolean }) {
   const rail = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ start: true, end: false });
   useEffect(() => {
@@ -230,13 +231,14 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     loadDetail.then(item => { if (!cancelled) { setDetail(item); setDetailAccount(account); } }).catch(() => { if (!cancelled) setError("İçerik detayı açılamadı. Tekrar deneyebilirsin."); }).finally(() => { if (!cancelled) setDetailLoading(false); });
     return () => { cancelled = true; };
   }, [selectedId, selectedKind, account, personalProvider, providerMode]);
-  const open = (item: MediaItem) => {
+  const open = (item: MediaItem, autoPlay = true) => {
     if (item.kind === "live") { router.push(`/canli-tv?channel=${encodeURIComponent(item.id)}`); return; }
     openedHere.current = true;
     const next = new URLSearchParams(params.toString()); next.set("item", item.id); next.set("kind", item.kind);
+    if (autoPlay) next.set("play", "1"); else next.delete("play");
     router.push(`?${next}`, { scroll: false });
   };
-  const close = () => { setDetail(null); if (openedHere.current) { openedHere.current = false; router.back(); } else { const next = new URLSearchParams(params.toString()); next.delete("item"); next.delete("kind"); router.replace(`?${next}`, { scroll: false }); } };
+  const close = () => { setDetail(null); if (openedHere.current) { openedHere.current = false; router.back(); } else { const next = new URLSearchParams(params.toString()); next.delete("item"); next.delete("kind"); next.delete("play"); router.replace(`?${next}`, { scroll: false }); } };
   const updateAdultPreference = (revision: number, visible: boolean) => {
     if (currentMovieRevision === revision) return;
     for (const key of cache.keys()) if (key.startsWith("movie?")) cache.delete(key);
@@ -249,7 +251,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
       setDetail(null);
       if (selectedKind === "movie" && selectedId) {
         const next = new URLSearchParams(params.toString());
-        next.delete("item"); next.delete("kind");
+        next.delete("item"); next.delete("kind"); next.delete("play");
         openedHere.current = false;
         router.replace(`?${next}`, { scroll: false });
       }
@@ -329,7 +331,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   </main>;
   return <main className={`${s.catalog} ${seriesCatalog ? seriesStyles.seriesPage : ""}`}>
     <div className={s.catalogContent} data-catalog-results>
-    {overview && featured && !search && <section className={s.hero} aria-label="Günün öne çıkan içeriği"><Artwork item={featured} hero/><div className={s.heroFade}/><div className={s.heroCopy}><span>{featured.groupTitle || (featured.kind === "series" ? "Dizi" : "Film")}</span><h1>{featured.title}</h1><p>{[featured.kind === "series" ? "Dizi" : "Film", featured.seasonCount ? `${featured.seasonCount} sezon` : null, featured.episodeCount ? `${featured.episodeCount} bölüm` : null].filter(Boolean).join(" · ")}</p><div className={s.heroActions}><button type="button" className={s.heroDiscover} onClick={() => open(featured)}><Icon name="arrow"/>İncele</button><FavoriteButton item={featured} expanded/></div></div>{heroOptions.length > 1 && <div className={s.heroSlides} role="group" aria-label="Öne çıkan içerikler">{heroOptions.map((item, index) => <button key={itemKey(item)} type="button" aria-label={`${index + 1}. içerik: ${item.title}`} aria-pressed={heroIndex === index} onClick={() => setHeroIndex(index)}/>)}</div>}</section>}
+    {overview && featured && !search && <section className={s.hero} aria-label="Günün öne çıkan içeriği"><Artwork item={featured} hero/><div className={s.heroFade}/><div className={s.heroCopy}><span>{featured.groupTitle || (featured.kind === "series" ? "Dizi" : "Film")}</span><h1>{featured.title}</h1><p>{[featured.kind === "series" ? "Dizi" : "Film", featured.seasonCount ? `${featured.seasonCount} sezon` : null, featured.episodeCount ? `${featured.episodeCount} bölüm` : null].filter(Boolean).join(" · ")}</p><div className={s.heroActions}><button type="button" className={s.heroDiscover} onClick={() => open(featured, false)}><Icon name="arrow"/>İncele</button><FavoriteButton item={featured} expanded/></div></div>{heroOptions.length > 1 && <div className={s.heroSlides} role="group" aria-label="Öne çıkan içerikler">{heroOptions.map((item, index) => <button key={itemKey(item)} type="button" aria-label={`${index + 1}. içerik: ${item.title}`} aria-pressed={heroIndex === index} onClick={() => setHeroIndex(index)}/>)}</div>}</section>}
     <div className={`${s.catalogToolbar} ${overview && featured && !search ? s.overviewToolbar : ""} ${seriesCatalog ? seriesStyles.toolbar : ""}`}><div className={s.catalogHeading} id="kesfet"><h1>{title}</h1>{(!favoritesOnly || favoritesReady) && <span>{favoritesOnly ? favorites.length : shownCatalog.total.toLocaleString("tr-TR")} içerik</span>}</div>
       <div className={`${s.filters} ${panelStyles.toolbarControls}`}>
         <button type="button" className={panelStyles.trigger} data-catalog-search-trigger data-active={Boolean(search)} aria-label={`${title} içinde ara`} aria-haspopup="dialog" aria-controls="catalog-search-dialog" aria-expanded={activePanel === "search"} onClick={() => setPanel({ owner: panelOwner, type: "search" })}><Icon name="search"/><span>{search ? "Aramayı düzenle" : "Ara"}</span></button>
@@ -355,8 +357,8 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     </> : <div className={s.grid}>{items.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div>}
     {!favoritesOnly && !overview && items.length < shownCatalog.total && <button className={s.more} disabled={loading} onClick={() => setPage(p => p+1)}>{loading ? "Yükleniyor…" : "Daha Fazla Göster"}</button>}
     </div>
-    {detailLoading && <div className={s.toast} role="status">İçerik hazırlanıyor…</div>}{detail && detailAccount === account && providerMode !== "loading" && <Detail key={detail.id} item={detail} onClose={close}/>}
-    {activePanel === "search" && <CatalogSearchDialog title={title} initialQuery={query} scope={favoritesOnly ? `Tür: ${({ all: "Tümü", movie: "Filmler", series: "Diziler", live: "Canlı TV" })[filter]}` : `Kategori: ${group || "Tümü"}`} preview={previewSearch} onSubmit={value => submitSearch(value, panelOwner)} onClose={() => closePanel(panelOwner)}/>}
+    {detailLoading && <div className={s.toast} role="status">İçerik hazırlanıyor…</div>}{detail && detailAccount === account && providerMode !== "loading" && <Detail key={itemKey(detail)} item={detail} autoPlay={params.get("play") === "1"} onClose={close}/>}
+    {activePanel === "search" && <CatalogSearchDialog title={title} initialQuery={query} scope={favoritesOnly ? `Tür: ${({ all: "Tümü", movie: "Filmler", series: "Diziler", live: "Canlı TV" })[filter]}` : `Kategori: ${group || "Tümü"}`} preview={previewSearch} onSelect={item => { if (panelOwnerRef.current !== panelOwner) return; closePanel(panelOwner); open(item); }} onSubmit={value => submitSearch(value, panelOwner)} onClose={() => closePanel(panelOwner)}/>}
     {activePanel === "categories" && <CategorySidebar open title={title} groups={categoryPreview?.owner === panelOwner ? categoryPreview.groups : categories} total={categoryPreview?.owner === panelOwner ? categoryPreview.total : !group && !search ? shownCatalog.total : undefined} selected={group} onSelect={value => { if (panelOwnerRef.current === panelOwner) setGroup(value); }} onClose={() => closePanel(panelOwner)}/>}
   </main>;
 }

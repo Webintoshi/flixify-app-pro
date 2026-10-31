@@ -69,9 +69,31 @@ it("finds Turkish category names locally without changing the selected category"
   expect(container.textContent).toContain("Kategori bulunamadı");
 });
 const catalog = (title: string, total = 1): Catalog => ({ total, items: [{ id: title, kind: "movie", title, groupTitle: "Drama", posterUrl: "/poster" }] });
+it("activates the actual search result without submitting the draft", async () => {
+  const selected = catalog("Avengers").items[0];
+  const onSelect = vi.fn(), onSubmit = vi.fn(), onClose = vi.fn();
+  await settle(() => root.render(<CatalogSearchDialog title="Filmler" initialQuery="Avengers" scope="Kategori: Tümü" preview={async () => ({ items: [selected], total: 1 })} onSelect={onSelect} onSubmit={onSubmit} onClose={onClose}/>));
+  await act(async () => { await vi.advanceTimersByTimeAsync(180); });
+  const result = container.querySelector<HTMLButtonElement>("li button");
+  expect(result).not.toBeNull(); expect(result?.type).toBe("button");
+  await settle(() => result!.click());
+  expect(onSelect).toHaveBeenCalledExactlyOnceWith(selected);
+  expect(onSubmit).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled();
+});
+it("does not activate an unavailable preview or retain results while a new query is pending", async () => {
+  const unavailable = { ...catalog("Eski film").items[0], available: false };
+  const onSelect = vi.fn();
+  await settle(() => root.render(<CatalogSearchDialog title="Filmler" initialQuery="Eski" scope="Kategori: Tümü" preview={async () => ({ items: [unavailable], total: 1 })} onSelect={onSelect} onSubmit={() => {}} onClose={() => {}}/>));
+  await act(async () => { await vi.advanceTimersByTimeAsync(180); });
+  const result = container.querySelector<HTMLButtonElement>("li button");
+  expect(result).not.toBeNull(); expect(result?.disabled).toBe(true);
+  await settle(() => result!.click()); expect(onSelect).not.toHaveBeenCalled();
+  await type(container.querySelector("input")!, "Yeni");
+  expect(container.querySelector("li button")).toBeNull();
+});
 it("keeps search as a draft, clears locally, and submits only on Ara", async () => {
   const onSubmit = vi.fn(), onClose = vi.fn(), preview = vi.fn(async (query: string) => catalog(query || "Gece Yolcusu", 4));
-  await settle(() => root.render(<CatalogSearchDialog title="Filmler" initialQuery="Gece" scope="Kategori: Drama" preview={preview} onSubmit={onSubmit} onClose={onClose}/>));
+  await settle(() => root.render(<CatalogSearchDialog title="Filmler" initialQuery="Gece" scope="Kategori: Drama" preview={preview} onSelect={() => {}} onSubmit={onSubmit} onClose={onClose}/>));
   await act(async () => { await vi.advanceTimersByTimeAsync(180); });
   expect(container.textContent).toContain("4 sonuç"); expect(onSubmit).not.toHaveBeenCalled();
   await type(container.querySelector("input")!, "  Deniz  ");
@@ -84,7 +106,7 @@ it("keeps search as a draft, clears locally, and submits only on Ara", async () 
 it("rejects late search preview responses and cancels pending preview on close", async () => {
   let resolveOld!: (value: Catalog) => void;
   const preview = vi.fn((query: string) => query === "Eski" ? new Promise<Catalog>(done => { resolveOld = done; }) : Promise.resolve(catalog("Yeni sonuç")));
-  await settle(() => root.render(<CatalogSearchDialog title="Filmler" initialQuery="Eski" scope="Kategori: Tümü" preview={preview} onSubmit={() => {}} onClose={() => {}}/>));
+  await settle(() => root.render(<CatalogSearchDialog title="Filmler" initialQuery="Eski" scope="Kategori: Tümü" preview={preview} onSelect={() => {}} onSubmit={() => {}} onClose={() => {}}/>));
   await act(async () => { await vi.advanceTimersByTimeAsync(180); });
   await type(container.querySelector("input")!, "Yeni");
   await act(async () => { await vi.advanceTimersByTimeAsync(180); });
@@ -99,7 +121,7 @@ it("closes nonempty search on the first Escape before the browser clears its dra
   const onSubmit = vi.fn(), preview = vi.fn(async () => catalog("Deniz", 2));
   function SearchHarness() {
     const [open, setOpen] = React.useState(true);
-    return open ? <CatalogSearchDialog title="Filmler" initialQuery="Gece" scope="Kategori: Tümü" preview={preview} onSubmit={onSubmit} onClose={() => setOpen(false)}/> : <p>Kapalı</p>;
+    return open ? <CatalogSearchDialog title="Filmler" initialQuery="Gece" scope="Kategori: Tümü" preview={preview} onSelect={() => {}} onSubmit={onSubmit} onClose={() => setOpen(false)}/> : <p>Kapalı</p>;
   }
   await settle(() => root.render(<SearchHarness/>));
   const input = container.querySelector<HTMLInputElement>("input")!;
@@ -134,7 +156,7 @@ it("closes nonempty category finder on one Escape and restores its opener withou
 
 it("uses the latest close callback for Escape without reopening the native dialog", async () => {
   const first = vi.fn(), latest = vi.fn(), preview = vi.fn(async () => catalog("Gece"));
-  const render = (onClose: () => void) => root.render(<CatalogSearchDialog title="Filmler" initialQuery="Gece" scope="Kategori: Tümü" preview={preview} onSubmit={() => {}} onClose={onClose}/>);
+  const render = (onClose: () => void) => root.render(<CatalogSearchDialog title="Filmler" initialQuery="Gece" scope="Kategori: Tümü" preview={preview} onSelect={() => {}} onSubmit={() => {}} onClose={onClose}/>);
   await settle(() => render(first)); const dialog = container.querySelector("dialog");
   await settle(() => render(latest)); expect(container.querySelector("dialog")).toBe(dialog);
   const input = container.querySelector<HTMLInputElement>("input")!;
