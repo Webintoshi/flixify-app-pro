@@ -14,9 +14,35 @@ export function pagePersonalCatalog(items: MediaItem[], page: number, search = '
  const filtered = items.filter(item => (!group || item.groupTitle === group) && item.title.toLocaleLowerCase('tr').includes(needle));
  return {items:filtered.slice((page-1)*48,page*48), total:filtered.length,groups:Array.from(groups,([title,count])=>({title,count}))};
 }
-export function hydratePersonalFavorites(refs: PersonalRef[], catalogs: MediaItem[], isExcluded: (ref: PersonalRef)=>boolean = ()=>false): MediaItem[] {
+export function hydratePersonalFavorites(refs: PersonalRef[], catalogs: MediaItem[], isExcluded: (ref: PersonalRef)=>boolean = ()=>false, resolveLive?: (ref: PersonalRef)=>MediaItem | undefined): MediaItem[] {
  const current = new Map(catalogs.filter(i=>i.personalRef).map(i=>[personalRefKey(i.personalRef!),i]));
- return refs.flatMap(value=> { try { const ref = validatePersonalRef(value); if(ref.kind === 'episode' || (ref.kind === 'live' && isExcluded(ref))) return []; const id = personalRefKey(ref); return [current.get(id) ?? {id,kind:ref.kind,title:'Kullanılamayan favori',personalRef:ref,available:false}]; } catch { return []; } });
+ const result:MediaItem[]=[];const liveIndexes=new Map<string,number>();
+ for(const value of refs) { try {
+  const ref=validatePersonalRef(value);if(ref.kind==='episode' || (ref.kind==='live' && isExcluded(ref)))continue;
+  const id=personalRefKey(ref);let item=current.get(id);
+  if(!item && ref.kind==='live') {
+   const resolved=resolveLive?.(ref);
+   if(resolved?.kind==='live' && resolved.personalRef?.sourceVersion===ref.sourceVersion)item=resolved;
+  }
+  item ??= {id,kind:ref.kind,title:'Kullanılamayan favori',personalRef:ref,available:false};
+  if(ref.kind!=='live'){result.push(item);continue;}
+  const key=item.id,index=liveIndexes.get(key);
+  if(index===undefined){liveIndexes.set(key,result.length);result.push({...item,personalFavoriteRefs:[ref]});}
+  else if(!result[index].personalFavoriteRefs!.some(saved=>personalRefKey(saved)===id))result[index]={...result[index],personalFavoriteRefs:[...result[index].personalFavoriteRefs!,ref]};
+ } catch { /* Invalid saved references cannot rebind a channel. */ } }
+ return result;
+}
+export function personalFavoriteMutationRefs(item:MediaItem, existing?:MediaItem):PersonalRef[] {
+ if(!item.personalRef)throw new Error('Unavailable reference');
+ const canonical=validatePersonalRef(item.personalRef);
+ const stored=existing?.personalFavoriteRefs?.length ? existing.personalFavoriteRefs : [existing?.personalRef ?? canonical];
+ const unique=new Map<string,PersonalRef>();
+ for(const value of existing ? stored : [canonical]) {
+  const ref=validatePersonalRef(value);
+  if(ref.sourceVersion!==canonical.sourceVersion || ref.kind!==canonical.kind)throw new Error('Favorite source changed');
+  unique.set(personalRefKey(ref),ref);
+ }
+ return [...unique.values()];
 }
 export function hydratePersonalWatched(refs: PersonalRef[], episodes: Episode[]): Set<string> {
  const keys = new Set(refs.flatMap(ref=> {try {return [personalRefKey(ref)];} catch {return [];}}));

@@ -105,6 +105,34 @@ public class ProviderParserTest {
         rejects(() -> ProviderParser.series(new JSONObject().put("episodes", new JSONObject().put("1", rows)), parent));
     }
 
+    @Test public void liveCatalogPrefersOneFhdVariantCleansNamesAndKeepsUnknownFallback() throws Exception {
+        ProviderParser.Bootstrap b=ProviderParser.bootstrap(bootstrap(),NOW);
+        JSONArray rows=new JSONArray().put(row("41","ts").put("name","TR | ATV HD"))
+                .put(row("43","ts").put("name","TR | Atv ꜰʜᴅ"))
+                .put(row("42","ts").put("name","TR | ATV FHD"))
+                .put(row("44","ts").put("name","TR | TRT 1"));
+        Catalog raw=ProviderParser.catalog(Kind.LIVE,rows,categories("TR: Ulusal"),b.scope());
+        Catalog result=ProviderParser.filterLiveCatalog(raw,b);
+        assertEquals("Exactly one variant and the unlabeled TRT channel must remain",2,result.items.size());
+        assertEquals("42",result.items.get(0).id);assertEquals("ATV",result.items.get(0).title);
+        assertEquals("44",result.items.get(1).id);assertEquals("TRT 1",result.items.get(1).title);
+        assertEquals("TR | ATV HD",raw.items.get(0).title);assertEquals(4,raw.items.size());
+        assertEquals("https://provider.test/live/private%20user/secret%2Fpassword/42.ts",ProviderParser.mediaUrl(b,result.items.get(0),NOW));
+    }
+
+    @Test public void liveOwnerExclusionPrecedesCurationAndEmptyPolicyRestoresRawWinner() throws Exception {
+        JSONArray rows=new JSONArray().put(row("41","ts").put("name","TR | ATV HD"))
+                .put(row("42","ts").put("name","TR | ATV FHD"));
+        ProviderParser.Bootstrap original=ProviderParser.bootstrap(bootstrap(),NOW);
+        Catalog raw=ProviderParser.catalog(Kind.LIVE,rows,categories("TR: Ulusal"),original.scope());
+        ProviderParser.Bootstrap excluded=ProviderParser.bootstrap(bootstrap().put("livePolicy",policy("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","42")),NOW);
+        Catalog fallback=ProviderParser.filterLiveCatalog(raw,excluded);
+        assertEquals(1,fallback.items.size());assertEquals("41",fallback.items.get(0).id);assertEquals("ATV",fallback.items.get(0).title);
+        Catalog restored=ProviderParser.filterLiveCatalog(raw,original);
+        assertEquals(1,restored.items.size());assertEquals("42",restored.items.get(0).id);
+        assertEquals("TR | ATV FHD",raw.items.get(1).title);
+    }
+
     private JSONObject policy(String revision,String... ids) throws Exception {
         JSONArray excluded=new JSONArray();for(String value:ids)excluded.put(value);
         return new JSONObject().put("revision",revision).put("excludedIds",excluded);

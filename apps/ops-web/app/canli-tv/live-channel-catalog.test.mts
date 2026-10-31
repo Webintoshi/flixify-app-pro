@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import * as catalog from "./live-channel-catalog.ts";
+import catalog from "./live-channel-catalog.ts";
 
 test("catalog fetches each page once and publishes only the first and completed lists", async () => {
   const requests: number[] = [];
@@ -158,3 +158,8 @@ test("aborted catalog load does not continue to later pages", async () => {
   );
   assert.deepEqual(requests, [1]);
 });
+
+ test("country and category survive a clean display title using its original provider label",()=>{
+ assert.deepEqual(catalog.classifyChannel({title:"ATV",sourceTitle:"TR • Atv FHD",groupTitle:null}),{countryId:"tr",categoryId:"national"});
+ assert.deepEqual(catalog.classifyChannel({title:"BBC World",sourceTitle:"UK • BBC World HD",groupTitle:null}),{countryId:"gb",categoryId:"news"});
+ });

@@ -19,6 +19,18 @@ public class MetadataDiskCacheTest {
     private Item item(Kind kind,String id,String scope) {return new Item(kind,id,"Fixture","9","Filmler","https://images.test/poster.jpg",kind==Kind.SERIES?"":"mp4",scope,kind==Kind.EPISODE?"56":"",kind==Kind.EPISODE?1:0,kind==Kind.EPISODE?1:0,"Description");}
     private Catalog catalog(String scope) {return new Catalog(Kind.MOVIE,Collections.singletonList(item(Kind.MOVIE,"12",scope)),Collections.singletonList(new Category("9","Filmler")));}
     private File directory() throws Exception {return Files.createTempDirectory("flixify-metadata-test-").toFile();}
+    @Test public void oldRawLiveDiskSnapshotGetsCurrentCurationWithoutLosingAlternatives() throws Exception {
+        Item hd=new Item(Kind.LIVE,"41","TR | ATV HD","9","TR: Ulusal","","ts",SCOPE,"",0,0,"");
+        Item fhd=new Item(Kind.LIVE,"42","TR | ATV FHD","9","TR: Ulusal","","ts",SCOPE,"",0,0,"");
+        Catalog raw=new Catalog(Kind.LIVE,Arrays.asList(hd,fhd),Collections.singletonList(new Category("9","TR: Ulusal")));
+        File root=directory();MetadataDiskCache writer=new MetadataDiskCache(root);writer.writeCatalog(SCOPE,EXPIRY,NOW,raw,()->true);
+        Catalog restored=new MetadataDiskCache(root).readCatalog(SCOPE,Kind.LIVE,EXPIRY,NOW+1).value;
+        Catalog projected=ProviderParser.filterLiveCatalog(restored,null);
+        assertEquals(1,projected.items.size());assertEquals("42",projected.items.get(0).id);assertEquals("ATV",projected.items.get(0).title);
+        assertEquals(2,restored.items.size());assertEquals("TR | ATV HD",restored.items.get(0).title);
+        assertNull(new MetadataDiskCache(root).readCatalog("other:source",Kind.LIVE,EXPIRY,NOW+1));
+    }
+
     @Test public void survivesRestartButNeverCrossesScopeOrVerifiedExpiry() throws Exception {
         File root=directory();MetadataDiskCache first=new MetadataDiskCache(root);
         first.writeCatalog(SCOPE,EXPIRY,NOW,catalog(SCOPE),()->true);

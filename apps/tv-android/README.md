@@ -1,6 +1,6 @@
 # Flixify Pro for Android TV
 
-Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.4.3`, code 11, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
+Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.4.4`, code 12, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
 
 ## Build
 
@@ -40,9 +40,12 @@ Cold launch shows the existing Flixify logo in the Android starting window, foll
 
 API origin is `https://api.flixify.vip`. App uses login/refresh, `/me`, `/me/provider-session` and `/me/personal-library`. Personal provider metadata/media are fetched from the TV's IP using the verified HTTPS origin. It never switches to shared credentials, legacy native relay endpoints or cancelled proxies. Tokens are encrypted through AndroidKeyStore; provider credentials are memory-only. Account/source changes discard stale work and caches. Absolute access expiry is checked before playback and on resume; metadata is refreshed every60seconds and before opening media. Provider extension changes the cutoff without restarting a running engine.
 
-LIVE metadata without a declared container format uses progressive MPEG-TS; valid explicit formats stay unchanged. The repository supplies `video/mp2t` to Media3 for TS and HLS MIME for HLS. Player buffers, frame handling, controls and sounds are unchanged. The LIVE disk-cache normalization key advances once for this release so older implicit-HLS snapshots are refetched; movie/series caches and saved favorite identities remain compatible.
+LIVE metadata without a declared container format uses progressive MPEG-TS; valid explicit formats stay unchanged. The repository supplies `video/mp2t` to Media3 for TS and HLS MIME for HLS. Player buffers, frame handling, controls and sounds are unchanged. The existing LIVE disk-cache format and `ts-default-v2` normalization key remain compatible; curation is applied after raw snapshot reads. Movie/series caches and saved favorite identities remain compatible.
 
 Optional live exclusions arrive with verified provider-session metadata. A revision filters current, memory-cached and disk-cached LIVE catalogs, favorite display and playback membership without changing sourceVersion or deleting saved references. A temporarily missing/malformed policy retains the last valid policy for the same verified identity; source replacement clears it. Removing an exclusion restores raw cached channels, including an already-visible Favorites page.
+
+LIVE listings show one suitable feed per conservatively identified channel with a plain display name. Compatible FHD is preferred, then HD, RAW, unknown, SD and UHD; HEVC is used only when no compatible alternative is available. A channel without FHD keeps one alternative. Country, language, regional names, channel numbers, +1, MAX and branded TRT4K/BEIN Sport4K services remain distinct. The shared TypeScript/Java fixture guards identical selection and naming. Raw rows, original IDs, stream formats, EPG and provider credentials remain unchanged. Saved obsolete variants resolve transiently to the selected feed; reads never rewrite user favorites. Explicit favorite removal deletes only the exact saved non-excluded aliases, while adding stores the selected feed. Owner exclusions apply before curation and cannot be bypassed by aliases.
+
 
 LIVE playback revalidates access before using its already verified scoped catalog, avoiding a full channel-list download for each selection. Optional EPG provider I/O has its own bounded worker after serialized context preparation; token rotation remains on the original serialized lane. Actual first-frame rendering distinguishes the30second initial preparation budget from a12second established playback stall. These changes remove avoidable client work; provider/network/physical-TV startup time still needs real-device feedback.
 

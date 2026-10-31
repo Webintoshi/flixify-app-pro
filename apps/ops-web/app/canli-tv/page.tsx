@@ -1,13 +1,16 @@
 "use client";
 
 import { mapPersonalLive, liveTransport, selectedProgrammes, createLiveRequestScope } from "./personal-live";
+import { sessionIdentity } from "../platform/personal-integration";
+import { loadLegacyLiveCatalog } from "../platform/legacy-live-catalog";
+import { curateLiveChannels } from "../platform/live-channel-presentation";
 import type { PersonalRef, PersonalEpgResult } from "../platform/personal-provider";
 import { selectLivePlaybackEngine } from "../platform/playback-transport";
 import { createDirectPlaybackDeadline } from "../platform/direct-playback-deadline";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { apiRequest } from "../../lib/api";
-import { CATEGORIES, COUNTRIES, classifyChannel, createCatalogMemoryCache, loadCatalogWithCache, type CatalogSnapshot } from "./live-channel-catalog";
+import { CATEGORIES, COUNTRIES, classifyChannel } from "./live-channel-catalog";
 import { categorySelectOptions, categorySelectValue } from "./live-category-selector";
 import {
   buildAudioTranscodeUrl,
@@ -36,7 +39,7 @@ import {
 import styles from "./live-tv-app.module.css";
 import { FavoriteButton } from "../platform/artwork";
 import { usePlatform, useProviderExpiry } from "../platform/session";
-import { parseRecentChannelIds, recentStorageKey, rememberRecentChannel } from "./live-recent";
+import { parseRecentChannelIds, recentStorageKey, rememberRecentChannel, resolveRecentChannelIds } from "./live-recent";
 import { PlayerChrome } from "../components/player-chrome";
 import { useSearchParams } from "next/navigation";
 
@@ -46,6 +49,7 @@ type LiveChannel = {
   id: string;
   personalRef?: PersonalRef;
   title: string;
+  sourceTitle?: string;
   groupTitle: string | null;
   logoUrl: string | null;
   playbackAllowed: boolean;
@@ -54,7 +58,6 @@ type LiveChannel = {
   variantGroupKey?: string | null;
 };
 
-type CatalogResponse = { items: LiveChannel[]; total?: number; groups?: Array<{ title: string; count: number }> };
 
 type PlaybackResponse = {
   personalRef?: PersonalRef;
@@ -69,9 +72,8 @@ type PlaybackResponse = {
 
 type AppIconName = "home" | "tv" | "movies" | "heart" | "clock" | "settings" | "search" | "close";
 
-const catalogPageSize = 200;
 const initialRenderLimit = 36;
-const liveCatalogCache = createCatalogMemoryCache<CatalogSnapshot<LiveChannel>>();
+
 
 function AppIcon({ name }: { name: AppIconName }) {
   const common = { width: 21, height: 21, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8 };
@@ -661,7 +663,9 @@ export default function LiveTvPage() {
   const { favorites, session: platformSession, personalProvider, providerMode, providerScope, providerExpiresAt, livePolicyRevision } = usePlatform();
   const openedChannel = useRef<string | null>(null);
   const [session, setSession] = useState<Session | null | undefined>(undefined);
-  const [channels, setChannels] = useState<LiveChannel[]>([]);
+  const [rawChannels, setChannels] = useState<LiveChannel[]>([]);
+  const liveProjection = useMemo(()=>curateLiveChannels(rawChannels),[rawChannels]);
+  const channels = liveProjection.items;
   const [catalogTotal, setCatalogTotal] = useState<number | null>(null);
   const [catalogLoaded, setCatalogLoaded] = useState(0);
   const [selectedChannel, setSelectedChannel] = useState<LiveChannel | null>(null);
@@ -745,38 +749,19 @@ export default function LiveTvPage() {
         .finally(() => { if (!controller.signal.aborted) setLoading(false); });
       return () => controller.abort();
     }
-    const cached = liveCatalogCache.get(session.accessToken, "live");
-    setCatalogLoaded(cached?.snapshot.items.length ?? 0);
-    setLoading(!cached);
-    setCatalogSyncing(!cached?.fresh);
-    setError(null);
-    if (!cached) {
-      setChannels([]);
-      setCatalogTotal(null);
-    }
-
-    void loadCatalogWithCache<LiveChannel>({
-      cache: liveCatalogCache,
-      account: session.accessToken,
-      scope: "live",
-      pageSize: catalogPageSize,
-      signal: controller.signal,
-      fetchPage: ({ page, signal }) => apiRequest<CatalogResponse>(
-        `/me/catalog/live?page=${page}&pageSize=${catalogPageSize}`,
-        { accessToken: session.accessToken, signal }
-      ),
-      onPage: (snapshot, isFirstPage) => {
-        if (controller.signal.aborted) return;
-        setChannels(snapshot.items);
-        setCatalogTotal(snapshot.total);
-        if (isFirstPage || cached) setLoading(false);
+    setLoading(true);setCatalogSyncing(true);setError(null);
+    let received=false;
+    void loadLegacyLiveCatalog({
+      accountId:sessionIdentity(session),sourceScope:providerScope,accessToken:session.accessToken,signal:controller.signal,
+      onPage:snapshot=>{
+        if(controller.signal.aborted)return;received=true;
+        setChannels(snapshot.rawItems.map(item=>({...item,groupTitle:item.groupTitle ?? null,logoUrl:item.logoUrl ?? item.posterUrl ?? null,playbackAllowed:item.playbackAllowed!==false,transport:item.transport ?? 'unknown',healthStatus:item.healthStatus ?? 'unknown'})));
+        setCatalogTotal(snapshot.rawItems.length);setCatalogLoaded(snapshot.rawItems.length);setLoading(false);
       },
-      onProgress: (loaded) => {
-        if (!controller.signal.aborted) setCatalogLoaded(loaded);
-      }
+      onProgress:(loaded,total)=>{if(!controller.signal.aborted){setCatalogLoaded(loaded);setCatalogTotal(total);}}
     }).catch((nextError) => {
       if (!controller.signal.aborted) {
-        setError(cached ? "Kanal listesi güncellenemedi. Kayıtlı liste gösteriliyor." : errorMessage(nextError));
+        setError(received ? "Kanal listesi güncellenemedi. Kayıtlı liste gösteriliyor." : errorMessage(nextError));
       }
     }).finally(() => {
       if (!controller.signal.aborted) {
@@ -823,7 +808,8 @@ export default function LiveTvPage() {
   const visibleChannels = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("tr-TR");
     const favoriteIds = new Set(favorites.filter((item) => item.kind === "live").map((item) => item.id));
-    const recentOrder = new Map(recentIds.map((id, index) => [id, index]));
+    const resolvedRecent = resolveRecentChannelIds(recentIds,id=>(providerMode === "personal" ? personalProvider?.resolveLiveItemId(id) : liveProjection.canonicalById.get(id)));
+    const recentOrder = new Map(resolvedRecent.map((id, index) => [id, index]));
     return enrichedChannels
       .filter((item) => {
         const matchesCountry = item.countryId === selectedCountry;
@@ -834,7 +820,7 @@ export default function LiveTvPage() {
       })
       .map((item) => item.channel)
       .sort((a, b) => directoryTab === "recent" ? (recentOrder.get(a.id) ?? 99) - (recentOrder.get(b.id) ?? 99) : 0);
-  }, [directoryTab, enrichedChannels, favorites, recentIds, search, selectedCategory, selectedCountry]);
+  }, [directoryTab, enrichedChannels, favorites, recentIds, search, selectedCategory, selectedCountry, personalProvider, liveProjection, providerMode]);
 
   const renderedChannels = visibleChannels.slice(0, renderLimit);
 
@@ -868,7 +854,7 @@ export default function LiveTvPage() {
         await new Promise((resolve) => setTimeout(resolve, 800));
         if (requestVersion !== requestVersionRef.current) return;
       }
-      const playbackQuery = getBrowserLivePlaybackQuery(channel.title);
+      const playbackQuery = getBrowserLivePlaybackQuery(channel.sourceTitle ?? channel.title);
       const response: PlaybackResponse = channel.personalRef && personalProvider
         ? { ...await personalProvider.playback(channel.personalRef), channelId:channel.id, personalRef:channel.personalRef, transport:channel.transport, canPlay:true, deliveryMode:"direct_provider", errorMessage:null }
         : await apiRequest<PlaybackResponse>(
@@ -906,13 +892,14 @@ export default function LiveTvPage() {
   useEffect(() => {
     const id = searchParams.get("channel");
     if (!id || openedChannel.current === id) return;
-    const channel = channels.find(item => item.id === id);
+    const canonicalId = (providerMode === "personal" ? personalProvider?.resolveLiveItemId(id) : liveProjection.canonicalById.get(id));
+    const channel = channels.find(item => item.id === canonicalId);
     if (!channel) return;
     openedChannel.current = id;
     setSelectedCountry(classifyChannel(channel).countryId);
     setSelectedCategory("all");
     void playChannel(channel);
-  }, [channels, searchParams]);
+  }, [channels, searchParams, liveProjection, personalProvider, providerMode]);
 
   if (session === undefined || loading) {
     return <main className={styles.statePage}><div className={styles.loader} /><p>Flixify Canlı hazırlanıyor…</p></main>;
@@ -929,7 +916,7 @@ export default function LiveTvPage() {
     );
   }
 
-  const displayedTotal = catalogTotal ?? channels.length;
+  const displayedTotal = channels.length;
   const programmes = epg ? selectedProgrammes(epg.programmes) : [];
   const programmeNow = Date.now();
   const nextProgramme = programmes.findIndex(programme => programme.start > programmeNow);
@@ -957,7 +944,7 @@ export default function LiveTvPage() {
               if (identity.personalProvider !== identityRef.current.personalProvider || identity.token !== identityRef.current.token || identity.providerMode !== identityRef.current.providerMode || identity.scope !== identityRef.current.scope) throw new Error("Oturum değişti");
               return {...result, channelId:selectedChannel.id, personalRef:selectedChannel.personalRef, transport:liveTransport(result.url), canPlay:true, deliveryMode:"direct_provider", errorMessage:null};
             } : undefined} onPlaybackChange={setPlayback} onNeedLowerQuality={() => {
-              const lower = findLowerBandwidthVariant(channels, selectedChannel);
+              const lower = findLowerBandwidthVariant(rawChannels, {...selectedChannel,title:selectedChannel.sourceTitle ?? selectedChannel.title});
               if (!lower) return false;
               void playChannel(lower,selectionTiming);
               return true;
@@ -1016,9 +1003,9 @@ export default function LiveTvPage() {
 
           <div className={styles.catalogStatus} aria-live="polite">
             {catalogSyncing
-              ? channels.length >= displayedTotal
+              ? catalogLoaded >= (catalogTotal ?? catalogLoaded)
                 ? "Kanal listesi güncelleniyor…"
-                : `${catalogLoaded.toLocaleString("tr-TR")} / ${displayedTotal.toLocaleString("tr-TR")} kanal hazırlanıyor`
+                : `${catalogLoaded.toLocaleString("tr-TR")} / ${(catalogTotal ?? catalogLoaded).toLocaleString("tr-TR")} kanal hazırlanıyor`
               : `${channels.length.toLocaleString("tr-TR")} kanal listelendi`}
           </div>
 

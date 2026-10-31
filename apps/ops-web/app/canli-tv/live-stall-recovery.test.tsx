@@ -74,7 +74,7 @@ describe("live stream stall recovery", () => {
     playback = vi.fn(async () => ({ url, expiresAt }));
     state.engines = [];state.hlsImportGate=null;state.api.mockReset().mockRejectedValue(new Error("Unexpected fixture API call"));
     state.platform = { session: { accessToken: "test-token" }, favorites: [], providerMode: "personal", providerScope: "line-a",
-      personalProvider: { catalog: async () => [{ id: "channel-a", title: "ATV HD", groupTitle: "TR", personalRef: ref }],
+      personalProvider: {resolveLiveItemId:(id:string)=>id, catalog: async () => [{ id: "channel-a", title: "ATV HD", groupTitle: "TR", personalRef: ref }],
         playback, shortEpg: async () => ({ status: "empty", programmes: [] }) } };
     container = document.getElementById("root")!;
     root = createRoot(container);
@@ -318,7 +318,7 @@ describe("live stream stall recovery", () => {
     expect(state.engines[0].destroyed).toBe(true);
     expect(state.engines[1].source).toBe(url);
     expect(playback.mock.calls.every(([value]) => value.id === "274")).toBe(true);
-    expect(video().getAttribute("aria-label")).toBe("ATV HD canlı yayın");
+    expect(video().getAttribute("aria-label")).toBe("ATV canlı yayın");
   });
 
   it("leaves a manually paused stream alone", async () => {
@@ -454,7 +454,7 @@ describe("live stream stall recovery", () => {
     expect(state.engines.at(-1).source).toBe("https://edge.test/lower.m3u8");
     if(!seen)await settle(()=>observer.fire(1));
     expect(Number(firstPictureSurface().getAttribute("data-first-picture-ms"))).toBe(seen?200:5200);
-    await settle(()=>[...container.querySelectorAll<HTMLButtonElement>("button")].find(button=>button.textContent?.includes("Fixture FHD"))!.click());
+    await settle(()=>[...container.querySelectorAll<HTMLButtonElement>("button")].find(button=>button.querySelector("strong")?.textContent==="Fixture")!.click());
     await tick(800);await tick(100);await settle(()=>observer.fire(observer.frames.length-1));
     expect(Number(firstPictureSurface().getAttribute("data-first-picture-ms"))).toBe(900);
   });

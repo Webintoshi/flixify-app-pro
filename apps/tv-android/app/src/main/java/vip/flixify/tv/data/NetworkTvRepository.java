@@ -78,6 +78,9 @@ public final class NetworkTvRepository implements TvRepository {
     private final Set<CatalogObserver> catalogObservers=new HashSet<>();
     private final Set<String> favoriteRefs=new HashSet<>(), watchedRefs=new HashSet<>();
     private String libraryScope="";
+    private Catalog curatedInput;
+    private String curatedRevision="";
+    private LiveChannelCuration.Projection curatedLive;
     private Runnable refreshTimer, expiryTimer;
 
     public NetworkTvRepository(Context context) { this(context,null,null,null); }
@@ -176,13 +179,33 @@ public final class NetworkTvRepository implements TvRepository {
             }
         });
     }
-    private Catalog currentLiveCatalog(Catalog value) { synchronized(lock) { return ProviderParser.filterLiveCatalog(value,guard.current()); } }
+    private LiveChannelCuration.Projection liveProjection(Catalog raw) {
+        synchronized(lock) {
+            ProviderParser.Bootstrap b=guard.current();String revision=b==null || b.livePolicy==null?"":b.livePolicy.revision;
+            if(curatedInput!=raw || curatedLive==null || !curatedRevision.equals(revision)) {
+                curatedInput=raw;curatedRevision=revision;
+                Set<String> excluded=b==null || b.livePolicy==null?Collections.emptySet():b.livePolicy.excludedIds;
+                curatedLive=LiveChannelCuration.curate(raw,excluded);
+            }
+            return curatedLive;
+        }
+    }
+    private Catalog currentLiveCatalog(Catalog value) {return value.kind==Kind.LIVE?liveProjection(value).catalog:value;}
+    private Item resolveLiveItem(Catalog fallback,String id) {
+        synchronized(lock){Catalog raw=catalogs.get(Kind.LIVE);return liveProjection(raw==null?fallback:raw).resolve(id);}
+    }
+    private List<Item> savedLiveAliases(Item item) {
+        List<Item> result=new ArrayList<>();Catalog raw=catalogs.get(Kind.LIVE);if(raw==null)return result;
+        LiveChannelCuration.Projection projection=liveProjection(raw);Item selected=projection.resolve(item.id);
+        if(selected!=null)for(String id:projection.aliases(selected.id)) {Item original=projection.original(id);if(original!=null && favoriteRefs.contains(refKey(original)))result.add(original);}
+        return result;
+    }
     @SuppressWarnings("unchecked") private <T> T policyResult(T value,boolean favorites) {
         synchronized(lock) {
             if(value instanceof Catalog){Catalog raw=catalogs.get(((Catalog)value).kind);return (T)currentLiveCatalog(raw==null?(Catalog)value:raw);}
             if(favorites && value instanceof List) {
                 List<Item> items=new ArrayList<>();
-                for(Kind kind:new Kind[]{Kind.LIVE,Kind.MOVIE,Kind.SERIES}){Catalog raw=catalogs.get(kind);if(raw!=null)for(Item item:currentLiveCatalog(raw).items)if(favoriteRefs.contains(refKey(item)))items.add(item);}
+                for(Kind kind:new Kind[]{Kind.LIVE,Kind.MOVIE,Kind.SERIES}){Catalog raw=catalogs.get(kind);if(raw!=null)for(Item item:currentLiveCatalog(raw).items)if(isFavorite(item))items.add(item);}
                 return (T)Collections.unmodifiableList(items);
             }
             return value;
@@ -310,7 +333,7 @@ public final class NetworkTvRepository implements TvRepository {
         };
         main.postDelayed(expiryTimer,Math.min(Math.max(1,b.expiresAtMs-clock.now()),Integer.MAX_VALUE));
     }
-    private void clearMetadataLocked() { catalogs.clear();catalogSavedAt.clear();catalogValidUntil.clear();catalogFetches.clear();foregroundCatalogFetches.clear();details.clear();detailSavedAt.clear();detailValidUntil.clear();detailFetches.clear();foregroundDetailFetches.clear();metadataRefreshes.clear();favoriteRefs.clear();watchedRefs.clear();libraryScope=""; }
+    private void clearMetadataLocked() { curatedInput=null;curatedLive=null;curatedRevision="";catalogs.clear();catalogSavedAt.clear();catalogValidUntil.clear();catalogFetches.clear();foregroundCatalogFetches.clear();details.clear();detailSavedAt.clear();detailValidUntil.clear();detailFetches.clear();foregroundDetailFetches.clear();metadataRefreshes.clear();favoriteRefs.clear();watchedRefs.clear();libraryScope=""; }
     private void clearProvider() {clearProvider(-1,-1,null);}
     private void clearProvider(long auth,long source,String scope) {clearProvider(auth,source,scope,false);}
     private void clearProvider(long auth,long source,String scope,boolean expiredOnly) {
@@ -412,7 +435,7 @@ public final class NetworkTvRepository implements TvRepository {
         String art=item.artwork;
         String decoded=art;try{decoded=new java.net.URI(art).getPath();}catch(Exception ignored){art="";}
         if(art.contains(b.username) || art.contains(b.password) || art.contains(ProviderParser.encode(b.username)) || art.contains(ProviderParser.encode(b.password)) || (decoded!=null && (decoded.contains(b.username) || decoded.contains(b.password))))art="";
-        return new Item(item.kind,item.id,item.title,item.categoryId,item.categoryName,art,item.extension,item.scope,item.seriesId,item.season,item.episode,item.description);
+        return new Item(item.kind,item.id,item.title,item.categoryId,item.categoryName,art,item.extension,item.scope,item.seriesId,item.season,item.episode,item.description,item.sourceTitle);
     }
     @Override public void series(Item series,Callback<SeriesDetail> callback) {
         enqueue("series-"+(series==null?"":series.id),true,new Callback<SeriesDetail>(){
@@ -487,7 +510,7 @@ public final class NetworkTvRepository implements TvRepository {
             // Bootstrap and catalog preparation stay serialized with all API/token operations.
             ProviderParser.Bootstrap b=bootstrap(auth,false);
             if(live==null || live.kind!=Kind.LIVE)throw new ProviderParser.Invalid();ProviderParser.reference(live,b.scope());
-            Item verified=find(catalogFor(auth,b,Kind.LIVE,false),live.id);if(verified==null)throw new ProviderParser.Invalid();
+            Item verified=resolveLiveItem(catalogFor(auth,b,Kind.LIVE,false),live.id);if(verified==null)throw new ProviderParser.Invalid();
             long source=guard.generation();active(auth,source,b.scope());
             return new Prepared<>(optionalAuth->{
                 active(optionalAuth,source,b.scope());
@@ -496,15 +519,29 @@ public final class NetworkTvRepository implements TvRepository {
             },source,b.scope());
         },true);
     }
+    private Callback<Playback> curatedPlaybackCallback(Item requested,Callback<Playback> callback) {
+        if(requested==null || requested.kind!=Kind.LIVE || callback==null)return callback;
+        return new Callback<Playback>() {
+            public void onResult(Playback value) {
+                boolean valid;
+                synchronized(lock){Catalog raw=catalogs.get(Kind.LIVE);Item selected=raw==null?null:liveProjection(raw).resolve(requested.id);valid=selected!=null && requested.scope.equals(currentScope()) && selected.id.equals(value.item.id);}
+                if(valid)callback.onResult(value);else callback.onError(failure(new Problem(Failure.Code.INVALID)));
+            }
+            public void onError(Failure issue){callback.onError(issue);}
+        };
+    }
     @Override public void playback(Item candidate,Callback<Playback> callback) {
-        enqueue("playback-"+(candidate==null?"":refKey(candidate)),true,callback,auth->{
+        enqueue("playback-"+(candidate==null?"":refKey(candidate)),true,curatedPlaybackCallback(candidate,callback),auth->{
             ProviderParser.Bootstrap b=bootstrap(auth,true); if(candidate==null)throw new ProviderParser.Invalid();ProviderParser.reference(candidate,b.scope());
             Item verified=null,next=null;
             if(candidate.kind==Kind.EPISODE) {
                 Item parent=new Item(Kind.SERIES,candidate.seriesId,"","","","","",b.scope(),"",0,0,"");
                 SeriesDetail detail=seriesFor(auth,b,parent,true);List<Item> all=new ArrayList<>();for(Season season:detail.seasons)all.addAll(season.episodes);
                 for(int i=0;i<all.size();i++)if(all.get(i).id.equals(candidate.id)){verified=all.get(i);if(i+1<all.size())next=all.get(i+1);break;}
-            } else if(candidate.kind!=Kind.SERIES)verified=find(catalogFor(auth,b,candidate.kind,candidate.kind!=Kind.LIVE),candidate.id);
+            } else if(candidate.kind!=Kind.SERIES) {
+                Catalog catalog=catalogFor(auth,b,candidate.kind,candidate.kind!=Kind.LIVE);
+                verified=candidate.kind==Kind.LIVE?resolveLiveItem(catalog,candidate.id):find(catalog,candidate.id);
+            }
             if(verified==null)throw new ProviderParser.Invalid();long source=guard.generation();active(auth,source,b.scope());
             // Read the current identity's deadline: a metadata refresh can shorten or extend it.
             ProviderParser.Bootstrap current=guard.current();String url=ProviderParser.mediaUrl(current,verified,clock.now());
@@ -514,7 +551,11 @@ public final class NetworkTvRepository implements TvRepository {
     }
     private String refKey(Item item) {return item.kind.name()+":"+item.seriesId+":"+item.id;}
     @Override public boolean isFavorite(Item item) {
-        synchronized(lock) {return item!=null && item.scope.equals(currentScope()) && favoriteRefs.contains(refKey(item));}
+        synchronized(lock) {
+            if(item==null || !item.scope.equals(currentScope()))return false;
+            if(item.kind==Kind.LIVE && !savedLiveAliases(item).isEmpty())return true;
+            return favoriteRefs.contains(refKey(item));
+        }
     }
     private void library(long auth,ProviderParser.Bootstrap b,boolean force) throws Exception {
         long source=guard.generation();active(auth,source,b.scope()); synchronized(lock){if(!force && libraryScope.equals(b.scope()))return;}
@@ -533,15 +574,24 @@ public final class NetworkTvRepository implements TvRepository {
         }return output;
     }
     @Override public void favorites(Callback<List<Item>> callback) {
-        enqueue("favorites",true,callback,auth->{ProviderParser.Bootstrap b=bootstrap(auth,false);library(auth,b,true);List<Item> output=new ArrayList<>();Set<String> wanted; synchronized(lock){wanted=new HashSet<>(favoriteRefs);}for(Kind kind:new Kind[]{Kind.LIVE,Kind.MOVIE,Kind.SERIES}){boolean needed=false;for(String key:wanted)if(key.startsWith(kind.name()+":")){needed=true;break;}if(needed)for(Item item:catalogFor(auth,b,kind,false).items)if(wanted.contains(refKey(item)))output.add(item);}return Collections.unmodifiableList(output);});
+        enqueue("favorites",true,callback,auth->{ProviderParser.Bootstrap b=bootstrap(auth,false);library(auth,b,true);List<Item> output=new ArrayList<>();Set<String> wanted; synchronized(lock){wanted=new HashSet<>(favoriteRefs);}for(Kind kind:new Kind[]{Kind.LIVE,Kind.MOVIE,Kind.SERIES}){boolean needed=false;for(String key:wanted)if(key.startsWith(kind.name()+":")){needed=true;break;}if(needed)for(Item item:catalogFor(auth,b,kind,false).items)if(isFavorite(item))output.add(item);}return Collections.unmodifiableList(output);});
     }
     @Override public void toggleFavorite(Item candidate,Callback<Boolean> callback) {
         enqueue("favorite-toggle-"+(candidate==null?"":candidate.key()),true,callback,auth->{
             ProviderParser.Bootstrap b=bootstrap(auth,false);if(candidate==null || candidate.kind==Kind.EPISODE)throw new ProviderParser.Invalid();ProviderParser.reference(candidate,b.scope());
-            Item item=find(catalogFor(auth,b,candidate.kind,false),candidate.id);if(item==null)throw new ProviderParser.Invalid();library(auth,b,false);
-            boolean old; synchronized(lock){old=favoriteRefs.contains(refKey(item));}
-            long source=guard.generation();JSONObject accepted=ProviderParser.object(api("/me/personal-library/favorites",old?"DELETE":"PUT",new JSONObject().put("ref",ProviderParser.reference(item,b.scope())),auth));if(!accepted.optBoolean("ok"))throw new ProviderParser.Invalid();active(auth,source,b.scope());
-            synchronized(lock){active(auth,source,b.scope());if(old)favoriteRefs.remove(refKey(item));else favoriteRefs.add(refKey(item));}return !old;
+            Catalog catalog=catalogFor(auth,b,candidate.kind,false);
+            Item item=candidate.kind==Kind.LIVE?resolveLiveItem(catalog,candidate.id):find(catalog,candidate.id);if(item==null)throw new ProviderParser.Invalid();library(auth,b,false);
+            List<Item> stored; synchronized(lock){stored=item.kind==Kind.LIVE?savedLiveAliases(item):favoriteRefs.contains(refKey(item))?Collections.singletonList(item):Collections.emptyList();}
+            long source=guard.generation();
+            if(!stored.isEmpty()) {
+                for(Item original:stored) {
+                    active(auth,source,b.scope());JSONObject accepted=ProviderParser.object(api("/me/personal-library/favorites","DELETE",new JSONObject().put("ref",ProviderParser.reference(original,b.scope())),auth));if(!accepted.optBoolean("ok"))throw new ProviderParser.Invalid();
+                    synchronized(lock){active(auth,source,b.scope());favoriteRefs.remove(refKey(original));}
+                }
+                return false;
+            }
+            JSONObject accepted=ProviderParser.object(api("/me/personal-library/favorites","PUT",new JSONObject().put("ref",ProviderParser.reference(item,b.scope())),auth));if(!accepted.optBoolean("ok"))throw new ProviderParser.Invalid();
+            synchronized(lock){active(auth,source,b.scope());favoriteRefs.add(refKey(item));}return true;
         });
     }
     @Override public void markWatched(Item episode) {

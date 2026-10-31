@@ -3,6 +3,9 @@ export type Kind = "live" | "movie" | "series";
 export type Episode = { personalRef?: PersonalRef; id: string; title: string; seasonNumber: number; episodeNumber: number; playbackAllowed: boolean; watched?: boolean };
 export type MediaItem = {
   personalRef?: PersonalRef;
+  personalFavoriteRefs?: PersonalRef[];
+  legacyFavoriteIds?: string[];
+  sourceTitle?: string;
   id: string; title: string; kind: Kind; posterUrl?: string | null; logoUrl?: string | null;
   releaseYear?: number | null;
   groupTitle?: string | null; playbackAllowed?: boolean; available?: boolean; lookupFailed?: boolean;

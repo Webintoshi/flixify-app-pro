@@ -384,6 +384,8 @@ public final class MainActivity extends Activity {
     }
     private void linkContent(View first) { for(Button b:rail)b.setNextFocusRightId(first.getId()); first.setNextFocusLeftId(rail[page.section.ordinal()].getId()); }
     private void renderCatalog(boolean contentFocus) {
+        String effectiveCategory=page.section==Section.FAVORITES?CatalogFilterData.effectiveFavoriteCategory(page.catalog,page.category):CatalogFilterData.effectiveCategory(page.catalog,page.category);
+        if(!effectiveCategory.equals(page.category)){page.category=effectiveCategory;page.categoryTitle="Tümü";page.scroll=0;page.focusKey="";}
         List<Item> filtered=CatalogFilterData.filtered(page.catalog,page.category,page.query);
         if(page.section==Section.HOME && sizing.hero>0 && !filtered.isEmpty())addHomeHero(filtered.get(0));
         LinearLayout controls=TvUi.row(this);body.addView(controls,TvUi.space(this,-1,50));

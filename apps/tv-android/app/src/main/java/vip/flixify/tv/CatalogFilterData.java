@@ -27,13 +27,21 @@ final class CatalogFilterData {
     private static String normalized(String value){return value==null?"":value.trim().toLowerCase(TURKISH);}
     private static boolean match(Item item,String category,String query){return (category==null || category.isEmpty() || category.equals(item.categoryId)) && item.title.toLowerCase(TURKISH).contains(query);}
     static boolean matches(Item item,String category,String query){return match(item,category,normalized(query));}
+    static String effectiveFavoriteCategory(Catalog catalog,String category){
+        if(category==null || category.isEmpty())return "";
+        for(Item item:catalog.items)if(category.equals(item.categoryId))return category;
+        return "";
+    }
+    static String effectiveCategory(Catalog catalog,String category){
+        return catalog.kind==Kind.LIVE?effectiveFavoriteCategory(catalog,category):category==null?"":category;
+    }
     static List<Item> filtered(Catalog catalog,String category,String query){
-        String text=normalized(query);List<Item> result=new ArrayList<>();
+        category=effectiveCategory(catalog,category);String text=normalized(query);List<Item> result=new ArrayList<>();
         for(Item item:catalog.items)if(match(item,category,text))result.add(item);
         return result;
     }
     static SearchPreview preview(Catalog catalog,String category,String query){
-        String text=normalized(query);int count=0;List<Item> samples=new ArrayList<>(3);
+        category=effectiveCategory(catalog,category);String text=normalized(query);int count=0;List<Item> samples=new ArrayList<>(3);
         for(Item item:catalog.items)if(match(item,category,text)){count++;if(samples.size()<3)samples.add(item);}
         return new SearchPreview(count,samples);
     }

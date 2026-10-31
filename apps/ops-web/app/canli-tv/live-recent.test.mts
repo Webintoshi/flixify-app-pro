@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseRecentChannelIds, recentStorageKey, rememberRecentChannel } from "./live-recent.ts";
+import helpers from "./live-recent.ts";
+const {parseRecentChannelIds,recentStorageKey,rememberRecentChannel,resolveRecentChannelIds}=helpers;
 
 test("a recently watched channel moves to the front without duplicates", () => {
   assert.deepEqual(rememberRecentChannel(["trt", "atv", "show"], "atv"), ["atv", "trt", "show"]);
@@ -20,3 +21,10 @@ test("recent history follows the account across refreshed access tokens", () => 
   assert.equal(recentStorageKey("MYACCOUNT1234567", "old-token"), recentStorageKey("MYACCOUNT1234567", "new-token"));
   assert.notEqual(recentStorageKey("MYACCOUNT1234567", "old-token"), recentStorageKey("OTHERACCOUNT1234", "old-token"));
 });
+
+ test("recent aliases keep their order once, without rebinding missing or foreign IDs",()=>{
+ const aliases=new Map([["old-atv","atv"],["atv","atv"],["trt","trt"]]);
+ const stored=["old-atv","trt","atv","other-source"];
+ assert.deepEqual(resolveRecentChannelIds(stored,id=>aliases.get(id)),["atv","trt"]);
+ assert.deepEqual(stored,["old-atv","trt","atv","other-source"]);
+ });

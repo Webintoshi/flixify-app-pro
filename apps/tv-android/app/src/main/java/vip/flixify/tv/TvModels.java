@@ -13,14 +13,18 @@ public final class TvModels {
     public static final class Item implements Serializable {
         private static final long serialVersionUID = 1L;
         public final Kind kind;
-        public final String id, title, categoryId, categoryName, artwork, extension, scope, seriesId, description;
+        public final String id, title, categoryId, categoryName, artwork, extension, scope, seriesId, description, sourceTitle;
         public final int season, episode;
         public Item(Kind kind, String id, String title, String categoryId, String categoryName, String artwork,
                     String extension, String scope, String seriesId, int season, int episode, String description) {
+            this(kind,id,title,categoryId,categoryName,artwork,extension,scope,seriesId,season,episode,description,title);
+        }
+        public Item(Kind kind, String id, String title, String categoryId, String categoryName, String artwork,
+                    String extension, String scope, String seriesId, int season, int episode, String description, String sourceTitle) {
             this.kind=kind; this.id=text(id); this.title=text(title); this.categoryId=text(categoryId);
             this.categoryName=text(categoryName); this.artwork=text(artwork); this.extension=text(extension);
             this.scope=text(scope); this.seriesId=text(seriesId); this.season=season; this.episode=episode;
-            this.description=text(description);
+            this.description=text(description);this.sourceTitle=text(sourceTitle);
         }
         public String key() { return kind.name()+":"+id; }
     }

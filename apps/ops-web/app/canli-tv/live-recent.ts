@@ -19,3 +19,7 @@ export function recentStorageKey(accountCode: string | null | undefined, accessT
   for (const character of accountCode || accessToken) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
   return `flixify-live-recent-${(hash >>> 0).toString(36)}`;
 }
+
+export function resolveRecentChannelIds(ids:readonly string[], resolve:(id:string)=>string|undefined):string[] {
+ return [...new Set(ids.map(resolve).filter((id):id is string=>Boolean(id)))].slice(0,20);
+}

@@ -1,6 +1,7 @@
 import { isJunkVodCatalogTitle, isValidMovieCatalogEntry, isValidSeriesEpisodeCatalogEntry } from '@flixify/contracts';
 import type { MediaItem, Episode, Kind } from './types';
 import { catalogReleaseYear } from './catalog-release-year';
+import { curateLiveChannels } from './live-channel-presentation';
 
 export type PersonalLivePolicy = { revision: string; excludedIds: string[] };
 export type PersonalProviderBootstrap = { livePolicy?: PersonalLivePolicy; accountId: string; sourceVersion: string; providerOrigin: string; username: string; password: string; expiresAt: string; moviePolicy: 'general-audience-only' };
@@ -106,7 +107,29 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
  let generation = 0; let bootstrapSequence = 0; let pendingBootstrap: Promise<{b:PersonalProviderBootstrap;g:number}> | undefined; let pendingBootstrapForced = false; let session: PersonalProviderBootstrap | undefined; let expiryTimer: ReturnType<typeof setTimeout> | undefined;
  let excludedIds = new Set<string>();
  const controllers = new Set<AbortController>(); const cache = new Map<Kind, PersonalMediaItem[]>();
- function clear() { pendingRefresh = undefined; generation++; bootstrapSequence++; pendingBootstrap = undefined; pendingBootstrapForced = false; session = undefined; excludedIds.clear(); options.onLivePolicyChange?.(''); cache.clear(); if (expiryTimer) clearTimeout(expiryTimer); expiryTimer = undefined; for (const c of controllers) c.abort(); controllers.clear(); }
+ let liveProjection: {raw:PersonalMediaItem[];revision:string;items:PersonalMediaItem[];canonicalById:Map<string,string>;byId:Map<string,PersonalMediaItem>} | undefined;
+ function projectedLive() {
+  const raw=cache.get('live');if(!raw || !session) return;
+  const revision=session.livePolicy?.revision ?? '';
+  if(liveProjection?.raw===raw && liveProjection.revision===revision) return liveProjection;
+  const result=curateLiveChannels(raw.map(item=>({...item,providerId:item.personalRef.id})),excludedIds);
+  const items:PersonalMediaItem[]=result.items.map(({providerId,...item})=>item);
+  return liveProjection={raw,revision,items,canonicalById:result.canonicalById,byId:new Map(items.map(item=>[item.id,item]))};
+ }
+ function resolveLiveItem(value:unknown):PersonalMediaItem|undefined {
+  try {
+   const ref=validatePersonalRef(value);
+   if(!session || Date.parse(session.expiresAt)<=now() || ref.kind!=='live' || ref.sourceVersion!==session.sourceVersion || isLiveExcluded(ref)) return;
+   const projection=projectedLive();const selected=projection?.canonicalById.get(personalItemId(ref));
+   const item=selected ? projection?.byId.get(selected) : undefined;return item ? structuredClone(item) : undefined;
+  } catch {return;}
+ }
+ function resolveLiveItemId(value:string):string|undefined {
+  if(!session || Date.parse(session.expiresAt)<=now()) return;
+  return projectedLive()?.canonicalById.get(value);
+ }
+ function visibleCatalog(kind:Kind,items:PersonalMediaItem[]) {return kind==='live' ? projectedLive()?.items ?? [] : items;}
+ function clear() { pendingRefresh = undefined; generation++; bootstrapSequence++; pendingBootstrap = undefined; pendingBootstrapForced = false; session = undefined; excludedIds.clear(); options.onLivePolicyChange?.(''); cache.clear(); liveProjection=undefined; if (expiryTimer) clearTimeout(expiryTimer); expiryTimer = undefined; for (const c of controllers) c.abort(); controllers.clear(); }
  function active(g: number, b: PersonalProviderBootstrap) { if (g !== generation || !session || session !== b) fail(); if (Date.parse(b.expiresAt) <= now()) { clear(); fail(); } }
  async function bootstrapRaw(force = false) {
   if (session && Date.parse(session.expiresAt) <= now()) clear();
@@ -149,10 +172,10 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
  function isLiveExcluded(ref: PersonalRef) { return ref.kind === 'live' && ref.sourceVersion === session?.sourceVersion && excludedIds.has(ref.id); }
  function filterLiveItems<T extends {personalRef?:PersonalRef}>(items:T[]):T[] { return items.filter(item=>!item.personalRef || !isLiveExcluded(item.personalRef)); }
  async function catalogFor(kind: Kind,b: PersonalProviderBootstrap,g: number,force = false) {
-  active(g,b); if (!['live','movie','series'].includes(kind)) fail(); if (!force && cache.has(kind)) return structuredClone(filterLiveItems(cache.get(kind)!));
+  active(g,b); if (!['live','movie','series'].includes(kind)) fail(); if (!force && cache.has(kind)) return structuredClone(visibleCatalog(kind,cache.get(kind)!));
   const prefix = kind === 'movie' ? 'vod' : kind;
   const [categories,rows] = await Promise.all([request(b,g,`get_${prefix}_categories`),request(b,g,kind === 'series' ? 'get_series' : `get_${prefix}_streams`)]);
-  const items = normalizeCatalog(kind,rows,categories,b.sourceVersion,options.liveDefaultExtension === 'ts' ? 'ts' : 'm3u8');active(g,b);cache.set(kind,items);return structuredClone(filterLiveItems(items));
+  const items = normalizeCatalog(kind,rows,categories,b.sourceVersion,options.liveDefaultExtension === 'ts' ? 'ts' : 'm3u8');active(g,b);cache.set(kind,items);return structuredClone(visibleCatalog(kind,items));
  }
  async function seriesFor(ref: PersonalRef,b: PersonalProviderBootstrap,g: number,force = false) {
   if (ref.sourceVersion !== b.sourceVersion || ref.kind !== 'series') fail();
@@ -162,9 +185,9 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
   return {...parent,seasons,episodeCount:episodes.length,seasonCount:seasons.length};
  }
  return {
-  clear, isLiveExcluded, filterLiveItems,
+  clear, isLiveExcluded, filterLiveItems, resolveLiveItem, resolveLiveItemId,
   refreshMetadata() { if (pendingRefresh) return pendingRefresh.then(({b})=>b); const promise = bootstrap(true); pendingRefresh = promise; void promise.then(()=>{if(pendingRefresh===promise)pendingRefresh=undefined;},()=>{if(pendingRefresh===promise)pendingRefresh=undefined;}); return promise.then(({b})=>b); },
-  async catalog(kind: Kind) { const {b,g} = await bootstrap();const items=await catalogFor(kind,b,g);active(g,b);return structuredClone(filterLiveItems(cache.get(kind) ?? items)); },
+  async catalog(kind: Kind) { const {b,g} = await bootstrap();const items=await catalogFor(kind,b,g);active(g,b);return structuredClone(items); },
   async series(value: unknown) {const ref=validatePersonalRef(value);const {b,g}=await bootstrap();return seriesFor(ref,b,g);},
   async shortEpg(value: unknown, signal?: AbortSignal): Promise<PersonalEpgResult> {
    try {
@@ -172,9 +195,10 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
     const ref=validatePersonalRef(value); const {b,g}=await bootstrap();
     if (signal?.aborted) fail();
     if (ref.kind !== 'live' || ref.sourceVersion !== b.sourceVersion) fail();
-    const items=await catalogFor('live',b,g);
-    if (signal?.aborted || !items.some(i=>i.personalRef.id===ref.id)) fail();
-    const programmes=normalizeEpg(await request(b,g,'get_short_epg',ref.id,signal));
+    await catalogFor('live',b,g);const selected=resolveLiveItem(ref);
+    if (!selected) return fail();
+    if (signal?.aborted) fail();
+    const programmes=normalizeEpg(await request(b,g,'get_short_epg',selected.personalRef.id,signal));
     return {status:programmes.length?'ready':'empty',programmes};
    } catch {return {status:'error',programmes:[],error:'Program bilgisi alınamadı'};}
   },
@@ -184,7 +208,8 @@ export function createPersonalProviderClient(options: { loadBootstrap: (signal: 
    // Access is freshly revalidated above. A live channel's membership can reuse the
    // catalog already verified for this exact source; on identity changes clear()
    // discards it before a new source can authorize a stream.
-   else if(ref.kind !== 'series') verified=(await catalogFor(ref.kind,b,g,ref.kind !== 'live')).find(i=>i.personalRef.id===ref.id)?.personalRef;
+   else if(ref.kind === 'live') {await catalogFor('live',b,g);verified=resolveLiveItem(ref)?.personalRef;}
+   else if(ref.kind !== 'series') verified=(await catalogFor(ref.kind,b,g,true)).find(i=>i.personalRef.id===ref.id)?.personalRef;
    if(!verified || isLiveExcluded(verified)) fail();active(g,b);return {url:buildPersonalMediaUrl(b,verified,now()),expiresAt:b.expiresAt};
   }
  };

@@ -1,6 +1,7 @@
 export type ChannelLike = {
   id?: string;
   title: string;
+  sourceTitle?: string;
   groupTitle: string | null;
 };
 
@@ -54,9 +55,9 @@ function classifyCategory(searchable: string) {
   return "national";
 }
 
-export function classifyChannel(channel: Pick<ChannelLike, "title" | "groupTitle">): ChannelClassification {
+export function classifyChannel(channel: Pick<ChannelLike, "title" | "groupTitle" | "sourceTitle">): ChannelClassification {
   const normalizedGroup = normalize(channel.groupTitle ?? "");
-  const normalizedTitle = normalize(channel.title);
+  const normalizedTitle = normalize(channel.sourceTitle ?? channel.title);
   const searchable = `${normalizedGroup} ${normalizedTitle}`;
   const recognizedCountries = COUNTRIES.filter((item) => item.id !== "other");
   const countryFromGroup = recognizedCountries.find((item) => item.patterns.some((pattern) => pattern.test(normalizedGroup)));

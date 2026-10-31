@@ -1,0 +1,1353 @@
+{
+  "cases": [
+    {
+      "name": "unicode FHD preference with TRT1 unknown fallback",
+      "rows": [
+        {
+          "id": "41",
+          "title": "TR | ATV HD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "43",
+          "title": "TR | Atv ꜰʜᴅ",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "42",
+          "title": "TR | ATV FHD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "44",
+          "title": "TR | TRT1",
+          "groupTitle": "TR | Ulusal"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "42",
+          "title": "ATV"
+        },
+        {
+          "id": "44",
+          "title": "TRT1"
+        }
+      ],
+      "expectedAliases": {
+        "41": "42",
+        "42": "42",
+        "43": "42",
+        "44": "44"
+      }
+    },
+    {
+      "name": "sports technical notes and continuous FHD winner",
+      "rows": [
+        {
+          "id": "1283",
+          "title": "TR • RAW BeIN Sport 1 Kota Dostu [Maçta aktif]",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "1700",
+          "title": "TR • BEIN SPORTS 1 4K",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "1970",
+          "title": "TR • BEIN SPORT 1 FHD [Sadece İst. Maçları]",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "2000",
+          "title": "TR • beIN SPORTS 1 FHD 7/24 Canlı",
+          "groupTitle": "TR | Spor"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "2000",
+          "title": "BEIN Sport 1"
+        }
+      ],
+      "expectedAliases": {
+        "1283": "2000",
+        "1700": "2000",
+        "1970": "2000",
+        "2000": "2000"
+      }
+    },
+    {
+      "name": "compound country quality and frame-rate notes",
+      "rows": [
+        {
+          "id": "5060",
+          "title": "UKFHD : RTE 1",
+          "groupTitle": "UK | National"
+        },
+        {
+          "id": "5121",
+          "title": "UKFHD | Sky Sports Main Event 50FPS",
+          "groupTitle": "UK | Sports"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "5060",
+          "title": "RTE 1"
+        },
+        {
+          "id": "5121",
+          "title": "Sky Sports Main Event"
+        }
+      ],
+      "expectedAliases": {
+        "5060": "5060",
+        "5121": "5121"
+      }
+    },
+    {
+      "name": "unknown fallback outranks UHD when FHD absent",
+      "rows": [
+        {
+          "id": "1",
+          "title": "TR | TRT1 4K",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "2",
+          "title": "TR | TRT1",
+          "groupTitle": "TR | Ulusal"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "2",
+          "title": "TRT1"
+        }
+      ],
+      "expectedAliases": {
+        "1": "2",
+        "2": "2"
+      }
+    },
+    {
+      "name": "compatible HD outranks FHD HEVC",
+      "rows": [
+        {
+          "id": "1",
+          "title": "TR | ATV FHD HEVC",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "2",
+          "title": "TR | ATV HD",
+          "groupTitle": "TR | Ulusal"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "2",
+          "title": "ATV"
+        }
+      ],
+      "expectedAliases": {
+        "1": "2",
+        "2": "2"
+      }
+    },
+    {
+      "name": "HEVC only group retains best resolution",
+      "rows": [
+        {
+          "id": "1",
+          "title": "TR | ATV HD HEVC",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "2",
+          "title": "TR | ATV FHD H.265",
+          "groupTitle": "TR | Ulusal"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "2",
+          "title": "ATV"
+        }
+      ],
+      "expectedAliases": {
+        "1": "2",
+        "2": "2"
+      }
+    },
+    {
+      "name": "contradictory quality cannot masquerade as FHD",
+      "rows": [
+        {
+          "id": "1",
+          "title": "TR | ATV FHD 4K",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "2",
+          "title": "TR | ATV FHD SD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "3",
+          "title": "TR | ATV HD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "4",
+          "title": "TR | ATV FHD 720p",
+          "groupTitle": "TR | Ulusal"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "3",
+          "title": "ATV"
+        }
+      ],
+      "expectedAliases": {
+        "1": "3",
+        "2": "3",
+        "3": "3",
+        "4": "3"
+      }
+    },
+    {
+      "name": "countries remain separate despite identical display name",
+      "rows": [
+        {
+          "id": "101",
+          "title": "TR | Ssport 1 FHD",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "102",
+          "title": "DE | S Sport 1 FHD",
+          "groupTitle": "DE | Sport"
+        },
+        {
+          "id": "103",
+          "title": "US | S Sport 1 FHD",
+          "groupTitle": "US | Sport"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "102",
+          "title": "S Sport 1"
+        },
+        {
+          "id": "101",
+          "title": "S Sport 1"
+        },
+        {
+          "id": "103",
+          "title": "S Sport 1"
+        }
+      ],
+      "expectedAliases": {
+        "101": "101",
+        "102": "102",
+        "103": "103"
+      }
+    },
+    {
+      "name": "region and timeshift remain distinct",
+      "rows": [
+        {
+          "id": "200",
+          "title": "TR | ATV FHD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "201",
+          "title": "TR | ATV Avrupa FHD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "300",
+          "title": "UK | BBC One FHD",
+          "groupTitle": "UK | General"
+        },
+        {
+          "id": "301",
+          "title": "UK | BBC One +1 FHD",
+          "groupTitle": "UK | General"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "300",
+          "title": "BBC One"
+        },
+        {
+          "id": "301",
+          "title": "BBC One +1"
+        },
+        {
+          "id": "200",
+          "title": "ATV"
+        },
+        {
+          "id": "201",
+          "title": "ATV Avrupa"
+        }
+      ],
+      "expectedAliases": {
+        "200": "200",
+        "201": "201",
+        "300": "300",
+        "301": "301"
+      }
+    },
+    {
+      "name": "explicit group language remains distinct",
+      "rows": [
+        {
+          "id": "1",
+          "title": "US | MTV FHD",
+          "groupTitle": "US | English"
+        },
+        {
+          "id": "2",
+          "title": "US | MTV FHD",
+          "groupTitle": "US | Spanish"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "1",
+          "title": "MTV"
+        },
+        {
+          "id": "2",
+          "title": "MTV"
+        }
+      ],
+      "expectedAliases": {
+        "1": "1",
+        "2": "2"
+      }
+    },
+    {
+      "name": "real three-letter brands are not country prefixes",
+      "rows": [
+        {
+          "id": "1",
+          "title": "NOW - FHD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "2",
+          "title": "TR • NOW HD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "3",
+          "title": "CNN FHD",
+          "groupTitle": "US | News"
+        },
+        {
+          "id": "4",
+          "title": "FOX FHD",
+          "groupTitle": "US | General"
+        },
+        {
+          "id": "5",
+          "title": "BBC One FHD",
+          "groupTitle": "UK | General"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "5",
+          "title": "BBC One"
+        },
+        {
+          "id": "1",
+          "title": "NOW"
+        },
+        {
+          "id": "3",
+          "title": "CNN"
+        },
+        {
+          "id": "4",
+          "title": "FOX"
+        }
+      ],
+      "expectedAliases": {
+        "1": "1",
+        "2": "1",
+        "3": "3",
+        "4": "4",
+        "5": "5"
+      }
+    },
+    {
+      "name": "owner exclusions precede winner choice and aliases",
+      "rows": [
+        {
+          "id": "41",
+          "title": "TR | ATV FHD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "42",
+          "title": "TR | ATV FHD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "43",
+          "title": "TR | ATV SD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "1256041",
+          "title": "Sifir Panel Bilgilendirme Kanalı",
+          "groupTitle": "TR | Ulusal"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "42",
+          "title": "ATV"
+        }
+      ],
+      "expectedAliases": {
+        "42": "42",
+        "43": "42"
+      },
+      "excludedIds": [
+        "41",
+        "1256041"
+      ]
+    },
+    {
+      "name": "eligibility filters candidates but aliases same real channel",
+      "rows": [
+        {
+          "id": "1",
+          "title": "TR | ATV FHD",
+          "groupTitle": "TR | Ulusal",
+          "available": false
+        },
+        {
+          "id": "2",
+          "title": "TR | ATV HD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "3",
+          "title": "TR | Closed FHD",
+          "groupTitle": "TR | Ulusal",
+          "playbackAllowed": false
+        },
+        {
+          "id": "4",
+          "title": "TR | Missing FHD",
+          "groupTitle": "TR | Ulusal",
+          "lookupFailed": true
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "2",
+          "title": "ATV"
+        }
+      ],
+      "expectedAliases": {
+        "1": "2",
+        "2": "2"
+      }
+    },
+    {
+      "name": "numeric provider ID wins over opaque presentation ID",
+      "rows": [
+        {
+          "id": "personal-a",
+          "title": "TR | ATV FHD",
+          "groupTitle": "TR | Ulusal",
+          "providerId": "20",
+          "logoUrl": "https://example.invalid/a.png"
+        },
+        {
+          "id": "personal-z",
+          "title": "TR | ATV FHD",
+          "groupTitle": "TR | Ulusal",
+          "providerId": "10",
+          "logoUrl": "https://example.invalid/z.png"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "personal-z",
+          "title": "ATV"
+        }
+      ],
+      "expectedAliases": {
+        "personal-a": "personal-z",
+        "personal-z": "personal-z"
+      }
+    },
+    {
+      "name": "distribution prefixes do not create duplicate services",
+      "rows": [
+        {
+          "id": "1",
+          "title": "[FuboTV] UKFHD | Sky Sports Main Event (FIBRA)",
+          "groupTitle": "UK | Sports"
+        },
+        {
+          "id": "2",
+          "title": "UKFHD | Sky Sports Main Event (SAT)",
+          "groupTitle": "UK | Sports"
+        },
+        {
+          "id": "3",
+          "title": "UKFHD | Sky Sports Main Event (ORANGE)",
+          "groupTitle": "UK | Sports"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "1",
+          "title": "Sky Sports Main Event"
+        }
+      ],
+      "expectedAliases": {
+        "1": "1",
+        "2": "1",
+        "3": "1"
+      }
+    },
+    {
+      "name": "EXXEN alias requires sports context",
+      "rows": [
+        {
+          "id": "1",
+          "title": "TR | EXXEN Sport 1 FHD",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "2",
+          "title": "TR | Exxen 1 HD",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "3",
+          "title": "TR | Exxen 1 FHD",
+          "groupTitle": "TR | Eğlence"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "3",
+          "title": "Exxen 1"
+        },
+        {
+          "id": "1",
+          "title": "EXXEN Sport 1"
+        }
+      ],
+      "expectedAliases": {
+        "1": "1",
+        "2": "1",
+        "3": "3"
+      }
+    },
+    {
+      "name": "channel numbers MAX and timeshift are not quality noise",
+      "rows": [
+        {
+          "id": "1",
+          "title": "TR | BEIN SPORTS 1 FHD",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "2",
+          "title": "TR | BEIN SPORT 2 FHD",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "3",
+          "title": "TR | BEIN SPORT MAX 1 FHD",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "4",
+          "title": "TR | BEIN SPORTS 1 +1 FHD",
+          "groupTitle": "TR | Spor"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "1",
+          "title": "BEIN Sport 1"
+        },
+        {
+          "id": "4",
+          "title": "BEIN Sport 1 +1"
+        },
+        {
+          "id": "2",
+          "title": "BEIN Sport 2"
+        },
+        {
+          "id": "3",
+          "title": "BEIN Sport MAX 1"
+        }
+      ],
+      "expectedAliases": {
+        "1": "1",
+        "2": "2",
+        "3": "3",
+        "4": "4"
+      }
+    },
+    {
+      "name": "360 aliases and stable numeric tie break",
+      "rows": [
+        {
+          "id": "9",
+          "title": "TR | 360TV FHD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "8",
+          "title": "TR | 360 FHD",
+          "groupTitle": "TR | Ulusal"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "8",
+          "title": "360"
+        }
+      ],
+      "expectedAliases": {
+        "9": "8",
+        "8": "8"
+      }
+    },
+    {
+      "name": "same-quality preference continuous normal nonRAW",
+      "rows": [
+        {
+          "id": "1",
+          "title": "TR | RAW ATV FHD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "2",
+          "title": "TR | ATV FHD [Maçta aktif]",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "3",
+          "title": "TR | ATV FHD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "4",
+          "title": "TR | ATV FHD LOW",
+          "groupTitle": "TR | Ulusal"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "3",
+          "title": "ATV"
+        }
+      ],
+      "expectedAliases": {
+        "1": "3",
+        "2": "3",
+        "3": "3",
+        "4": "3"
+      }
+    },
+    {
+      "name": "1080i and FULL HD count as FHD",
+      "rows": [
+        {
+          "id": "1",
+          "title": "TR | TRT1 HD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "2",
+          "title": "TR | TRT1 1080i",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "3",
+          "title": "TR | TRT1 FULL HD",
+          "groupTitle": "TR | Ulusal"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "2",
+          "title": "TRT1"
+        }
+      ],
+      "expectedAliases": {
+        "1": "2",
+        "2": "2",
+        "3": "2"
+      }
+    },
+    {
+      "name": "smallcaps HEVC remains last compatible fallback",
+      "rows": [
+        {
+          "id": "1",
+          "title": "TR | Atv ꜰʜᴅ ʜᴇᴠᴄ",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "2",
+          "title": "TR | ATV 720p",
+          "groupTitle": "TR | Ulusal"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "2",
+          "title": "ATV"
+        }
+      ],
+      "expectedAliases": {
+        "1": "2",
+        "2": "2"
+      }
+    },
+    {
+      "name": "meaningful parenthetical and square qualifiers survive",
+      "rows": [
+        {
+          "id": "1",
+          "title": "UK | BBC News (English) FHD",
+          "groupTitle": "UK | News"
+        },
+        {
+          "id": "2",
+          "title": "UK | BBC News (Arabic) FHD",
+          "groupTitle": "UK | News"
+        },
+        {
+          "id": "3",
+          "title": "TR | ATV [İstanbul Marmara] FHD",
+          "groupTitle": "TR | Ulusal"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "2",
+          "title": "BBC News (Arabic)"
+        },
+        {
+          "id": "1",
+          "title": "BBC News (English)"
+        },
+        {
+          "id": "3",
+          "title": "ATV [İstanbul Marmara]"
+        }
+      ],
+      "expectedAliases": {
+        "1": "1",
+        "2": "2",
+        "3": "3"
+      }
+    },
+    {
+      "name": "branded 4K stations stay separate from numbered variants",
+      "rows": [
+        {
+          "id": "81",
+          "title": "TR • TRT 4K",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "55",
+          "title": "TR • TRT1 FHD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "274",
+          "title": "beIN Sport 4K[Sadece İst. Maçları] [Maçta aktif]",
+          "groupTitle": "TR:BEINSPORT"
+        },
+        {
+          "id": "283",
+          "title": "TR • BEİNSPORTS 1 ꜰʜᴅ 7/24 Canlı",
+          "groupTitle": "TR:BEINSPORT"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "283",
+          "title": "BEIN Sport 1"
+        },
+        {
+          "id": "274",
+          "title": "BEIN Sport 4K"
+        },
+        {
+          "id": "81",
+          "title": "TRT 4K"
+        },
+        {
+          "id": "55",
+          "title": "TRT1"
+        }
+      ],
+      "expectedAliases": {
+        "81": "81",
+        "55": "55",
+        "274": "274",
+        "283": "283"
+      }
+    },
+    {
+      "name": "non-Latin channel names remain nonempty and distinct",
+      "rows": [
+        {
+          "id": "10",
+          "title": "AR | قناة الفهد FHD",
+          "groupTitle": "AR | Arabic"
+        },
+        {
+          "id": "11",
+          "title": "RU | Россия 1 FHD",
+          "groupTitle": "RUSSIA"
+        },
+        {
+          "id": "12",
+          "title": "UA | Спорт-1 FHD",
+          "groupTitle": "UKRAINE"
+        },
+        {
+          "id": "13",
+          "title": "GR | ΕΡΤ FHD",
+          "groupTitle": "GREECE"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "10",
+          "title": "قناة الفهد"
+        },
+        {
+          "id": "13",
+          "title": "ΕΡΤ"
+        },
+        {
+          "id": "11",
+          "title": "Россия 1"
+        },
+        {
+          "id": "12",
+          "title": "Спорт-1"
+        }
+      ],
+      "expectedAliases": {
+        "10": "10",
+        "11": "11",
+        "12": "12",
+        "13": "13"
+      }
+    },
+    {
+      "name": "full country groups prevent cross-country collisions",
+      "rows": [
+        {
+          "id": "1",
+          "title": "Sport 1 FHD",
+          "groupTitle": "SPAIN"
+        },
+        {
+          "id": "2",
+          "title": "Sport 1 FHD",
+          "groupTitle": "BRAZIL"
+        },
+        {
+          "id": "3",
+          "title": "Sport 1 FHD",
+          "groupTitle": "SWEDEN"
+        },
+        {
+          "id": "4",
+          "title": "Sport 1 FHD",
+          "groupTitle": "NORWAY"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "2",
+          "title": "Sport 1"
+        },
+        {
+          "id": "1",
+          "title": "Sport 1"
+        },
+        {
+          "id": "4",
+          "title": "Sport 1"
+        },
+        {
+          "id": "3",
+          "title": "Sport 1"
+        }
+      ],
+      "expectedAliases": {
+        "1": "1",
+        "2": "2",
+        "3": "3",
+        "4": "4"
+      }
+    },
+    {
+      "name": "unknown country groups remain conservatively isolated",
+      "rows": [
+        {
+          "id": "1",
+          "title": "News FHD",
+          "groupTitle": "Island Alpha"
+        },
+        {
+          "id": "2",
+          "title": "News FHD",
+          "groupTitle": "Island Beta"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "1",
+          "title": "News"
+        },
+        {
+          "id": "2",
+          "title": "News"
+        }
+      ],
+      "expectedAliases": {
+        "1": "1",
+        "2": "2"
+      }
+    },
+    {
+      "name": "actual BEIN1 variants choose the compatible continuous FHD feed",
+      "rows": [
+        {
+          "id": "275",
+          "title": "TR • RAW BeIN Sport 1 Kota Dostu [Maçta aktif]",
+          "groupTitle": "TR:BEINSPORT"
+        },
+        {
+          "id": "276",
+          "title": "TR • RAW BeIN Sport 1 SD [Maçta aktif]",
+          "groupTitle": "TR:BEINSPORT"
+        },
+        {
+          "id": "277",
+          "title": "TR • RAW BeIN Sport 1 HD [Maçta aktif]",
+          "groupTitle": "TR:BEINSPORT"
+        },
+        {
+          "id": "278",
+          "title": "TR • RAW BeIN Sport 1 FHD Low [Maçta aktif]",
+          "groupTitle": "TR:BEINSPORT"
+        },
+        {
+          "id": "279",
+          "title": "TR • RAW BeIN Sport 1 [Maçta aktif]",
+          "groupTitle": "TR:BEINSPORT"
+        },
+        {
+          "id": "280",
+          "title": "TR • VIP BEIN SPORT 1 (MAC ZAMANI ACIK)",
+          "groupTitle": "TR:BEINSPORT"
+        },
+        {
+          "id": "281",
+          "title": "TR • BEINSPORTS 1 sᴅ 7/24 Canlı",
+          "groupTitle": "TR:BEINSPORT"
+        },
+        {
+          "id": "282",
+          "title": "TR • BEiNSPORTS 1 ʜᴅ 7/24 Canlı",
+          "groupTitle": "TR:BEINSPORT"
+        },
+        {
+          "id": "283",
+          "title": "TR • BEİNSPORTS 1  ꜰʜᴅ 7/24 Canlı",
+          "groupTitle": "TR:BEINSPORT"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "283",
+          "title": "BEIN Sport 1"
+        }
+      ],
+      "expectedAliases": {
+        "275": "283",
+        "276": "283",
+        "277": "283",
+        "278": "283",
+        "279": "283",
+        "280": "283",
+        "281": "283",
+        "282": "283",
+        "283": "283"
+      }
+    },
+    {
+      "name": "NFKC technical styling does not remove real accents",
+      "rows": [
+        {
+          "id": "1",
+          "title": "Canal Éxito ᶠʰᵈ ᴴ²⁶⁵",
+          "groupTitle": "SPAIN"
+        },
+        {
+          "id": "2",
+          "title": "Canal Éxito HD",
+          "groupTitle": "SPAIN"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "2",
+          "title": "Canal Éxito"
+        }
+      ],
+      "expectedAliases": {
+        "1": "2",
+        "2": "2"
+      }
+    },
+    {
+      "name": "English LIVE station brand is not availability noise",
+      "rows": [
+        {
+          "id": "1",
+          "title": "MTV LIVE FHD H264",
+          "groupTitle": "SPAIN"
+        },
+        {
+          "id": "2",
+          "title": "MTV FHD",
+          "groupTitle": "SPAIN"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "2",
+          "title": "MTV"
+        },
+        {
+          "id": "1",
+          "title": "MTV LIVE"
+        }
+      ],
+      "expectedAliases": {
+        "1": "1",
+        "2": "2"
+      }
+    },
+    {
+      "name": "bracket event notes differ from real numbered event channels",
+      "rows": [
+        {
+          "id": "1",
+          "title": "S Sport Plus 1 FHD (YAYIN ZAMANI AKTİF)",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "2",
+          "title": "Event Feed FHD (LIVE EVENT)",
+          "groupTitle": "SPAIN"
+        },
+        {
+          "id": "3",
+          "title": "LIVE EVENT 01 FHD",
+          "groupTitle": "SPAIN"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "2",
+          "title": "Event Feed"
+        },
+        {
+          "id": "3",
+          "title": "LIVE EVENT 01"
+        },
+        {
+          "id": "1",
+          "title": "S Sport Plus 1"
+        }
+      ],
+      "expectedAliases": {
+        "1": "1",
+        "2": "2",
+        "3": "3"
+      }
+    },
+    {
+      "name": "known compact Turkish brands share one identity",
+      "rows": [
+        {
+          "id": "1",
+          "title": "TR | ASPOR FHD",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "2",
+          "title": "TR | A SPOR 4K",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "3",
+          "title": "TR | TRTSPOR FHD",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "4",
+          "title": "TR | TRT SPOR HD",
+          "groupTitle": "TR | Spor"
+        },
+        {
+          "id": "5",
+          "title": "TR | KANALD FHD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "6",
+          "title": "TR | Kanal D HD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "7",
+          "title": "TR | BEYAZTV FHD",
+          "groupTitle": "TR | Ulusal"
+        },
+        {
+          "id": "8",
+          "title": "TR | Beyaz TV 4K",
+          "groupTitle": "TR | Ulusal"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "1",
+          "title": "A Spor"
+        },
+        {
+          "id": "7",
+          "title": "Beyaz TV"
+        },
+        {
+          "id": "5",
+          "title": "Kanal D"
+        },
+        {
+          "id": "3",
+          "title": "TRT Spor"
+        }
+      ],
+      "expectedAliases": {
+        "1": "1",
+        "2": "1",
+        "3": "3",
+        "4": "3",
+        "5": "5",
+        "6": "5",
+        "7": "7",
+        "8": "7"
+      }
+    },
+    {
+      "name": "compound quality country prefix without delimiter preserves regional stations",
+      "rows": [
+        {
+          "id": "5077",
+          "title": "UKFHD AL JAZEERA",
+          "groupTitle": "UKVIP"
+        },
+        {
+          "id": "5079",
+          "title": "UKFHD BBC One Channel Islands",
+          "groupTitle": "UKVIP"
+        },
+        {
+          "id": "5080",
+          "title": "UKFHD BBC One East",
+          "groupTitle": "UKVIP"
+        }
+      ],
+      "expectedItems": [
+        {
+          "id": "5077",
+          "title": "AL JAZEERA"
+        },
+        {
+          "id": "5079",
+          "title": "BBC One Channel Islands"
+        },
+        {
+          "id": "5080",
+          "title": "BBC One East"
+        }
+      ],
+      "expectedAliases": {
+        "5077": "5077",
+        "5079": "5079",
+        "5080": "5080"
+      }
+    }
+  ],
+  "descriptorCases": [
+    {
+      "title": "TR • RAW BeIN Sport 1 Kota Dostu [Maçta aktif]",
+      "groupTitle": "TR | Spor",
+      "expected": {
+        "displayName": "BEIN Sport 1",
+        "countryCode": "TR",
+        "quality": "raw",
+        "hevc": false,
+        "eventOnly": true,
+        "lowBandwidth": true,
+        "raw": true
+      }
+    },
+    {
+      "title": "TR | ATV FHD 4K",
+      "groupTitle": "TR | Ulusal",
+      "expected": {
+        "displayName": "ATV",
+        "countryCode": "TR",
+        "quality": "uhd",
+        "hevc": false,
+        "eventOnly": false,
+        "lowBandwidth": false,
+        "raw": false
+      }
+    },
+    {
+      "title": "TR | ATV FHD SD",
+      "groupTitle": "TR | Ulusal",
+      "expected": {
+        "displayName": "ATV",
+        "countryCode": "TR",
+        "quality": "sd",
+        "hevc": false,
+        "eventOnly": false,
+        "lowBandwidth": false,
+        "raw": false
+      }
+    },
+    {
+      "title": "TR | ATV FHD 720p",
+      "groupTitle": "TR | Ulusal",
+      "expected": {
+        "displayName": "ATV",
+        "countryCode": "TR",
+        "quality": "hd",
+        "hevc": false,
+        "eventOnly": false,
+        "lowBandwidth": false,
+        "raw": false
+      }
+    },
+    {
+      "title": "UKFHD | Sky Sports Main Event 50FPS",
+      "groupTitle": "UK | Sports",
+      "expected": {
+        "displayName": "Sky Sports Main Event",
+        "countryCode": "GB",
+        "quality": "fhd",
+        "hevc": false,
+        "eventOnly": false,
+        "lowBandwidth": false,
+        "raw": false
+      }
+    },
+    {
+      "title": "TR | Atv ꜰʜᴅ ʜᴇᴠᴄ",
+      "groupTitle": "TR | Ulusal",
+      "expected": {
+        "displayName": "ATV",
+        "countryCode": "TR",
+        "quality": "fhd",
+        "hevc": true,
+        "eventOnly": false,
+        "lowBandwidth": false,
+        "raw": false
+      }
+    },
+    {
+      "title": "NOW - FHD",
+      "groupTitle": "TR | Ulusal",
+      "expected": {
+        "displayName": "NOW",
+        "countryCode": "TR",
+        "quality": "fhd",
+        "hevc": false,
+        "eventOnly": false,
+        "lowBandwidth": false,
+        "raw": false
+      }
+    },
+    {
+      "title": "TR | TRT1",
+      "groupTitle": "TR | Ulusal",
+      "expected": {
+        "displayName": "TRT1",
+        "countryCode": "TR",
+        "quality": "unknown",
+        "hevc": false,
+        "eventOnly": false,
+        "lowBandwidth": false,
+        "raw": false
+      }
+    },
+    {
+      "title": "UKHD | Event Channel Live Events Only",
+      "groupTitle": "UK | Sports",
+      "expected": {
+        "displayName": "Event Channel",
+        "countryCode": "GB",
+        "quality": "hd",
+        "hevc": false,
+        "eventOnly": true,
+        "lowBandwidth": false,
+        "raw": false
+      }
+    },
+    {
+      "title": "SD | Sudan TV FHD",
+      "groupTitle": "SD | General",
+      "expected": {
+        "displayName": "Sudan TV",
+        "countryCode": "SD",
+        "quality": "fhd",
+        "hevc": false,
+        "eventOnly": false,
+        "lowBandwidth": false,
+        "raw": false
+      }
+    }
+  ]
+}

@@ -4,6 +4,27 @@ import adapter from './personal-provider.ts';
 const { normalizeCatalog, normalizeEpisodes, normalizeEpg, buildPersonalMediaUrl, createPersonalProviderClient } = adapter;
 const bootstrap = {accountId:'a',sourceVersion:'v1',providerOrigin:'https://provider.test',username:'u/a',password:'p?#',expiresAt:'2030-01-01T00:00:00Z',moviePolicy:'general-audience-only'};
 const ref = {source:'personal',sourceVersion:'v1',kind:'movie',id:'12',extension:'mp4'} as const;
+test('live projection keeps one clean compatible channel and resolves original IDs for playback and EPG',async()=>{
+ const rows=[{stream_id:1,name:'TR • Atv 4K'},{stream_id:2,name:'TR • Atv FHD'},{stream_id:3,name:'TR • TRT 1 4K'},{stream_id:4,name:'TR • TRT 1 RAW'},{stream_id:5,name:'TR • ATV FHD [Maçta aktif]'}];
+ const actions:Array<{action:string|null;id:string|null}>=[];
+ let policy={revision:'a'.repeat(64),excludedIds:[] as string[]};
+ const client=createPersonalProviderClient({liveDefaultExtension:"ts",loadBootstrap:async()=>({...bootstrap,livePolicy:policy}),fetch:async(input:any)=>{
+  const url=new URL(String(input)),action=url.searchParams.get('action');actions.push({action,id:url.searchParams.get('stream_id')});
+  return new Response(JSON.stringify(action==='get_live_streams'?rows:action==='get_short_epg'?{epg_listings:[]}:[]),{headers:{'content-type':'application/json'}});
+ }});
+ const current=await client.catalog('live');
+ assert.deepEqual(current.map(item=>[item.personalRef.id,item.title]),[['2','ATV'],['4','TRT 1']]);
+ const original={source:'personal',sourceVersion:'v1',kind:'live',id:'1',extension:'ts'} as const;
+ assert.equal(client.resolveLiveItem(original)?.personalRef?.id,'2');
+ const playback=await client.playback(original);assert.ok(new URL(playback.url).pathname.endsWith('/2.ts'));assert.equal(original.id,'1');
+ await client.shortEpg(original);assert.equal(actions.find(row=>row.action==='get_short_epg')?.id,'2');
+ policy={revision:'b'.repeat(64),excludedIds:['2']};await client.refreshMetadata();
+ assert.deepEqual((await client.catalog('live')).map(item=>item.personalRef.id),['5','4']);
+ assert.equal(client.resolveLiveItem(original)?.personalRef?.id,'5');
+ assert.equal(client.resolveLiveItem({...original,id:'2'}),undefined);
+ assert.equal(actions.filter(row=>row.action==='get_live_streams').length,1);
+ client.clear();assert.equal(client.resolveLiveItem(original),undefined);
+});
 test('movie categories are exact and missing/unknown/adult fail closed; IDs and artwork are untrusted',()=>{
  const rows=[{stream_id:12,name:'Film',category_id:'1',stream_icon:'javascript:alert(1)',container_extension:'mp4',direct_source:'https://evil.test/x'}, {stream_id:13,name:'Other',category_id:'2'}, {stream_id:'../4',name:'Bad',category_id:'1'}];
  const items=normalizeCatalog('movie',rows,[{category_id:'1',category_name:'TR | YÜKSEK PUANLI FİLMLER'},{category_id:'2',category_name:'Aile Adult'}],'v1');

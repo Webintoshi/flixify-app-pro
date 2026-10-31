@@ -4,9 +4,9 @@ import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LiveTvPage from "./page";
 
-const state = vi.hoisted(() => ({ platform: {} as any }));
+const state = vi.hoisted(() => ({ platform: {} as any, query:"" }));
 vi.mock("../platform/session", () => ({ usePlatform: () => state.platform, useProviderExpiry: () => state.platform.providerExpiresAt }));
-vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(state.query) }));
 vi.mock("next/link", () => ({ default: (props: any) => React.createElement("a", props) }));
 
 describe("live directory presentation and player tools", () => {
@@ -31,7 +31,7 @@ describe("live directory presentation and player tools", () => {
     vi.stubGlobal("Event", dom.window.Event); vi.stubGlobal("React", React); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const memory = new Map<string, string>();
     Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: (key: string) => memory.get(key) ?? null, setItem: (key: string, value: string) => memory.set(key, value) } });
-    starts = 0;
+    starts = 0;state.query="";
     Object.defineProperties(dom.window.HTMLElement.prototype, {
       currentTime: { configurable: true, writable: true, value: 0 },
       src: { configurable: true, get() { return this.getAttribute("src") ?? ""; }, set(value: string) { this.setAttribute("src", value); } },
@@ -51,8 +51,20 @@ describe("live directory presentation and player tools", () => {
     shortEpg = vi.fn(async () => ({ status: "empty", programmes: [] }));
     toggle = vi.fn();
     state.platform = { session: { accessToken: "fixture-token" }, favorites: [{ ...channel, kind: "live" }], favoritesReady: true, pending: new Set(), toggle, providerMode: "personal", providerScope: "fixture-line", providerExpiresAt: expiry,
-      personalProvider: { catalog: async () => [channel, second], playback, shortEpg } };
+      personalProvider: {resolveLiveItemId:(id:string)=>id, catalog: async () => [channel, second], playback, shortEpg } };
     container = document.getElementById("root")!; root = createRoot(container);
+  });
+  it("opens an old channel link once using its selected FHD and preserves recent history aliases",async()=>{
+    const old={...channel,id:"old-atv",title:"TR • Atv 4K",groupTitle:null};
+    const current={...channel,id:"fhd-atv",title:"TR • Atv FHD",groupTitle:null,personalRef:{...ref,id:"103"}};
+    state.query="channel=old-atv";state.platform.personalProvider.catalog=async()=>[old,current];
+    state.platform.personalProvider.resolveLiveItemId=(id:string)=>["old-atv","fhd-atv"].includes(id)?"fhd-atv":undefined;
+    state.platform.favorites=[];
+    await settle(()=>root.render(<LiveTvPage/>));await settle();
+    expect(playback).toHaveBeenCalledTimes(1);expect(playback.mock.calls[0][0]).toEqual(current.personalRef);
+    expect(container.textContent).toContain("1 kanal");expect(container.textContent).not.toContain("Atv 4K");
+    await settle(()=>button("Son İzlediklerim").click());
+    expect([...container.querySelectorAll('button strong')].filter(node=>node.textContent==='ATV')).toHaveLength(1);
   });
   afterEach(async () => { await settle(() => root.unmount()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 

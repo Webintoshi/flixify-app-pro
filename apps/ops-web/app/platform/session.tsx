@@ -2,7 +2,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { apiRequest } from "../../lib/api";
 import { createPersonalProviderClient, selectPersonalLiveExtension, validatePersonalBootstrap, type PersonalProviderBootstrap, type PersonalRef } from "./personal-provider";
-import { sessionIdentity, hydratePersonalFavorites, createScopedBootstrapLoader } from "./personal-integration";
+import { sessionIdentity, hydratePersonalFavorites, personalFavoriteMutationRefs, createScopedBootstrapLoader } from "./personal-integration";
+import { loadLegacyLiveCatalog } from "./legacy-live-catalog";
+import { hydrateLegacyLiveFavorites, legacyFavoriteMutationIds } from "./live-favorites";
 import { createDirectPlaybackDeadline } from "./direct-playback-deadline";
 import { itemKey, sessionKey, type MediaItem, type Session } from "./types";
 
@@ -58,7 +60,10 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       lastStored = stored;
       const next = readSession(); const identity = sessionIdentity(next);
       setSession(next); setReady(true);
-      if (identity === identityRef.current) return;
+      if (identity === identityRef.current) {
+        if(loadingGeneration.current===generation.current || pendingRef.current.size) favoritesPolicyDirty.current=true;
+        return;
+      }
       identityRef.current = identity; sourceRef.current = ""; setProviderExpiresAt(undefined);
       bootstrapRef.current?.controller?.abort(); bootstrapRef.current = null;
       providerRef.current?.clear(); providerRef.current = null; setPersonalProvider(null); setProviderMode(next ? "loading" : "legacy"); setProviderScope(""); setProviderError("");
@@ -150,7 +155,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
   }, [identity, providerRetry, refreshProvider]);
   const reloadFavorites = useCallback(() => {
     if (providerMode === "loading") return;
-    if (!identity || pendingRef.current.size || loadingGeneration.current === generation.current) return;
+    if (!session || !identity || pendingRef.current.size || loadingGeneration.current === generation.current) return;
     const g = generation.current;
     favoritesPolicyDirty.current=false;
     loadingGeneration.current = g; setFavoritesLoading(true);
@@ -158,9 +163,13 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       ? apiRequest<{favorites:PersonalRef[]}>("/me/personal-library", {signal:AbortSignal.timeout(15000)}).then(async library => {
         const kinds = Array.from(new Set(library.favorites.filter(ref=>ref.kind !== "episode").map(ref=>ref.kind as MediaItem["kind"])));
         const rows = await Promise.all(kinds.map(kind=>personalProvider.catalog(kind)));
-        return {items:hydratePersonalFavorites(library.favorites,rows.flat(),personalProvider.isLiveExcluded),partial:false};
+        return {items:hydratePersonalFavorites(library.favorites,rows.flat(),personalProvider.isLiveExcluded,personalProvider.resolveLiveItem),partial:false};
       })
-      : apiRequest<{items:MediaItem[];partial?:boolean}>("/me/favorites", {signal:AbortSignal.timeout(60000)});
+      : apiRequest<{items:MediaItem[];partial?:boolean}>("/me/favorites", {accessToken:session.accessToken,skipAuthRefresh:true,signal:AbortSignal.timeout(60000)}).then(async result=>{
+        if(!result.items.some(item=>item.kind==='live') || g!==generation.current) return result;
+        const catalog=await loadLegacyLiveCatalog({accountId:identity,sourceScope:providerScope,accessToken:session.accessToken,signal:AbortSignal.timeout(60000)});
+        return {...result,items:hydrateLegacyLiveFavorites(result.items,catalog.items,catalog.canonicalById)};
+      });
     load.then(r => {
       if (g === generation.current && !pendingRef.current.size) {
         setFavorites(r.items); setFavoritesReady(true);
@@ -172,7 +181,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       if (loadingGeneration.current === g) loadingGeneration.current = null;
       if (g === generation.current) {setFavoritesLoading(false);if(favoritesPolicyDirty.current)reloadFavoritesRef.current();}
     });
-  }, [identity, personalProvider, providerMode, providerScope, livePolicyRevision]);
+  }, [identity, personalProvider, providerMode, providerScope, livePolicyRevision, session?.accessToken]);
   reloadFavoritesRef.current=reloadFavorites;
   const reload = useCallback(() => { refreshProvider(); reloadFavorites(); }, [refreshProvider, reloadFavorites]);
   const invalidateFavorites = useCallback(() => {
@@ -194,8 +203,17 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     try {
       if (providerMode === "personal") {
         if (!item.personalRef) throw new Error("Unavailable reference");
-        await apiRequest("/me/personal-library/favorites", {method:existing ? "DELETE" : "PUT",body:{ref:item.personalRef}});
-      } else if(providerMode === "legacy") await apiRequest(`/me/favorites/${item.kind}/${encodeURIComponent(item.id)}`, { method: existing ? "DELETE" : "PUT" });
+        const refs=personalFavoriteMutationRefs(item,existing);
+        for(const ref of refs) {
+          if(g!==generation.current)throw new Error("Session changed");
+          await apiRequest("/me/personal-library/favorites", {method:existing ? "DELETE" : "PUT",body:{ref},accessToken:session.accessToken,skipAuthRefresh:true,signal:AbortSignal.timeout(15000)});
+        }
+      } else if(providerMode === "legacy") {
+        for(const id of legacyFavoriteMutationIds(item,existing)) {
+          if(g!==generation.current)throw new Error("Session changed");
+          await apiRequest(`/me/favorites/${item.kind}/${encodeURIComponent(id)}`, {method:existing ? "DELETE" : "PUT",accessToken:session.accessToken,skipAuthRefresh:true,signal:AbortSignal.timeout(15000)});
+        }
+      }
       else throw new Error("Unavailable session");
     }
     catch { if (g === generation.current) { setFavorites(list => existing ? [existing, ...list.filter(f => itemKey(f) !== key)] : list.filter(f => itemKey(f) !== key)); setError("Favori değişikliği kaydedilemedi. Lütfen tekrar dene."); } }

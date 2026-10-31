@@ -340,6 +340,42 @@ describe("personal provider session recovery", () => {
     expect(platform.favorites.some(item=>item.kind==="live")).toBe(true);
   });
 
+  it("retries a captured legacy favorite read with the refreshed token after its old request fails",async()=>{
+    const old=deferred<Response>();const tokens:Array<string|null>=[];
+    const previous=vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async(input,init)=>{
+      if(new URL(String(input)).pathname==="/me/favorites") {tokens.push(new Headers(init?.headers).get("authorization"));return tokens.length===1?old.promise:json({items:[]});}
+      return previous(input,init);
+    });
+    await mount();await settle();expect(tokens).toHaveLength(1);
+    const refreshed={...session(),accessToken:session().accessToken+".refreshed"};
+    await settle(()=>platform.saveSession(refreshed));
+    await settle(()=>old.resolve(json({message:"Expired"},401)));await settle();
+    expect(tokens).toEqual([`Bearer ${session().accessToken}`,`Bearer ${refreshed.accessToken}`]);
+    expect(platform.favoritesReady).toBe(true);expect(platform.favoritesError).toBe("");
+  });
+
+  it.each([false,true])("removes only stored live aliases and stops remaining writes on account switch: %s",async switchAccount=>{
+    allowed=true;const first=deferred<Response>();const writes:Array<{id:string;authorization:string|null}>=[];
+    const previous=vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async(input,init)=>{
+      const url=new URL(String(input));
+      if(url.pathname==="/me/personal-library")return json({favorites:[1,2].map(id=>({source:"personal",sourceVersion:"line-account-a",kind:"live",id:String(id)}))});
+      if(url.pathname==="/player_api.php")return json(url.searchParams.get("action")==="get_live_streams"?[{stream_id:1,name:"TR • ATV 4K"},{stream_id:2,name:"TR • ATV FHD"}]:[]);
+      if(url.pathname==="/me/personal-library/favorites"){
+        expect(init?.method).toBe("DELETE");writes.push({id:JSON.parse(String(init?.body)).ref.id,authorization:new Headers(init?.headers).get("authorization")});
+        return writes.length===1?first.promise:json({ok:true});
+      }
+      return previous(input,init);
+    });
+    await mount();await settle();expect(platform.favorites).toHaveLength(1);expect(platform.favorites[0].title).toBe("ATV");
+    let mutation!:Promise<void>;await settle(()=>{mutation=platform.toggle(platform.favorites[0]);});
+    if(switchAccount)await settle(()=>platform.saveSession(session("account-b")));
+    await settle(()=>first.resolve(json({ok:true})));await mutation;await settle();
+    expect(writes.map(write=>write.id)).toEqual(switchAccount?["1"]:["1","2"]);
+    expect(writes.every(write=>write.authorization===`Bearer ${session().accessToken}`)).toBe(true);
+  });
+
   it.each([{nativeHls:false,mse:true,extension:"ts"},{nativeHls:true,mse:true,extension:"ts"},{nativeHls:false,mse:false,extension:"m3u8"},{nativeHls:true,mse:true,mpegtsLive:false,extension:"m3u8"}])("uses the verified browser default for implicit LIVE metadata: %j",async capabilities=>{
     allowed=true;transport.mseLive=capabilities.mpegtsLive!==false;
     Object.defineProperty(window.HTMLElement.prototype,"canPlayType",{configurable:true,value:()=>capabilities.nativeHls?"probably":""});

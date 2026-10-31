@@ -145,12 +145,9 @@ public final class ProviderParser {
         return bootstrap!=null && item!=null && item.kind==Kind.LIVE && item.scope.equals(bootstrap.scope()) && bootstrap.livePolicy!=null && bootstrap.livePolicy.excludedIds.contains(item.id);
     }
     static Catalog filterLiveCatalog(Catalog catalog,Bootstrap bootstrap) {
-        if(catalog.kind!=Kind.LIVE || bootstrap==null || bootstrap.livePolicy==null || bootstrap.livePolicy.excludedIds.isEmpty())return catalog;
-        List<Item> items=new ArrayList<>();Set<String> categoryIds=new HashSet<>();
-        for(Item item:catalog.items)if(!liveExcluded(item,bootstrap)){items.add(item);categoryIds.add(item.categoryId);}
-        if(items.size()==catalog.items.size())return catalog;
-        List<Category> categories=new ArrayList<>();for(Category category:catalog.categories)if(categoryIds.contains(category.id))categories.add(category);
-        return new Catalog(catalog.kind,items,categories);
+        if(catalog.kind!=Kind.LIVE)return catalog;
+        Set<String> excluded=new HashSet<>();for(Item item:catalog.items)if(liveExcluded(item,bootstrap))excluded.add(item.id);
+        return LiveChannelCuration.curate(catalog,excluded).catalog;
     }
     static String secret(Object value, int max) throws Invalid {
         if (!(value instanceof String) || ((String)value).isEmpty() || ((String)value).length() > max || ((String)value).matches("(?s).*[\\x00-\\x1f\\x7f].*")) throw new Invalid();

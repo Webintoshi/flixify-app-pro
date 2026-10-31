@@ -17,6 +17,7 @@ import { pagePersonalCatalog, sessionIdentity, resolvePersonalDetail } from "./p
 import { buildShowcaseRails, orderShowcaseCatalog, showcaseDayKey } from "./catalog-showcase";
 import { buildHomepageShowcase, selectHomepageCatalog } from "./homepage-showcase";
 import { HomepageHero } from "./homepage-hero";
+import { loadLegacyLiveCatalog } from "./legacy-live-catalog";
 import { itemKey, type Catalog, type Kind, type MediaItem } from "./types";
 import s from "./platform.module.css";
 import seriesStyles from "./series-catalog.module.css";
@@ -155,7 +156,8 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const [detailAccount, setDetailAccount] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
   const openedHere = useRef(false);
-  const account = `${sessionIdentity(session)}:${providerMode}:${providerScope}`;
+  const identity = sessionIdentity(session);
+  const account = `${identity}:${providerMode}:${providerScope}`;
   const [day, setDay] = useState(showcaseDayKey);
   // A view owns a frozen raw snapshot, even when playback refreshes provider caches.
   const personalSnapshot = useMemo(() => ({ raw: new Map<Kind, Promise<MediaItem[]>>(), daily: new Map<string, MediaItem[]>() }), [account, personalProvider]);
@@ -200,12 +202,16 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
       });
     }
     if (providerMode !== "legacy") return Promise.reject(new Error("Provider loading"));
-    if (overview && kind !== "live" && !search && !group) return getHomepageCatalog(kind, account, revision, session?.accessToken ?? "", signal).then(data => {
+    if (kind === "live") return loadLegacyLiveCatalog({ accountId: identity, accessToken: session?.accessToken ?? "", sourceScope: providerScope, signal }).then(data => {
+      signal?.throwIfAborted();
+      return pagePersonalCatalog(data.items, page, search, group);
+    });
+    if (overview && !search && !group) return getHomepageCatalog(kind, account, revision, session?.accessToken ?? "", signal).then(data => {
       const items = selectHomepageCatalog(data.items, kind, "");
       return { ...data, items, total: items.length };
     });
     return getCatalog(kind, page, search, group, account, revision, 48, { signal });
-  }, [personalProvider, providerMode, acquisitionDay, personalSnapshot, livePolicyRevision, overview, session?.accessToken]);
+  }, [personalProvider, providerMode, providerScope, identity, acquisitionDay, personalSnapshot, livePolicyRevision, overview, session?.accessToken]);
   const hasSession = Boolean(session);
   const currentMovieRevision = movieRevision.account === account ? movieRevision.revision : 0;
   const selectedId = params.get("item");

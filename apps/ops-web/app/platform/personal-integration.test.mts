@@ -83,3 +83,16 @@ test('excluded live favorites stay stored but do not become unavailable placehol
  assert.equal(hidden.length,1);assert.equal(hidden[0].kind,'movie');assert.equal(saved.length,2);
  assert.equal(hydratePersonalFavorites(saved,[],()=>false).length,2);
 });
+test('obsolete live favorites resolve once to the selected channel and remove only their exact saved aliases',()=>{
+ const old={source:'personal',sourceVersion:'line-a',kind:'live',id:'1',extension:'ts'} as const;
+ const selected={...old,id:'2'};const blocked={...old,id:'9'};
+ const item={id:'personal:line-a:live:2',kind:'live' as const,title:'ATV',personalRef:selected};
+ const saved=[old,selected,blocked];
+ const favorites=hydratePersonalFavorites(saved,[item],candidate=>candidate.id==='9',candidate=>['1','2'].includes(candidate.id)?item:undefined);
+ assert.equal(favorites.length,1);assert.equal(favorites[0].title,'ATV');assert.equal(favorites[0].personalRef?.id,'2');
+ assert.deepEqual(favorites[0].personalFavoriteRefs?.map(candidate=>candidate.id),['1','2']);
+ assert.deepEqual(integration.personalFavoriteMutationRefs(item,favorites[0]).map(candidate=>candidate.id),['1','2']);
+ assert.deepEqual(integration.personalFavoriteMutationRefs(item).map(candidate=>candidate.id),['2']);
+ assert.equal(saved.length,3);assert.equal(old.id,'1');
+ assert.throws(()=>integration.personalFavoriteMutationRefs(item,{...favorites[0],personalFavoriteRefs:[{...old,sourceVersion:'another-line'}]}));
+});

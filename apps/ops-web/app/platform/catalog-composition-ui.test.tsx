@@ -51,6 +51,59 @@ beforeEach(() => {
 });
 afterEach(async () => { await settle(() => root.unmount()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+function legacyLiveFixture(sourceScope: string) {
+  const live = [
+    { id: "41", kind: "live", title: "TR | ATV HD", groupTitle: "TR | Ulusal", logoUrl: "/atv-hd.png" },
+    { id: "44", kind: "live", title: "TR | TRT1", groupTitle: "TR | Ulusal", logoUrl: "/trt.png" },
+    ...Array.from({ length: 298 }, (_, i) => ({ id: `other-${i}`, kind: "live", title: `TR | Other ${i}`, groupTitle: "TR | Ulusal", logoUrl: "/other.png" })),
+    { id: "42", kind: "live", title: "TR | Atv FHD", groupTitle: "TR | Ulusal", logoUrl: "/atv-fhd.png" }
+  ];
+  state.platform = { ...state.platform, providerMode: "legacy", providerScope: sourceScope, personalProvider: null };
+  state.api.mockImplementation(async (path: string) => {
+    if (path.startsWith("/me/catalog/live")) {
+      const params = new URL(path, "https://fixture.invalid").searchParams;
+      const needle = (params.get("search") ?? "").toLowerCase();
+      const rows = live.filter(item => item.title.toLowerCase().includes(needle));
+      const page = Number(params.get("page") ?? "1"), size = Number(params.get("pageSize") ?? "48");
+      return { items: rows.slice((page - 1) * size, page * size), total: rows.length, groups: [{ title: "TR | Ulusal", count: rows.length }] };
+    }
+    if (path.startsWith("/me/catalog/")) {
+      const kind = path.includes("/series") ? "series" : "movie";
+      return { items: items(kind).slice(0, 1), total: 1 };
+    }
+    return { user: { status: "active", hasAssignedLink: true, hasActiveSubscription: true, activePackage: { endsAt: "2099-01-01" } } };
+  });
+}
+
+it("curates the whole legacy live pool before paging and routes search to its selected FHD", async () => {
+  legacyLiveFixture("legacy-live-curation");
+  await settle(() => root.render(<CatalogPage kind="live"/>));
+  expect([...container.querySelectorAll("strong")].map(node => node.textContent)).toContain("ATV");
+  expect(container.textContent).toContain("300 içerik");
+  expect(container.textContent).not.toContain("TR | ATV HD");
+  expect(state.api.mock.calls.some(([path]) => String(path).includes("/me/catalog/live?page=2&pageSize=300"))).toBe(true);
+  await settle(() => container.querySelector<HTMLButtonElement>("[data-catalog-search-trigger]")!.click());
+  const input = container.querySelector<HTMLInputElement>("#catalog-search")!;
+  await settle(() => { input.value = "ATV"; input.dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(180); });
+  expect(container.querySelector("dialog")?.textContent).toContain("1 sonuç");
+  expect(container.querySelectorAll("dialog li button")).toHaveLength(1);
+  await settle(() => container.querySelector<HTMLButtonElement>("dialog li button")!.click());
+  expect(state.push).toHaveBeenLastCalledWith("/canli-tv?channel=42");
+});
+
+it("uses the same complete legacy live selection for the homepage rail", async () => {
+  legacyLiveFixture("legacy-home-live-curation");
+  await settle(() => root.render(<CatalogPage kind="movie" overview/>));
+  const rail = [...container.querySelectorAll("section")].find(section => section.querySelector("h2")?.textContent === "Canlı TV")!;
+  expect(rail).toBeDefined();
+  expect([...rail.querySelectorAll("strong")].map(node => node.textContent)).toContain("ATV");
+  expect(rail.textContent).not.toContain("TR | ATV HD");
+  const atv = rail.querySelector<HTMLButtonElement>('button[aria-label="ATV oynat"]')!;
+  expect(atv.querySelector("img")?.getAttribute("src")).toBe("/atv-fhd.png");
+  await settle(() => atv.click()); expect(state.push).toHaveBeenCalledWith("/canli-tv?channel=42");
+});
+
 it("keeps the exact signed APK download in the header without a separate home notice", async () => {
   await settle(() => root.render(<AppShell publicAccess><div>Library</div></AppShell>));
   const download = container.querySelector<HTMLAnchorElement>("header a[download]");
