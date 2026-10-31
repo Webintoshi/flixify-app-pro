@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -272,6 +273,7 @@ class WebTransactionFixture:
         self.events = []
         self.break_env_once = False
         self.fail_target_health = False
+        self.fail_target_guard = False
         self.stack = contextlib.ExitStack()
         for key, value in (('DIRECTORY', self.root), ('COMPOSE', self.compose), ('ENV', self.env), ('command', self.command)):
             self.stack.enter_context(patch.object(g, key, value))
@@ -315,6 +317,7 @@ class WebTransactionFixture:
             for field in ('docker_compose_raw', 'docker_compose'):
                 document = json.loads(self.record[field])
                 document['services']['ops-web']['image'] = payload['new']['ops-web']
+                release.isolate_guard_document(document,payload['isolate_guard'])
                 self.record[field] = json.dumps(document)
             self.apps.update(payload['new'])
             self.compose.write_bytes(self.record['docker_compose'].encode())
@@ -334,9 +337,12 @@ class WebTransactionFixture:
                 self.containers['ops-web'] = self.container('ops-web', tag, self.images[tag]['Id'])
                 self.containers['ops-web']['Id'] = 'recreated-web-' + str(len(self.events))
                 self.containers['ops-web']['State']['StartedAt'] = 'new-start'
+                self.containers['ops-web']['Config']['Env'].append('REGISTRATION_GUARD_SECRET=')
+            return b''
+        if args[:3] == ('docker', 'exec', 'api-' + self.guard.UUID):
             return b''
         if args[:3] == ('docker', 'exec', 'ops-web-' + self.guard.UUID):
-            if self.fail_target_health and self.containers['ops-web']['Image'] == CANDIDATE_ID:
+            if (self.fail_target_health or (self.fail_target_guard and 'REGISTRATION_GUARD_SECRET' in args[-1])) and self.containers['ops-web']['Image'] == CANDIDATE_ID:
                 raise release.GateError('command_failed')
             return b''
         raise AssertionError('unexpected external boundary: ' + repr(args[:3]))
@@ -381,6 +387,7 @@ class WebTransactionTests(unittest.TestCase):
         self.assertEqual(f.containers, original)
         after = json.loads(f.record['docker_compose_raw'])
         original_doc['services']['ops-web']['image'] = 'flixify-ops-web:live-registration-aaaaaaaaaaaa-20261031'
+        for name in release.ISOLATED_SERVICES:original_doc['services'][name]['environment']['REGISTRATION_GUARD_SECRET']=''
         self.assertEqual(after, original_doc)
         self.assertEqual(f.env.read_bytes(), original_env)
         f.invoke('--recreate')
@@ -417,6 +424,15 @@ class WebTransactionTests(unittest.TestCase):
         self.assertEqual(f.env.read_bytes(), original_env)
         self.assertEqual({name: f.containers[name] for name in protected}, protected)
 
+    def test_nonempty_runtime_guard_rolls_back_only_web_and_keeps_literal_empty_isolation(self):
+        f=self.fixture;protected={name:copy.deepcopy(f.containers[name]) for name in ('api','worker','db')};env=f.env.read_bytes()
+        f.invoke('--apply');f.fail_target_guard=True
+        with self.assertRaisesRegex(release.GateError,'deploy_failed_but_source_restored'):f.invoke('--recreate')
+        self.assertEqual(f.containers['ops-web']['Image'],release.SOURCE_ID)
+        self.assertEqual({name:f.containers[name] for name in protected},protected);self.assertEqual(f.env.read_bytes(),env)
+        doc=json.loads(f.record['docker_compose_raw'])
+        for name in release.ISOLATED_SERVICES:self.assertEqual(doc['services'][name]['environment']['REGISTRATION_GUARD_SECRET'],'')
+        self.assertTrue(all(args[-1]=='ops-web' for args in f.events if args[:2]==('docker','compose') and 'up' in args))
     def test_protected_restart_or_running_change_stops_before_recreation(self):
         f = self.fixture
         f.invoke('--apply')
@@ -476,6 +492,60 @@ class WebTransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(release.GateError, 'service_files_changed_during_preflight'):
             f.guard.sync_images(*context, f.guard.SOURCE, f.guard.TARGET)
         self.assertEqual(f.mutations(), [])
+
+
+class GuardIsolationTests(unittest.TestCase):
+    def test_only_three_non_api_literal_empty_overrides_are_added_and_rollback_keeps_them(self):
+        f=WebTransactionFixture();self.addCleanup(f.close);original=copy.deepcopy(f.doc)
+        a,b=release.expected_swapped(f.doc,f.doc,f.guard.TARGET)
+        for name in ('ops-web','worker','db'):self.assertEqual(a['services'][name]['environment'],dict(original['services'][name]['environment'],REGISTRATION_GUARD_SECRET=''))
+        self.assertEqual(a['services']['api'],original['services']['api'])
+        source,_=release.expected_swapped(a,b,f.guard.SOURCE)
+        for name in ('ops-web','worker','db'):self.assertEqual(source['services'][name]['environment']['REGISTRATION_GUARD_SECRET'],'')
+        self.assertEqual(source['services']['ops-web']['image'],release.SOURCE_TAG)
+    def test_runtime_health_checks_execute_empty_web_and_nonempty_api_in_their_exact_containers(self):
+        for web_value,api_value,expected in ((None,'x'*32,False),('accidental-secret','x'*32,False),('',None,False),('','short',False),('','x'*32,True)):
+            calls=[]
+            def command(*args,**kwargs):
+                calls.append(args);values=os.environ.copy();values.pop('REGISTRATION_GUARD_SECRET',None)
+                value=web_value if args[2].startswith('ops-web-') else api_value
+                if value is not None:values['REGISTRATION_GUARD_SECRET']=value
+                result=subprocess.run(['node','-e',args[-1]],env=values,capture_output=True)
+                if result.returncode:raise release.GateError('command_failed')
+                return result.stdout
+            with self.subTest(web_value=web_value,api_value=api_value),patch.object(release.prior,'healthy',return_value=True),patch.object(release.guard,'command',side_effect=command):
+                self.assertEqual(release.healthy('ops-web','candidate','sha256:fixture'),expected)
+                self.assertEqual(calls[0][2],'ops-web-'+release.guard.UUID)
+                if web_value=='':self.assertEqual(calls[1][2],'api-'+release.guard.UUID)
+    def test_partial_or_nonempty_override_profile_is_refused(self):
+        f=WebTransactionFixture();self.addCleanup(f.close)
+        for value in (None,'${REGISTRATION_GUARD_SECRET}','unexpected'):
+            doc=copy.deepcopy(f.doc);doc['services']['ops-web']['environment']['REGISTRATION_GUARD_SECRET']=value
+            with self.subTest(value=value),self.assertRaises(release.GateError):release.expected_swapped(doc,doc,f.guard.TARGET)
+    def test_mixed_shapes_preserve_order_and_duplicates_or_mixed_profiles_fail_closed(self):
+        f=WebTransactionFixture();self.addCleanup(f.close);doc=copy.deepcopy(f.doc)
+        doc['services']['worker']['environment']=['KEEP=worker','WITH_EQUALS=a=b=c']
+        a,_=release.expected_swapped(doc,doc,f.guard.TARGET)
+        self.assertEqual(a['services']['worker']['environment'],['KEEP=worker','WITH_EQUALS=a=b=c','REGISTRATION_GUARD_SECRET='])
+        for entries in (['KEEP=worker','REGISTRATION_GUARD_SECRET='],['REGISTRATION_GUARD_SECRET=','REGISTRATION_GUARD_SECRET='],['KEEP=first','KEEP=second']):
+            bad=copy.deepcopy(doc);bad['services']['worker']['environment']=entries
+            with self.subTest(entries=entries),self.assertRaises(release.GateError):release.expected_swapped(bad,bad,f.guard.TARGET)
+    def test_reconstructed_legacy_source_hash_requires_exact_container_and_exact_removed_key(self):
+        doc={'services':{'ops-web':{'image':release.SOURCE_TAG,'environment':{'KEEP':'unchanged','REGISTRATION_GUARD_SECRET':'dummy'}}}}
+        item={'Id':release.LEGACY_WEB_CONTAINER_ID,'Image':release.SOURCE_ID,'Config':{'Image':release.SOURCE_TAG,'Labels':{'com.docker.compose.config-hash':release.LEGACY_WEB_CONFIG_HASH}}}
+        with patch.object(release,'normalized_hash',side_effect=[release.LEGACY_SHARED_GUARD_HASH,release.LEGACY_WEB_CONFIG_HASH]):
+            self.assertTrue(release.legacy_source_compatible(item,doc,release.LEGACY_SHARED_GUARD_HASH))
+        for key,value in (('Id','other-container'),('Image','other-image')):
+            bad=copy.deepcopy(item);bad[key]=value
+            with self.subTest(key=key),patch.object(release,'normalized_hash') as normalized:self.assertFalse(release.legacy_source_compatible(bad,doc,release.LEGACY_SHARED_GUARD_HASH));normalized.assert_not_called()
+        with patch.object(release,'normalized_hash',side_effect=[release.LEGACY_SHARED_GUARD_HASH,'unrelated-drift']):self.assertFalse(release.legacy_source_compatible(item,doc,release.LEGACY_SHARED_GUARD_HASH))
+        with patch.object(release,'normalized_hash') as normalized:self.assertFalse(release.legacy_source_compatible(item,doc,'unreviewed-computed-hash'));normalized.assert_not_called()
+        with patch.object(release,'normalized_hash',side_effect=['wrong-control-roundtrip',release.LEGACY_WEB_CONFIG_HASH]) as normalized:
+            self.assertFalse(release.legacy_source_compatible(item,doc,release.LEGACY_SHARED_GUARD_HASH));self.assertEqual(normalized.call_count,1)
+        empty=copy.deepcopy(doc);empty['services']['ops-web']['environment']['REGISTRATION_GUARD_SECRET']=''
+        with patch.object(release,'normalized_hash',side_effect=[release.LEGACY_EMPTY_GUARD_HASH,release.LEGACY_WEB_CONFIG_HASH]):self.assertTrue(release.legacy_source_compatible(item,empty,release.LEGACY_EMPTY_GUARD_HASH))
+        self.assertEqual(doc['services']['ops-web']['environment']['REGISTRATION_GUARD_SECRET'],'dummy')
+
 
 
 
