@@ -202,6 +202,31 @@ class JobTests(unittest.TestCase):
         self.assertEqual((state["status"], state["reason"]), ("halted", "probe-or-remote-state-uncertain"))
         self.assertEqual(events, ["probe", "reconcile"])
 
+    def test_only_exact_safe_probe_code_is_saved_and_resume_clears_it(self):
+        calls = []
+        def fail_known(*args, **kwargs):
+            calls.append("probe")
+            raise RuntimeError("remote-start-not-acknowledged")
+        state = self.run_job(fail_known)
+        self.assertEqual((state["status"], state["reason"], state.get("probeFailureCode")), ("halted", "probe-or-remote-state-uncertain", "remote-start-not-acknowledged"))
+        self.assertEqual(calls, ["probe"])
+        deadline = state["deadlineUnix"]
+        secret = "remote-start-not-acknowledged https://source.invalid/private?password=fixture-secret"
+        def fail_unknown(*args, **kwargs):
+            calls.append("probe")
+            raise RuntimeError(secret)
+        state = self.run_job(fail_unknown)
+        self.assertEqual((state["status"], state["reason"]), ("halted", "probe-or-remote-state-uncertain"))
+        self.assertNotIn("probeFailureCode", state)
+        self.assertNotIn("fixture-secret", (self.directory / "state.json").read_text())
+        self.assertEqual(calls, ["probe", "probe"])
+        state = self.run_job(fail_known)
+        self.assertEqual(state.get("probeFailureCode"), "remote-start-not-acknowledged")
+        resumed = self.run_job(lambda *a, **k: working(), max_targets=1)
+        self.assertEqual((resumed["status"], resumed["checkedTargets"]), ("paused", 1))
+        self.assertNotIn("probeFailureCode", resumed)
+        self.assertEqual(resumed["deadlineUnix"], deadline)
+
     def test_stop_mid_proof_does_not_checkpoint_incomplete_target(self):
         stop, calls = {"value": False}, []
         def probe(credentials, channel, remote, timeout):

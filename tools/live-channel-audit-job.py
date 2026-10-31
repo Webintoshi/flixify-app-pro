@@ -23,6 +23,13 @@ API_PROJECT = "eupquokyj7qegufqvqkjmuyr"
 API_SERVICE = "api"
 API_TAG = "flixify-api:live-registration-8645860e0552-20261031"
 MAX_SECONDS = 23 * 60 * 60
+PROBE_FAILURE_CODES = frozenset({
+    "remote-operation-uncertain", "remote-result-invalid", "remote-operation-rejected",
+    "remote-transport-uncertain", "remote-not-idle", "remote-cleanup-unconfirmed",
+    "remote-start-not-acknowledged", "remote-readiness-timeout", "remote-unit-not-owned",
+    "local-ssh-reap-unconfirmed", "remote-decoder-result-invalid", "remote-frame-not-proved",
+    "remote-status-invalid"
+})
 
 
 def load_pinned(path, expected, name):
@@ -148,7 +155,10 @@ def run_job(credentials, manifest, remote, state_dir, probe, *, apply_sql=None, 
         def checked_probe(channel):
             guard()
             try: return probe(credentials, channel, remote, timeout=15)
-            except Exception: raise Halt("probe-or-remote-state-uncertain") from None
+            except Exception as error:
+                code = str(error)
+                if code in PROBE_FAILURE_CODES: state["probeFailureCode"] = code
+                raise Halt("probe-or-remote-state-uncertain") from None
         def prepare_or_apply(report):
             if report.get("halted"): raise Halt(report["halted"])
             pending = {key: row for key, row in report["results"].items() if row.get("classification") == "confirmed-http-unavailable" and key not in state["appliedProofs"]}
@@ -173,6 +183,7 @@ def run_job(credentials, manifest, remote, state_dir, probe, *, apply_sql=None, 
                 state["preparedProofIds"] = []
                 save()
         state.update(status="running", reason=None, runCount=state["runCount"] + 1)
+        state.pop("probeFailureCode", None)
         count_before = 0
         try:
             report = read_report()
