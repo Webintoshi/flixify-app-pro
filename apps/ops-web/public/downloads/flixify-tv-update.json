@@ -1,10 +1,10 @@
 {
   "packageName": "vip.flixify.tv",
-  "versionName": "1.4.3",
-  "versionCode": 11,
+  "versionName": "1.4.4",
+  "versionCode": 12,
   "minSdk": 23,
-  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.3.apk",
-  "sha256": "6b60219f5cc91d1d229998e3e42a1a8d5f77c0416768baef22018995ffedf5bb",
-  "sizeBytes": 1347386,
-  "notes": "Arama sonuçları kumandayla doğrudan açılır; seçilen içeriğe geri dönüş düzeltildi."
+  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.4.apk",
+  "sha256": "1c39269832a326935ce6b3911c7b3b9487150b72f182e251c30c82b4fb66f68f",
+  "sizeBytes": 1355944,
+  "notes": "Canlı kanal adları sadeleştirildi; yinelenen kanallarda FHD tercih edilir, FHD yoksa tek alternatif korunur. Eski favoriler seçilen kanala bağlanır."
 }
