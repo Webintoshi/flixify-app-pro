@@ -333,6 +333,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   }, [shownCatalog.items, overview, currentOtherRows, providerMode, day]);
   const homepage = useMemo(() => buildHomepageShowcase(dailyPool.filter(item => !failedPosters.has(itemKey(item))), day), [dailyPool, day, failedPosters]);
   const homeView = overview && !search;
+  const homeLoading = providerMode === "loading" || loading || otherVodLoading || (catalogAccount !== catalogOwner && !error);
   const hideFailedPoster = (event: SyntheticEvent<HTMLElement>) => {
     const image = event.target as HTMLElement;
     if (image.tagName !== "IMG" || !image.isConnected) return;
@@ -407,9 +408,9 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     {(error || providerError) && <div className={s.inlineError} role="alert">{providerError || error}<button onClick={() => { setReload(v => v+1); if(providerMode === "loading") reloadFavorites(); }}>Tekrar Dene</button></div>}
     {favoritesOnly && favoritesError && <div className={s.inlineError} role="alert">{favoritesError}<button disabled={favoritesLoading} onClick={reloadFavorites}>{favoritesLoading ? "Yükleniyor…" : "Tekrar Dene"}</button></div>}
     {homeView ? <>
-      {(loading || otherVodLoading) && !homepage.total ? <Skeletons/> : !homepage.total ? <section className={homeStyles.empty} role="status"><span>2026</span><h1>{error ? "Vitrin şu anda yüklenemiyor" : failedPosters.size ? "2026 afişleri yüklenemiyor" : "2026 seçkisi hazırlanıyor"}</h1><p>{error ? "İçerikleri yeniden yükleyebilir veya tüm kataloğa göz atabilirsin." : failedPosters.size ? "İçeriklere film ve dizi arşivlerinden ulaşabilirsin." : "Katalogda yılı doğrulanmış 2026 içerikleri burada görünecek."}</p><div><Link href="/filmler">Tüm filmler</Link><Link href="/diziler">Tüm diziler</Link></div></section> : null}
-      {homepage.movies.length > 0 && <MediaRail label="2026 Filmleri" row={homepage.movies} href="/filmler" className={homeStyles.posterRail} open={open}/>}
-      {homepage.series.length > 0 && <MediaRail label="2026 Dizileri" row={homepage.series} href="/diziler" className={homeStyles.posterRail} open={open}/>}
+      {homeLoading && !homepage.total ? <Skeletons/> : !homepage.total ? <section className={homeStyles.empty} role="status"><span>2026</span><h1>{error ? "Vitrin şu anda yüklenemiyor" : failedPosters.size ? "2026 afişleri yüklenemiyor" : "2026 seçkisi hazırlanıyor"}</h1><p>{error ? "İçerikleri yeniden yükleyebilir veya tüm kataloğa göz atabilirsin." : failedPosters.size ? "İçeriklere film ve dizi arşivlerinden ulaşabilirsin." : "Katalogda yılı doğrulanmış 2026 içerikleri burada görünecek."}</p><div><Link href="/filmler">Tüm filmler</Link><Link href="/diziler">Tüm diziler</Link></div></section> : null}
+      {homepage.movies.length > 0 && <MediaRail label="2026 Filmleri" row={homepage.movies} href="/filmler?q=2026" className={homeStyles.posterRail} open={open}/>}
+      {homepage.series.length > 0 && <MediaRail label="2026 Dizileri" row={homepage.series} href="/diziler?q=2026" className={homeStyles.posterRail} open={open}/>}
       {currentOtherRows.filter(row => row.kind === "live" && row.data.items.length).map(row => <MediaRail key={row.kind} label="Canlı TV" row={row.data.items.slice(0,12)} href="/canli-tv" open={open}/>)}
     </> : favoritesOnly && !favoritesReady ? (favoritesError && !favoritesLoading ? null : <Skeletons/>) : (loading && !items.length) ? <Skeletons/> : !items.length ? (favoritesOnly && favoritesError ? null : <div className={s.empty}><Icon name={favoritesOnly ? "heart" : "search"}/><h2>{emptyCopy?.heading ?? (favoritesOnly && !search ? "Henüz favori eklemediniz" : "İçerik bulunamadı")}</h2><p>{emptyCopy?.body ?? (favoritesOnly && !search ? "Beğendiğin içeriklerin kalbine dokun; hepsi burada bir araya gelsin." : "Başka bir arama veya kategori deneyebilirsin.")}</p>{favoritesOnly && <Link className={s.primary} href="/filmler">Filmlere Git</Link>}</div>) : favoritesOnly ? (["live","movie","series"] as Kind[]).map(rowKind => {
       const row = items.filter(item => item.kind === rowKind);

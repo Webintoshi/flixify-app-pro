@@ -122,6 +122,12 @@ it("publishes ready 2026 series without waiting for the live channel catalog", a
   expect(container.textContent).toContain("2026 Dizileri");
   expect(container.querySelector('[aria-label="İçerikler yükleniyor"]')).toBeNull();
 });
+it("keeps loading honest while the provider session is being restored", async () => {
+  state.platform = { ...state.platform, providerMode: "loading", personalProvider: null };
+  await render({ overview: true });
+  expect(container.querySelector('[aria-label="İçerikler yükleniyor"]')).not.toBeNull();
+  expect(container.textContent).not.toContain("2026 seçkisi hazırlanıyor");
+});
 it("keeps older titles searchable from the 2026 homepage", async () => {
   const old = { ...items()[0], title: "Arşiv filmi", releaseYear: 2016 };
   state.platform.personalProvider.catalog.mockImplementation(async (kind: string) => kind === "movie" ? [old] : []);
