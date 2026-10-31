@@ -129,8 +129,27 @@ class BridgeTests(unittest.TestCase):
         for reply in [ready('d'*32),bridge.BridgeHalt('remote-transport-uncertain')]:
             process=FakeSSH()
             with patch.object(bridge.subprocess,'Popen',return_value=process),patch.object(bridge,'new_nonce',return_value=NONCE,create=True),patch.object(bridge,'ssh_request',side_effect=reply if isinstance(reply,Exception) else None,return_value=reply):
-                with self.assertRaises(bridge.BridgeHalt):bridge.decode_remote(REMOTE,{'url':LOCATION,'streamId':'90'},15)
+                with self.assertRaisesRegex(bridge.BridgeHalt,'remote-transport-uncertain' if isinstance(reply,Exception) else 'remote-unit-not-owned'):bridge.decode_remote(REMOTE,{'url':LOCATION,'streamId':'90'},15)
             self.assertIsNone(process.sent);self.assertTrue(process.stdin.closed);self.assertTrue(process.killed);self.assertTrue(process.waited)
+
+    def test_own_nonce_partial_startup_waits_for_complete_ready_snapshot_before_url(self):
+        partials=[{**ready(),'activeState':'activating'},{**ready(),'mainPid':0},{**ready(),'cgroupMatches':False},{key:value for key,value in ready().items() if key!='cgroupMatches'},{**ready(),'controlPid':123},{**ready(),'populated':False}]
+        for partial in partials:
+            with self.subTest(partial=partial):
+                process=FakeSSH();replies=iter([partial,ready()])
+                def status(remote,action):
+                    self.assertEqual(action,'status');self.assertIsNone(process.sent);return next(replies)
+                with patch.object(bridge.subprocess,'Popen',return_value=process),patch.object(bridge,'new_nonce',return_value=NONCE),patch.object(bridge,'ssh_request',side_effect=status) as checks,patch.object(bridge.time,'sleep'):
+                    result=bridge.decode_remote(REMOTE,{'url':LOCATION,'streamId':'90'},15)
+                self.assertEqual(checks.call_count,2);self.assertEqual(result['status'],'working')
+                self.assertEqual(json.loads(process.sent),{'url':LOCATION,'streamId':'90'});self.assertTrue(process.waited)
+
+    def test_own_nonce_incomplete_startup_keeps_original_deadline_and_no_url(self):
+        process=FakeSSH()
+        with patch.object(bridge.subprocess,'Popen',return_value=process),patch.object(bridge,'new_nonce',return_value=NONCE),patch.object(bridge,'ssh_request',return_value={**ready(),'mainPid':0}) as checks,patch.object(bridge.time,'monotonic',side_effect=[0,1,11]),patch.object(bridge.time,'sleep'):
+            with self.assertRaisesRegex(bridge.BridgeHalt,'remote-readiness-timeout'):bridge.decode_remote(REMOTE,{'url':LOCATION,'streamId':'90'},15)
+        self.assertEqual(checks.call_count,1);self.assertIsNone(process.sent)
+        self.assertTrue(process.killed);self.assertTrue(process.waited);self.assertTrue(process.stdin.closed)
 
     def test_early_ssh_exit_and_ack_timeout_never_receive_a_url(self):
         for early in [True,False]:

@@ -18,6 +18,8 @@ The reviewed helper source is `tools/live-channel-cdn-probe.py`; deploy it as `h
 
 Before each probe, the bridge requires an inactive or failed unit, zero main/control PIDs and an unpopulated cgroup. It starts the new unit with empty stdin, then requires this attempt's exact random nonce in the unit Description, an active main PID and the expected populated cgroup before sending any signed URL. The pinned helper must reject empty stdin before starting FFmpeg. A delayed startup after uncertain transport receives only EOF and cannot start media. An empty-input helper process may briefly appear afterward; that is not evidence of a decoded stream.
 
+Partial startup snapshots wait within the existing ten-second readiness deadline. A partially populated cgroup or an activating unit alone does not identify another owner. Only the complete ready shape with a different nonce triggers the foreign-unit halt; exact ownership is still required before any URL is sent.
+
 After every decoder attempt, the bridge stops/reconciles the unit and requires the same complete idle proof before returning or making a confirmation request. Local SSH stdin is closed and its process killed/reaped on every failure or interruption before reconciliation. SSH, malformed response or cleanup uncertainty raises `BridgeHalt`; the driver must stop and require reconciliation. A local SSH process ending alone does not prove remote decoder exit.
 
 The driver must also call `reconcile_remote(remote)` in its final/pause cleanup, then verify it succeeded before allowing another media session. It must retain the frozen scanner's per-line lock. A user interrupt still reconciles the current remote unit before propagating. Do not automatically restart a failed or interrupted job.

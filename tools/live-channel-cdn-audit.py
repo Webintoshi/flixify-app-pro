@@ -105,8 +105,11 @@ def reconcile_remote(remote):
 
 def new_nonce(): return secrets.token_hex(16)
 
+def unit_ready(state):
+    return state.get("idle") is False and state.get("activeState") == "active" and state.get("populated") is True and state.get("cgroupMatches") is True and type(state.get("mainPid")) is int and state["mainPid"] > 0 and type(state.get("controlPid")) is int and state["controlPid"] == 0
+
 def owned_ready(state, nonce):
-    return state.get("description") == "Flixify owned CDN audit " + nonce and state.get("idle") is False and state.get("activeState") == "active" and state.get("populated") is True and state.get("cgroupMatches") is True and type(state.get("mainPid")) is int and state["mainPid"] > 0 and type(state.get("controlPid")) is int and state["controlPid"] == 0
+    return state.get("description") == "Flixify owned CDN audit " + nonce and unit_ready(state)
 
 def decode_remote(remote, payload, timeout):
     nonce = new_nonce()
@@ -119,7 +122,7 @@ def decode_remote(remote, payload, timeout):
             if time.monotonic() >= deadline: raise BridgeHalt("remote-readiness-timeout")
             state = ssh_request(remote, "status")
             if owned_ready(state, nonce): break
-            if state.get("activeState") == "active" or state.get("populated") is True: raise BridgeHalt("remote-unit-not-owned")
+            if unit_ready(state): raise BridgeHalt("remote-unit-not-owned")
             time.sleep(0.05)
         try: stdout, stderr = process.communicate(input=json.dumps(payload).encode(), timeout=55)
         except subprocess.TimeoutExpired: raise BridgeHalt("remote-transport-uncertain") from None
