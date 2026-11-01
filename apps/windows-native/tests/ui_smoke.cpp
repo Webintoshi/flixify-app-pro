@@ -201,6 +201,22 @@ bool homeAtTop(QQuickWindow *window) {
     const auto titleY=title->mapToScene(QPointF()).y(),heroY=hero->mapToScene(QPointF()).y();
     return titleY>=66&&titleY<=150&&heroY>titleY&&heroY<270&&hero->height()>250;
 }
+bool doubleClickOnlyChangesFullscreen(QQuickWindow *video,QQuickWindow *overlay,DesktopPlayer &player,QJsonObject &evidence) {
+    auto pointer=overlay?visual(overlay->contentItem(),"videoPointerArea"):nullptr;
+    auto pauseTimer=overlay?overlay->findChild<QObject *>("videoSingleClickTimer"):nullptr;
+    if(!video||!pointer||!pauseTimer)return false;
+    const bool beforeFullscreen=player.fullScreen(),beforePlaying=player.playing();
+    QSignalSpy doubleClicks(pointer,SIGNAL(doubleClicked(QQuickMouseEvent*))),pauses(pauseTimer,SIGNAL(triggered()));
+    overlay->requestActivate();QTest::qWait(50);
+    // QWindow's mouseDClick already emits both press/release pairs; no preceding click.
+    QTest::mouseDClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(overlay->width()/2,overlay->height()/2),10);
+    const bool geometrySettled=until([&] {
+        return player.fullScreen()!=beforeFullscreen&&video->visibility()==(player.fullScreen()?QWindow::FullScreen:QWindow::Windowed)&&overlay->isVisible()&&overlay->geometry()==video->geometry();
+    },3000);
+    QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval()+80);
+    evidence={{"fullscreenBefore",beforeFullscreen},{"fullscreenAfter",player.fullScreen()},{"playingBefore",beforePlaying},{"playingAfter",player.playing()},{"active",player.active()},{"doubleClicks",doubleClicks.size()},{"pauseTimerTriggers",pauses.size()},{"geometrySettled",geometrySettled}};
+    return geometrySettled&&player.active()&&player.playing()==beforePlaying&&player.fullScreen()!=beforeFullscreen&&doubleClicks.size()==1&&pauses.isEmpty();
+}
 }
 
 int main(int argc,char **argv) {
@@ -299,6 +315,9 @@ int main(int argc,char **argv) {
             if(!menu||!until([&]{return menu->property("visible").toBool();}))return finish("Menu probe subtitle menu missing",41);
             QTest::keyClick(QGuiApplication::focusWindow()?QGuiApplication::focusWindow():overlay,Qt::Key_Escape);
             if(!until([&]{return !menu->property("visible").toBool();})||!player.active())return finish(QString("Subtitle menu Escape failed: active=%1 visible=%2").arg(player.active()).arg(menu->property("visible").toBool()),42);
+            QQuickWindow *video=nullptr;for(auto window:QGuiApplication::topLevelWindows())if(window->objectName()=="playerWindow")video=qobject_cast<QQuickWindow *>(window);
+            QJsonArray pointerChecks;
+            for(int direction=0;direction<2;++direction) { QJsonObject evidence;const bool passed=doubleClickOnlyChangesFullscreen(video,overlay,player,evidence);pointerChecks.append(evidence);report["pointerDispatch"]=pointerChecks;if(!passed)return finish("Pointer fullscreen probe failed: "+QString::fromUtf8(QJsonDocument(evidence).toJson(QJsonDocument::Compact)),51); }
             report["menuEscapePreserved"]=true;player.close();
         }
         return finish("Catalog preview only; native Windows playback remains unverified",0);
@@ -313,13 +332,8 @@ int main(int argc,char **argv) {
     if(!video || !capture(video,QDir(output).filePath("player.png")))return finish("Native player screenshot failed",25);
     QQuickWindow *overlay=nullptr;for(auto window:QGuiApplication::topLevelWindows())if(window->objectName()=="playerOverlay")overlay=qobject_cast<QQuickWindow *>(window);
     if(!overlay)return finish("Player controls window missing",50);
-    overlay->requestActivate();QTest::qWait(50);
-    const QPoint center(overlay->width()/2,overlay->height()/2);
-    QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,center);
-    QTest::mouseDClick(overlay,Qt::LeftButton,Qt::NoModifier,center);
-    QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval()+80);
-    if(!player.playing()||!player.fullScreen())return finish("Video double-click paused playback instead of only changing fullscreen",51);
-    player.setFullScreen(false);
+    QJsonArray pointerChecks;
+    for(int direction=0;direction<2;++direction) { QJsonObject evidence;const bool passed=doubleClickOnlyChangesFullscreen(video,overlay,player,evidence);pointerChecks.append(evidence);report["pointerDispatch"]=pointerChecks;if(!passed)return finish("Video double-click failed: "+QString::fromUtf8(QJsonDocument(evidence).toJson(QJsonDocument::Compact)),51); }
     report["doubleClickPreservedPlayback"]=true;
     player.interact();
     if(!until([&]{return !player.controlsVisible();},4000))return finish("Player controls did not hide after idle",26);

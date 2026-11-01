@@ -151,7 +151,7 @@ Window {
                 }
                 onDoubleClicked: { pointerClick.stop(); player.setFullScreen(!player.fullScreen) }
             }
-            Timer { id: pointerClick; interval: Qt.styleHints.mouseDoubleClickInterval; onTriggered: if (player.active) player.togglePause() }
+            Timer { id: pointerClick; objectName: "videoSingleClickTimer"; interval: Qt.styleHints.mouseDoubleClickInterval; onTriggered: if (player.active) player.togglePause() }
             Rectangle {
                 anchors.top: parent.top
                 width: parent.width
