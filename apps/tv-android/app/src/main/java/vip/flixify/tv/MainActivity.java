@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.Intent;
+import android.content.ActivityNotFoundException;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -82,6 +84,11 @@ public final class MainActivity extends Activity {
     private String preparedScope="";
     private long favoritesRefreshSerial;
     private boolean favoritesRefreshPending,favoritesRefreshAgain;
+    private boolean welcomeResolved,welcomeBusy;
+    private long welcomeSerial;
+    private String welcomeAccount="",welcomeError="";
+    private WelcomeOffer welcomeOffer;
+    private int welcomeUsers=1;
 
     @Override public void onCreate(Bundle state) {
         setTheme(R.style.TvTheme);
@@ -98,10 +105,10 @@ public final class MainActivity extends Activity {
             page.query=state.getString("query",""); page.category=state.getString("category",""); page.categoryTitle=state.getString("categoryTitle","Tümü");
             page.focusKey=state.getString("focusKey",""); page.scroll=state.getInt("scroll",0);
             resizeFocus=state.getString("controlFocus");
+            welcomeUsers=state.getInt("welcomeUsers",1)==2?2:1;
         }
         if(!repository.hasSession())showLogin("");
-        else if(page.section==Section.ACCOUNT)showAccount();
-        else showPage(false,false);
+        else loadWelcome();
         initialized=true;
         View content=findViewById(android.R.id.content);
         content.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{
@@ -121,6 +128,7 @@ public final class MainActivity extends Activity {
         super.onResume();playerLaunching=false;posterSound.resume();updatePanel.resumed(); if(!initialized)return;
         boolean returning=resumeReload || searchPlayerReturn; resumeReload=false;if(searchPlayerReturn)resizeAfterCatalog=false;searchPlayerReturn=false;
         if(!repository.hasSession()) { if(returning)showLogin(""); return; }
+        if(welcomeBlocked()){loadWelcome();return;}
         discardPreviousSource();
         if(body==null) { page=pages.get(Section.HOME);showPage(false,false); }
         else if(returning) {
@@ -130,7 +138,7 @@ public final class MainActivity extends Activity {
         final String scope=repository.currentScope(); final long ticket=generation;
         repository.refreshAccess(new TvRepository.Callback<Account>() {
             public void onResult(Account account) {
-                if(!screenAlive(ticket))return;
+                if(!screenAlive(ticket) || welcomeBlocked())return;
                 if(!scope.equals(repository.currentScope())) {
                     invalidateScopedCatalogs();if(page.section==Section.ACCOUNT)showAccount();else showPage(false,false);
                 } else if(!account.canPlay && page.section!=Section.ACCOUNT)showAccount();
@@ -144,6 +152,7 @@ public final class MainActivity extends Activity {
         artwork.retireScreen();
         preparedScope="";
         favoritesRefreshSerial++;favoritesRefreshPending=false;favoritesRefreshAgain=false;
+        welcomeSerial++;welcomeBusy=false;
         if(!searchPlayerReturn)captureGrid();stopped=true;resumeReload=true;generation++;observationEpoch++;clearPendingCatalogs();searchSelection=null;
         if(catalogObservation!=null){try{catalogObservation.close();}catch(Exception ignored){}catalogObservation=null;}
         updatePanel.cancel();if(dialog!=null)dialog.dismiss();super.onStop();
@@ -164,6 +173,7 @@ public final class MainActivity extends Activity {
         out.putString("categoryTitle",page.categoryTitle); out.putString("focusKey",page.focusKey); out.putInt("scroll",page.scroll);
         out.putString("controlFocus",searchPlayerReturn?"poster:"+page.focusKey:focusIdentity(getCurrentFocus()));
         startup.saveInstanceState(out);
+        out.putInt("welcomeUsers",welcomeUsers);
         super.onSaveInstanceState(out);
     }
     private boolean isPosterCard(View view) {
@@ -200,6 +210,80 @@ public final class MainActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
     private boolean screenAlive(long ticket) { return !destroyed && !stopped && !isFinishing() && ticket==generation; }
+    private boolean welcomeBlocked(){
+        String account=repository.currentAccountId();
+        if(welcomeResolved && !welcomeAccount.isEmpty() && !account.isEmpty() && !welcomeAccount.equals(account)){welcomeResolved=false;welcomeOffer=null;welcomeBusy=false;welcomeSerial++;}
+        return !welcomeResolved;
+    }
+    private boolean welcomeCurrent(long serial,String account){
+        return !destroyed && !stopped && !isFinishing() && serial==welcomeSerial && repository.hasSession() && (account.isEmpty() || account.equals(repository.currentAccountId()));
+    }
+    private void loadWelcome(){
+        if(!repository.hasSession()){showLogin("");return;}
+        String account=repository.currentAccountId();
+        if(welcomeBusy && account.equals(welcomeAccount))return;
+        welcomeAccount=account;welcomeResolved=false;welcomeBusy=true;welcomeError="";welcomeOffer=null;
+        generation++;clearPendingCatalogs();body=null;grid=null;artwork.retireScreen();
+        final long serial=++welcomeSerial;final String owner=welcomeAccount;
+        renderWelcome();
+        repository.welcomeOffer(new TvRepository.Callback<WelcomeOffer>(){
+            public void onResult(WelcomeOffer value){
+                if(!welcomeCurrent(serial,owner)){retryChangedWelcome(serial);return;}
+                welcomeBusy=false;
+                if(value==null){welcomeError="Seçenekler doğrulanamadı. Tekrar dene.";renderWelcome();return;}
+                welcomeOffer=value;if(value.showPrompt())renderWelcome("welcome-trial");else enterAfterWelcome();
+            }
+            public void onError(Failure failure){
+                if(!welcomeCurrent(serial,owner)){retryChangedWelcome(serial);return;}
+                welcomeBusy=false;if(failure.code==Failure.Code.AUTH){sessionEnded(failure.message);return;}
+                welcomeError="Seçenekler yüklenemedi. Bağlantını kontrol edip tekrar dene.";renderWelcome();
+            }
+        });
+    }
+    private void retryChangedWelcome(long serial){if(!destroyed && !stopped && !isFinishing() && serial==welcomeSerial && repository.hasSession()){welcomeBusy=false;loadWelcome();}}
+    private void renderWelcome(){renderWelcome(null);}
+    private void renderWelcome(String requestedFocus){
+        if(destroyed || stopped || !repository.hasSession() || welcomeResolved)return;
+        View current=getCurrentFocus();Object tag=current==null?null:current.getTag();String focus=requestedFocus!=null?requestedFocus:tag instanceof String && ((String)tag).startsWith("welcome-")?(String)tag:null;
+        if(!welcomeError.isEmpty())focus="welcome-retry";
+        WelcomeOfferScreen screen=new WelcomeOfferScreen(this,welcomeOffer,welcomeUsers,welcomeBusy,welcomeError,focus,new WelcomeOfferScreen.Actions(){
+            public void trial(){chooseWelcome("trial");}
+            public void monthly(){chooseWelcome("monthly");}
+            public void users(int value){if(!welcomeBusy){welcomeUsers=value==2?2:1;renderWelcome();}}
+            public void retry(){if(!welcomeBusy)loadWelcome();}
+            public void logout(){sessionEnded("");}
+        });
+        startup.show(screen);startup.ready();
+    }
+    private void chooseWelcome(String choice){
+        if(welcomeResolved || welcomeBusy || welcomeOffer==null || !welcomeOffer.showPrompt())return;
+        if(!welcomeCurrent(welcomeSerial,welcomeAccount)){loadWelcome();return;}
+        final int users=welcomeUsers;final String owner=welcomeAccount;final long serial=++welcomeSerial;
+        welcomeBusy=true;welcomeError="";renderWelcome();
+        repository.chooseWelcomeOffer(choice,new TvRepository.Callback<WelcomeOffer>(){
+            public void onResult(WelcomeOffer value){
+                if(!welcomeCurrent(serial,owner)){retryChangedWelcome(serial);return;}
+                welcomeBusy=false;
+                if(value==null || value.showPrompt()){welcomeError="Seçimin kaydedilemedi. Tekrar dene.";renderWelcome();return;}
+                enterAfterWelcome();
+                if("monthly".equals(choice))openPackages(users);
+            }
+            public void onError(Failure failure){
+                if(!welcomeCurrent(serial,owner)){retryChangedWelcome(serial);return;}
+                welcomeBusy=false;if(failure.code==Failure.Code.AUTH){sessionEnded(failure.message);return;}
+                welcomeError="Seçimin kaydedilemedi. Tekrar deneyebilirsin.";renderWelcome();
+            }
+        });
+    }
+    private void enterAfterWelcome(){
+        welcomeResolved=true;welcomeBusy=false;welcomeError="";welcomeAccount=repository.currentAccountId();welcomeSerial++;
+        if(page.section==Section.ACCOUNT)showAccount();else showPage(false,false);
+    }
+    private void openPackages(int users){
+        String url=WelcomeOffer.notEligible().paymentUrl(users);
+        try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE));}
+        catch(ActivityNotFoundException|SecurityException unavailable){notice("TV’de tarayıcı bulunamadı. Telefonunda "+url+" adresini aç ve aynı 16 karakterli hesap kodunla giriş yap. Ödeme tamamlandığında erişimin bu hesabına otomatik tanımlanır.");}
+    }
     @Override public void onWindowFocusChanged(boolean focused) {super.onWindowFocusChanged(focused);if(focused)openSearchSelection();}
     private boolean valid(long ticket,String scope) {
         // A remembered session bootstraps its first source inside the repository operation.
@@ -226,13 +310,13 @@ public final class MainActivity extends Activity {
         return true;
     }
     private void receiveCatalog(Catalog catalog) {
-        if(stopped || destroyed || isFinishing() || !repository.hasSession() || !catalogMatchesCurrentSource(catalog))return;
+        if(stopped || destroyed || isFinishing() || !repository.hasSession() || welcomeBlocked() || !catalogMatchesCurrentSource(catalog))return;
         pendingCatalogUpdates.put(catalog.kind,catalog);
         pendingCatalogScopes.put(catalog.kind,repository.currentScope());
         if(!searchHandoffPending() && !searchPlayerReturn && !playerLaunching && (dialog==null || !dialog.isShowing()))applyPendingCatalogs(true);
     }
     private void applyPendingCatalogs(boolean redraw) {
-        if(stopped || destroyed || !repository.hasSession() || (dialog!=null && dialog.isShowing()))return;
+        if(stopped || destroyed || !repository.hasSession() || welcomeBlocked() || (dialog!=null && dialog.isShowing()))return;
         if(discardPreviousSource()) {
             if(redraw && page.section!=Section.ACCOUNT)showPage(false,false);
             return;
@@ -286,8 +370,9 @@ public final class MainActivity extends Activity {
         };
     }
     private interface Result<T> { void accept(T value); }
-    private void sessionEnded(String message) {repository.logout();artwork.clear();updatePanel.cancel();invalidateScopedCatalogs();showLogin(message);}
+    private void sessionEnded(String message) {welcomeSerial++;welcomeResolved=false;welcomeBusy=false;welcomeOffer=null;welcomeAccount="";repository.logout();artwork.clear();updatePanel.cancel();invalidateScopedCatalogs();showLogin(message);}
     private void resizeScreen() {
+        if(repository.hasSession() && welcomeBlocked()){renderWelcome();return;}
         // A native IME may resize the Activity behind its dialog. Keep the owning
         // catalogue and the same editor alive until the draft is closed/submitted.
         if(searchHandoffPending() || searchPlayerReturn || (catalogDialog!=null && catalogDialog.isShowing())){resizeAfterCatalog=true;return;}
@@ -337,7 +422,7 @@ public final class MainActivity extends Activity {
         ImageView logo=new ImageView(this);logo.setImageResource(R.drawable.flixify_logo);logo.setContentDescription("Flixify");logo.setScaleType(ImageView.ScaleType.FIT_CENTER);form.addView(logo,TvUi.space(this,220,sizing.shortScreen?44:66));
         TextView title=TvUi.text(this,"TV'de izlemeye başlayın",sizing.compact?23:28,TvUi.WHITE);TvUi.heading(title);form.addView(title,TvUi.space(this,-1,-2));
         TextView hint=TvUi.text(this,"16 karakterli hesap kodunuzla giriş yapın.",16,TvUi.MUTED);form.addView(hint,TvUi.space(this,-1,-2));
-        loginCode=new EditText(this);loginCode.setId(View.generateViewId());loginCode.setTextColor(TvUi.WHITE);loginCode.setTextSize(22);loginCode.setSingleLine(true);
+        loginCode=new RemoteEditText(this);loginCode.setId(View.generateViewId());loginCode.setTextColor(TvUi.WHITE);loginCode.setTextSize(22);loginCode.setSingleLine(true);
         loginCode.setHint("Giriş kodu");loginCode.setHintTextColor(TvUi.MUTED);loginCode.setContentDescription("16 karakterli giriş kodu");
         loginCode.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);loginCode.setFilters(new InputFilter[]{new InputFilter.LengthFilter(16)});
         loginCode.setImeOptions(EditorInfo.IME_ACTION_GO);loginCode.setPadding(TvUi.dp(this,16),TvUi.dp(this,8),TvUi.dp(this,16),TvUi.dp(this,8));loginCode.setBackground(TvUi.focusBackground(this));form.addView(loginCode,TvUi.space(this,-1,54));
@@ -359,7 +444,7 @@ public final class MainActivity extends Activity {
         repository.login(code,new TvRepository.Callback<Account>() {
             public void onResult(Account account) {
                 if(destroyed || stopped || ticket!=generation)return;
-                loginCode.setText(""); page=pages.get(Section.HOME); showPage(true,false);
+                loginCode.setText(""); page=pages.get(Section.HOME);welcomeResolved=false;loadWelcome();
             }
             public void onError(Failure failure) {
                 if(destroyed || stopped || ticket!=generation)return;
@@ -397,6 +482,7 @@ public final class MainActivity extends Activity {
     private Kind pageKind() { return page.section==Section.LIVE?Kind.LIVE:page.section==Section.SERIES?Kind.SERIES:Kind.MOVIE; }
     private String pageTitle() { return page.section==Section.HOME?"Sizin için":NAV[page.section.ordinal()]; }
     private void showPage(boolean reload,boolean contentFocus) {
+        if(welcomeBlocked()){loadWelcome();return;}
         discardPreviousSource();
         applyPendingCatalogs(false);
         shell(pageTitle(),page.section==Section.HOME?"Filmler, diziler ve canlı yayınlar tek yerde.":"");
@@ -589,6 +675,7 @@ public final class MainActivity extends Activity {
         LinearLayout inner=TvUi.column(this);inner.setPadding(0,TvUi.dp(this,8),0,TvUi.dp(this,16));scroll.addView(inner,new ScrollView.LayoutParams(-1,-2));body.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));return inner;
     }
     private void showAccount() {
+        if(welcomeBlocked()){loadWelcome();return;}
         page=pages.get(Section.ACCOUNT);shell("Hesabım","");
         LinearLayout loading=scrollContent();loading.addView(TvUi.text(this,"Hesap yükleniyor…",20,TvUi.MUTED),TvUi.space(this,-1,64));addAccountActions(loading);
         final long ticket=generation;String scope=repository.currentScope();repository.account(true,callback(ticket,scope,account->{
@@ -605,6 +692,7 @@ public final class MainActivity extends Activity {
     private void addAccountActions(LinearLayout parent) {
         Button update=updatePanel.addTo(parent,sizing.contentWidth()-8);markFocus(update,"account:update");
         Button logout=addLocalLogout(parent);update.setNextFocusDownId(logout.getId());logout.setNextFocusUpId(update.getId());linkContent(logout);
+        Button packages=TvUi.button(this,"Paketleri gör",()->openPackages(1));markFocus(packages,"account:packages");parent.addView(packages,TvUi.space(this,Math.min(230,sizing.contentWidth()-8),48));logout.setNextFocusDownId(packages.getId());packages.setNextFocusUpId(logout.getId());
     }
     private Button addLocalLogout(LinearLayout parent) {
         Button logout=TvUi.button(this,"Oturumu kapat",this::confirmLogout);markFocus(logout,"account:logout");parent.addView(logout,TvUi.space(this,Math.min(230,sizing.contentWidth()-8),48));return logout;
@@ -621,6 +709,10 @@ public final class MainActivity extends Activity {
         TextView text=TvUi.text(this,safeMessage(message),20,TvUi.MUTED);inner.addView(text,TvUi.space(this,-1,-2));
         if(page.section==Section.ACCOUNT)addAccountActions(inner);
         Button button=TvUi.button(this,"Tekrar dene",retry);markFocus(button,"content:retry");inner.addView(button,TvUi.space(this,Math.min(220,sizing.contentWidth()-8),48));
+        if(page.section==Section.ACCOUNT){
+            View logout=findFocus(inner,"account:logout"),packages=findFocus(inner,"account:packages");
+            if(logout!=null && packages!=null){inner.removeView(packages);inner.addView(packages);logout.setNextFocusDownId(button.getId());button.setNextFocusUpId(logout.getId());button.setNextFocusDownId(packages.getId());packages.setNextFocusUpId(button.getId());}
+        }
         if(page.section!=Section.ACCOUNT)linkContent(button);restoreResizeFocus(true);startup.ready();
     }
     private void afterOrdinaryDialog(Dialog shown) {
@@ -631,6 +723,7 @@ public final class MainActivity extends Activity {
     }
     private void notice(String message) { dialog=new AlertDialog.Builder(this).setMessage(message).setPositiveButton("Tamam",null).create();afterOrdinaryDialog(dialog);dialog.show(); }
     @Override public void onBackPressed() {
+        if(repository.hasSession() && welcomeBlocked()){finish();return;}
         if(startup!=null && startup.isShowing()){finish();return;}
         if(body==null) { super.onBackPressed();return; }
         if(!page.query.isEmpty() || !page.category.isEmpty()) { page.query="";page.category="";page.categoryTitle="Tümü";page.scroll=0;page.focusKey="";showPage(false,true);return; }

@@ -12,6 +12,9 @@ public interface TvRepository {
     default void prepareOfflineData() {}
     /** Releases memory, retaining only a visible catalogue and private disk snapshots. */
     default void trimMemory(Kind keep) {}
+    default String currentAccountId(){return currentScope();}
+    default void welcomeOffer(Callback<WelcomeOffer> callback){callback.onResult(WelcomeOffer.notEligible());}
+    default void chooseWelcomeOffer(String choice,Callback<WelcomeOffer> callback){callback.onError(new Failure(Failure.Code.INVALID,"Seçimin kaydedilemedi. Tekrar dene."));}
     boolean hasSession();
     String currentScope();
     void login(String code,Callback<Account> callback);

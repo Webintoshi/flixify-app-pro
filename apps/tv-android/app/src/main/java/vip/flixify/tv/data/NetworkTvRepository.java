@@ -38,6 +38,7 @@ import java.util.concurrent.TimeUnit;
 import vip.flixify.tv.TvModels.*;
 import vip.flixify.tv.TvRepository;
 import vip.flixify.tv.BackgroundWorkGate;
+import vip.flixify.tv.WelcomeOffer;
 
 /** Personal-provider-only repository. URLs and credentials never leave memory or become error text. */
 public final class NetworkTvRepository implements TvRepository {
@@ -58,6 +59,7 @@ public final class NetworkTvRepository implements TvRepository {
     private final java.util.concurrent.Executor callbacks;
     private final TokenStore tokenStore;
     private final SharedPreferences positions;
+    private final SharedPreferences welcomeMemo;
     private final MetadataDiskCache metadataDisk;
     private final SourceGuard guard=new SourceGuard();
     private volatile TokenStore.Session tokens;
@@ -101,10 +103,38 @@ public final class NetworkTvRepository implements TvRepository {
         this.callbacks=callbacks==null?main::post:callbacks;
         Context app=context.getApplicationContext(); tokenStore=new TokenStore(app);
         positions=app.getSharedPreferences("tv_scoped_resume",Context.MODE_PRIVATE);
+        welcomeMemo=app.getSharedPreferences("tv_welcome_resolved_v1",Context.MODE_PRIVATE);
         metadataDisk=new MetadataDiskCache(new java.io.File(app.getFilesDir(),"catalog-cache-v1"));
         tokens=tokenStore.load(); worker.allowCoreThreadTimeOut(true);epgWorker.allowCoreThreadTimeOut(true);metadataWorker.allowCoreThreadTimeOut(true);
     }
     @Override public boolean hasSession() { return tokens!=null; }
+    @Override public String currentAccountId(){TokenStore.Session value=tokens;return value==null?"":value.accountId;}
+    private String welcomeKey(long auth)throws Exception{
+        TokenStore.Session value=requireTokens(auth);String account=value.accountId;
+        if(account.isEmpty())account=loadAccount(auth,false).id;
+        if(account.isEmpty())throw new ProviderParser.Invalid();
+        byte[] bytes=MessageDigest.getInstance("SHA-256").digest(account.getBytes(StandardCharsets.UTF_8));StringBuilder key=new StringBuilder(64);
+        for(byte b:bytes)key.append(String.format(Locale.ROOT,"%02x",b&255));return key.toString();
+    }
+    private WelcomeOffer rememberWelcome(long auth,String key,WelcomeOffer value)throws Exception{
+        synchronized(lock){checkAuth(auth);if(!value.showPrompt())welcomeMemo.edit().putString(key,value.state).apply();}
+        return value;
+    }
+    @Override public void welcomeOffer(Callback<WelcomeOffer> callback){
+        enqueue("welcome-offer",false,callback,auth->{
+            String key=welcomeKey(auth);String state=welcomeMemo.getString(key,"");checkAuth(auth);
+            if("not_eligible".equals(state) || "dismissed".equals(state) || "redeemed".equals(state))return new WelcomeOffer(state,"dismissed".equals(state),0,0,0);
+            WelcomeOffer value=WelcomeOfferParser.parse(ProviderParser.object(api("/me/welcome-offer","GET",null,auth)));
+            return rememberWelcome(auth,key,value);
+        });
+    }
+    @Override public void chooseWelcomeOffer(String choice,Callback<WelcomeOffer> callback){
+        if(!"trial".equals(choice) && !"monthly".equals(choice)){callbacks.execute(()->callback.onError(failure(new ProviderParser.Invalid())));return;}
+        enqueue("welcome-choice-"+choice,false,callback,auth->{
+            String key=welcomeKey(auth);WelcomeOffer value=WelcomeOfferParser.parse(ProviderParser.object(api("/me/welcome-offer/choice","POST",new JSONObject().put("choice",choice),auth)));
+            if(value.showPrompt())throw new ProviderParser.Invalid();return rememberWelcome(auth,key,value);
+        });
+    }
     @Override public String currentScope() {
         ProviderParser.Bootstrap b=guard.current(); return b!=null && b.expiresAtMs>clock.now()?b.scope():"";
     }

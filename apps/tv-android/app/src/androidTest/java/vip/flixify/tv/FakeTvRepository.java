@@ -6,6 +6,17 @@ import vip.flixify.tv.TvModels.*;
 /** Entirely offline account/catalog fixture. No provider or media connection is opened. */
 final class FakeTvRepository implements TvRepository {
     boolean session;
+    String accountId="fixture-account";
+    WelcomeOffer welcome=WelcomeOffer.notEligible();
+    boolean delayWelcome,delayWelcomeChoice,failWelcome,failWelcomeChoice;
+    int welcomeRequests,welcomeChoices,catalogRequests;
+    String lastWelcomeChoice;
+    Callback<WelcomeOffer> delayedWelcome,delayedWelcomeChoice;
+    @Override public String currentAccountId(){return session?accountId:"";}
+    @Override public void welcomeOffer(Callback<WelcomeOffer> callback){welcomeRequests++;if(delayWelcome){delayedWelcome=callback;return;}if(failWelcome){callback.onError(new Failure(Failure.Code.NETWORK,"Offline fixture"));return;}callback.onResult(welcome);}
+    @Override public void chooseWelcomeOffer(String choice,Callback<WelcomeOffer> callback){welcomeChoices++;lastWelcomeChoice=choice;if(delayWelcomeChoice){delayedWelcomeChoice=callback;return;}if(failWelcomeChoice){callback.onError(new Failure(Failure.Code.NETWORK,"Offline fixture"));return;}welcome=new WelcomeOffer("dismissed",true,11955,12677,1675);callback.onResult(welcome);}
+    void releaseWelcome(){Callback<WelcomeOffer> callback=delayedWelcome;delayedWelcome=null;delayWelcome=false;if(callback!=null)callback.onResult(welcome);}
+    void releaseWelcomeChoice(){Callback<WelcomeOffer> callback=delayedWelcomeChoice;delayedWelcomeChoice=null;delayWelcomeChoice=false;if(callback!=null){welcome=new WelcomeOffer("dismissed",true,11955,12677,1675);callback.onResult(welcome);}}
     int preparationRequests;
     Kind retainedOnTrim;
     int trimRequests;
@@ -58,6 +69,7 @@ final class FakeTvRepository implements TvRepository {
     }
     void publishCatalog(Catalog catalog) {catalogOverrides.put(catalog.kind,catalog);if(catalogObserver!=null)catalogObserver.onCatalog(catalog);}
     public void catalog(Kind kind,boolean force,Callback<Catalog> cb) {
+        catalogRequests++;
         lastCatalogForced=force;
         if(bootstrapOnCatalog)bootstrapped=true;
         if (delayCatalog) { delayedCatalog=cb; return; }

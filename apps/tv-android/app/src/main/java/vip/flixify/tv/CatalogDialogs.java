@@ -84,7 +84,7 @@ final class CatalogDialogs {
         ImageView magnifier=new ImageView(activity);magnifier.setImageDrawable(new Symbol(activity,Icon.SEARCH,TvUi.MUTED));
         magnifier.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         inputRow.addView(magnifier,new LinearLayout.LayoutParams(dp(activity,24),dp(activity,24)));
-        EditText input=editor(activity,"İçerik adıyla ara","İçerik adı",22);
+        EditText input=editor(activity,"İçerik adıyla ara","İçerik adı",22,true);
         input.setTag("tv_search_input");input.setText(safe(query));input.setSelection(input.length());
         inputRow.addView(input,new LinearLayout.LayoutParams(0,dp(activity,56),1));
         ImageButton clear=icon(activity,Icon.CLEAR,"Aramayı temizle");clear.setTag("tv_search_clear");
@@ -292,7 +292,10 @@ final class CatalogDialogs {
     private static LinearLayout row(Context context){LinearLayout layout=new LinearLayout(context);layout.setOrientation(LinearLayout.HORIZONTAL);layout.setGravity(Gravity.CENTER_VERTICAL);return layout;}
     private static TextView text(Context context,String value,int size,int color){TextView view=TvUi.text(context,value,size,color);view.setSingleLine(true);view.setEllipsize(TextUtils.TruncateAt.END);return view;}
     private static EditText editor(Context context,String hint,String description,int size) {
-        EditText input=new EditText(context);input.setId(View.generateViewId());input.setSingleLine(true);input.setTextSize(size);input.setTextColor(TvUi.WHITE);input.setHintTextColor(TvUi.MUTED);input.setHint(hint);input.setContentDescription(description);
+        return editor(context,hint,description,size,false);
+    }
+    private static EditText editor(Context context,String hint,String description,int size,boolean remoteNavigation) {
+        EditText input=remoteNavigation?new RemoteEditText(context):new EditText(context);input.setId(View.generateViewId());input.setSingleLine(true);input.setTextSize(size);input.setTextColor(TvUi.WHITE);input.setHintTextColor(TvUi.MUTED);input.setHint(hint);input.setContentDescription(description);
         input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);input.setImeOptions(EditorInfo.IME_ACTION_SEARCH);input.setBackgroundColor(Color.TRANSPARENT);input.setPadding(dp(context,10),dp(context,7),dp(context,8),dp(context,7));input.setMinWidth(0);input.setMinimumWidth(0);return input;
     }
     private static Button action(Context context,String value,boolean primary) {

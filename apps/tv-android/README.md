@@ -1,6 +1,6 @@
 # Flixify Pro for Android TV
 
-Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.4.5`, code 13, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
+Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.4.6`, code 14, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
 
 ## Build
 
@@ -28,6 +28,8 @@ Cold launch shows the existing Flixify logo in the Android starting window, foll
 - Direction keys move visible focus; OK selects. Back closes input/dialogs, hides active playback controls before leaving the player, restores catalog focus, then returns to navigation and exits at the root.
 - Search uses a focused panel with live local result counts and directly selectable preview results. OK or click starts the selected canonical item after the dialog closes and window focus returns; Back restores its query, category and selected poster. Ara still applies the draft as a catalog filter. Categories use a virtualized side panel, local finder, per-category counts and a selected mark independent of focus. Search and category remain intersected, Turkish-aware, and scoped to the current account/catalog. Native keyboard resize preserves the editor; Back/cancel restores the opener. Short screens simplify optional context so the action stays visible.
 - Native TV keyboard enters the existing16-character account code and search. No signup or purchase is performed on TV.
+
+The server-backed welcome campaign gates catalogue rendering only for newly granted accounts. Its silver free choice acknowledges the existing three-hour trial; it never starts another trial. The red monthly choice supports125/199.50TRY and opens the fixed website package page for the same-account payment, with a phone fallback if no TV browser is installed. Account also links to that page after dismissal. The private account-hashed memo only suppresses a resolved screen; server state always determines payment eligibility. Hidden API30+ IME arrow routing is handled before the retained input connection, preserving visible-keyboard, typing, OK and Back behavior.
 - Live TV, movies, series/seasons/episodes, favorites, account and search use native controls.
 - Cinematic artwork-led home and virtualized cards adapt to measured usable width and height; live logos use landscape FIT_CENTER cards, including mixed Favorites, and film/series posters retain their existing treatment. Focus is restored after resize.
 - Card OK opens playback directly. A series starts its latest available saved episode, otherwise the first unwatched episode, otherwise its first episode for replay. The player retains a remote season/episode panel for manual selection. Favorites are added/removed with the player heart; episodes favorite the parent series. Returning to Favorites refreshes the list and restores nearby focus.
