@@ -2,17 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { packageCopy, paymentResultLabel, checkoutErrorLabel } from './stripe-package-copy.ts';
 
-test('all four card subscriptions show final TRY price and honest renewal interval', () => {
+test('six packages show final TRY price without automatic renewal', () => {
   const expected = [
-    ['1-ay', '249 TL', 'Her ay otomatik yenilenir.'],
-    ['3-ay', '640 TL', 'Her 3 ayda bir otomatik yenilenir.'],
-    ['6-ay', '990 TL', 'Her 6 ayda bir otomatik yenilenir.'],
-    ['12-ay', '1.600 TL', 'Her 12 ayda bir otomatik yenilenir.']
+    ['1-ay', '250 ₺', 'Tek seferlik ödeme. Otomatik yenilenmez.'],
+    ['6-ay', '699 ₺', 'Tek seferlik ödeme. Otomatik yenilenmez.'],
+    ['12-ay', '999 ₺', 'Tek seferlik ödeme. Otomatik yenilenmez.'],
+    ['1-ay-2-kullanici', '399 ₺', 'Tek seferlik ödeme. Otomatik yenilenmez.'],
+    ['6-ay-2-kullanici', '999 ₺', 'Tek seferlik ödeme. Otomatik yenilenmez.'],
+    ['12-ay-2-kullanici', '1.399 ₺', 'Tek seferlik ödeme. Otomatik yenilenmez.']
   ];
   for (const [slug, price, renewal] of expected) {
     assert.deepEqual(packageCopy(slug), { price, renewal });
-    assert.doesNotMatch(renewal, /tek seferlik/i);
+    assert.match(renewal, /tek seferlik/i);
   }
+  assert.equal(packageCopy('3-ay'), null);
 });
 
 test('payment return never asserts activation until status is active', () => {

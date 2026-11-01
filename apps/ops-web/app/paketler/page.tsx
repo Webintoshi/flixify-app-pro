@@ -1,57 +1,42 @@
 "use client";
 
-import { useState } from 'react';
-import Link from 'next/link';
+import { useRef, useState } from 'react';
 import type { PackageRecord } from '@flixify/contracts';
 import { apiRequest } from '../../lib/api';
-import { packagePaymentHref } from '../../lib/account-model';
-import { AccountPage, Loading, LoadError, useAccountResource } from '../account/components';
-import { packageCopy, checkoutErrorLabel } from './stripe-package-copy';
-import s from '../account/account.module.css';
-
-type BillingStatus = { status: string; checkoutEnabled: boolean };
+import { AccountFrame, Loading, LoadError, useAccountResource } from '../account/components';
+import { checkoutErrorLabel } from './stripe-package-copy';
+import { checkoutAvailable, packageCards, type BillingPackagesStatus, type PackageUsers } from './packages-model';
+import { Pricing } from '../../components/ui/pricing';
+import { PackageCheckout } from '../../components/ui/package-checkout';
+import { embeddedCheckout, type EmbeddedCheckoutSession } from './embedded-payment';
+import type { PackageCard } from './packages-model';
 
 export default function PackagesPage() {
   const { data, loading, error, reload } = useAccountResource<{ items: PackageRecord[] }>('/admin/packages/public');
-  const billing = useAccountResource<BillingStatus>('/me/billing/status');
+  const billing = useAccountResource<BillingPackagesStatus>('/me/billing/status');
+  const [users, setUsers] = useState<PackageUsers>(1);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
-  const packages = (data?.items ?? []).filter(pkg => pkg.isActive).sort((a, b) => a.durationMonths - b.durationMonths);
-  const cardCheckoutEnabled = billing.data?.checkoutEnabled === true;
+  const inFlight = useRef(false);
+  const [checkout, setCheckout] = useState<{ session: EmbeddedCheckoutSession; plan: PackageCard } | null>(null);
+  const plans = packageCards(data?.items ?? [], users);
 
   async function startCheckout(slug: string) {
+    const selected = plans.find(plan => plan.slug === slug);
+    if (inFlight.current || !selected || !checkoutAvailable(selected, billing.data)) return;
+    inFlight.current = true;
     setSubmitting(slug);
     setCheckoutError(null);
     try {
-      const result = await apiRequest<{ url: string }>('/me/billing/checkout-session', { method: 'POST', body: { packageSlug: slug } });
-      const target = new URL(result.url);
-      if (target.protocol !== 'https:' || target.hostname !== 'checkout.stripe.com') throw new Error('checkout_url_invalid');
-      window.location.assign(result.url);
+      const result = await apiRequest<unknown>('/me/billing/checkout-session', { method: 'POST', body: { packageSlug: slug }, signal: AbortSignal.timeout(30000) });
+      setCheckout({ session: embeddedCheckout(result), plan: selected });
+      setSubmitting(null);
     } catch (error) {
       setCheckoutError(checkoutErrorLabel(error));
       setSubmitting(null);
+      inFlight.current = false;
     }
   }
 
-  return <AccountPage title="Paketler" subtitle="Paketinizi seçin.">
-    {loading ? <Loading /> : error ? <LoadError onRetry={reload} /> : packages.length ? <section aria-label="Abonelik paketleri">
-      {checkoutError && <p className={s.errorText} role="alert">{checkoutError}</p>}
-      <div className={s.packages}>{packages.map(pkg => {
-        const copy = packageCopy(pkg.slug);
-        return <article className={s.package} key={pkg.id}>
-          <h3>{pkg.title}</h3>
-          <div className={s.price}>{copy?.price ?? pkg.priceLabel ?? 'Fiyat için destek'}</div>
-          {cardCheckoutEnabled && copy ? <>
-            <button className={s.primary} type="button" disabled={submitting !== null} onClick={() => startCheckout(pkg.slug)}>
-              {submitting === pkg.slug ? 'Ödeme açılıyor…' : 'Şimdi Abone Ol'}
-            </button>
-            <Link className={s.textLink} href={packagePaymentHref(pkg.slug)}>Diğer Ödeme Yöntemlerini Gör</Link>
-          </> : <>
-            <Link className={s.primary} aria-label={pkg.title + ' ödeme yöntemlerini gör'} href={packagePaymentHref(pkg.slug)}>Ödeme Yöntemlerini Gör</Link>
-          </>}
-        </article>;
-      })}</div>
-      {cardCheckoutEnabled && <p className={s.billingNote}>Kartlı abonelik seçtiğiniz süre sonunda otomatik yenilenir. Dilediğiniz zaman iptal edebilirsiniz.</p>}
-    </section> : <div className={s.notice}><h2>Şu anda paket bulunmuyor</h2><p>Güncel seçenekler için destek ekibimize ulaşabilirsiniz.</p><Link className={s.secondary} href="/iletisim">Destek al</Link></div>}
-  </AccountPage>;
+  return <AccountFrame>{checkout ? <PackageCheckout checkout={checkout.session} plan={checkout.plan} onBack={() => { setCheckout(null); inFlight.current = false; setCheckoutError(null); billing.reload(); }} /> : loading ? <Loading /> : error ? <LoadError onRetry={reload} /> : <Pricing plans={plans} users={users} onUsersChange={next => { if (!inFlight.current) { setUsers(next); setCheckoutError(null); } }} billing={billing.data} submitting={submitting} checkoutError={checkoutError} onCheckout={startCheckout} />}</AccountFrame>;
 }

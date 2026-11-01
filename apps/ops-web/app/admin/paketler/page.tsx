@@ -87,7 +87,7 @@ export default function AdminPackagesPage() {
         <div>
           <h1>Paket Yönetimi</h1>
           <p>
-            Sabit abonelik süreleri (1, 3, 6 ve 12 ay) için fiyat etiketlerini ve paket görünürlüklerini buradan yönetebilirsiniz.
+            Tek ve çift kullanıcılı 1, 6 ve 12 aylık paketlerin fiyatlarını ve görünürlüklerini buradan yönetebilirsiniz.
           </p>
         </div>
       </section>

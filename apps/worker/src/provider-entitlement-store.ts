@@ -30,8 +30,21 @@ type SubscriptionRow = {
     end_reason: string | null;
     ends_at: Date | string;
     package_id: string;
+    package_slug: string;
 };
 const conflict = () => new ProviderEntitlementError('SYNC_CONFLICT');
+export function resolveProviderPackageSlug(packageId: string, maxConnections?: number, currentPackageSlug?: string): string {
+    if (maxConnections !== undefined && (!Number.isSafeInteger(maxConnections) || maxConnections < 1))
+        throw new ProviderEntitlementError('PROVIDER_INVALID');
+    if (maxConnections !== undefined && maxConnections > 2) return 'provider-managed';
+    if (packageId === '9') return '3-ay';
+    const base = ({ '8': '1-ay', '10': '6-ay', '11': '12-ay', '13': '1-ay', '15': '6-ay', '16': '12-ay' } as Record<string, string>)[packageId];
+    if (!base) return 'provider-managed';
+    const dual = base + '-2-kullanici';
+    if (maxConnections === 2 || (maxConnections === undefined && currentPackageSlug === dual)) return dual;
+    if (['13', '15', '16'].includes(packageId)) return 'provider-managed';
+    return base;
+}
 export function createProviderEntitlementStore(pool: Pool): EntitlementStore {
     return {
         async discover() {
@@ -62,6 +75,8 @@ export function createProviderEntitlementStore(pool: Pool): EntitlementStore {
         async apply(job, line) {
             if (line.username !== job.username || line.password !== job.password || (job.providerLineId && job.providerLineId !== line.lineId))
                 throw conflict();
+            // Validate observed capacity before acquiring locks or transferring ownership.
+            resolveProviderPackageSlug(line.packageId, line.maxConnections);
             await transaction(pool, async (c) => {
                 // Prevent reassignment/duplicate pair insertion between eligibility check and commit.
                 const user = await c.query('select id from public.users where id=$1 for update', [job.userId]);
@@ -85,7 +100,7 @@ export function createProviderEntitlementStore(pool: Pool): EntitlementStore {
                 update public.provider_entitlement_sync j set provider_line_id=null,subscription_id=null from old where j.id=old.id
               ) select subscription_id from old`, [job.userId, job.id, line.lineId]);
                 state.subscription_id ??= previous.rows[0]?.subscription_id ?? null;
-                const subscriptions = await c.query(`select s.* from public.subscriptions s where s.user_id=$1 order by s.id for update`, [job.userId]);
+                const subscriptions = await c.query(`select s.*,p.slug as package_slug from public.subscriptions s join public.packages p on p.id=s.package_id where s.user_id=$1 order by s.id for update of s`, [job.userId]);
                 const subscriptionRows = subscriptions.rows as SubscriptionRow[];
                 const current = subscriptionRows.find(s => s.id === state.subscription_id);
                 const clock = await c.query('select now() as checked_at');
@@ -98,7 +113,7 @@ export function createProviderEntitlementStore(pool: Pool): EntitlementStore {
       values('provider-sync',$1,'subscription',$2,jsonb_build_object('syncId',$3::text,'providerLineId',$4::text,'before',$5::jsonb,'after',$6::jsonb))`, [action, id, job.id, line.lineId, JSON.stringify(from), JSON.stringify(to)]);
                 };
                 if (paid && canReopen) {
-                    const slug = ({ '8': '1-ay', '9': '3-ay', '10': '6-ay', '11': '12-ay' } as Record<string, string>)[line.packageId] ?? 'provider-managed';
+                    const slug = resolveProviderPackageSlug(line.packageId, line.maxConnections, current?.package_slug);
                     const packages = await c.query('select id from public.packages where slug=$1', [slug]);
                     const packageId = packages.rows[0]?.id;
                     if (!packageId)

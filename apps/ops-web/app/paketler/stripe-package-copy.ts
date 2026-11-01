@@ -1,8 +1,10 @@
 const PACKAGE_COPY = {
-  '1-ay': { price: '249 TL', renewal: 'Her ay otomatik yenilenir.' },
-  '3-ay': { price: '640 TL', renewal: 'Her 3 ayda bir otomatik yenilenir.' },
-  '6-ay': { price: '990 TL', renewal: 'Her 6 ayda bir otomatik yenilenir.' },
-  '12-ay': { price: '1.600 TL', renewal: 'Her 12 ayda bir otomatik yenilenir.' }
+  '1-ay': { price: '250 ₺', renewal: 'Tek seferlik ödeme. Otomatik yenilenmez.' },
+  '6-ay': { price: '699 ₺', renewal: 'Tek seferlik ödeme. Otomatik yenilenmez.' },
+  '12-ay': { price: '999 ₺', renewal: 'Tek seferlik ödeme. Otomatik yenilenmez.' },
+  '1-ay-2-kullanici': { price: '399 ₺', renewal: 'Tek seferlik ödeme. Otomatik yenilenmez.' },
+  '6-ay-2-kullanici': { price: '999 ₺', renewal: 'Tek seferlik ödeme. Otomatik yenilenmez.' },
+  '12-ay-2-kullanici': { price: '1.399 ₺', renewal: 'Tek seferlik ödeme. Otomatik yenilenmez.' }
 } as const;
 
 export function packageCopy(slug: string): { price: string; renewal: string } | null {
@@ -30,6 +32,6 @@ export function checkoutErrorLabel(error: unknown): string {
     case 'subscription_active': return 'Aboneliğiniz zaten aktif. Paket durumunu Hesabım sayfasından görebilirsiniz.';
     case 'checkout_preparing': return 'Ödeme sayfanız hazırlanıyor. Aynı paketi biraz sonra tekrar açın.';
     case 'checkout_state_unavailable': return 'Ödeme durumu şu anda doğrulanamıyor. Biraz sonra tekrar deneyin; yeniden ödeme yapmayın.';
-    default: return 'Abonelik başlatılamadı. Tekrar deneyin veya diğer ödeme yöntemlerine göz atın.';
+    default: return 'Ödeme başlatılamadı. Tekrar deneyin veya diğer ödeme yöntemlerine göz atın.';
   }
 }

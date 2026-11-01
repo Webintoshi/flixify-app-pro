@@ -29,12 +29,13 @@ describe.skipIf(!connectionString)('real PostgreSQL provider entitlement store',
         await pool.query(`create table public.users(id uuid primary key default gen_random_uuid(),status text not null default 'new',deleted_at timestamptz);
    create table public.user_iptv_credentials(id uuid primary key default gen_random_uuid(),user_id uuid unique references public.users(id),username text,password text,updated_at timestamptz default now());
    create table public.app_settings(id boolean primary key,shared_source_reference_username text,shared_source_reference_password text);
-   create table public.packages(id uuid primary key default gen_random_uuid(),slug text unique,title text,duration text,duration_months integer,is_active boolean default true);
+   create table public.packages(id uuid primary key default gen_random_uuid(),slug text unique,title text,duration text,duration_months integer,price_label text,is_active boolean default true);
    create table public.subscriptions(id uuid primary key default gen_random_uuid(),user_id uuid references public.users(id),package_id uuid references public.packages(id),status text check(status in('active','expired','cancelled')),starts_at timestamptz,ends_at timestamptz,activated_by_admin_id text,end_reason text,created_at timestamptz default now());
    create table public.admin_audit_logs(id uuid primary key default gen_random_uuid(),admin_id text,action text,entity_type text,entity_id text,payload jsonb);
    insert into public.app_settings values(true,'shared','shared-secret');
    insert into public.packages(slug,title,duration,duration_months) values('1-ay','1 Ay','1m',1),('3-ay','3 Ay','3m',3),('6-ay','6 Ay','6m',6),('12-ay','12 Ay','12m',12);`);
         await pool.query(await readFile(new URL('../../../supabase/migrations/202610260001_provider_entitlement_sync.sql', import.meta.url), 'utf8'));
+        await pool.query(await readFile(new URL('../../../supabase/migrations/202611010001_single_dual_packages.sql', import.meta.url), 'utf8'));
     });
     beforeEach(async () => {
         await pool.query('truncate public.provider_entitlement_sync,public.admin_audit_logs,public.subscriptions,public.user_iptv_credentials,public.users cascade');
@@ -57,6 +58,57 @@ describe.skipIf(!connectionString)('real PostgreSQL provider entitlement store',
             activated_by_admin_id: string;
             end_reason: string;
         }) => s.activated_by_admin_id === 'auto-trial').end_reason).toBe('trial-3h');
+    });
+    it.each([['8', '1-ay-2-kullanici'], ['10', '6-ay-2-kullanici'], ['11', '12-ay-2-kullanici'], ['13', '1-ay-2-kullanici'], ['15', '6-ay-2-kullanici'], ['16', '12-ay-2-kullanici']])('retains verified dual access and exact renewal expiry for provider package %s', async (packageId, slug) => {
+        await store.apply(await claim(), line({ packageId, maxConnections: 2 }));
+        const first = (await subscriptions())[0];
+        const expectedPackageId = (await pool.query('select id from public.packages where slug=$1', [slug])).rows[0].id;
+        expect(first.package_id).toBe(expectedPackageId);
+        const expiry = new Date(Date.now() + 172800000).toISOString();
+        await store.apply(await again(), line({ packageId, maxConnections: 2, expiresAt: expiry }));
+        expect(await subscriptions()).toHaveLength(1);
+        expect((await subscriptions())[0]).toMatchObject({ id: first.id, package_id: expectedPackageId });
+        expect(new Date((await subscriptions())[0].ends_at).toISOString()).toBe(expiry);
+        const auditCount = (await pool.query('select count(*)::int n from public.admin_audit_logs')).rows[0].n;
+        await store.apply(await again(), line({ packageId, maxConnections: 2, expiresAt: expiry }));
+        expect((await pool.query('select count(*)::int n from public.admin_audit_logs')).rows[0].n).toBe(auditCount);
+    });
+    it('preserves only current managed dual access when a compatible renewal omits count', async () => {
+        await store.apply(await claim(), line({ packageId: '15', maxConnections: 2 }));
+        const first = (await subscriptions())[0];
+        const expiry = new Date(Date.now() + 172800000).toISOString();
+        await store.apply(await again(), line({ packageId: '10', expiresAt: expiry }));
+        expect((await subscriptions())[0]).toMatchObject({ id: first.id, package_id: first.package_id });
+        expect(new Date((await subscriptions())[0].ends_at).toISOString()).toBe(expiry);
+        await store.apply(await again(), line({ packageId: '11' }));
+        const singleYearId = (await pool.query("select id from public.packages where slug='12-ay'")).rows[0].id;
+        expect((await subscriptions())[0].package_id).toBe(singleYearId);
+    });
+    it('does not infer capacity from unrelated unowned dual subscription history', async () => {
+        await pool.query("insert into public.subscriptions(user_id,package_id,status,starts_at,ends_at,activated_by_admin_id) select $1,id,'active',now(),now()+interval '6 months','admin' from public.packages where slug='6-ay-2-kullanici'", [userId]);
+        await store.apply(await claim(), line({ packageId: '10' }));
+        const singleId = (await pool.query("select id from public.packages where slug='6-ay'")).rows[0].id;
+        expect((await subscriptions()).find((row: { status: string; package_id: string }) => row.status === 'active')?.package_id).toBe(singleId);
+    });
+    it('maps authoritative single count and unsupported capacity without falsely granting dual access', async () => {
+        await store.apply(await claim(), line({ packageId: '10', maxConnections: 2 }));
+        await store.apply(await again(), line({ packageId: '10', maxConnections: 1 }));
+        const singleId = (await pool.query("select id from public.packages where slug='6-ay'")).rows[0].id;
+        expect((await subscriptions())[0].package_id).toBe(singleId);
+        await store.apply(await again(), line({ packageId: '15', maxConnections: 1 }));
+        const neutralId = (await pool.query("select id from public.packages where slug='provider-managed'")).rows[0].id;
+        expect((await subscriptions())[0].package_id).toBe(neutralId);
+        await store.apply(await again(), line({ packageId: '10', maxConnections: 3 }));
+        expect((await subscriptions())[0].package_id).toBe(neutralId);
+    });
+    it('rejects malformed capacity without mutating owned subscription or sync state', async () => {
+        await store.apply(await claim(), line({ maxConnections: 2 }));
+        const next = await again();
+        const beforeSubscriptions = await subscriptions();
+        const beforeSync = (await pool.query('select * from public.provider_entitlement_sync order by id')).rows;
+        await expect(store.apply(next, line({ maxConnections: 0 }))).rejects.toThrow('PROVIDER_INVALID');
+        expect(await subscriptions()).toEqual(beforeSubscriptions);
+        expect((await pool.query('select * from public.provider_entitlement_sync order by id')).rows).toEqual(beforeSync);
     });
     it('retains active trial marker on paid upgrade and on disabled first paid observation', async () => {
         for(const enabled of [true,false]) {

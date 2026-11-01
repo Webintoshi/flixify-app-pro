@@ -137,10 +137,10 @@ const packages: PackageRecord[] = [
   {
     id: randomUUID(),
     slug: "1-ay",
-    title: "1 Ay",
+    title: "1 Ay · Tek Kullanıcı",
     duration: "1m",
     durationMonths: 1,
-    priceLabel: "199 TL",
+    priceLabel: "250 ₺",
     isActive: true,
     createdAt: now()
   },
@@ -151,26 +151,56 @@ const packages: PackageRecord[] = [
     duration: "3m",
     durationMonths: 3,
     priceLabel: "499 TL",
-    isActive: true,
+    isActive: false,
     createdAt: now()
   },
   {
     id: randomUUID(),
     slug: "6-ay",
-    title: "6 Ay",
+    title: "6 Ay · Tek Kullanıcı",
     duration: "6m",
     durationMonths: 6,
-    priceLabel: "899 TL",
+    priceLabel: "699 ₺",
     isActive: true,
     createdAt: now()
   },
   {
     id: randomUUID(),
     slug: "12-ay",
-    title: "12 Ay",
+    title: "12 Ay · Tek Kullanıcı",
     duration: "12m",
     durationMonths: 12,
-    priceLabel: "1499 TL",
+    priceLabel: "999 ₺",
+    isActive: true,
+    createdAt: now()
+  },
+  {
+    id: randomUUID(),
+    slug: "1-ay-2-kullanici",
+    title: "1 Ay · Çift Kullanıcı",
+    duration: "1m",
+    durationMonths: 1,
+    priceLabel: "399 ₺",
+    isActive: true,
+    createdAt: now()
+  },
+  {
+    id: randomUUID(),
+    slug: "6-ay-2-kullanici",
+    title: "6 Ay · Çift Kullanıcı",
+    duration: "6m",
+    durationMonths: 6,
+    priceLabel: "999 ₺",
+    isActive: true,
+    createdAt: now()
+  },
+  {
+    id: randomUUID(),
+    slug: "12-ay-2-kullanici",
+    title: "12 Ay · Çift Kullanıcı",
+    duration: "12m",
+    durationMonths: 12,
+    priceLabel: "1.399 ₺",
     isActive: true,
     createdAt: now()
   }
@@ -681,7 +711,7 @@ function withoutVodStream<T extends { streamUrl: string | null; playbackAllowed:
 }
 
 function seedDemoUsers() {
-  const linkedPackage = packages[1];
+  const linkedPackage = packages.find((item) => item.slug === "6-ay" && item.isActive);
   if (!linkedPackage) {
     return;
   }
@@ -1349,18 +1379,12 @@ export function assignDemoM3USource(userId: string, sourceUrl: string) {
 
 export function activateDemoSubscription(userId: string, packageSlug: string) {
   const user = getDemoUser(userId);
-  const pack = packages.find((item) => item.slug === packageSlug);
+  const pack = packages.find((item) => item.slug === packageSlug && item.isActive);
   if (!user || !pack || user.deletedAt) {
     throw new Error("Aktivasyon yapilamadi");
   }
 
-  const durationMap = {
-    "1-ay": 30,
-    "3-ay": 90,
-    "6-ay": 180,
-    "12-ay": 365
-  } as const;
-  const remainingDays = durationMap[packageSlug as keyof typeof durationMap] ?? 30;
+  const remainingDays = pack.duration === "12m" ? 365 : pack.durationMonths * 30;
 
   user.summary.hasActiveSubscription = true;
   user.summary.activePackage = {

@@ -11,6 +11,7 @@ export type ProviderEntitlement = {
     enabled: boolean;
     adminEnabled: boolean;
     expiresAt: string;
+    maxConnections?: number;
 };
 export type ProviderLookup = {
     username: string;
@@ -22,6 +23,12 @@ function identifier(value: unknown): string { const s = String(value ?? ''); if 
     throw invalid(); return s; }
 function flag(value: unknown): boolean { if (value !== '0' && value !== '1' && value !== 0 && value !== 1)
     throw invalid(); return String(value) === '1'; }
+function connectionCapacity(value: unknown): number | undefined {
+    if (value === undefined) return undefined;
+    if ((typeof value !== 'string' && typeof value !== 'number') || !/^[1-9]\d{0,14}$/.test(String(value)) || !Number.isSafeInteger(Number(value)))
+        throw invalid();
+    return Number(value);
+}
 export function createProviderEntitlementClient(options: {
     url: string;
     apiKey: string;
@@ -90,6 +97,6 @@ export function createProviderEntitlementClient(options: {
             const seconds = Number(line.exp_date);
             if (!Number.isSafeInteger(seconds) || seconds > 253402300799)
                 throw invalid();
-            return { lineId: id, username: input.username, password: input.password, packageId: identifier(line.package_id), isTrial: flag(line.is_trial), enabled: flag(line.enabled), adminEnabled: flag(line.admin_enabled), expiresAt: new Date(seconds * 1000).toISOString() };
+            return { lineId: id, username: input.username, password: input.password, packageId: identifier(line.package_id), isTrial: flag(line.is_trial), enabled: flag(line.enabled), adminEnabled: flag(line.admin_enabled), expiresAt: new Date(seconds * 1000).toISOString(), maxConnections: connectionCapacity(line.max_connections) };
         } };
 }
