@@ -29,6 +29,10 @@ apps/viewer-windows/web-dist
 tmp
 output
 supabase/.temp
+apps/macos-native/.build
+apps/macos-native/Vendor
+apps/macos-native/.swiftpm
+apps/macos-native/**/__pycache__/
 
 coolify/.env.production
 logs/*.log
