@@ -26,6 +26,7 @@ ApplicationWindow {
     property string requestedSeries: ""
     property var seriesData: repository.seriesDetail
     property bool seriesPending: false
+    property bool accessExpired: repository.authenticated && !repository.welcomeVisible && repository.account.canPlay === false
     onSeriesDataChanged: {
         if (seriesPending && seriesData.series && String(seriesData.series.id) === requestedSeries) {
             seriesPending = false;
@@ -87,7 +88,7 @@ ApplicationWindow {
     }
     Item {
         anchors.fill: parent
-        visible: !repository.bootstrapping && repository.authenticated && !repository.welcomeVisible
+        visible: !repository.bootstrapping && repository.authenticated && !repository.welcomeVisible && !root.accessExpired
         enabled: !player.active
         Rectangle {
             id: sidebar
@@ -290,6 +291,7 @@ ApplicationWindow {
         anchors.fill: parent
         visible: !repository.bootstrapping && (!repository.authenticated || repository.welcomeVisible)
     }
+    AccessExpired { anchors.fill: parent; visible: !repository.bootstrapping && root.accessExpired }
     Rectangle {
         anchors.fill: parent
         color: "#07090C"

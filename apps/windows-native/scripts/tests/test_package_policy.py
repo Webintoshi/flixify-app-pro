@@ -23,6 +23,25 @@ class PackagePolicyTests(unittest.TestCase):
             self.assertTrue(policy.privacy_findings(data))
         self.assertFalse(policy.privacy_findings(b'C:\\flixify\\source\\main.cpp'))
 
+    def test_nul_separated_ascii_fragments_do_not_create_fake_paths(self):
+        self.assertFalse(policy.privacy_findings(b'C:\\\x00Users\\name'))
+
+    def test_real_utf16_both_byte_orders_and_email_tokens_remain_detected(self):
+        for value in ('C:\\Users\\Owner\\private.cpp', 'owner@example.invalid', 'ghp_abcdefghijklmnop'):
+            for encoding in ('utf-16le', 'utf-16be'):
+                self.assertTrue(policy.privacy_findings(value.encode(encoding)))
+
+    def test_safe_privacy_diagnostics_never_include_matched_values(self):
+        data = b'C:\\Users\\SecretOwner\\private.cpp'
+        report = policy.privacy_diagnostics(data)
+        self.assertTrue(report['findings'])
+        text = json.dumps(report)
+        self.assertNotIn('SecretOwner', text)
+        self.assertNotIn('private.cpp', text)
+        self.assertIn('offset', text)
+        self.assertIn('encoding', text)
+        self.assertIn('region', text)
+
     def test_rejects_missing_runtime_and_debug_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

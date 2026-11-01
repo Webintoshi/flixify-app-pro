@@ -55,10 +55,57 @@ def verify_lock(lock):
             raise ValueError('Unversioned dependency URL')
 
 
+def _privacy_matches(data):
+    variants = [('bytes', 0, 1, data)]
+    for encoding, expression in (('utf-16le', rb'(?:[\x20-\x7e]\x00){4,}'),
+                                 ('utf-16be', rb'(?:\x00[\x20-\x7e]){4,}')):
+        for string in re.finditer(expression, data):
+            decoded = string.group().decode(encoding).encode('ascii')
+            variants.append((encoding, string.start(), 2, decoded))
+    for encoding, base, stride, variant in variants:
+        for index, pattern in enumerate(PERSONAL_PATTERNS, 1):
+            for match in re.finditer(pattern, variant):
+                yield str(index), encoding, base + match.start() * stride, len(match.group()) * stride
+
+
 def privacy_findings(data):
-    variants = [data, data.replace(b'\x00', b'')]
-    return sorted({str(index + 1) for variant in variants for index, pattern in enumerate(PERSONAL_PATTERNS)
-                   if re.search(pattern, variant)})
+    return sorted({match[0] for match in _privacy_matches(data)})
+
+
+def _binary_region(data, offset):
+    if data[:2] != b'MZ' or len(data) < 64:
+        return 'non-PE'
+    try:
+        pe = struct.unpack_from('<I', data, 60)[0]
+        if data[pe:pe + 4] != b'PE\0\0':
+            return 'invalid-PE'
+        count = struct.unpack_from('<H', data, pe + 6)[0]
+        size = struct.unpack_from('<H', data, pe + 20)[0]
+        sections = pe + 24 + size
+        for index in range(count):
+            start = sections + index * 40
+            raw_size, raw = struct.unpack_from('<II', data, start + 16)
+            if raw <= offset < raw + raw_size:
+                section = data[start:start + 8].rstrip(b'\0')
+                return section.decode('ascii') if re.fullmatch(rb'[.A-Za-z0-9_]+', section) else 'other-section'
+        return 'PE-header-or-overlay'
+    except (struct.error, UnicodeError):
+        return 'invalid-PE'
+
+
+def privacy_diagnostics(data, known_assets=None, upstream_objects=None):
+    findings = []
+    for pattern, encoding, offset, length in _privacy_matches(data):
+        context = data[max(0, offset - 32):min(len(data), offset + length + 32)]
+        findings.append({
+            'patternId': pattern, 'encoding': encoding, 'offset': offset, 'length': length,
+            'region': _binary_region(data, offset), 'contextSha256': hashlib.sha256(context).hexdigest(),
+            'knownRawAssetContexts': [name for name, content in (known_assets or {}).items() if context in content],
+            'upstreamObjectContexts': [name for name, content in (upstream_objects or {}).items() if context in content]
+        })
+    return {'findings': findings, 'rawMatchedValuesIncluded': False,
+            'legacyNulCollapsedPatternIds': sorted({str(index + 1) for index, pattern in enumerate(PERSONAL_PATTERNS)
+                                                   if re.search(pattern, data.replace(b'\x00', b''))})}
 
 
 def stage_findings(root):

@@ -20,7 +20,10 @@ Window {
     color: "black"
     property bool playbackActive: player.active
     property bool playbackFullScreen: player.fullScreen
-    onPlaybackActiveChanged: Qt.callLater(synchronizeVisibility)
+    onPlaybackActiveChanged: {
+        if (!playbackActive) pointerClick.stop()
+        Qt.callLater(synchronizeVisibility)
+    }
     onPlaybackFullScreenChanged: Qt.callLater(synchronizeVisibility)
     Component.onCompleted: synchronizeVisibility()
     function synchronizeVisibility() {
@@ -138,15 +141,17 @@ Window {
                 onPointChanged: player.interact()
             }
             MouseArea {
+                objectName: "videoPointerArea"
                 anchors.fill: parent
                 hoverEnabled: true
                 onPositionChanged: player.interact()
                 onClicked: {
                     player.interact();
-                    player.togglePause();
+                    pointerClick.restart();
                 }
-                onDoubleClicked: player.setFullScreen(!player.fullScreen)
+                onDoubleClicked: { pointerClick.stop(); player.setFullScreen(!player.fullScreen) }
             }
+            Timer { id: pointerClick; interval: Qt.styleHints.mouseDoubleClickInterval; onTriggered: if (player.active) player.togglePause() }
             Rectangle {
                 anchors.top: parent.top
                 width: parent.width
@@ -539,7 +544,7 @@ Window {
                     onTriggered: player.selectSubtitle(-1)
                 }
                 Instantiator {
-                    model: player.subtitleTracks
+                    model: player.subtitleTracks.filter(function(track) { return track.id !== -1 })
                     delegate: MenuItem {
                         required property var modelData
                         required property int index

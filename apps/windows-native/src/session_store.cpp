@@ -47,7 +47,15 @@ MetadataStore::MetadataStore(QString r):root(std::move(r)){}
 QString MetadataStore::hash(const QString &s){return QString::fromLatin1(QCryptographicHash::hash(s.toUtf8(),QCryptographicHash::Sha256).toHex());}
 QString MetadataStore::path(const QString &scope,const QString &name)const{return root+"/metadata/"+hash(scope+QChar(0)+name)+".json";}
 QVariant MetadataStore::read(const QString &scope,const QString &name,qint64 expiry,qint64 now,qint64 *savedAt)const {if(expiry<=now)return {};auto bytes=readBounded(path(scope,name),20*1024*1024);if(bytes.isEmpty())return {};auto r=QJsonDocument::fromJson(bytes).object();auto saved=r["savedAt"].toVariant().toLongLong(),deadline=r["expiresAt"].toVariant().toLongLong();if(r["version"].toInt()!=1||r["scope"].toString()!=scope||saved>now||now-saved>=7LL*86400000||deadline<=now)return {};if(savedAt)*savedAt=saved;return r["value"].toVariant();}
-void MetadataStore::write(const QString &scope,const QString &name,const QVariant &value,qint64 expiry,qint64 now){if(scope.isEmpty()||expiry<=now)return;auto bytes=QJsonDocument(QJsonObject{{"version",1},{"scope",scope},{"savedAt",now},{"expiresAt",expiry},{"value",QJsonValue::fromVariant(value)}}).toJson(QJsonDocument::Compact);if(bytes.size()>20*1024*1024)return;if(atomic(path(scope,name),bytes))trim();}
+QByteArray MetadataStore::encode(const QString &scope,const QVariant &value,qint64 expiry,qint64 now){
+    if(scope.isEmpty()||expiry<=now)return {};
+    auto bytes=QJsonDocument(QJsonObject{{"version",1},{"scope",scope},{"savedAt",now},{"expiresAt",expiry},{"value",QJsonValue::fromVariant(value)}}).toJson(QJsonDocument::Compact);
+    return bytes.size()<=20*1024*1024?bytes:QByteArray{};
+}
+void MetadataStore::writeEncoded(const QString &scope,const QString &name,const QByteArray &bytes){
+    if(scope.isEmpty()||bytes.isEmpty()||bytes.size()>20*1024*1024)return;if(atomic(path(scope,name),bytes))trim();
+}
+void MetadataStore::write(const QString &scope,const QString &name,const QVariant &value,qint64 expiry,qint64 now){writeEncoded(scope,name,encode(scope,value,expiry,now));}
 void MetadataStore::trim(){auto entries=QDir(root+"/metadata").entryInfoList({"*.json"},QDir::Files|QDir::NoSymLinks,QDir::Time|QDir::Reversed);qint64 size=0;for(const auto&e:entries)size+=e.size();int count=entries.size();for(const auto&e:entries){if(count<=128&&size<=32*1024*1024)break;if(QFile::remove(e.absoluteFilePath())){count--;size-=e.size();}}}
 QVariantMap MetadataStore::progress()const {auto r=QJsonDocument::fromJson(readBounded(root+"/progress.json",1024*1024)).object().toVariantMap();return r.size()<=2000?r:QVariantMap{};}
 qint64 MetadataStore::position(const QVariantMap &item)const {auto kind=item.value("kind").toString();if(kind!="movie"&&kind!="episode")return 0;return qMax(qint64(0),progress().value(progressKey(item)).toMap().value("position").toLongLong());}

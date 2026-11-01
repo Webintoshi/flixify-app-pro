@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import zipfile
 
-from package_policy import dependency_report, sha256, stage_findings, uninstall_manifest, verify_codec_fixtures, verify_smoke
+from package_policy import dependency_report, privacy_diagnostics, sha256, stage_findings, uninstall_manifest, verify_codec_fixtures, verify_smoke
 
 
 def run(arguments, **kwargs):
@@ -106,6 +106,10 @@ def main():
             cwd=stage, stdout=log, stderr=subprocess.STDOUT, timeout=180)
     verify_smoke(proof)
     (stage / 'ui_smoke.exe').unlink()
+    assets = {path.name: path.read_bytes() for path in (source / 'resources').iterdir() if path.suffix.lower() in {'.png', '.wav', '.ico'}}
+    upstream = {path.name: path.read_bytes() for path in (args.qt / 'lib').glob('Qt6EntryPoint*.lib')}
+    private_scan = privacy_diagnostics((stage / 'Flixify Pro.exe').read_bytes(), assets, upstream)
+    (proof / 'privacy-diagnostics.json').write_text(json.dumps(private_scan, indent=2) + '\n')
     errors = stage_findings(stage)
     if errors:
         raise ValueError('\n'.join(errors))

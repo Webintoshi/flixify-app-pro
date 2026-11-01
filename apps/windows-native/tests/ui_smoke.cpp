@@ -22,6 +22,7 @@
 #include <QFileInfo>
 #include <QSysInfo>
 #include <QSet>
+#include <QStyleHints>
 #include <QSignalSpy>
 #include <cstring>
 #include <cstdlib>
@@ -100,7 +101,7 @@ class FixtureServer final : public QTcpServer {
         QJsonValue value;
         const auto expiryText = QDateTime::fromMSecsSinceEpoch(expiry, Qt::UTC).toString(Qt::ISODateWithMs);
         if (url.path() == "/auth/login-by-code" || url.path() == "/auth/refresh") value = QJsonObject{{"accessToken","fixture-access"},{"refreshToken","fixture-refresh"},{"user",QJsonObject{{"id","fixture-account"},{"codeSuffix","TEST"}}}};
-        else if (url.path() == "/me") value = QJsonObject{{"user",QJsonObject{{"id","fixture-account"},{"codeSuffix","TEST"},{"status","active"},{"hasAssignedLink",true},{"hasActiveSubscription",true},{"activePackage",QJsonObject{{"title","Yerel doğrulama paketi"},{"endsAt",expiryText}}}}}};
+        else if (url.path() == "/me") { ++accountRequests;value = QJsonObject{{"user",QJsonObject{{"id","fixture-account"},{"codeSuffix","TEST"},{"status","active"},{"hasAssignedLink",accessActive},{"hasActiveSubscription",accessActive},{"activePackage",QJsonObject{{"title","Yerel doğrulama paketi"},{"endsAt",expiryText}}}}}}; }
         else if (url.path() == "/me/provider-session") value = QJsonObject{{"accountId","fixture-account"},{"sourceVersion","fixture-v1"},{"providerOrigin",base().toString()},{"username","fixture-user"},{"password","fixture-secret"},{"expiresAt",expiryText},{"moviePolicy","general-audience-only"}};
         else if (url.path() == "/me/welcome-offer") value = welcome();
         else if (url.path() == "/me/welcome-offer/choice") { welcomePending_=false;value=welcome(); }
@@ -135,6 +136,8 @@ class FixtureServer final : public QTcpServer {
         socket->disconnectFromHost();
     }
 public:
+    bool accessActive = true;
+    int accountRequests = 0;
     qint64 expiry = QDateTime::currentMSecsSinceEpoch()+3600000;
     QSet<QString> paths, actions;
     FixtureServer() {
@@ -270,6 +273,17 @@ int main(int argc,char **argv) {
     root->resize(900,620); QTest::qWait(100);
     if(!capture(root,QDir(output).filePath("minimum-size.png")))return finish("Minimum size screenshot failed",21);
     root->resize(1280,800);
+    fixture.accessActive=false;repository.refresh();
+    if(!until([&]{auto expired=visual(root->contentItem(),"expiredAccessPage");return repository.authenticated()&&!repository.busy()&&repository.account()["canPlay"]==false&&expired&&expired->isVisible();}))return finish("Authenticated expired account did not show its access screen",44);
+    auto browse=visual(root->contentItem(),"browsePage"),loginInput=visual(root->contentItem(),"loginCode");
+    if(!browse||browse->isVisible()||!loginInput||loginInput->isVisible())return finish("Expired account showed a catalog or login form",45);
+    for(const auto &name:QStringList{"expiredPackages","expiredRefresh","expiredSupport","expiredLogout"}) { auto action=visual(root->contentItem(),name);if(!action||!action->isVisible()||!action->isEnabled())return finish("Expired access action missing: "+name,46); }
+    if(!capture(root,QDir(output).filePath("expired-access.png")))return finish("Expired access screenshot failed",47);
+    const auto checked=fixture.accountRequests;
+    if(!click(root,"expiredRefresh")||!until([&]{return fixture.accountRequests>checked&&!repository.busy();}))return finish("Expired account recheck did not reach the fixture",48);
+    fixture.accessActive=true;
+    if(!click(root,"expiredRefresh")||!until([&]{return !repository.busy()&&repository.account()["canPlay"]==true;}))return finish("Renewed account did not restore access",49);
+    report["expiredAccess"]=true;
     const bool http=fixture.paths.contains("/auth/login-by-code")&&fixture.paths.contains("/me/provider-session")&&fixture.paths.contains("/me/personal-library")&&fixture.actions.contains("get_vod_streams")&&fixture.actions.contains("get_live_streams")&&fixture.actions.contains("get_series_info")&&!fixture.paths.contains("/me/native");
     report["fixtureHttp"]=http;
     if(!http)return finish("Required fixture HTTP flows were not exercised",22);
@@ -297,6 +311,16 @@ int main(int argc,char **argv) {
     player.interact();
     QQuickWindow *video=nullptr; for(auto window:QGuiApplication::topLevelWindows())if(auto quick=qobject_cast<QQuickWindow *>(window);quick&&quick!=root&&quick->isVisible()&&quick->color()==QColor("black"))video=quick;
     if(!video || !capture(video,QDir(output).filePath("player.png")))return finish("Native player screenshot failed",25);
+    QQuickWindow *overlay=nullptr;for(auto window:QGuiApplication::topLevelWindows())if(window->objectName()=="playerOverlay")overlay=qobject_cast<QQuickWindow *>(window);
+    if(!overlay)return finish("Player controls window missing",50);
+    overlay->requestActivate();QTest::qWait(50);
+    const QPoint center(overlay->width()/2,overlay->height()/2);
+    QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,center);
+    QTest::mouseDClick(overlay,Qt::LeftButton,Qt::NoModifier,center);
+    QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval()+80);
+    if(!player.playing()||!player.fullScreen())return finish("Video double-click paused playback instead of only changing fullscreen",51);
+    player.setFullScreen(false);
+    report["doubleClickPreservedPlayback"]=true;
     player.interact();
     if(!until([&]{return !player.controlsVisible();},4000))return finish("Player controls did not hide after idle",26);
     player.togglePause();if(!until([&]{return !player.playing()&&player.controlsVisible();}))return finish("Pause/controls state failed",27);
@@ -316,8 +340,10 @@ int main(int argc,char **argv) {
     player.selectAudio(audio[1]);player.selectSubtitle(subtitles[0]);
     QTest::qWait(2400);
     if(player.audioTrack()!=audio[1]||player.subtitleTrack()!=subtitles[0]||!player.playing())return finish("MKV selected audio/subtitle IDs did not persist after native track polling",39);
-    auto overlay=root->findChild<QQuickWindow *>("playerOverlay");
+    overlay=root->findChild<QQuickWindow *>("playerOverlay");
     if(!overlay)for(auto window:QGuiApplication::topLevelWindows())if(window->objectName()=="playerOverlay")overlay=qobject_cast<QQuickWindow *>(window);
+    const auto subtitleMenu=overlay?overlay->findChild<QObject *>("playerSubtitleMenu"):nullptr;
+    if(!subtitleMenu||subtitleMenu->property("count").toInt()!=subtitles.size()+1)return finish("Subtitle menu duplicated its off entry or omitted a track",52);
     for(const auto &names:QList<QPair<QString,QString>>{{"playerAudioAction","playerAudioMenu"},{"playerSubtitleAction","playerSubtitleMenu"}}) {
         player.interact();if(!overlay||!click(overlay,names.first))return finish("Track menu control failed",40);
         auto menu=overlay->findChild<QObject *>(names.second);
