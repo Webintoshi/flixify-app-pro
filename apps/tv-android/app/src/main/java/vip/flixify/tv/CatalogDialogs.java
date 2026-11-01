@@ -213,7 +213,7 @@ final class CatalogDialogs {
         LinearLayout.LayoutParams filterSpace=new LinearLayout.LayoutParams(-1,dp(activity,50));filterSpace.topMargin=dp(activity,12);filterSpace.bottomMargin=dp(activity,12);content.addView(inputRow,filterSpace);
         filter.setOnFocusChangeListener((v,focused)->inputRow.setBackground(inputSurface(activity,focused)));
         FrameLayout listHost=new FrameLayout(activity);
-        ListView list=new ListView(activity);list.setId(View.generateViewId());list.setTag("tv_categories_list");list.setFocusable(true);list.setFocusableInTouchMode(true);
+        ListView list=new CategoryListView(activity);list.setId(View.generateViewId());list.setTag("tv_categories_list");list.setFocusable(true);list.setFocusableInTouchMode(true);
         list.setItemsCanFocus(false);list.setChoiceMode(ListView.CHOICE_MODE_SINGLE);list.setVerticalScrollBarEnabled(false);
         list.setDivider(new ColorDrawable(Color.TRANSPARENT));list.setDividerHeight(dp(activity,5));list.setClipToPadding(false);
         list.setSelector(rowSelector(activity));list.setDrawSelectorOnTop(false);list.setPadding(0,dp(activity,3),0,dp(activity,3));
@@ -229,7 +229,8 @@ final class CatalogDialogs {
         LinearLayout.LayoutParams footerSpace=new LinearLayout.LayoutParams(-1,dp(activity,44));footerSpace.topMargin=dp(activity,8);content.addView(footer,footerSpace);content.optionalFooter=footer;
         Runnable focusList=()->{
             if(adapter.getCount()==0){close.requestFocus();return;}
-            hideKeyboard(filter);list.requestFocus();
+            // A touch keyboard leaves ListView selection deferred until the first OK unless touch mode ends here.
+            hideKeyboard(filter);list.requestFocusFromTouch();
             int index=adapter.selectedPosition();list.clearChoices();if(index>=0)list.setItemChecked(index,true);list.setSelection(Math.max(0,index));
         };
         list.setOnItemClickListener((parent,view,position,id)->{

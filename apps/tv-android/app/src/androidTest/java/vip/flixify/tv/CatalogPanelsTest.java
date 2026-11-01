@@ -98,17 +98,30 @@ public class CatalogPanelsTest {
     }
     boolean imeVisible(){for(AccessibilityWindowInfo w:InstrumentationRegistry.getInstrumentation().getUiAutomation().getWindows())if(w.getType()==AccessibilityWindowInfo.TYPE_INPUT_METHOD)return true;return false;}
     @Test public void categoryFinderKeepsEditorVisibleAndDoneReturnsToList(){
+        categoryFinderAfterKeyboard(false);
+    }
+    @Test public void categoryDoneFromTouchKeyboardCommitsMatchingCategoryWithOneOk(){
+        categoryFinderAfterKeyboard(true);
+    }
+    private void categoryFinderAfterKeyboard(boolean forceTouchMode){
         try(ActivityScenario<MainActivity> s=launch()){
             openCategories(s);key(KeyEvent.KEYCODE_DPAD_LEFT);key(KeyEvent.KEYCODE_DPAD_CENTER);
             await(s,"Native category keyboard visible",a->imeVisible());
             final View[] original={null};
             s.onActivity(a->{original[0]=tag(a,"tv_categories_filter");Rect visible=new Rect();assertTrue("Category editor remains visible with the TV keyboard",original[0].getGlobalVisibleRect(visible));assertTrue("Category editor fully fits while typing; visible="+visible+", size="+original[0].getWidth()+"x"+original[0].getHeight(),visible.height()>=original[0].getHeight()-2);});
             draft(s,"tv_categories_filter","Drama");
+            if(forceTouchMode)InstrumentationRegistry.getInstrumentation().setInTouchMode(true);
             s.onActivity(a->((EditText)original[0]).onEditorAction(EditorInfo.IME_ACTION_DONE));
             await(s,"Done dismisses keyboard and focuses matching category",a->!imeVisible() && tag(a,"tv_categories_list")!=null && tag(a,"tv_categories_list").hasFocus());
             s.onActivity(a->{assertSame(original[0],tag(a,"tv_categories_filter"));assertEquals(1,((ListView)tag(a,"tv_categories_list")).getAdapter().getCount());});
+            s.onActivity(a->{
+                ListView list=(ListView)tag(a,"tv_categories_list");android.view.WindowInsets insets=list.getRootWindowInsets();
+                String state="selectedPosition="+list.getSelectedItemPosition()+"\ntouchMode="+list.isInTouchMode()+"\nlistHasFocus="+list.hasFocus()+"\nwindowHasFocus="+list.hasWindowFocus()+"\nimeWindowVisible="+imeVisible()+"\nimeInsetsVisible="+(android.os.Build.VERSION.SDK_INT>=30 && insets!=null?insets.isVisible(android.view.WindowInsets.Type.ime()):"unknown")+"\n";
+                android.util.Log.i("FlixifyFixture",state);
+                try{java.io.File directory=a.getExternalFilesDir(null);if(directory!=null)try(java.io.FileOutputStream output=new java.io.FileOutputStream(new java.io.File(directory,forceTouchMode?"native-category-forced-touch-after-ime.txt":"native-category-after-ime.txt"))){output.write(state.getBytes(java.nio.charset.StandardCharsets.UTF_8));}}catch(java.io.IOException diagnosticOnly){}
+            });
             key(KeyEvent.KEYCODE_DPAD_CENTER);await(s,"Category chosen after keyboard",a->text(a.findViewById(android.R.id.content),"Kategori: Drama")!=null);
-        }
+        }finally{if(forceTouchMode)InstrumentationRegistry.getInstrumentation().setInTouchMode(false);}
     }
     @Test public void changedSourceCannotApplyOldDialogDraft(){
         AtomicReference<String> scope=new AtomicReference<>(repository.scope);

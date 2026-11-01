@@ -3,6 +3,7 @@ package vip.flixify.tv;
 import android.app.Instrumentation;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -36,6 +37,7 @@ public class WelcomeOfferUiTest {
     private View label(View root,String text){if(root instanceof TextView && text.contentEquals(((TextView)root).getText()))return root;if(root instanceof ViewGroup)for(int n=0;n<((ViewGroup)root).getChildCount();n++){View found=label(((ViewGroup)root).getChildAt(n),text);if(found!=null)return found;}return null;}
     private void click(String tag){instrumentation.runOnMainSync(()->{View view=tagged(tag);assertNotNull(tag,view);assertTrue(tag,view.isEnabled());view.requestFocus();view.performClick();});settle();}
     private void gated(){instrumentation.runOnMainSync(()->{assertNotNull(tagged("tv-welcome"));assertNull(tagged("tv-catalog-shell"));assertEquals(0,repository.catalogRequests);});}
+    private void fullyVisible(String tag){View view=tagged(tag);assertNotNull(tag,view);Rect bounds=new Rect(),viewport=new Rect();assertTrue(tag,view.getGlobalVisibleRect(bounds));assertTrue(activity.findViewById(android.R.id.content).getGlobalVisibleRect(viewport));assertEquals(tag+" full height",view.getHeight(),bounds.height());assertEquals(tag+" full width",view.getWidth(),bounds.width());assertTrue(tag+" inside viewport",viewport.contains(bounds));}
     @Test public void pendingFetchCannotExposeCatalogThroughResizeStopOrResume(){
         repository.delayWelcome=true;launch();gated();
         final TvRepository.Callback<WelcomeOffer> old=repository.delayedWelcome;
@@ -87,5 +89,16 @@ public class WelcomeOfferUiTest {
             instrumentation.runOnMainSync(()->assertEquals("Paketleri gör",((TextView)activity.getCurrentFocus()).getText().toString()));instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER);settle();
             assertNotNull(sent.get());assertEquals("https://flixify.vip/paketler?welcome=1&users=1",sent.get().getDataString());assertNull(sent.get().getExtras());assertEquals(0,repository.welcomeChoices);
         }finally{instrumentation.removeMonitor(browser);}
+    }
+    @Test public void televisionViewportShowsEqualCardsAndBothCtasWithoutClipping(){
+        launch();instrumentation.runOnMainSync(()->{ViewGroup root=activity.findViewById(android.R.id.content);ViewGroup.LayoutParams size=root.getLayoutParams();size.width=TvUi.dp(activity,960);size.height=TvUi.dp(activity,540);root.setLayoutParams(size);});settle();
+        for(int users:new int[]{1,2}){
+            if(users==2)click("welcome-users-2");
+            instrumentation.runOnMainSync(()->{for(String tag:new String[]{"welcome-trial-card","welcome-paid-card","welcome-trial","welcome-paid","welcome-users-1","welcome-users-2","welcome-price","welcome-payment-hint","welcome-logout"})fullyVisible(tag);
+                View left=tagged("welcome-trial-card"),right=tagged("welcome-paid-card");assertEquals("Card frame heights",left.getHeight(),right.getHeight());
+                int[] leftButton=new int[2],rightButton=new int[2];tagged("welcome-trial").getLocationOnScreen(leftButton);tagged("welcome-paid").getLocationOnScreen(rightButton);assertEquals("CTA alignment",leftButton[1],rightButton[1]);
+                assertTrue(tagged("welcome-users-"+users).isSelected());assertFalse(tagged("welcome-users-"+(users==1?2:1)).isSelected());
+            });
+        }
     }
 }
