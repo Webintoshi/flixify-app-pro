@@ -1,10 +1,10 @@
 {
   "packageName": "vip.flixify.tv",
-  "versionName": "1.4.5",
-  "versionCode": 13,
+  "versionName": "1.4.6",
+  "versionCode": 14,
   "minSdk": 23,
-  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.5.apk",
-  "sha256": "0557946f54082e60a171d5ada901b725e8308b7136d606efcb78233b5ff4d338",
-  "sizeBytes": 1367652,
-  "notes": "Daha hızlı katalog ve favoriler, arka plan veri hazırlığı ve düşük bellek iyileştirmeleri. Video dosyaları indirilmez; mevcut tema ve kumanda kontrolleri korunur."
+  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.6.apk",
+  "sha256": "911bbfc9d6513676d6c6605af1e07a4d9e81f9997bb44c32c17688ae9b34a4b6",
+  "sizeBytes": 1374125,
+  "notes": "Yeni üyelere özel karşılama ekranı ve aylık paketlerde %50 indirim. TV ekranına uyumlu paket seçimi ve kumandayla kategori seçimi iyileştirildi. Katalog, favoriler ve oynatıcı korunur."
 }
