@@ -23,6 +23,15 @@ export default function DownloadsPage() {
     } catch {}
   }, []);
 
+  useEffect(() => {
+    const id = window.location.hash.slice(1);
+    if (id !== "macos" && id !== "android-tv") return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
   function handleLogout() {
     try {
       window.localStorage.removeItem("flixify-public-session");
