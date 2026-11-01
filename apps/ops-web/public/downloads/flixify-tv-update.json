@@ -1,10 +1,10 @@
 {
   "packageName": "vip.flixify.tv",
-  "versionName": "1.4.6",
-  "versionCode": 14,
+  "versionName": "1.4.7",
+  "versionCode": 15,
   "minSdk": 23,
-  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.6.apk",
-  "sha256": "911bbfc9d6513676d6c6605af1e07a4d9e81f9997bb44c32c17688ae9b34a4b6",
-  "sizeBytes": 1374125,
-  "notes": "Yeni üyelere özel karşılama ekranı ve aylık paketlerde %50 indirim. TV ekranına uyumlu paket seçimi ve kumandayla kategori seçimi iyileştirildi. Katalog, favoriler ve oynatıcı korunur."
+  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.7.apk",
+  "sha256": "4c509e19ed410834a1e93bcf3ea3e57c0895a3f6a2e9fa33a411d56bbcb75284",
+  "sizeBytes": 1398255,
+  "notes": "Web ile uyumlu 2026 film ve dizi vitrini, Marvel/aksiyon/fantastik rafları, düzenli canlı kanal listesi ve kumanda iyileştirmeleri. Mevcut önbellek ve oynatıcı korunur."
 }
