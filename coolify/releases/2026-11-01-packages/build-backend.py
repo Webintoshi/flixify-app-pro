@@ -56,6 +56,13 @@ API_TEST_FILES = tuple(API_TEST_ROOT + path for path in (
     "billing-tests/fixtures.ts", "billing-tests/referral-store.fixture.ts",
 ))
 MIN_FREE_BYTES, MEMORY_MIB, TOTAL_MEMORY_MIB = 8 * 1024**3, 1280, 1536
+EXTERNAL_CRASHLOOP_ID = "91799af64ea846ab5d34eb06b6fe2d52427862363818bef201085032a93ff9dd"
+EXTERNAL_CRASHLOOP_NAME = "/keycloak-ofkjsgfd5e6zy6h13sainlyf-20261030T162523"
+EXTERNAL_CRASHLOOP_IMAGE = "sha256:09a381c715ab0b111835b70f2905955274843a219c6f27efb348e4d9f4086858"
+EXTERNAL_CRASHLOOP_PROJECT = "ofkjsgfd5e6zy6h13sainlyf"
+EXTERNAL_CRASHLOOP_MIN_RESTARTS = 8300
+EPHEMERAL_ENDPOINT_FIELDS = frozenset(("EndpointID", "IPAddress", "IPPrefixLen", "Gateway", "MacAddress", "IPv6Gateway", "GlobalIPv6Address", "GlobalIPv6PrefixLen"))
+EXTERNAL_RUNTIME_OBSERVATIONS = []
 
 
 def configuration(service):
@@ -282,14 +289,46 @@ def test_candidate(repo, revision, service, candidate):
     print("backend_candidate_regressions_passed:" + service + "; network_none; fixture_environment")
 
 
+def host_container_identity(row):
+    stable = {key: row.get(key) for key in ("Config", "HostConfig", "Mounts")}
+    networks = (row.get("NetworkSettings") or {}).get("Networks")
+    stable["Networks"] = networks
+    result = {"name": row["Name"], "image": row["Image"], "startedAt": row["State"].get("StartedAt"), "running": row["State"]["Running"], "restarts": row["RestartCount"]}
+    if row["Id"] == EXTERNAL_CRASHLOOP_ID or row["Name"] == EXTERNAL_CRASHLOOP_NAME:
+        labels = (row.get("Config") or {}).get("Labels") or {}
+        restarts = row.get("RestartCount")
+        if (row["Id"] != EXTERNAL_CRASHLOOP_ID or row["Name"] != EXTERNAL_CRASHLOOP_NAME or row["Image"] != EXTERNAL_CRASHLOOP_IMAGE or
+                labels.get("com.docker.compose.project") != EXTERNAL_CRASHLOOP_PROJECT or type(restarts) is not int or restarts < EXTERNAL_CRASHLOOP_MIN_RESTARTS or
+                row["State"].get("OOMKilled") is not False or type(row["State"].get("Running")) is not bool):
+            raise GateError("pinned_external_crashloop_identity_or_safety_drift")
+        if not isinstance(networks, dict) or any(not isinstance(entry, dict) for entry in networks.values()) or not isinstance(stable["Mounts"], list):
+            raise GateError("pinned_external_crashloop_configuration_shape_drift")
+        # This already-failing external service may reconnect endpoints; its configured attachments remain protected.
+        stable["Networks"] = {name: {key: value for key, value in entry.items() if key not in EPHEMERAL_ENDPOINT_FIELDS} for name, entry in networks.items()}
+        stable["Mounts"] = sorted(stable["Mounts"], key=lambda value: json.dumps(value, sort_keys=True, separators=(",", ":")))
+        for key in ("startedAt", "running", "restarts"):
+            result.pop(key)
+        dynamic = {name: {key: value for key, value in entry.items() if key in EPHEMERAL_ENDPOINT_FIELDS} for name, entry in networks.items()}
+        EXTERNAL_RUNTIME_OBSERVATIONS.append({"containerId": row["Id"], "image": row["Image"], "startedAt": row["State"].get("StartedAt"), "running": row["State"]["Running"], "restarts": restarts, "oomKilled": False,
+            "ephemeralNetworkSha256": hashlib.sha256(json.dumps(dynamic, sort_keys=True, separators=(",", ":")).encode()).hexdigest()})
+        del EXTERNAL_RUNTIME_OBSERVATIONS[:-16]
+    result["config"] = hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest()
+    return result
+
+
+def emit_runtime_observations():
+    if EXTERNAL_RUNTIME_OBSERVATIONS:
+        print("pinned_external_crashloop_runtime_observations:" + json.dumps(EXTERNAL_RUNTIME_OBSERVATIONS, sort_keys=True, separators=(",", ":")))
+
+
 def host_snapshot():
     ids = command("docker", "ps", "--all", "--quiet", "--no-trunc").decode().splitlines()
     rows = json.loads(command("docker", "inspect", *ids)) if ids else []
     result = {}
     for row in rows:
-        stable = {key: row.get(key) for key in ("Config", "HostConfig", "Mounts")}
-        stable["Networks"] = (row.get("NetworkSettings") or {}).get("Networks")
-        result[row["Id"]] = {"name": row["Name"], "image": row["Image"], "config": hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest(), "startedAt": row["State"].get("StartedAt"), "running": row["State"]["Running"], "restarts": row["RestartCount"]}
+        result[row["Id"]] = host_container_identity(row)
+    if EXTERNAL_CRASHLOOP_ID not in result:
+        raise GateError("pinned_external_crashloop_container_missing")
     service_dir = Path("/data/coolify/services") / core.UUID
     result["environment"] = hashlib.sha256((service_dir / ".env").read_bytes()).hexdigest()
     result["registrationFence"] = hashlib.sha256((service_dir / ".live-registration-rollout.json").read_bytes()).hexdigest()
@@ -325,6 +364,7 @@ def main():
     args = parser.parse_args()
     base, updates, before, protected = preflight(args.source_repo, args.revision, args.service, json.loads(args.source_pin.read_bytes()))
     if not (args.build or args.verify_existing):
+        emit_runtime_observations()
         print("backend_preflight_ok; no_mutation; independently_pinned_actual_source")
         return
     if shutil.disk_usage("/var/lib/docker").free < MIN_FREE_BYTES:
@@ -334,7 +374,9 @@ def main():
     expected = compile_overlay(args.service, args.revision, base, updates, before, publish=args.build)
     candidate = verify_candidate(args.service, args.revision, base, updates, before, expected)
     test_candidate(args.source_repo, args.revision, args.service, candidate)
-    if host_snapshot() != protected:
+    after = host_snapshot()
+    emit_runtime_observations()
+    if after != protected:
         raise GateError("backend_build_changed_existing_host_or_service_environment")
     print("backend_candidate_verified:" + candidate)
 

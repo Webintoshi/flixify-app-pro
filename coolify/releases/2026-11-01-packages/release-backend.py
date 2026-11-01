@@ -194,6 +194,7 @@ def invoke(action):
             guard.sync_images(record, compose, env, before, raw, rendered, guard.SOURCE, guard.TARGET)
     if fence_snapshot() != before_fence or protected_host_snapshot() != before_host:
         raise GateError("backend_release_changed_registration_fence_or_other_service")
+    builder.emit_runtime_observations()
     print("backend_" + (action or "dry_run") + "_verified; service=" + SERVICE + "; environment_registration_fence_and_other_services_unchanged")
 
 
