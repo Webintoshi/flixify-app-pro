@@ -1,5 +1,6 @@
 """Offline welcome-offer release contracts; never contacts a device or host."""
 import contextlib
+import ast
 import copy
 import hashlib
 import importlib.util
@@ -184,5 +185,20 @@ class Contracts(unittest.TestCase):
         for key in ('environment','registrationFence'):
             value=dict(expected);value[key]='f'*64
             with self.assertRaises(backend.GateError):backend.validate_runtime_proofs(value)
+    def test_real_apk_reader_forwards_reviewed_cap_and_reads_a_regular_2kib_apk(self):
+        with tempfile.TemporaryDirectory(prefix='welcome-apk-reader-') as directory:
+            path=Path(directory)/'release.apk';payload=b'PK\x03\x04'+bytes(2044);path.write_bytes(payload)
+            self.assertEqual(android.regular_bytes(path),payload)
+            self.assertEqual(android.web.MAX_APK_BYTES,android.web.reviewed.MAX_APK_BYTES)
+            path.write_bytes(b'not an apk'+bytes(2038))
+            with self.assertRaises(android.GateError):android.regular_bytes(path)
+            with path.open('wb') as handle:handle.truncate(android.web.MAX_APK_BYTES+1)
+            with self.assertRaises(android.GateError):android.regular_bytes(path)
+    def test_native_verifiers_have_every_profile_global_they_access(self):
+        for name,module in (('verify-android.py',android),('verify-upgrade.py',upgrade)):
+            tree=ast.parse((HERE/name).read_text())
+            required={node.attr for node in ast.walk(tree) if isinstance(node,ast.Attribute) and isinstance(node.value,ast.Name) and node.value.id=='web'}
+            for field in required:
+                with self.subTest(verifier=name,field=field):self.assertTrue(hasattr(module.web,field),field)
 
 if __name__=='__main__':unittest.main()

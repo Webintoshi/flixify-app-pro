@@ -4,7 +4,7 @@
       "path": "apps/api/src/stripe-billing-routes.ts",
       "source": "coolify/releases/2026-11-01-welcome-offer/api-source/stripe-billing-routes.ts",
       "new": false,
-      "sha256": "e9f83086e8c3bc5fa55e42d58b45672a1558e03ad95862dacdffce7f49062e03"
+      "sha256": "5796433deeecd30347521f91e5a98056cb3be9cf078dc384cac7bd7a4ebaa144"
     },
     {
       "path": "apps/api/src/stripe-billing-store.ts",

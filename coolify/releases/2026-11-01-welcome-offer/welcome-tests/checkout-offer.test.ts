@@ -27,4 +27,6 @@ describe('account-bound welcome Checkout',()=>{
  it('does not reuse an ambiguous full-price creating operation for the discounted request',async()=>{const f=fixture();f.store.pendingCheckout.mockResolvedValue({operationId:'op_old',packageSlug:'1-ay',status:'creating',sessionId:null,priceId:saleIds['1-ay'],catalogVersion:'2026-11-01-one-time'});expect((await f.buy()).statusCode).toBe(409);expect(f.stripe.createCheckoutSession).not.toHaveBeenCalled();await f.app.close();});
  it('retains its reservation after an uncertain Stripe create instead of admitting a second charge',async()=>{const f=fixture();f.stripe.createCheckoutSession.mockRejectedValue(new Error('timeout'));expect((await f.buy()).statusCode).toBe(503);expect(f.store.failCheckout).not.toHaveBeenCalled();await f.app.close();});
 
+ it('uses Dashboard-managed payment methods instead of the retired payment_method_types parameter',async()=>{for(const payload of[{packageSlug:'1-ay'},{packageSlug:'1-ay',offerId:campaign}]){const f=fixture();expect((await f.app.inject({method:'POST',url:'/me/billing/checkout-session',payload})).statusCode).toBe(200);expect(f.stripe.createCheckoutSession.mock.calls[0][0]).not.toHaveProperty('payment_method_types');await f.app.close();}});
+
 });

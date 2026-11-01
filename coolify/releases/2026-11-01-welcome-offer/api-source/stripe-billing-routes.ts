@@ -11,7 +11,6 @@ type CheckoutParams = {
   redirect_on_completion: 'if_required';
   customer: string;
   client_reference_id: string;
-  payment_method_types: ['card'];
   line_items: [{ price: string; quantity: 1 }];
   return_url: string;
   discounts?: [{coupon: string}];
@@ -177,7 +176,6 @@ export function registerStripeBillingRoutes(app: FastifyInstance, deps: Dependen
         redirect_on_completion: 'if_required',
         customer: customerId,
         client_reference_id: userId,
-        payment_method_types: ['card'],
         line_items: [{ price: selected.priceId, quantity: 1 }],
         ...(offer ? {discounts:[{coupon:offer.couponId}] as [{coupon:string}]} : {}),
         return_url: 'https://flixify.vip/odeme-sonucu?session_id={CHECKOUT_SESSION_ID}',
