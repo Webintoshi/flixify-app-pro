@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import { apiRequest } from "../../lib/api";
 import { accountState, type AccountUser } from "../../lib/account-model";
@@ -17,6 +17,9 @@ import { pagePersonalCatalog, sessionIdentity, resolvePersonalDetail } from "./p
 import { buildShowcaseRails, orderShowcaseCatalog, showcaseDayKey } from "./catalog-showcase";
 import { buildHomepageShowcase, selectHomepageCatalog } from "./homepage-showcase";
 import { HomepageHero } from "./homepage-hero";
+import { buildMovieShowcase } from "./movie-showcase";
+import { loadMovieShowcaseSeeds, movieShowcaseQueries } from "./movie-showcase-source";
+import { useInfiniteScroll } from "./use-infinite-scroll";
 import { pageLiveChannelCatalog } from "./live-channel-lineup";
 import { loadLegacyLiveCatalog } from "./legacy-live-catalog";
 import { itemKey, type Catalog, type Kind, type MediaItem } from "./types";
@@ -102,7 +105,21 @@ function MediaTile({ item, open }: { item: MediaItem; open: (item: MediaItem, au
   </div>;
 }
 function Skeletons() { return <div className={s.grid} aria-busy="true" aria-label="İçerikler yükleniyor">{Array.from({ length: 12 }, (_, i) => <div className={s.skeleton} key={i}/>)}</div>; }
-function MediaRail({ label, row, href, open, className, landscape = false }: { label: string; row: MediaItem[]; href?: string; open: (item: MediaItem, autoPlay?: boolean) => void; className?: string; landscape?: boolean }) {
+function MovieHeroSkeleton() {
+  return <section className={homeStyles.hero} data-homepage-hero data-movie-hero-loading role="status" aria-busy="true" aria-label="2026 film vitrini hazırlanıyor">
+    <div className={homeStyles.copy} aria-hidden="true">
+      <p className={homeStyles.metadata}><span className={s.skeleton} style={{ display: "block", width: 100, height: "1.5em", aspectRatio: "auto" }}/></p>
+      <h1><span className={s.skeleton} style={{ display: "block", maxWidth: 560, height: "1.05em", aspectRatio: "auto" }}/></h1>
+      <p className={homeStyles.category}><span className={s.skeleton} style={{ display: "block", width: "55%", height: "1.6em", aspectRatio: "auto" }}/></p>
+      <div className={homeStyles.actions}><span className={`${homeStyles.watch} ${s.skeleton}`} style={{ width: 116, aspectRatio: "auto", backgroundColor: "var(--tv-panel)" }}/><span className={`${homeStyles.info} ${s.skeleton}`} style={{ width: 86, aspectRatio: "auto" }}/></div>
+    </div>
+    <div className={homeStyles.poster} style={{ cursor: "default" }} aria-hidden="true"><div className={s.skeleton} data-artwork-kind="movie"/></div>
+    <div className={homeStyles.selectors} aria-hidden="true">{Array.from({ length: 5 }, (_, index) => <div className={homeStyles.selector} style={{ cursor: "default" }} key={index}>
+      <span className={homeStyles.selectorImage}><div className={s.skeleton} data-artwork-kind="movie"/></span><span className={`${homeStyles.selectorTitle} ${s.skeleton}`} style={{ height: "1.4em", aspectRatio: "auto" }}/>
+    </div>)}</div>
+  </section>;
+}
+function MediaRail({ label, row, href, open, className, landscape = false, emptyMessage }: { label: string; row: MediaItem[]; href?: string; open: (item: MediaItem, autoPlay?: boolean) => void; className?: string; landscape?: boolean; emptyMessage?: string }) {
   const rail = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ start: true, end: false });
   const move = (direction: number) => {
@@ -125,10 +142,10 @@ function MediaRail({ label, row, href, open, className, landscape = false }: { l
   return <section className={`${s.mediaSection} ${landscape ? s.landscapeRail : ""} ${className ?? ""}`} data-media-layout={landscape ? "landscape" : "poster"}>
     <div className={s.sectionHeading}><h2>{label}</h2><div className={s.railActions}>
       {href && <Link href={href}>Tümünü Gör <Icon name="arrow"/></Link>}
-      <button type="button" aria-label={`${label} önceki içerikler`} disabled={position.start} onClick={() => move(-1)}><span style={{ display: "flex", transform: "rotate(180deg)" }}><Icon name="arrow"/></span></button>
-      <button type="button" aria-label={`${label} sonraki içerikler`} disabled={position.end} onClick={() => move(1)}><Icon name="arrow"/></button>
+      {row.length > 0 && <><button type="button" aria-label={`${label} önceki içerikler`} disabled={position.start} onClick={() => move(-1)}><span style={{ display: "flex", transform: "rotate(180deg)" }}><Icon name="arrow"/></span></button>
+      <button type="button" aria-label={`${label} sonraki içerikler`} disabled={position.end} onClick={() => move(1)}><Icon name="arrow"/></button></>}
     </div></div>
-    <div ref={rail} className={s.horizontalRail} onScroll={() => { const element = rail.current; if (element) setPosition({ start: element.scrollLeft <= 2, end: element.scrollLeft + element.clientWidth >= element.scrollWidth - 2 }); }}>{row.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div>
+    {row.length ? <div ref={rail} className={s.horizontalRail} onScroll={() => { const element = rail.current; if (element) setPosition({ start: element.scrollLeft <= 2, end: element.scrollLeft + element.clientWidth >= element.scrollWidth - 2 }); }}>{row.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div> : emptyMessage ? <p style={{ color: "var(--tv-muted)", fontSize: 14, lineHeight: 1.6 }}>{emptyMessage}</p> : null}
   </section>;
 }
 export default function CatalogPage({ kind, overview = false, favoritesOnly = false }: { kind: Kind; overview?: boolean; favoritesOnly?: boolean }) {
@@ -141,7 +158,11 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const [group, setGroup] = useState("");
   const hasCategories = !favoritesOnly && !overview;
   const [filter, setFilter] = useState<Kind | "all">("all");
-  const [page, setPage] = useState(1);
+  const [pageState, setPageState] = useState<{ owner: object | null; page: number }>({ owner: null, page: 1 });
+  const [pageProgress, setPageProgress] = useState<{ owner: object | null; page: number; count: number; hasMore: boolean }>({ owner: null, page: 0, count: 0, hasMore: false });
+  const committedCatalog = useRef<{ owner: object | null; items: MediaItem[] }>({ owner: null, items: [] });
+  const [movieSeedRetry, setMovieSeedRetry] = useState(0);
+  const [moviePool, setMoviePool] = useState<{ owner: object | null; items: MediaItem[]; complete: boolean; error: boolean }>({ owner: null, items: [], complete: false, error: false });
   const [catalog, setCatalog] = useState<Catalog>({ items: [], total: 0 });
   const [catalogAccount, setCatalogAccount] = useState("");
   const [accessAccount, setAccessAccount] = useState<{ account: string; user: AccountUser } | null>(null);
@@ -216,6 +237,16 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   }, [personalProvider, providerMode, providerScope, identity, acquisitionDay, personalSnapshot, livePolicyRevision, overview, session?.accessToken]);
   const hasSession = Boolean(session);
   const currentMovieRevision = movieRevision.account === account ? movieRevision.revision : 0;
+  const catalogOwner = JSON.stringify([account, kind, search, group, acquisitionDay, overview, currentMovieRevision]);
+  const paginationOwner = useMemo(() => ({}), [catalogOwner, personalSnapshot]);
+  const paginationOwnerRef = useRef(paginationOwner);
+  useLayoutEffect(() => { paginationOwnerRef.current = paginationOwner; }, [paginationOwner]);
+  const page = pageState.owner === paginationOwner ? pageState.page : 1;
+  const setPage = useCallback((value: number | ((page: number) => number)) => setPageState(previous => {
+    const current = previous.owner === paginationOwner ? previous.page : 1;
+    const next = typeof value === "function" ? value(current) : value;
+    return previous.owner === paginationOwner && previous.page === next ? previous : { owner: paginationOwner, page: next };
+  }), [paginationOwner]);
   const selectedId = params.get("item");
   const selectedKind = params.get("kind");
   const panelOwner = useMemo(() => ({ account, kind, group, query, search, filter, overview, favoritesOnly, selectedId, selectedKind, currentMovieRevision, personalSnapshot }), [account, kind, group, query, search, filter, overview, favoritesOnly, selectedId, selectedKind, currentMovieRevision, personalSnapshot]);
@@ -224,7 +255,6 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   const activePanel = panel?.owner === panelOwner ? panel.type : null;
   const [categoryPreview, setCategoryPreview] = useState<{ owner: object; groups: NonNullable<Catalog["groups"]>; total: number } | null>(null);
   useEffect(() => { setPanel(null); }, [panelOwner]);
-  const catalogOwner = JSON.stringify([account, kind, search, group, acquisitionDay, overview]);
   const rowsOwner = JSON.stringify([account, search, acquisitionDay]);
   useEffect(() => {
     const refresh = () => {
@@ -266,14 +296,19 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     if (!session || providerMode === "loading" || favoritesOnly) { setLoading(false); return; }
     let cancelled = false; const controller = new AbortController(); setLoading(true); setError("");
     loadCatalog(kind, page, search, group, account, currentMovieRevision, controller.signal).then(data => {
-      if (cancelled) return;
-      setCatalog(previous => ({ ...data, items: page === 1 || catalogAccount !== catalogOwner ? data.items : Array.from(new Map([...previous.items, ...data.items].map(i => [itemKey(i), i])).values()) }));
+      if (cancelled || paginationOwnerRef.current !== paginationOwner) return;
+      const previous = committedCatalog.current.owner === paginationOwner ? committedCatalog.current.items : [];
+      const merged = page === 1 ? data.items : Array.from(new Map([...previous, ...data.items].map(item => [itemKey(item), item])).values());
+      const added = page === 1 ? merged.length : merged.length - previous.length;
+      committedCatalog.current = { owner: paginationOwner, items: merged };
+      setCatalog({ ...data, items: merged });
+      setPageProgress({ owner: paginationOwner, page, count: merged.length, hasMore: data.items.length > 0 && added > 0 && merged.length < data.total });
       if (!group && data.groups?.length) setCategoryGroups({ account, kind, groups: data.groups });
       setCatalogAccount(catalogOwner);
       setCatalogSnapshot(personalSnapshot);
     }).catch(() => { if (!cancelled) setError("İçerikler yüklenemedi. Tekrar deneyebilirsin."); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; controller.abort(); };
-  }, [session, account, kind, page, search, group, favoritesOnly, reload, currentMovieRevision, loadCatalog]);
+  }, [session, account, kind, page, search, group, favoritesOnly, reload, currentMovieRevision, loadCatalog, paginationOwner]);
   useEffect(() => {
     if (!overview || !session || providerMode === "loading") return;
     let cancelled = false; const controller = new AbortController(); setOtherVodLoading(true);
@@ -330,7 +365,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     hasAssignedLink: Boolean(verifiedUser.hasAssignedLink),
     trialProvisionStatus: verifiedUser.trialProvisionStatus ?? null
   }) : null;
-  const shownCatalog: Catalog = catalogAccount === catalogOwner && catalogSnapshot === personalSnapshot ? catalog : { items: [], total: 0, groups: [] };
+  const shownCatalog: Catalog = catalogAccount === catalogOwner && catalogSnapshot === personalSnapshot && pageProgress.owner === paginationOwner ? catalog : { items: [], total: 0, groups: [] };
   const items = useMemo(() => favoritesOnly ? favorites.filter(item => (filter === "all" || item.kind === filter) && item.title.toLocaleLowerCase("tr").includes(search.toLocaleLowerCase("tr"))) : shownCatalog.items, [favoritesOnly, favorites, filter, search, shownCatalog.items]);
   const emptyCopy = emptyCatalogCopy(kind, group, search);
   const currentOtherRows = useMemo(() => otherRowsAccount === rowsOwner && rowsSnapshot === personalSnapshot ? otherRows : [], [otherRowsAccount, rowsOwner, otherRows, rowsSnapshot, personalSnapshot]);
@@ -341,6 +376,37 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   }, [shownCatalog.items, overview, currentOtherRows, providerMode, day]);
   const homepage = useMemo(() => buildHomepageShowcase(dailyPool.filter(item => !failedPosters.has(itemKey(item))), day), [dailyPool, day, failedPosters]);
   const homeView = overview && !search;
+  const movieView = kind === "movie" && !overview && !favoritesOnly && !search && !group;
+  const moviePoolOwner = useMemo(() => ({}), [account, personalSnapshot, currentMovieRevision, reload, movieSeedRetry]);
+  const movieGroups = categoryGroups.account === account && categoryGroups.kind === "movie" ? categoryGroups.groups : shownCatalog.groups ?? [];
+  const movieQueriesKey = JSON.stringify(movieShowcaseQueries(movieGroups));
+  const seedEnabled = movieView && !accessCopy && !activePanel && !selectedId && !detail && !detailLoading && providerMode !== "loading" && pageProgress.owner === paginationOwner;
+  useEffect(() => {
+    if (!seedEnabled || !session || (moviePool.owner === moviePoolOwner && moviePool.complete)) return;
+    let cancelled = false; const controller = new AbortController();
+    const first = [...shownCatalog.items];
+    setMoviePool({ owner: moviePoolOwner, items: first, complete: false, error: false });
+    const publish = (entries: MediaItem[], complete: boolean) => { if (!cancelled) setMoviePool({ owner: moviePoolOwner, items: entries, complete, error: false }); };
+    if (providerMode === "personal") {
+      const raw = personalSnapshot.raw.get("movie");
+      if (raw) void raw.then(entries => publish(entries, true)).catch(() => { if (!cancelled) setMoviePool({ owner: moviePoolOwner, items: first, complete: true, error: true }); });
+    } else if (providerMode === "legacy") {
+      void loadMovieShowcaseSeeds({ account, revision: currentMovieRevision, groups: movieGroups, signal: controller.signal,
+        request: query => getCatalog("movie", 1, query.search, query.group, account, currentMovieRevision, query.pageSize, { signal: controller.signal, accessToken: session.accessToken, skipAuthRefresh: true }),
+        onItems: entries => publish([...first, ...entries], false)
+      }).then(entries => publish([...first, ...entries], true)).catch(() => { if (!cancelled) setMoviePool(previous => ({ owner: moviePoolOwner, items: previous.owner === moviePoolOwner ? previous.items : first, complete: true, error: true })); });
+    }
+    return () => { cancelled = true; controller.abort(); };
+  }, [seedEnabled, moviePoolOwner, movieQueriesKey, providerMode, personalSnapshot, account, currentMovieRevision, session?.accessToken]);
+  const movieCandidates = useMemo(() => {
+    const owned = moviePool.owner === moviePoolOwner ? moviePool.items : [];
+    return providerMode === "personal" && moviePool.owner === moviePoolOwner && moviePool.complete ? owned : [...owned, ...items];
+  }, [moviePool, moviePoolOwner, providerMode, items]);
+  const orderedMovieCandidates = useMemo(() => providerMode === "personal" ? orderShowcaseCatalog(movieCandidates, "movie", day) : movieCandidates, [movieCandidates, providerMode, day]);
+  const movieCollections = useMemo(() => buildMovieShowcase(orderedMovieCandidates, { failedPosters }), [orderedMovieCandidates, failedPosters]);
+  const moviePoolPending = moviePool.owner !== moviePoolOwner || !moviePool.complete;
+  const movieCollectionNotice = moviePoolPending ? "Seçkiler hazırlanıyor…" : moviePool.error ? "Seçki şu anda yüklenemiyor." : null;
+  const movieHeroPending = movieView && !movieCollections.hero.length && hasSession && !error && !providerError && (providerMode === "loading" || (loading && !items.length) || moviePoolPending);
   const homeLoading = providerMode === "loading" || loading || otherVodLoading || (catalogAccount !== catalogOwner && !error);
   const hideFailedPoster = (event: SyntheticEvent<HTMLElement>) => {
     const image = event.target as HTMLElement;
@@ -354,7 +420,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   };
   const seriesCatalog = kind === "series" && !overview && !favoritesOnly;
   // Preserve the legacy provider prefix as pages append; only complete personal pools are daily-ranked.
-  const discoveryRows = useMemo(() => !favoritesOnly && !overview && !group && !search && kind !== "live" ? buildShowcaseRails(items, kind) : null, [favoritesOnly, overview, group, search, kind, items]);
+  const discoveryRows = useMemo(() => !favoritesOnly && !overview && !group && !search && kind === "series" ? buildShowcaseRails(items, kind) : null, [favoritesOnly, overview, group, search, kind, items]);
   const categories = useMemo(() => categoryGroups.account === account && categoryGroups.kind === kind ? categoryGroups.groups : shownCatalog.groups ?? [], [categoryGroups, account, kind, shownCatalog.groups]);
   useEffect(() => {
     if (activePanel !== "categories" || providerMode !== "personal") return;
@@ -395,15 +461,24 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     if (panelOwnerRef.current !== owner) return;
     setQuery(value); setSearch(value); setPage(1); closePanel(owner);
   };
+  const paginationEnabled = !favoritesOnly && !overview && hasSession && providerMode !== "loading" && !accessCopy && !activePanel && !selectedId && !detail && !detailLoading;
+  const hasMorePages = pageProgress.owner === paginationOwner && pageProgress.hasMore;
+  const infiniteSentinel = useInfiniteScroll({ scopeKey: paginationOwner, enabled: paginationEnabled, hasMore: hasMorePages, loading, error,
+    progressKey: `${pageProgress.page}:${pageProgress.count}`,
+    onLoadNext: () => {
+      if (paginationOwnerRef.current !== paginationOwner || !paginationEnabled || loading || error || !hasMorePages) return;
+      setPage(previous => Math.min(previous + 1, pageProgress.page + 1));
+    }
+  });
   if (accessCopy) return <main className={`${s.catalog} ${kind === "series" && !overview && !favoritesOnly ? seriesStyles.seriesPage : ""}`}>
     <div className={s.catalogContent} data-catalog-results>
       <div className={s.catalogToolbar}><div className={s.catalogHeading}><h1>{title}</h1></div></div>
       <div className={s.empty} role="status"><Icon name="settings"/><h2>{accessCopy.heading}</h2><p>{accessCopy.body}</p>{accessCopy.action && <Link className={s.primary} href={accessCopy.action.href}>{accessCopy.action.label}</Link>}</div>
     </div>
   </main>;
-  return <main className={`${s.catalog} ${seriesCatalog ? seriesStyles.seriesPage : ""} ${homeView ? homeStyles.page : ""}`} onErrorCapture={homeView ? hideFailedPoster : undefined}>
+  return <main className={`${s.catalog} ${seriesCatalog ? seriesStyles.seriesPage : ""} ${homeView || movieView ? homeStyles.page : ""}`} onErrorCapture={homeView || movieView ? hideFailedPoster : undefined}>
     <div className={s.catalogContent} data-catalog-results>
-    {homeView && <HomepageHero key={`${account}:${day}`} items={homepage.hero} onOpen={open}/>}
+    {movieHeroPending ? <MovieHeroSkeleton/> : (homeView || movieView) && <HomepageHero key={`${account}:${day}:${movieView}`} items={movieView ? movieCollections.hero : homepage.hero} onOpen={open}/>}
     <div className={`${s.catalogToolbar} ${homeView ? homeStyles.homeToolbar : ""} ${seriesCatalog ? seriesStyles.toolbar : ""}`}><div className={s.catalogHeading} id="kesfet"><h1>{title}</h1>{(!favoritesOnly || favoritesReady) && <span>{favoritesOnly ? favorites.length : shownCatalog.total.toLocaleString("tr-TR")} içerik</span>}</div>
       <div className={`${s.filters} ${panelStyles.toolbarControls}`}>
         <button type="button" className={panelStyles.trigger} data-catalog-search-trigger data-active={Boolean(search)} aria-label={`${title} içinde ara`} aria-haspopup="dialog" aria-controls="catalog-search-dialog" aria-expanded={activePanel === "search"} onClick={() => setPanel({ owner: panelOwner, type: "search" })}><Icon name="search"/><span>{search ? "Aramayı düzenle" : "Ara"}</span></button>
@@ -415,7 +490,16 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     {favoritesOnly && <div className={s.chips}>{(["all","live","movie","series"] as const).map(value => <button key={value} className={filter === value ? s.selectedChip : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>{({all:"Tümü",live:"Canlı TV",movie:"Filmler",series:"Diziler"})[value]}</button>)}</div>}
     {(error || providerError) && <div className={s.inlineError} role="alert">{providerError || error}<button onClick={() => { setReload(v => v+1); if(providerMode === "loading") reloadFavorites(); }}>Tekrar Dene</button></div>}
     {favoritesOnly && favoritesError && <div className={s.inlineError} role="alert">{favoritesError}<button disabled={favoritesLoading} onClick={reloadFavorites}>{favoritesLoading ? "Yükleniyor…" : "Tekrar Dene"}</button></div>}
-    {homeView ? <>
+    {movieView ? <>
+      {loading && !items.length ? <Skeletons/> : <>
+        <MediaRail label="2026 Filmleri" row={movieCollections.current} href="/filmler?q=2026" className={homeStyles.posterRail} open={open} emptyMessage={movieCollectionNotice ?? "Katalogda uygun 2026 filmi henüz bulunmuyor."}/>
+        <MediaRail label="Çok İzlenenler · Marvel" row={movieCollections.marvel} className={homeStyles.posterRail} open={open} emptyMessage={movieCollectionNotice ?? "Bu koleksiyonda kullanılabilir film henüz bulunmuyor."}/>
+        <MediaRail label="Aksiyon Filmleri" row={movieCollections.action} className={homeStyles.posterRail} open={open} emptyMessage={movieCollectionNotice ?? "Afişi bulunan aksiyon filmleri burada görünecek."}/>
+        <MediaRail label="Fantastik Filmler" row={movieCollections.fantasy} className={homeStyles.posterRail} open={open} emptyMessage={movieCollectionNotice ?? "Bu koleksiyonda kullanılabilir film henüz bulunmuyor."}/>
+        {moviePool.owner === moviePoolOwner && moviePool.error && <div className={s.inlineError} role="alert">Seçkiler yüklenemedi. Film arşivine göz atabilirsin.<button onClick={() => setMovieSeedRetry(value => value + 1)}>Seçkileri tekrar yükle</button></div>}
+        <section className={s.mediaSection} aria-label="Tüm filmler"><div className={s.sectionHeading}><h2>Tüm Filmler</h2></div><div className={s.grid} data-catalog-archive>{items.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div></section>
+      </>}
+    </> : homeView ? <>
       {homeLoading && !homepage.total ? <Skeletons/> : !homepage.total ? <section className={homeStyles.empty} role="status"><span>2026</span><h1>{error ? "Vitrin şu anda yüklenemiyor" : failedPosters.size ? "2026 afişleri yüklenemiyor" : "2026 seçkisi hazırlanıyor"}</h1><p>{error ? "İçerikleri yeniden yükleyebilir veya tüm kataloğa göz atabilirsin." : failedPosters.size ? "İçeriklere film ve dizi arşivlerinden ulaşabilirsin." : "Katalogda yılı doğrulanmış 2026 içerikleri burada görünecek."}</p><div><Link href="/filmler">Tüm filmler</Link><Link href="/diziler">Tüm diziler</Link></div></section> : null}
       {homepage.movies.length > 0 && <MediaRail label="2026 Filmleri" row={homepage.movies} href="/filmler?q=2026" className={homeStyles.posterRail} open={open}/>}
       {homepage.series.length > 0 && <MediaRail label="2026 Dizileri" row={homepage.series} href="/diziler?q=2026" className={homeStyles.posterRail} open={open}/>}
@@ -429,9 +513,9 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     </> : kind === "live" && !group && !search ? <MediaRail label="Canlı TV" row={items} open={open}/> : discoveryRows ? <>
       <MediaRail label="Günün Seçkisi" row={discoveryRows.primary} className={seriesCatalog ? seriesStyles.firstRail : undefined} open={open}/>
       {discoveryRows.categories.map(([label, row]) => <MediaRail key={label} label={label} row={row} className={seriesCatalog ? seriesStyles.categoryRail : undefined} open={open}/>)}
-      {discoveryRows.other.length > 0 && <MediaRail label={kind === "series" ? "Diğer Diziler" : "Diğer Filmler"} row={discoveryRows.other} open={open}/>}
-    </> : <div className={s.grid}>{items.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div>}
-    {!favoritesOnly && !overview && items.length < shownCatalog.total && <button className={s.more} disabled={loading} onClick={() => setPage(p => p+1)}>{loading ? "Yükleniyor…" : "Daha Fazla Göster"}</button>}
+      {discoveryRows.other.length > 0 && <section className={s.mediaSection}><div className={s.sectionHeading}><h2>Diğer Diziler</h2></div><div className={s.grid} data-catalog-archive>{discoveryRows.other.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div></section>}
+    </> : <div className={s.grid} data-catalog-archive>{items.map(item => <MediaTile key={itemKey(item)} item={item} open={open}/>)}</div>}
+    {!favoritesOnly && !overview && hasMorePages && <div ref={infiniteSentinel} data-catalog-sentinel role="status" aria-live="polite" style={{ minHeight: 2 }}>{loading ? "İçerikler yükleniyor…" : ""}</div>}
     </div>
     {detailLoading && <div className={s.toast} role="status">İçerik hazırlanıyor…</div>}{detail && detailAccount === account && providerMode !== "loading" && <Detail key={itemKey(detail)} item={detail} autoPlay={params.get("play") === "1"} onClose={close}/>}
     {activePanel === "search" && <CatalogSearchDialog title={title} initialQuery={query} scope={favoritesOnly ? `Tür: ${({ all: "Tümü", movie: "Filmler", series: "Diziler", live: "Canlı TV" })[filter]}` : `Kategori: ${group || "Tümü"}`} preview={previewSearch} onSelect={item => { if (panelOwnerRef.current !== panelOwner) return; closePanel(panelOwner); open(item); }} onSubmit={value => submitSearch(value, panelOwner)} onClose={() => closePanel(panelOwner)}/>}

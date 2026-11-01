@@ -158,7 +158,7 @@ it("presents disjoint 2026 movie and series selections as portrait poster rails"
 it("backfills a failed homepage poster while retaining the content in the movie archive", async () => {
   await settle(() => root.render(<CatalogPage kind="movie" overview/>));
   const movies = () => [...container.querySelectorAll("section")].find(section => section.querySelector("h2")?.textContent === "2026 Filmleri")!;
-  const first = movies().querySelector<HTMLButtonElement>('button[aria-label$=" oynat"]')!;
+  const first = movies().querySelector<HTMLButtonElement>('[data-homepage-poster] > button[aria-label$=" oynat"]')!;
   const failedTitle = first.querySelector("strong")!.textContent!;
   const image = first.querySelector("img")!;
   await settle(() => image.dispatchEvent(new Event("error", { bubbles: true })));
@@ -169,7 +169,7 @@ it("backfills a failed homepage poster while retaining the content in the movie 
 });
 it("opens expanded artwork from keyboard focus even on a coarse pointer device and closes on Escape", async () => {
   await settle(() => root.render(<CatalogPage kind="movie"/>));
-  const tile = container.querySelector<HTMLButtonElement>('button[aria-label$="oynat"]')!;
+  const tile = container.querySelector<HTMLButtonElement>('[data-homepage-poster] > button[aria-label$="oynat"]')!;
   await settle(() => tile.focus());
   expect(document.querySelector("[data-media-preview]")).not.toBeNull();
   const escape = new Event("keydown"); Object.defineProperty(escape, "key", { value: "Escape" });
@@ -183,7 +183,7 @@ it("uses the actual channel logo when its poster field is empty", async () => {
 it("routes movie and series posters directly to playback while explicit more keeps detail navigation", async () => {
   for (const kind of ["movie", "series"] as const) {
     await settle(() => root.render(<CatalogPage kind={kind}/>));
-    const tile = container.querySelector<HTMLButtonElement>('button[aria-label$="oynat"]');
+    const tile = container.querySelector<HTMLButtonElement>('[data-homepage-poster] > button[aria-label$="oynat"]');
     expect(tile).not.toBeNull();
     const selected = items(kind).find(item => item.title === tile!.querySelector("strong")?.textContent)!;
     await settle(() => tile!.click());
@@ -209,7 +209,7 @@ it("closes search and opens its canonical preview result directly without filter
 });
 it("plays from the expanded poster surface while its explicit more action still opens details", async () => {
   await settle(() => root.render(<CatalogPage kind="movie"/>));
-  const tile = container.querySelector<HTMLButtonElement>('button[aria-label$="oynat"]')!;
+  const tile = container.querySelector<HTMLButtonElement>('[data-homepage-poster] > button[aria-label$="oynat"]')!;
   const selected = items("movie").find(item => item.title === tile.querySelector("strong")?.textContent)!;
   await settle(() => tile.focus());
   const previewPlay = document.querySelector<HTMLButtonElement>('[data-media-preview] button[aria-label$="önizlemeden oynat"]');

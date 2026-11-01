@@ -5,8 +5,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import CatalogPage from "./catalog";
 import { orderShowcaseCatalog } from "./catalog-showcase";
 import type { MediaItem } from "./types";
-const state = vi.hoisted(() => ({ platform: {} as any, params: new URLSearchParams(), api: vi.fn(), preference: null as null | ((revision: number, visible: boolean) => void) }));
+const state = vi.hoisted(() => ({ platform: {} as any, params: new URLSearchParams(), api: vi.fn(), infinite: {} as any, preference: null as null | ((revision: number, visible: boolean) => void) }));
 vi.mock("./session", () => ({ usePlatform: () => state.platform }));
+vi.mock("./use-infinite-scroll", () => ({ useInfiniteScroll: (options: any) => { state.infinite = options; return () => {}; } }));
 vi.mock("../../lib/api", () => ({ apiRequest: (path: string, options?: unknown) => state.api(path, options) }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => state.params, useRouter: () => ({ push: vi.fn(), back: vi.fn(), replace: vi.fn() }) }));
 vi.mock("next/link", () => ({ default: (props: any) => <a {...props}/> }));
@@ -15,10 +16,10 @@ vi.mock("./detail", () => ({ Detail: ({ item }: any) => <div data-detail>{item.t
 vi.mock("./adult-movie-toggle", () => ({ AdultMovieToggle: ({ onChanged }: any) => { state.preference = onChanged; return null; } }));
 let root: Root, container: HTMLElement;
 const items = (kind = "movie", version = "v1") => Array.from({ length: 120 }, (_, i) => ({ id: `${version}-${i}`, kind, title: `${kind} Title ${i}`, releaseYear: 2026, groupTitle: `Group ${i % 8}`, posterUrl: "/poster", personalRef: { kind, id: String(i), sourceVersion: version } } as MediaItem));
-const titles = () => [...container.querySelectorAll("strong")].map(n => n.textContent);
+const titles = () => [...container.querySelectorAll(container.querySelector("[data-catalog-archive]") ? "[data-catalog-archive] strong" : "strong")].map(n => n.textContent);
 const settle = async (fn = () => {}) => { await act(async () => { fn(); }); };
 const render = async (props = {}) => settle(() => root.render(<CatalogPage kind="movie" {...props}/>));
-const click = async (text: string) => settle(() => { ([...container.querySelectorAll("button")].find(b => b.textContent === text) as HTMLElement).click(); });
+const click = async (text: string) => settle(() => { if (text === "Daha Fazla Göster") { state.infinite.onLoadNext(); return; } ([...container.querySelectorAll("button")].find(b => b.textContent === text) as HTMLElement).click(); });
 beforeEach(() => {
   const dom = parseHTML("<html><body><div id='root'></div></body></html>");
   vi.stubGlobal("window", dom.window); vi.stubGlobal("document", dom.window.document); vi.stubGlobal("Event", dom.window.Event); vi.stubGlobal("React", React); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -207,7 +208,7 @@ it("appends adversarial legacy page two without replacing the primary or reorder
     : { user: { status: "active", hasAssignedLink: true, hasActiveSubscription: true, activePackage: { endsAt: "2099-01-01" } } });
   await render();
   const first = titles();
-  const primary = () => [...container.querySelectorAll("section")].find(section => section.querySelector("h2")?.textContent === "Günün Seçkisi")!.querySelectorAll("strong");
+  const primary = () => [...container.querySelectorAll("section")].find(section => section.querySelector("h2")?.textContent === "2026 Filmleri")!.querySelectorAll("strong");
   const beforePrimary = [...primary()].map(node => node.textContent);
   await click("Daha Fazla Göster");
   expect([...primary()].map(node => node.textContent)).toEqual(beforePrimary);

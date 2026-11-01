@@ -4,6 +4,7 @@ import { mapPersonalLive, liveTransport, selectedProgrammes, createLiveRequestSc
 import { liveChannelDirectoryInfo, compareLiveChannelOrder, normalizeLiveChannelSearch } from "../platform/live-channel-lineup";
 import { sessionIdentity } from "../platform/personal-integration";
 import { loadLegacyLiveCatalog } from "../platform/legacy-live-catalog";
+import { useInfiniteScroll } from "../platform/use-infinite-scroll";
 import { curateLiveChannels } from "../platform/live-channel-presentation";
 import type { PersonalRef, PersonalEpgResult } from "../platform/personal-provider";
 import { selectLivePlaybackEngine } from "../platform/playback-transport";
@@ -676,7 +677,8 @@ export default function LiveTvPage() {
   const [search, setSearch] = useState("");
   const [directoryTab, setDirectoryTab] = useState<"all" | "favorites" | "recent">("all");
   const [recentIds, setRecentIds] = useState<string[]>([]);
-  const [renderLimit, setRenderLimit] = useState(initialRenderLimit);
+  const [renderWindow, setRenderWindow] = useState<{ owner: object | null; limit: number }>({ owner: null, limit: initialRenderLimit });
+  const channelListRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [catalogSyncing, setCatalogSyncing] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -825,9 +827,18 @@ export default function LiveTvPage() {
       .map((item) => item.channel);
   }, [directoryTab, enrichedChannels, favorites, recentIds, search, selectedCategory, selectedCountry, personalProvider, liveProjection, providerMode]);
 
+  const directoryOwner = useMemo(() => ({}), [rawChannels, providerMode, providerScope, platformSession?.accessToken, livePolicyRevision, directoryTab, search, selectedCategory, selectedCountry]);
+  const renderLimit = renderWindow.owner === directoryOwner ? renderWindow.limit : initialRenderLimit;
   const renderedChannels = visibleChannels.slice(0, renderLimit);
-
-  useEffect(() => setRenderLimit(initialRenderLimit), [directoryTab, search, selectedCategory, selectedCountry]);
+  const channelSentinelRef = useInfiniteScroll({
+    scopeKey: directoryOwner,
+    rootRef: channelListRef,
+    enabled: Boolean(session && providerMode !== "loading" && rawChannels.length),
+    hasMore: renderedChannels.length < visibleChannels.length,
+    loading,
+    progressKey: renderLimit,
+    onLoadNext: () => setRenderWindow(current => ({ owner: directoryOwner, limit: Math.min(visibleChannels.length, (current.owner === directoryOwner ? current.limit : initialRenderLimit) + initialRenderLimit) }))
+  });
 
   async function playChannel(channel: LiveChannel, inheritedTiming?: SelectionTiming | null) {
     if (!session || !channel.playbackAllowed || providerMode === "loading") return;
@@ -1012,7 +1023,7 @@ export default function LiveTvPage() {
               : `${channels.length.toLocaleString("tr-TR")} kanal listelendi`}
           </div>
 
-          <div className={styles.channelList} aria-label="Canlı kanallar">
+          <div ref={channelListRef} className={styles.channelList} aria-label="Canlı kanallar" aria-busy={loading}>
             {renderedChannels.map((channel) => {
               const isSelected = selectedChannel?.id === channel.id;
               return (
@@ -1023,11 +1034,8 @@ export default function LiveTvPage() {
               );
             })}
             {!visibleChannels.length ? <p className={styles.empty}>{directoryTab === "favorites" ? "Henüz favori kanalın yok." : directoryTab === "recent" ? "Henüz izlediğin kanal yok." : "Bu seçimde kanal bulunamadı."}</p> : null}
-            {renderedChannels.length < visibleChannels.length ? (
-              <button type="button" className={styles.loadMore} onClick={() => setRenderLimit((value) => value + initialRenderLimit)}>
-                Daha fazla kanal göster
-              </button>
-            ) : null}
+            {visibleChannels.length > 0 && <span className={styles.srOnly} role="status">{renderedChannels.length} / {visibleChannels.length} kanal gösteriliyor</span>}
+            {renderedChannels.length < visibleChannels.length && <div ref={channelSentinelRef} data-infinite-scroll-sentinel="live" aria-hidden="true" style={{ height: 1 }}/>}
           </div>
         </aside>
       </div>
