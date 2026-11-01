@@ -76,6 +76,24 @@ jobs:
           cmake --build C:\flixify\build --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'Native compile failed' }
 
+      - name: Record owned binary privacy diagnostics
+        run: |
+          @'
+          import json, sys
+          from pathlib import Path
+          source = Path("C:/flixify/src")
+          sys.path.insert(0, str(source / "scripts"))
+          from package_policy import privacy_diagnostics
+          assets = {p.name: p.read_bytes() for p in (source / "resources").iterdir() if p.suffix.lower() in {".png", ".wav", ".ico"}}
+          qt = Path("C:/flixify/Qt/6.11.3/msvc2022_64")
+          upstream = {p.name: p.read_bytes() for p in (qt / "lib").glob("Qt6EntryPoint*.lib")}
+          proof = Path("C:/flixify/build/diagnostics")
+          proof.mkdir()
+          result = privacy_diagnostics(Path("C:/flixify/build/Flixify Pro.exe").read_bytes(), assets, upstream)
+          (proof / "privacy-diagnostics.json").write_text(json.dumps(result, indent=2) + "\n")
+          '@ | python
+          if ($LASTEXITCODE -ne 0) { throw 'Owned binary diagnostic collection failed' }
+
       - name: Run catalog repository expiry and packaging tests
         run: |
           $env:PATH = "$env:QT_ROOT\bin;$env:PATH"
@@ -120,6 +138,8 @@ jobs:
         with:
           name: Windows-native-failure-${{ github.run_id }}
           path: |
+            C:/flixify/build/*-test.xml
+            C:/flixify/build/diagnostics/**
             C:/flixify/build/Testing/Temporary/LastTest.log
             C:/flixify/build/CMakeFiles/CMakeConfigureLog.yaml
             C:/flixify/output/proof/**
