@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import zipfile
 
-from package_policy import dependency_report, privacy_diagnostics, sha256, stage_findings, uninstall_manifest, verify_codec_fixtures, verify_smoke
+from package_policy import dependency_report, privacy_diagnostics, prune_test_runtime, sha256, stage_findings, uninstall_manifest, verify_codec_fixtures, verify_smoke
 
 
 def run(arguments, **kwargs):
@@ -106,6 +106,7 @@ def main():
             cwd=stage, stdout=log, stderr=subprocess.STDOUT, timeout=180)
     verify_smoke(proof)
     (stage / 'ui_smoke.exe').unlink()
+    test_runtime_pruned = prune_test_runtime(stage)
     assets = {path.name: path.read_bytes() for path in (source / 'resources').iterdir() if path.suffix.lower() in {'.png', '.wav', '.ico'}}
     upstream = {path.name: path.read_bytes() for path in (args.qt / 'lib').glob('Qt6EntryPoint*.lib')}
     private_scan = privacy_diagnostics((stage / 'Flixify Pro.exe').read_bytes(), assets, upstream)
@@ -114,7 +115,7 @@ def main():
     if errors:
         raise ValueError('\n'.join(errors))
     dependencies = dependency_report(stage, Path(os.environ['SystemRoot']) / 'System32')
-    (proof / 'dependency-report.json').write_text(json.dumps({'passed': True, 'images': dependencies}, indent=2) + '\n')
+    (proof / 'dependency-report.json').write_text(json.dumps({'passed': True, 'testRuntimePruned': test_runtime_pruned, 'images': dependencies}, indent=2) + '\n')
     (proof / 'privacy-report.json').write_text(json.dumps({
         'passed': True, 'ownedBinary': 'Flixify Pro.exe', 'ownedSha256': sha256(stage / 'Flixify Pro.exe'),
         'forbiddenPersonalPathsAndCredentials': 0, 'debugSymbols': 0,

@@ -2,12 +2,32 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import struct
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'package_policy.py'
 spec = importlib.util.spec_from_file_location('package_policy', SCRIPT)
 policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(policy)
+
+
+def minimal_pe(import_name=None):
+    data = bytearray(1024)
+    data[:2] = b'MZ'
+    struct.pack_into('<I', data, 60, 128)
+    data[128:132] = b'PE\0\0'
+    struct.pack_into('<HH', data, 132, 0x8664, 1)
+    struct.pack_into('<H', data, 148, 240)
+    struct.pack_into('<H', data, 152, 0x20b)
+    section = 152 + 240
+    data[section:section + 8] = b'.rdata\0\0'
+    struct.pack_into('<IIII', data, section + 8, 512, 4096, 512, 512)
+    if import_name:
+        struct.pack_into('<II', data, 152 + 112 + 8, 4096, 40)
+        struct.pack_into('<I', data, 512 + 12, 4096 + 128)
+        name = import_name.encode('ascii') + b'\0'
+        data[640:640 + len(name)] = name
+    return bytes(data)
 
 
 class PackagePolicyTests(unittest.TestCase):
@@ -118,6 +138,34 @@ class PackagePolicyTests(unittest.TestCase):
         lock['archives'][0]['sha256'] = 'wrong'
         with self.assertRaises(ValueError):
             policy.verify_lock(lock)
+
+    def test_prune_qt_test_only_after_smoke_and_without_production_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'Flixify Pro.exe').write_bytes(minimal_pe('Qt6Core.dll'))
+            (root / 'Qt6Core.dll').write_bytes(minimal_pe())
+            (root / 'Qt6Test.dll').write_bytes(minimal_pe())
+            self.assertTrue(policy.prune_test_runtime(root))
+            self.assertFalse((root / 'Qt6Test.dll').exists())
+            self.assertTrue((root / 'Qt6Core.dll').exists())
+
+    def test_prune_rejects_any_remaining_plugin_requiring_qt_test(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'Qt6Test.dll').write_bytes(minimal_pe())
+            (root / 'plugin.dll').write_bytes(minimal_pe('Qt6Test.dll'))
+            with self.assertRaisesRegex(ValueError, 'plugin.dll'):
+                policy.prune_test_runtime(root)
+            self.assertTrue((root / 'Qt6Test.dll').exists())
+
+    def test_prune_rejects_live_smoke_harness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'ui_smoke.exe').write_bytes(minimal_pe('Qt6Test.dll'))
+            (root / 'Qt6Test.dll').write_bytes(minimal_pe())
+            with self.assertRaises(ValueError):
+                policy.prune_test_runtime(root)
+            self.assertTrue((root / 'Qt6Test.dll').exists())
 
     def test_uninstaller_manifest_deletes_only_payload_files(self):
         with tempfile.TemporaryDirectory() as directory:

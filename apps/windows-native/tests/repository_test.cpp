@@ -17,6 +17,7 @@ public:
     QString version="v1";
     QString providerUser="fixture-user",providerPassword="fixture-secret";
     QSet<QString> delayedPaths;
+    QSet<QString> delayedUnauthorizedPaths;
     QSet<QString> delayedActions;
     int movieCount=1;
     QJsonArray favoriteRefs;
@@ -36,7 +37,7 @@ public:
                 s->setProperty("issuedRotation",QVariantMap{{"accessToken",currentAccess},{"refreshToken",currentRefresh},{"user",QVariantMap{{"id","account"},{"codeSuffix","TEST"}}}});
             }else if(path.startsWith("/me")){
                 QByteArray token;for(const auto &header:data.left(split).split('\n'))if(header.toLower().startsWith("authorization:"))token=header.mid(14).trimmed();
-                if(token!="Bearer "+currentAccess.toUtf8()){respondStatus(s,401);return;}
+                if(token!="Bearer "+currentAccess.toUtf8()){if(delayedUnauthorizedPaths.contains(path)){s->setProperty("rejectedToken",token);delayed.append(s);return;}respondStatus(s,401);return;}
             }
         }
         bool delay=delayedPaths.contains(path);for(const auto &action:delayedActions)if(path.contains(action))delay=true;if(delay){delayed.append(s);return;}respond(s,path);});}}); }
@@ -163,7 +164,7 @@ private slots:
         FixtureServer server;server.singleUseRefresh=true;QTemporaryDir dir;RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;options.now=[] {return 1900000000000LL;};DesktopRepository repo(options);repo.login("ABCDEFGHIJKLMNOP");QTRY_COMPARE(repo.scope(),QString("account:v1"));repo.navigate("movies");QTRY_COMPARE(repo.items().size(),1);QTRY_VERIFY(!repo.busy());const auto oldItem=repo.items().first().toMap();
         server.version="v2";server.delayedPaths.insert("/me/provider-session");repo.refresh();QTRY_VERIFY(!server.delayed.isEmpty());auto *authorizedBootstrap=server.delayed.first();
         server.delayedPaths.insert("/me/personal-library/favorites");server.delayedPaths.insert("/auth/refresh");repo.toggleFavorite(oldItem);QTRY_COMPARE(server.delayed.size(),2);auto *write=server.delayed.last();server.delayedPaths.remove("/me/personal-library/favorites");server.respondStatus(write,401);QTRY_COMPARE(server.delayed.size(),3);auto *rotation=server.delayed.last();QCOMPARE(server.issuedRotations,1);QCOMPARE(server.currentAccess,QString("fixture-access-2"));
-        server.delayedPaths.clear();server.respond(authorizedBootstrap,"/me/provider-session");QTest::qWait(50);if(rotation->state()==QAbstractSocket::ConnectedState)server.respond(rotation,"/auth/refresh");QTRY_COMPARE_WITH_TIMEOUT(repo.scope(),QString("account:v2"),3000);QTRY_VERIFY_WITH_TIMEOUT(!repo.busy(),3000);QVERIFY(repo.authenticated());
+        server.delayedPaths.clear();server.respond(authorizedBootstrap,"/me/provider-session");QTRY_COMPARE_WITH_TIMEOUT(repo.scope(),QString("account:v2"),3000);if(rotation->state()==QAbstractSocket::ConnectedState)server.respond(rotation,"/auth/refresh");QTRY_COMPARE_WITH_TIMEOUT(repo.scope(),QString("account:v2"),3000);QTRY_VERIFY_WITH_TIMEOUT(!repo.busy(),3000);QVERIFY(repo.authenticated());
         repo.restore();QTRY_VERIFY_WITH_TIMEOUT(!repo.busy(),3000);QVERIFY(repo.authenticated());QCOMPARE(repo.scope(),QString("account:v2"));
         int writes=0;bool newBearer=false;for(const auto &r:server.requests){if(r.startsWith("PUT /me/personal-library/favorites "))writes++;if(r.startsWith("GET /me ")&&r.contains("Authorization: Bearer fixture-access-2"))newBearer=true;}QCOMPARE(writes,1);QCOMPARE(server.issuedRotations,1);QVERIFY(newBearer);
     }
@@ -223,6 +224,13 @@ private slots:
     void staleSeriesPlaybackDoesNotEmitAgainAfterRevalidation() {
         FixtureServer server;server.actionOverrides["get_series"]=QJsonArray{QJsonObject{{"series_id","9"},{"name","A"},{"category_id","1"}}};auto info=[](int count){QJsonArray episodes;for(int i=1;i<=count;i++)episodes.append(QJsonObject{{"id",QString::number(10+i)},{"season",1},{"episode_num",i},{"container_extension","mp4"}});return QJsonObject{{"episodes",QJsonObject{{"1",episodes}}}};};server.actionOverrides["get_series_info"]=info(1);QTemporaryDir dir;qint64 time=1900000000000LL;RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;options.now=[&] {return time;};DesktopRepository repo(options);repo.login("ABCDEFGHIJKLMNOP");QTRY_COMPARE(repo.scope(),QString("account:v1"));repo.navigate("series");QTRY_COMPARE(repo.items().size(),1);const auto series=repo.items().first().toMap();repo.showSeries(series);QTRY_COMPARE(Catalog::episodes(repo.seriesDetail()).size(),1);
         time+=6LL*3600000+1;server.actionOverrides["get_series_info"]=info(2);server.delayedActions.insert("get_series_info");QSignalSpy ready(&repo,&DesktopRepository::playbackReady);repo.playItem(series);QTRY_COMPARE(ready.size(),1);QTRY_VERIFY(!server.delayed.isEmpty());auto *pending=server.delayed.first();server.delayedActions.clear();server.respond(pending,pending->property("path").toString());QTest::qWait(100);QCOMPARE(ready.size(),1);QCOMPARE(ready.first().first().toMap().value("item").toMap().value("id").toString(),QString("11"));
+    }
+
+    void lateUnauthorizedForOldAccessReusesAlreadyRotatedToken() {
+        FixtureServer server;server.singleUseRefresh=true;QTemporaryDir dir;RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;options.now=[] {return 1900000000000LL;};DesktopRepository repo(options);repo.login("ABCDEFGHIJKLMNOP");QTRY_COMPARE(repo.scope(),QString("account:v1"));repo.navigate("movies");QTRY_COMPARE(repo.items().size(),1);QTRY_VERIFY(!repo.busy());
+        server.delayedPaths.insert("/me/personal-library/favorites");server.delayedPaths.insert("/auth/refresh");repo.toggleFavorite(repo.items().first().toMap());QTRY_COMPARE(server.delayed.size(),1);auto *write=server.delayed.first();server.delayedPaths.remove("/me/personal-library/favorites");server.respondStatus(write,401);QTRY_COMPARE(server.delayed.size(),2);auto *rotation=server.delayed.last();QCOMPARE(server.issuedRotations,1);
+        server.delayedUnauthorizedPaths.insert("/me");repo.refresh();QTRY_COMPARE(server.delayed.size(),3);auto *late=server.delayed.last();QCOMPARE(late->property("rejectedToken").toByteArray(),QByteArray("Bearer fixture-access"));server.delayedPaths.clear();server.respond(rotation,"/auth/refresh");QTRY_COMPARE(repo.favorites().size(),1);QCOMPARE(server.currentAccess,QString("fixture-access-2"));
+        server.delayedUnauthorizedPaths.clear();server.respondStatus(late,401);QTRY_VERIFY(!repo.busy());QVERIFY(repo.authenticated());QCOMPARE(repo.scope(),QString("account:v1"));QCOMPARE(server.issuedRotations,1);bool currentBearer=false;for(const auto &r:server.requests)if(r.startsWith("GET /me ")&&r.contains("Authorization: Bearer fixture-access-2"))currentBearer=true;QVERIFY(currentBearer);
     }
 
 };

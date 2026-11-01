@@ -91,9 +91,13 @@ public:
     }
     void api(QString path,QByteArray method,QJsonObject body,Reply callback,bool retried=false){
         if(!session.valid()){callback(401,{});return;}
-        const auto auth=authGeneration,generation=sourceGeneration;const auto scope=currentScope;
-        request(options.apiBase.resolved(QUrl(path)),method,body,session.accessToken,[this,path,method,body,callback=std::move(callback),retried,auth,generation,scope](int status,QJsonDocument doc){
+        const auto auth=authGeneration,generation=sourceGeneration;const auto scope=currentScope,access=session.accessToken;
+        request(options.apiBase.resolved(QUrl(path)),method,body,access,[this,path,method,body,callback=std::move(callback),retried,auth,generation,scope,access](int status,QJsonDocument doc){
             if(!apiContextValid(auth,generation,scope))return;
+            if(status==401&&session.accessToken!=access){
+                if(!retried)api(path,method,body,callback,true);else callback(0,{});
+                return;
+            }
             if(status==401&&!retried){
                 rotate([this,path,method,body,callback,auth,generation,scope](bool ok){
                     if(!apiContextValid(auth,generation,scope))return;

@@ -118,6 +118,8 @@ def stage_findings(root):
             errors.append('Symlink in package: ' + path.relative_to(root).as_posix())
         if path.suffix.lower() in {'.pdb', '.ilk', '.obj', '.lib', '.exp', '.pem', '.key', '.pfx', '.p12'}:
             errors.append('Forbidden package file: ' + path.relative_to(root).as_posix())
+    if (root / 'Qt6Test.dll').exists() or (root / 'ui_smoke.exe').exists():
+        errors.append('Test-only executable or QtTest runtime in final package')
     owned = [root / 'Flixify Pro.exe', root / 'qt.conf']
     for path in owned:
         if path.is_file() and privacy_findings(path.read_bytes()):
@@ -249,3 +251,19 @@ def uninstall_manifest(root):
         result.append('RMDir "$INSTDIR\\' + literal(path) + '"')
     result.append('RMDir "$INSTDIR"')
     return '\n'.join(result) + '\n'
+
+
+def prune_test_runtime(root):
+    root = Path(root)
+    if (root / 'ui_smoke.exe').exists():
+        raise ValueError('Cannot prune the test runtime while the smoke harness remains staged')
+    library = root / 'Qt6Test.dll'
+    if not library.is_file():
+        return False
+    for image in root.rglob('*'):
+        if image == library or image.suffix.lower() not in {'.exe', '.dll'}:
+            continue
+        if 'qt6test.dll' in pe_imports(image.read_bytes()):
+            raise ValueError('Production image still requires Qt6Test.dll: ' + image.relative_to(root).as_posix())
+    library.unlink()
+    return True

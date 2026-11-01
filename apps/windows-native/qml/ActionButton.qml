@@ -22,7 +22,7 @@ Button {
         font.family: "Segoe UI"
         font.pixelSize: 14
         font.weight: control.prominent || control.selected ? Font.DemiBold : Font.Normal
-        color: !control.enabled ? "#78818F" : control.light ? "#07090C" : "#F5F6F8"
+        color: !control.enabled ? "#78818F" : control.light || (control.prominent && !control.down) ? "#07090C" : "#F5F6F8"
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
