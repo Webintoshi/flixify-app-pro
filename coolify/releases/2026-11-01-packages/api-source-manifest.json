@@ -1,0 +1,96 @@
+{
+  "runtimeSources": [
+    {
+      "path": "apps/api/src/entitlement-provider.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/entitlement-provider.ts",
+      "new": false,
+      "sha256": "5e00b0a5b9c7e9abec3e83eb0ebe4b640781dda32485c31f143e8089678c43b3"
+    },
+    {
+      "path": "apps/api/src/referral-store.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/referral-store.ts",
+      "new": false,
+      "sha256": "96ed01c93681f7d0e5e922a7b12fa8bd965dedbdf0c90b76bc64c50f63f1bc19"
+    },
+    {
+      "path": "apps/api/src/stripe-billing-api.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/stripe-billing-api.ts",
+      "new": false,
+      "sha256": "2e5ca009da7001135ad369c374a5b6b5305fb59a720ec4a445f2f7c0685c1e63"
+    },
+    {
+      "path": "apps/api/src/stripe-billing-policy.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/stripe-billing-policy.ts",
+      "new": false,
+      "sha256": "84bf07bacb52a509441a3102280eeeb02c9902d0ef6702316200d7ea77b40b60"
+    },
+    {
+      "path": "apps/api/src/stripe-billing-routes.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/stripe-billing-routes.ts",
+      "new": false,
+      "sha256": "d3fae1f4aa978a080a48f400792d6015f668a3bf96418b1997d3e9f3081c9040"
+    },
+    {
+      "path": "apps/api/src/stripe-billing-runtime.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/stripe-billing-runtime.ts",
+      "new": false,
+      "sha256": "6da8f8e9f47770bfe1deafa4846516f7bdfa05be9c996b56b366808f30b89870"
+    },
+    {
+      "path": "apps/api/src/stripe-billing-schema.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/stripe-billing-schema.ts",
+      "new": false,
+      "sha256": "5089af1b5c21d247ac9d1cfeba1bd430b6081ea327e8e6392c97526d3c383fc8"
+    },
+    {
+      "path": "apps/api/src/stripe-billing-store.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/stripe-billing-store.ts",
+      "new": false,
+      "sha256": "aa648f9ae20bf8546ffa1c7b14820c344f0ef5e06d914a88b1f710e1f7444468"
+    },
+    {
+      "path": "apps/api/src/stripe-entitlement.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/stripe-entitlement.ts",
+      "new": false,
+      "sha256": "9f967ffbe62f0e214ccd7614e51816300cb64c3b48e989c44a8e5c5cf601cbc5"
+    },
+    {
+      "path": "apps/api/src/stripe-payment-api.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/stripe-payment-api.ts",
+      "new": true,
+      "sha256": "c5eac62bb99238e3516a71c534e320fb0e487cfc4df32093a8d25469d9b2a04d"
+    },
+    {
+      "path": "apps/api/src/stripe-payment-store.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/stripe-payment-store.ts",
+      "new": true,
+      "sha256": "14b36e74235bf00d040d535b7cf9a7608f1edfebb7d4f64e8f2f43714a9615bb"
+    },
+    {
+      "path": "apps/api/src/stripe-payment.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/stripe-payment.ts",
+      "new": true,
+      "sha256": "1d9da3e47775d2aa6e8cc941c82e758eea39f4f37a900bd50d6680fec6427aa3"
+    },
+    {
+      "path": "apps/api/src/stripe-price-validation.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/stripe-price-validation.ts",
+      "new": false,
+      "sha256": "cdeca44f651192d2afe37d2537688748de64dc7fcf0a0407eb824c193d38bd9a"
+    },
+    {
+      "path": "apps/api/src/stripe-sales-catalog.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/stripe-sales-catalog.ts",
+      "new": true,
+      "sha256": "137b8fe92373fcf83e55c1b432e5df5224c3042a59d81e2f07ffdaf36fc9c80c"
+    },
+    {
+      "path": "apps/api/src/stripe-webhook.ts",
+      "source": "coolify/releases/2026-11-01-packages/api-source/stripe-webhook.ts",
+      "new": false,
+      "sha256": "f99fcc411e494dbbb13ea6afda8a480563d2aec36dbe5d709350801a7dcf48bd"
+    }
+  ],
+  "patchesFile": "coolify/releases/2026-11-01-packages/api-patches.json",
+  "patchesSha256": "3af4b1a4bc560dcde932606dc99a121b1b778b46e368492b5fe9de35d15fe0d1"
+}

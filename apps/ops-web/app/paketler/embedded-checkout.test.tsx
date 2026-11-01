@@ -4,9 +4,10 @@ import { parseHTML } from 'linkedom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PackageCheckout, PackagePaymentProgress } from '../../components/ui/package-checkout';
 
-const state = vi.hoisted(() => ({ request: vi.fn() }));
+const state = vi.hoisted(() => ({ request: vi.fn(), session: null as any }));
 vi.mock('next/link', () => ({ default: (props: any) => React.createElement('a', props) }));
 vi.mock('../../lib/api', () => ({ apiRequest: (...args: any[]) => state.request(...args) }));
+vi.mock('../platform/session', () => ({ readSession: () => state.session }));
 vi.mock('../account/components', () => ({ formatDate: (value: string) => value }));
 
 function deferred<T>() {
@@ -33,7 +34,7 @@ describe('embedded payment lifecycle and status polling', () => {
     vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
     vi.stubGlobal('Event', dom.window.Event); vi.stubGlobal('React', React); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     Object.defineProperty(window.HTMLElement.prototype, 'focus', { value: vi.fn(), configurable: true });
-    state.request.mockReset();
+    state.request.mockReset(); state.session = null;
     container = document.getElementById('root')!;
     root = createRoot(container);
   });
@@ -141,4 +142,27 @@ describe('embedded payment lifecycle and status polling', () => {
     expect(container.textContent).toBe('');
     expect(state.request).not.toHaveBeenCalled();
   });
+  it('clears an old account result on session change and ignores its late poll', async () => {
+    const old = deferred<{ status: string }>();
+    state.session = { accessToken: 'fixture-a', kryptoniteCode: 'account-a' };
+    state.request.mockReturnValueOnce(old.promise).mockRejectedValue(new Error('not owned'));
+    await settle(() => root!.render(<PackagePaymentProgress sessionId={session.sessionId} />));
+    const signal = state.request.mock.calls[0][1].signal as AbortSignal;
+    await settle(() => { state.session = { accessToken: 'fixture-b', kryptoniteCode: 'account-b' }; window.dispatchEvent(new Event('flixify-session')); });
+    expect(signal.aborted).toBe(true);
+    await settle(() => old.resolve({ status: 'active' }));
+    expect(container.textContent).not.toContain('Paketin kullanıma hazır');
+    expect(container.textContent).toContain('Ödeme durumu alınamadı');
+  });
+
+  it('removes terminal success immediately when another tab changes the account', async () => {
+    state.session = { accessToken: 'fixture-a', kryptoniteCode: 'account-a' };
+    state.request.mockResolvedValueOnce({ status: 'active', endsAt: '2027-05-01' }).mockRejectedValue(new Error('not owned'));
+    await settle(() => root!.render(<PackagePaymentProgress sessionId={session.sessionId} />));
+    expect(container.textContent).toContain('Paketin kullanıma hazır');
+    await settle(() => { state.session = { accessToken: 'fixture-b', kryptoniteCode: 'account-b' }; window.dispatchEvent(new Event('storage')); });
+    expect(container.textContent).not.toContain('Paketin kullanıma hazır');
+    expect(container.textContent).not.toContain('2027-05-01');
+  });
+
 });

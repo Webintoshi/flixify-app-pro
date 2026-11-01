@@ -4,6 +4,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
 import { formatDate } from '../../app/account/components';
 import { apiRequest } from '../../lib/api';
+import { readSession } from '../../app/platform/session';
+import { sessionIdentity } from '../../app/platform/personal-integration';
 import { packagePaymentMessage, type EmbeddedCheckoutSession, type PackagePaymentStatus as PaymentState } from '../../app/paketler/embedded-payment';
 import { formatPackagePrice, type PackageCard } from '../../app/paketler/packages-model';
 import s from './package-checkout.module.css';
@@ -30,6 +32,18 @@ function loadStripe(): Promise<StripeFactory> {
 }
 
 export function PackagePaymentProgress({ sessionId }: { sessionId: string }) {
+  const [identity, setIdentity] = useState(() => sessionIdentity(readSession()));
+  useEffect(() => {
+    const sync = () => setIdentity(sessionIdentity(readSession()));
+    window.addEventListener('flixify-session', sync);
+    window.addEventListener('storage', sync);
+    window.addEventListener('focus', sync);
+    return () => { window.removeEventListener('flixify-session', sync); window.removeEventListener('storage', sync); window.removeEventListener('focus', sync); };
+  }, []);
+  return <ScopedPaymentProgress key={`${sessionId}:${identity}`} sessionId={sessionId} identity={identity} />;
+}
+
+function ScopedPaymentProgress({ sessionId, identity }: { sessionId: string; identity: string }) {
   const [version, setVersion] = useState(0);
   const [payment, setPayment] = useState<{ data: PaymentState | null; error: boolean; loading: boolean }>({ data: null, error: false, loading: true });
   const state = payment.data?.status ?? 'processing';
@@ -38,20 +52,21 @@ export function PackagePaymentProgress({ sessionId }: { sessionId: string }) {
     let current = true;
     let pending = false;
     let finished = false;
+    const valid = () => current && sessionIdentity(readSession()) === identity;
     let controller: AbortController | null = null;
     const load = async () => {
-      if (pending || finished || !current) return;
+      if (pending || finished || !valid()) return;
       pending = true;
       controller = new AbortController();
       const timeout = window.setTimeout(() => controller?.abort(), 15000);
       try {
         const data = await apiRequest<PaymentState>(`/me/billing/payment-status?session_id=${encodeURIComponent(sessionId)}`, { signal: controller.signal });
         if (!data || typeof data.status !== 'string') throw new Error('payment_status_invalid');
-        if (current) {
+        if (valid()) {
           finished = ['active', 'review_required', 'failed', 'expired'].includes(data.status);
           setPayment({ data, error: false, loading: false });
         }
-      } catch { if (current) setPayment(previous => ({ ...previous, error: true, loading: false })); }
+      } catch { if (valid()) setPayment(previous => ({ ...previous, error: true, loading: false })); }
       finally { window.clearTimeout(timeout); pending = false; }
     };
     void load();
@@ -59,8 +74,8 @@ export function PackagePaymentProgress({ sessionId }: { sessionId: string }) {
     const onFocus = () => { void load(); };
     window.addEventListener('focus', onFocus);
     return () => { current = false; window.clearInterval(timer); controller?.abort(); window.removeEventListener('focus', onFocus); };
-  }, [sessionId, version]);
-  const message = packagePaymentMessage(state);
+  }, [sessionId, identity, version]);
+  const message = packagePaymentMessage(state, payment.data?.endsAt);
   return <section className={s.result} role="status" aria-live="polite">
     {!terminal && !payment.error && <span className={s.spinner} aria-hidden="true" />}
     <h2>{payment.error ? 'Ödeme durumu alınamadı' : message.title}</h2>
@@ -68,7 +83,7 @@ export function PackagePaymentProgress({ sessionId }: { sessionId: string }) {
     {state === 'active' && payment.data?.endsAt && <p>Paket bitişi: {formatDate(payment.data.endsAt)}</p>}
     <div className={s.resultActions}>
       <button type="button" onClick={() => { setPayment(previous => ({ ...previous, loading: true })); setVersion(value => value + 1); }} className={s.secondary} disabled={payment.loading}>Durumu yenile</button>
-      <Link className={s.primary} href={state === 'active' ? '/' : '/iletisim'}>{state === 'active' ? 'İzlemeye dön' : 'Destek al'}</Link>
+      <Link className={s.primary} href={state === 'active' ? '/' : state === 'expired' ? '/paketler' : '/iletisim'}>{state === 'active' ? 'İzlemeye dön' : state === 'expired' ? 'Paketleri gör' : 'Destek al'}</Link>
     </div>
   </section>;
 }

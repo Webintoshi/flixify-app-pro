@@ -17,5 +17,6 @@ test('only confirmed activation displays success, while pending and failed state
   assert.match(packagePaymentMessage('processing').description, /yeniden ödeme yapma/i);
   assert.match(packagePaymentMessage('review_required').description, /yeniden ödeme yapma/i);
   assert.notEqual(packagePaymentMessage('awaiting_payment').title, packagePaymentMessage('active').title);
+  assert.equal(packagePaymentMessage('expired', '2026-10-01T00:00:00Z').title, 'Paketinin süresi doldu');
   assert.notEqual(packagePaymentMessage('unexpected').title, packagePaymentMessage('active').title);
 });
