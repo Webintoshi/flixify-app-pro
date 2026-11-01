@@ -9,6 +9,7 @@ import MobileTabBar from "./components/navigation/MobileTabBar";
 import { AppShell } from "./platform/shell";
 import { usePlatform } from "./platform/session";
 import registrationStyles from "./kayit-ol/registration.module.css";
+import { WelcomeOfferBoundary } from "./platform/welcome-offer";
 
 const publicNavigation = [
   { href: "/", label: "Ana Sayfa" },
@@ -193,6 +194,10 @@ function AdminShell({ pathname, children }: { pathname: string; children: ReactN
 }
 
 export default function SiteShell({ children }: { children: ReactNode }) {
+  return <WelcomeOfferBoundary><SiteShellContent>{children}</SiteShellContent></WelcomeOfferBoundary>;
+}
+
+function SiteShellContent({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? "/";
   const { session } = usePlatform();
   if (["/ayarlar", "/paketler", "/davet", "/odeme-bildirimi", "/iletisim"].includes(pathname)) {

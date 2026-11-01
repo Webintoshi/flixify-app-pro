@@ -1,0 +1,28 @@
+import { describe, expect, it, vi } from 'vitest';
+import { fulfillPaidCheckout, type CheckoutPaymentView } from '../api-source/stripe-payment.js';
+import { SALE_CATALOG_VERSION } from '../api-source/stripe-sales-catalog.js';
+import { saleIds } from '../../2026-11-01-packages/billing-tests/fixtures';
+
+function fixture(create=false){
+  const now=Date.now();let claimed=false;
+  const before={id:'4242',username:'fixture',password:'fixture_private',expiresAt:now+86400000,isTrial:true,enabled:true,maxConnections:1};
+  const after={...before,expiresAt:(create?now:before.expiresAt)+30*86400000,isTrial:false,maxConnections:2};
+  const paid:CheckoutPaymentView={sessionId:'cs_fixture',liveMode:false,mode:'payment',status:'complete',paymentStatus:'paid',customerId:'cus_fixture',userId:'user_fixture',packageSlug:'1-ay-2-kullanici',catalogVersion:SALE_CATALOG_VERSION,users:2,priceId:'price_dual_one',quantity:1,amountTotal:39900,currency:'try',paymentIntent:{id:'pi_fixture',status:'succeeded',liveMode:false,amount:39900,amountReceived:39900,currency:'try',customerId:'cus_fixture',userId:'user_fixture',packageSlug:'1-ay-2-kullanici',catalogVersion:SALE_CATALOG_VERSION,users:2,priceId:'price_dual_one'}};
+  const store={jobOwner:vi.fn(async()=> 'user_fixture'),withUserLock:vi.fn(async(_u:string,fn:()=>Promise<any>)=>fn()),claim:vi.fn(async()=>claimed?null:(claimed=true,{userId:'user_fixture',livemode:false})),checkout:vi.fn(async()=>({sessionId:'cs_fixture',userId:'user_fixture',packageSlug:'1-ay-2-kullanici',priceId:'price_dual_one',catalogVersion:SALE_CATALOG_VERSION,liveMode:false})),bindPaymentIntent:vi.fn(async()=>{}),credentialsForUser:vi.fn(async()=>create?null:{username:before.username,password:before.password}),reserveNewLine:vi.fn(async()=>({username:before.username,password:before.password})),complete:vi.fn(async()=>{}),review:vi.fn(async()=>{}),defer:vi.fn(async()=>{claimed=false;})};
+  const provider={listPackages:vi.fn(async()=>[{id:13,name:'Dual',isTrial:false,duration:1,unit:'months',credits:1,maxConnections:2}]),findLine:vi.fn().mockResolvedValueOnce(create?null:before).mockResolvedValue(after),extendLine:vi.fn(async()=>{}),createPaidLine:vi.fn(async()=>{})};
+  const billing={fetchCheckoutPayment:vi.fn(async()=>paid)};
+  const customerStore={ownerForCustomer:vi.fn(async()=> 'user_fixture'),userEligible:vi.fn(async()=>true)};
+  const deps:any={liveMode:false,allowedTestUserIds:new Set(['user_fixture']),salePriceIds:saleIds,billing,store,provider,customerStore};
+  return{deps,store,provider,billing,customerStore,paid,after};
+}
+
+describe('welcome paid fulfillment',()=>{
+ function offerFixture(){const f=fixture();Object.assign(f.paid,{offerId:'welcome-monthly-50-v1',couponId:'flixify_welcome_monthly_50_v1',expectedAmountMinor:19950,couponIds:['flixify_welcome_monthly_50_v1'],amountSubtotal:39900,amountDiscount:19950,amountTotal:19950});Object.assign(f.paid.paymentIntent!,{offerId:'welcome-monthly-50-v1',couponId:'flixify_welcome_monthly_50_v1',expectedAmountMinor:19950,amount:19950,amountReceived:19950});f.store.checkout.mockResolvedValue({...awaitPin(),offerId:'welcome-monthly-50-v1',couponId:'flixify_welcome_monthly_50_v1',expectedAmountMinor:19950} as any);Object.assign(f.store,{validateWelcomePayment:vi.fn(async()=>true),trialProvisionPending:vi.fn(async()=>false)});return f;}
+ function awaitPin(){return{sessionId:'cs_fixture',userId:'user_fixture',packageSlug:'1-ay-2-kullanici',priceId:'price_dual_one',catalogVersion:SALE_CATALOG_VERSION,liveMode:false};}
+ it('fulfills the exact199.50dual purchase with unchanged provider capacity and base price',async()=>{const f=offerFixture();expect(await fulfillPaidCheckout('cs_fixture',f.deps)).toBe('fulfilled');expect(f.store.complete).toHaveBeenCalledOnce();expect(f.provider.extendLine).toHaveBeenCalledWith({lineId:'4242',packageId:13});});
+ it.each([{couponId:'other'},{expectedAmountMinor:12500},{amountTotal:19949},{amountDiscount:19949},{couponIds:['attacker']},{couponIds:[]},{offerId:null}])('rejects a forged settled discount before provider work%j',async(change)=>{const f=offerFixture();Object.assign(f.paid,change);expect(await fulfillPaidCheckout('cs_fixture',f.deps)).toBe('review-required');expect(f.provider.extendLine).not.toHaveBeenCalled();});
+ it('does not accept metadata alone without the current account reservation',async()=>{const f=offerFixture();(f.store as any).validateWelcomePayment.mockResolvedValue(false);expect(await fulfillPaidCheckout('cs_fixture',f.deps)).toBe('review-required');expect(f.provider.extendLine).not.toHaveBeenCalled();});
+ it('waits for automatic trial provisioning before making any paid provider request',async()=>{const f=offerFixture();(f.store as any).trialProvisionPending.mockResolvedValue(true);expect(await fulfillPaidCheckout('cs_fixture',f.deps)).toBe('awaiting-payment');expect(f.provider.listPackages).not.toHaveBeenCalled();expect(f.provider.extendLine).not.toHaveBeenCalled();expect(f.store.defer).toHaveBeenCalledOnce();(f.store as any).trialProvisionPending.mockResolvedValue(false);expect(await fulfillPaidCheckout('cs_fixture',f.deps)).toBe('fulfilled');expect(f.provider.extendLine).toHaveBeenCalledOnce();});
+ it('refuses a previously paid provider line even before the local entitlement worker catches up',async()=>{const f=offerFixture();f.provider.findLine.mockReset().mockResolvedValue({id:'4242',username:'fixture',password:'fixture_private',expiresAt:Date.now()+86400000,isTrial:false,enabled:true,maxConnections:2});expect(await fulfillPaidCheckout('cs_fixture',f.deps)).toBe('review-required');expect(f.provider.extendLine).not.toHaveBeenCalled();expect(f.provider.createPaidLine).not.toHaveBeenCalled();expect(f.store.complete).not.toHaveBeenCalled();});
+
+});

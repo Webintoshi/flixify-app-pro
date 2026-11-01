@@ -4,7 +4,9 @@ import { parseHTML } from 'linkedom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PackagesPage from './page';
 
-const state = vi.hoisted(() => ({ packages: [] as any[], billing: {} as any, request: vi.fn(), assign: vi.fn(), mounted: vi.fn(), destroyed: vi.fn(), complete: (() => {}) as () => void, payment: {} as any }));
+const state = vi.hoisted(() => ({ packages: [] as any[], billing: {} as any, welcome: null as any, search: '', request: vi.fn(), assign: vi.fn(), mounted: vi.fn(), destroyed: vi.fn(), complete: (() => {}) as () => void, payment: {} as any }));
+vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(state.search) }));
+vi.mock('../platform/welcome-offer', () => ({ useWelcomeOfferStatus: () => state.welcome }));
 vi.mock('next/link', () => ({ default: (props: any) => React.createElement('a', props) }));
 vi.mock('../../lib/api', () => ({ apiRequest: (...args: any[]) => state.request(...args) }));
 vi.mock('../account/components', () => ({
@@ -27,7 +29,7 @@ describe('package selection and payment handoff', () => {
     vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('Event', dom.window.Event);
     vi.stubGlobal('React', React); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     Object.defineProperty(window, 'location', { value: { assign: state.assign }, configurable: true });
-    state.assign.mockReset(); state.request.mockReset(); state.mounted.mockReset(); state.destroyed.mockReset(); state.payment = { status: 'processing' };
+    state.assign.mockReset(); state.request.mockReset(); state.mounted.mockReset(); state.destroyed.mockReset(); state.payment = { status: 'processing' }; state.welcome = null; state.search = '';
     Object.defineProperty(window.HTMLElement.prototype, 'focus', { value: vi.fn(), configurable: true });
     Object.defineProperty(window, 'Stripe', { value: () => ({ createEmbeddedCheckoutPage: async (options: any) => { await options.fetchClientSecret(); state.complete = options.onComplete; return { mount: state.mounted, destroy: state.destroyed }; } }), configurable: true });
     state.packages = slugs.map((slug, index) => ({ id: `plan-${index}`, slug, title: `${months[index]} Aylık`, durationMonths: months[index], isActive: true, priceLabel: `${prices[index]} ₺` }));
@@ -107,6 +109,33 @@ describe('package selection and payment handoff', () => {
     expect(container.textContent).not.toContain('Ödemeyi tamamla');
     expect(container.textContent).not.toContain('Paketin kullanıma hazır');
     expect(state.assign).not.toHaveBeenCalled();
+  });
+
+  it('retains the monthly welcome quote after dismissal and sends only its server-approved offer id', async () => {
+    state.search = '?welcome=1&users=2';
+    state.welcome = { campaign: 'welcome-monthly-50-v1', state: 'dismissed', eligible: true, catalogue: { movies: 11955, live: 12677, series: 1675 }, offers: [
+      { id: 'welcome-monthly-50-v1', packageSlug: '1-ay', users: 1, durationMonths: 1, amountMinor: 12500, regularAmountMinor: 25000, currency: 'try' },
+      { id: 'welcome-monthly-50-v1', packageSlug: '1-ay-2-kullanici', users: 2, durationMonths: 1, amountMinor: 19950, regularAmountMinor: 39900, currency: 'try' }
+    ] };
+    state.billing = { checkoutEnabled: true, checkoutPackages: [{ packageSlug: '1-ay-2-kullanici', amountTry: 199.5, users: 2, durationMonths: 1, offerId: 'welcome-monthly-50-v1' }] };
+    state.request.mockResolvedValue({ sessionId: 'cs_live_fixture', clientSecret: 'cs_live_fixture_secret_example', publishableKey: 'pk_live_fixture' });
+    await settle(() => root.render(<PackagesPage />));
+    const monthly = container.querySelectorAll('article')[0];
+    expect(toggle().getAttribute('aria-checked')).toBe('true'); expect(monthly.textContent).toContain('199,50'); expect(monthly.querySelector('s')?.textContent).toBe('399 ₺');
+    expect(monthly.querySelector('a')).toBeNull(); expect(state.request).not.toHaveBeenCalled();
+    await settle(() => monthly.querySelector('button')!.click());
+    expect(state.request.mock.calls[0][1].body).toEqual({ packageSlug: '1-ay-2-kullanici', offerId: 'welcome-monthly-50-v1' });
+    expect(container.textContent).toContain('199,50 ₺');
+  });
+
+  it('does not advertise a discounted manual payment when the matching card quote is unavailable', async () => {
+    state.welcome = { campaign: 'welcome-monthly-50-v1', state: 'dismissed', eligible: true, offers: [
+      { id: 'welcome-monthly-50-v1', packageSlug: '1-ay', users: 1, durationMonths: 1, amountMinor: 12500, regularAmountMinor: 25000, currency: 'try' }
+    ] };
+    state.billing = { checkoutEnabled: true, checkoutPackages: [{ packageSlug: '1-ay', amountTry: 250, users: 1, durationMonths: 1 }] };
+    await settle(() => root.render(<PackagesPage />));
+    const monthly = container.querySelectorAll('article')[0];
+    expect(monthly.querySelector('a')).toBeNull(); expect(monthly.querySelector('button')?.disabled).toBe(true); expect(state.request).not.toHaveBeenCalled();
   });
 
 });

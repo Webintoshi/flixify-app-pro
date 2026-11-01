@@ -50,3 +50,22 @@ test('Stripe checkout requires an exact enabled package match, including duratio
   }
   assert.equal(checkoutAvailable({ ...plan, available: false }, { checkoutEnabled: true, checkoutPackages: [exact] }), false);
 });
+
+test('eligible welcome quotes discount only the matching monthly plan and retain fractional lira', () => {
+  const welcome = { campaign: 'welcome-monthly-50-v1', state: 'dismissed', eligible: true, offers: [
+    { id: 'welcome-monthly-50-v1', packageSlug: '1-ay', users: 1, durationMonths: 1, amountMinor: 12500, regularAmountMinor: 25000, currency: 'try' },
+    { id: 'welcome-monthly-50-v1', packageSlug: '1-ay-2-kullanici', users: 2, durationMonths: 1, amountMinor: 19950, regularAmountMinor: 39900, currency: 'try' }
+  ], catalogue: { movies: 11955, live: 12677, series: 1675 } };
+  const single = packageCards(catalog, 1, welcome);
+  const dual = packageCards(catalog, 2, welcome);
+  assert.deepEqual(single.map(plan => plan.price), [125, 699, 999]);
+  assert.deepEqual(dual.map(plan => plan.price), [199.5, 999, 1399]);
+  assert.equal(dual[0].regularPrice, 399);
+  assert.equal(dual[0].offerId, 'welcome-monthly-50-v1');
+  assert.equal(formatPackagePrice(199.5), '199,50');
+  const exact = { packageSlug: dual[0].slug, amountTry: 199.5, users: 2, durationMonths: 1, offerId: 'welcome-monthly-50-v1' };
+  assert.equal(checkoutAvailable(dual[0], { checkoutEnabled: true, checkoutPackages: [exact] }), true);
+  assert.equal(checkoutAvailable(dual[0], { checkoutEnabled: true, checkoutPackages: [{ ...exact, offerId: undefined }] }), false);
+  assert.equal(packageCards(catalog, 2, { ...welcome, eligible: false })[0].price, 399);
+  assert.equal(packageCards(catalog, 2, { ...welcome, state: 'redeemed' })[0].price, 399);
+});

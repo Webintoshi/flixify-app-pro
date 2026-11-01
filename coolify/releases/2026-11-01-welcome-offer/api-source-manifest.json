@@ -1,0 +1,70 @@
+{
+  "runtimeSources": [
+    {
+      "path": "apps/api/src/stripe-billing-routes.ts",
+      "source": "coolify/releases/2026-11-01-welcome-offer/api-source/stripe-billing-routes.ts",
+      "new": false,
+      "sha256": "e9f83086e8c3bc5fa55e42d58b45672a1558e03ad95862dacdffce7f49062e03"
+    },
+    {
+      "path": "apps/api/src/stripe-billing-store.ts",
+      "source": "coolify/releases/2026-11-01-welcome-offer/api-source/stripe-billing-store.ts",
+      "new": false,
+      "sha256": "db0a5905bd8ecd541b8a66cf71f5822b12df6a8ab11c1fe91512fb7b842c0262"
+    },
+    {
+      "path": "apps/api/src/stripe-billing-api.ts",
+      "source": "coolify/releases/2026-11-01-welcome-offer/api-source/stripe-billing-api.ts",
+      "new": false,
+      "sha256": "6b217590cf0ad5e7edd7872339947e57d4541b2b2624517ff24b7ec3fe793313"
+    },
+    {
+      "path": "apps/api/src/stripe-payment-api.ts",
+      "source": "coolify/releases/2026-11-01-welcome-offer/api-source/stripe-payment-api.ts",
+      "new": false,
+      "sha256": "9d287ca4e8d48821d216800dbe18c2d7365252d05f7aba53739ff4446810d83f"
+    },
+    {
+      "path": "apps/api/src/stripe-payment.ts",
+      "source": "coolify/releases/2026-11-01-welcome-offer/api-source/stripe-payment.ts",
+      "new": false,
+      "sha256": "0f4ba949a8aafcb3def0e322a70317d01cd57a2adc29b82f8069da6006f94e1b"
+    },
+    {
+      "path": "apps/api/src/stripe-payment-store.ts",
+      "source": "coolify/releases/2026-11-01-welcome-offer/api-source/stripe-payment-store.ts",
+      "new": false,
+      "sha256": "6f2bb58246432a53b8108b02fffe873191c9b19ae7b5308b3608fdce8c8f660e"
+    },
+    {
+      "path": "apps/api/src/welcome-offer.ts",
+      "source": "coolify/releases/2026-11-01-welcome-offer/api-source/welcome-offer.ts",
+      "new": true,
+      "sha256": "cc3722d0f33bb3fcc7489069f69cd9ca5cd5a30c37fa83ed28f79cbb5f5f637c"
+    },
+    {
+      "path": "apps/api/src/welcome-offer-store.ts",
+      "source": "coolify/releases/2026-11-01-welcome-offer/api-source/welcome-offer-store.ts",
+      "new": true,
+      "sha256": "12ec5308ca3940a18d4354811ac1008218bcb5f78856a1f86d1f9ca42434bcc3"
+    },
+    {
+      "path": "apps/api/src/welcome-offer-routes.ts",
+      "source": "coolify/releases/2026-11-01-welcome-offer/api-source/welcome-offer-routes.ts",
+      "new": true,
+      "sha256": "4612bb5a63a8e0f23afed3632c272db897ed973bd9c46a51431bf7bba3d1f4f7"
+    }
+  ],
+  "patches": [
+    {
+      "path": "apps/api/src/server.ts",
+      "source": "coolify/releases/2026-11-01-welcome-offer/api-patches.json",
+      "sha256": "941ced380bee07c905f6da487bffdc397b88ebe746e915282ee090080957a158"
+    },
+    {
+      "path": "apps/api/src/repository.ts",
+      "source": "coolify/releases/2026-11-01-welcome-offer/repository-patches.json",
+      "sha256": "1536636708ece9a137dd3a5ef948a5ab58946a509685fb15cb58af2a0927203f"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "path": "apps/api/src/server.ts",
+  "sourceSha256": "1ef8a9a047e3c8643f5b2e3e4724b5e1e3e06d09f69933401bf66e6d2a0f567a",
+  "replacements": [
+    {
+      "old": "import { registerPersonalLibrary } from \"./personal-library.js\";",
+      "new": "import { registerPersonalLibrary } from \"./personal-library.js\";\nimport { WelcomeOfferStore } from \"./welcome-offer-store.js\";\nimport { registerWelcomeOfferRoutes } from \"./welcome-offer-routes.js\";"
+    },
+    {
+      "old": "  registerPersonalLibrary(app, { authenticate: authenticateUser, context: (id) => getUserContext(id), secret: env.APP_JWT_SECRET, demo: isDemoMode, classify: classifyUserRouteError });",
+      "new": "  registerPersonalLibrary(app, { authenticate: authenticateUser, context: (id) => getUserContext(id), secret: env.APP_JWT_SECRET, demo: isDemoMode, classify: classifyUserRouteError });\n  if (!isDemoMode) registerWelcomeOfferRoutes(app, { authenticate: authenticateUser, store: new WelcomeOfferStore(pool) });"
+    }
+  ]
+}

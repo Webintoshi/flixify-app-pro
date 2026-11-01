@@ -1,0 +1,10 @@
+{
+  "path": "apps/api/src/repository.ts",
+  "sourceSha256": "9fd8df3a6ae7ae442bcadea14d8a699c49ec53abef78a092fc27df31ec0bcf3e",
+  "replacements": [
+    {
+      "old": "    await client.query(\n      `insert into public.auto_trial_provision_jobs (user_id, provider_username, provider_password, status)\n       values ($1, $2, $3, 'queued')`,\n      [userId, providerUsername, providerPassword]\n    );",
+      "new": "    await client.query(\n      `insert into public.auto_trial_provision_jobs (user_id, provider_username, provider_password, status)\n       values ($1, $2, $3, 'queued')`,\n      [userId, providerUsername, providerPassword]\n    );\n    await client.query(\n      \"insert into public.welcome_offer_accounts(user_id,campaign) values($1,'welcome-monthly-50-v1')\",\n      [userId]\n    );"
+    }
+  ]
+}

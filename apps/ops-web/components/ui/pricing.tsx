@@ -50,16 +50,17 @@ export function Pricing({ plans, users, onUsersChange, billing, submitting, chec
           'Film, dizi ve canlı TV',
           'TV, telefon ve bilgisayarda kullanım'
         ];
-        return <article key={plan.months} className={`${s.card} ${plan.months === 6 ? s.recommended : ''}`} aria-label={`${plan.months} aylık ${dual ? 'çift' : 'tek'} kullanıcılı paket`}>
+        return <article key={plan.months} className={`${s.card} ${plan.months === 6 ? s.recommended : ''}`} data-welcome-package={plan.offerId ? '' : undefined} aria-label={`${plan.months} aylık ${dual ? 'çift' : 'tek'} kullanıcılı paket`}>
           {plan.months === 6 && <span className={s.badge}>Önerilen</span>}
           <h2>{plan.months} Aylık</h2>
+          {plan.offerId && <p className={s.welcomeLabel}>Yeni üyelere özel · %50 indirim <s>{formatPackagePrice(plan.regularPrice!)} ₺</s></p>}
           <div className={s.price}><span key={plan.price} data-package-price>{formatPackagePrice(plan.price)}</span><span className={s.currency}>₺</span></div>
           <p className={s.period}>Toplam {plan.months} aylık paket tutarı</p>
           <ul>{features.map(feature => <li key={feature}><Check /><span>{feature}</span></li>)}</ul>
           <div className={s.actions}>
-            {!plan.available ? <button type="button" disabled className={s.unavailable}>Şu anda kullanılamıyor</button> : cardCheckout ? <>
+            {!plan.available || plan.offerId && !cardCheckout ? <button type="button" disabled className={s.unavailable}>Şu anda kullanılamıyor</button> : cardCheckout ? <>
               <button type="button" className={s.primary} disabled={submitting !== null} onClick={() => onCheckout(plan.slug)}>{submitting === plan.slug ? 'Ödeme açılıyor…' : 'Paketi Satın Al'}</button>
-              <PurchaseLink className={s.otherMethods} slug={plan.slug} locked={submitting !== null}>Diğer ödeme yöntemleri</PurchaseLink>
+              {!plan.offerId && <PurchaseLink className={s.otherMethods} slug={plan.slug} locked={submitting !== null}>Diğer ödeme yöntemleri</PurchaseLink>}
             </> : <PurchaseLink className={s.primary} label={`${plan.months} aylık ${dual ? 'çift' : 'tek'} kullanıcılı paket ödeme yöntemleri`} slug={plan.slug} locked={submitting !== null}>Paketi Seç</PurchaseLink>}
           </div>
           <p className={s.cardNote}>Tek seferlik ödeme. Otomatik yenileme yok.</p>

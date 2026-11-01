@@ -40,6 +40,13 @@ describe('embedded payment lifecycle and status polling', () => {
   });
   afterEach(async () => { await unmount(); vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+  it('notifies its owner once after server-confirmed activation and never on a pending payment', async () => {
+    const activated = vi.fn(); state.request.mockResolvedValueOnce({ status: 'processing' }).mockResolvedValue({ status: 'active' });
+    await settle(() => root!.render(<PackagePaymentProgress sessionId={session.sessionId} onActivated={activated} />));
+    expect(activated).not.toHaveBeenCalled(); await advance(4000); expect(activated).toHaveBeenCalledOnce();
+    await advance(8000); await settle(() => window.dispatchEvent(new Event('focus'))); expect(activated).toHaveBeenCalledOnce();
+  });
+
   it('shows a later polling failure and recovers safely to confirmed activation', async () => {
     state.request.mockResolvedValueOnce({ status: 'processing' }).mockRejectedValueOnce(new Error('status unavailable')).mockResolvedValue({ status: 'active', endsAt: '2027-05-01T00:00:00.000Z' });
     await settle(() => root!.render(<PackagePaymentProgress sessionId={session.sessionId} />));

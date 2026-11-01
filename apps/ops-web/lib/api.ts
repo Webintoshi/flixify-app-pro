@@ -166,6 +166,10 @@ export function getUserToken() {
   return null;
 }
 
+export class ApiRequestError extends Error {
+  constructor(message: string, public readonly status: number) { super(message); this.name = 'ApiRequestError'; }
+}
+
 export async function apiRequest<T>(
   path: string,
   options: {
@@ -212,7 +216,7 @@ export async function apiRequest<T>(
       }
     }
 
-    throw new Error(normalizeErrorMessage(responseText, response.status));
+    throw new ApiRequestError(normalizeErrorMessage(responseText, response.status), response.status);
   }
 
   if (response.status === 204) {

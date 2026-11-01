@@ -1,0 +1,13 @@
+[
+  "apps/ops-web/app/paketler/packages-model.ts",
+  "apps/ops-web/app/paketler/page.tsx",
+  "apps/ops-web/app/platform/tv-download.ts",
+  "apps/ops-web/app/platform/welcome-offer-model.ts",
+  "apps/ops-web/app/platform/welcome-offer.module.css",
+  "apps/ops-web/app/platform/welcome-offer.tsx",
+  "apps/ops-web/app/site-shell.tsx",
+  "apps/ops-web/components/ui/package-checkout.tsx",
+  "apps/ops-web/components/ui/pricing.module.css",
+  "apps/ops-web/components/ui/pricing.tsx",
+  "apps/ops-web/lib/api.ts"
+]

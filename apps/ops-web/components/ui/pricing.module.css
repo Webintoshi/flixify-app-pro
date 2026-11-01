@@ -20,6 +20,7 @@
 .price{display:flex;align-items:baseline;justify-content:center;gap:7px;white-space:nowrap;font-size:clamp(38px,3.9vw,60px);line-height:1.05;font-weight:750;letter-spacing:-.055em;font-variant-numeric:tabular-nums}
 .price>span:first-child{animation:priceChange .25s ease-out}
 .currency{font-size:.48em;letter-spacing:0;font-weight:550}
+.welcomeLabel{font-size:12px;line-height:1.6;color:var(--tv-accent,#ff3545);margin:-12px 0 12px}.welcomeLabel s{display:block;color:var(--tv-muted,#a7b0be);font-size:18px;font-variant-numeric:tabular-nums}
 .period{margin:11px 0 27px;color:var(--tv-muted,#a7b0be);font-size:11px;line-height:1.5}
 .card ul{list-style:none;display:flex;flex-direction:column;gap:15px;padding:0;margin:0 0 28px;text-align:left;align-self:stretch}
 .card li{display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.5;color:var(--tv-text,#f5f6f8)}

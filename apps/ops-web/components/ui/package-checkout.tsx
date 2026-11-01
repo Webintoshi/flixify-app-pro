@@ -31,7 +31,7 @@ function loadStripe(): Promise<StripeFactory> {
   return stripeScript;
 }
 
-export function PackagePaymentProgress({ sessionId }: { sessionId: string }) {
+export function PackagePaymentProgress({ sessionId, onActivated }: { sessionId: string; onActivated?: () => void }) {
   const [identity, setIdentity] = useState(() => sessionIdentity(readSession()));
   useEffect(() => {
     const sync = () => setIdentity(sessionIdentity(readSession()));
@@ -40,14 +40,18 @@ export function PackagePaymentProgress({ sessionId }: { sessionId: string }) {
     window.addEventListener('focus', sync);
     return () => { window.removeEventListener('flixify-session', sync); window.removeEventListener('storage', sync); window.removeEventListener('focus', sync); };
   }, []);
-  return <ScopedPaymentProgress key={`${sessionId}:${identity}`} sessionId={sessionId} identity={identity} />;
+  return <ScopedPaymentProgress key={`${sessionId}:${identity}`} sessionId={sessionId} identity={identity} onActivated={onActivated} />;
 }
 
-function ScopedPaymentProgress({ sessionId, identity }: { sessionId: string; identity: string }) {
+function ScopedPaymentProgress({ sessionId, identity, onActivated }: { sessionId: string; identity: string; onActivated?: () => void }) {
   const [version, setVersion] = useState(0);
   const [payment, setPayment] = useState<{ data: PaymentState | null; error: boolean; loading: boolean }>({ data: null, error: false, loading: true });
   const state = payment.data?.status ?? 'processing';
   const terminal = ['active', 'review_required', 'failed', 'expired'].includes(state);
+  const notified = useRef(false);
+  useEffect(() => {
+    if (payment.data?.status === 'active' && !payment.error && !notified.current) { notified.current = true; onActivated?.(); }
+  }, [payment.data?.status, payment.error, onActivated]);
   useEffect(() => {
     let current = true;
     let pending = false;
@@ -88,7 +92,7 @@ function ScopedPaymentProgress({ sessionId, identity }: { sessionId: string; ide
   </section>;
 }
 
-export function PackageCheckout({ checkout, plan, onBack }: { checkout: EmbeddedCheckoutSession; plan: PackageCard; onBack: () => void }) {
+export function PackageCheckout({ checkout, plan, onBack, onActivated }: { checkout: EmbeddedCheckoutSession; plan: PackageCard; onBack: () => void; onActivated?: () => void }) {
   const mount = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const id = useId();
@@ -129,6 +133,6 @@ export function PackageCheckout({ checkout, plan, onBack }: { checkout: Embedded
     {phase === 'loading' && <p className={s.loading} role="status"><span className={s.spinner} aria-hidden="true" />Ödeme ekranı hazırlanıyor…</p>}
     {phase === 'error' && <div className={s.result} role="alert"><h2>Ödeme ekranı açılamadı</h2><p>Bağlantını kontrol edip aynı işlemi tekrar açabilirsin.</p><button type="button" className={s.primary} onClick={() => setAttempt(value => value + 1)}>Tekrar aç</button></div>}
     <div ref={mount} className={s.frame} hidden={phase === 'complete' || phase === 'error'} />
-    {phase === 'complete' && <PackagePaymentProgress key={checkout.sessionId} sessionId={checkout.sessionId} />}
+    {phase === 'complete' && <PackagePaymentProgress key={checkout.sessionId} sessionId={checkout.sessionId} onActivated={onActivated} />}
   </section>;
 }
