@@ -278,6 +278,101 @@ class ExternalCrashloopTests(unittest.TestCase):
             build.host_snapshot()
 
 
+class LegacyWorkerCompatibilityTests(unittest.TestCase):
+    def setUp(self):
+        release.LEGACY_WORKER_OBSERVATIONS.clear()
+
+    def tearDown(self):
+        release.LEGACY_WORKER_OBSERVATIONS.clear()
+
+    def fixture(self):
+        defaults = ["PATH=/image/node", "NODE_VERSION=22.0.0", "YARN_VERSION=1.22.0"]
+        item = {"Id": release.LEGACY_WORKER_ID, "Name": "/worker-" + release.guard.UUID, "Image": build.WORKER_ID, "RestartCount": 0, "Mounts": [],
+            "Config": {"Image": build.WORKER_TAG, "Labels": {"com.docker.compose.project": release.guard.UUID, "com.docker.compose.config-hash": release.LEGACY_WORKER_HASH}, "Env": defaults + ["KEEP=fixture-private", "SERVICE_NAME_WORKER=worker"]},
+            "State": {"StartedAt": release.LEGACY_WORKER_STARTED, "Running": True}}
+        doc = {"services": {"worker": {"image": build.WORKER_TAG, "environment": {"KEEP": "fixture-private", "SERVICE_NAME_WORKER": "worker", "REGISTRATION_GUARD_SECRET": ""}}}}
+        return item, doc, {"Config": {"Env": defaults}}
+
+    def normalized(self, doc):
+        return release.DESIRED_WORKER_HASH if "REGISTRATION_GUARD_SECRET" in doc["services"]["worker"]["environment"] else release.LEGACY_WORKER_HASH
+
+    def test_exact_original_worker_and_only_missing_empty_guard_are_proven_without_mutation(self):
+        item, doc, image = self.fixture()
+        old_item, old_doc = copy.deepcopy(item), copy.deepcopy(doc)
+        with patch.object(release.guard, "image", return_value=image), patch.object(release, "normalized_worker_hash", side_effect=self.normalized) as normalize:
+            self.assertTrue(release.legacy_worker_source_compatible(item, doc, release.DESIRED_WORKER_HASH))
+        self.assertEqual(item, old_item)
+        self.assertEqual(doc, old_doc)
+        self.assertEqual(len(normalize.call_args_list), 2)
+        reconstructed = normalize.call_args_list[1].args[0]
+        expected = copy.deepcopy(doc)
+        del expected["services"]["worker"]["environment"]["REGISTRATION_GUARD_SECRET"]
+        self.assertEqual(reconstructed, expected)
+        self.assertNotIn("fixture-private", json.dumps(release.LEGACY_WORKER_OBSERVATIONS))
+
+    def test_changed_runtime_environment_image_defaults_or_nonempty_guard_cannot_match(self):
+        for kind in ("actual-value", "actual-extra", "actual-empty-guard", "planned-value", "planned-extra", "planned-secret", "image-default", "duplicate"):
+            item, doc, image = self.fixture()
+            if kind == "actual-value": item["Config"]["Env"][-2] = "KEEP=changed"
+            elif kind == "actual-extra": item["Config"]["Env"].append("UNREVIEWED=value")
+            elif kind == "actual-empty-guard": item["Config"]["Env"].append("REGISTRATION_GUARD_SECRET=")
+            elif kind == "planned-value": doc["services"]["worker"]["environment"]["KEEP"] = "changed"
+            elif kind == "planned-extra": doc["services"]["worker"]["environment"]["UNREVIEWED"] = "value"
+            elif kind == "planned-secret": doc["services"]["worker"]["environment"]["REGISTRATION_GUARD_SECRET"] = "forbidden"
+            elif kind == "image-default": image["Config"]["Env"].append("UNREVIEWED=value")
+            else: item["Config"]["Env"].append("KEEP=fixture-private")
+            with self.subTest(kind=kind), patch.object(release.guard, "image", return_value=image), patch.object(release, "normalized_worker_hash", side_effect=self.normalized):
+                if kind == "duplicate":
+                    with self.assertRaises(release.GateError): release.legacy_worker_source_compatible(item, doc, release.DESIRED_WORKER_HASH)
+                else:
+                    self.assertFalse(release.legacy_worker_source_compatible(item, doc, release.DESIRED_WORKER_HASH))
+
+    def test_original_container_image_project_hash_start_and_mount_pins_are_mandatory(self):
+        for kind in ("id", "name", "image", "tag", "project", "hash", "started", "restart", "stopped", "mount", "desired-hash"):
+            item, doc, _ = self.fixture()
+            computed = release.DESIRED_WORKER_HASH
+            if kind == "id": item["Id"] = "replacement"
+            elif kind == "name": item["Name"] = "/other"
+            elif kind == "image": item["Image"] = "different"
+            elif kind == "tag": item["Config"]["Image"] = "different"
+            elif kind == "project": item["Config"]["Labels"]["com.docker.compose.project"] = "different"
+            elif kind == "hash": item["Config"]["Labels"]["com.docker.compose.config-hash"] = "0" * 64
+            elif kind == "started": item["State"]["StartedAt"] = "different"
+            elif kind == "restart": item["RestartCount"] = 1
+            elif kind == "stopped": item["State"]["Running"] = False
+            elif kind == "mount": item["Mounts"] = [{"Destination": "/unexpected"}]
+            else: computed = "0" * 64
+            with self.subTest(kind=kind), patch.object(release.guard, "image") as image:
+                self.assertFalse(release.legacy_worker_source_compatible(item, doc, computed))
+                image.assert_not_called()
+
+    def test_both_normalized_current_and_reconstructed_original_hashes_must_match(self):
+        for values in (["0" * 64], [release.DESIRED_WORKER_HASH, "0" * 64]):
+            item, doc, image = self.fixture()
+            with patch.object(release.guard, "image", return_value=image), patch.object(release, "normalized_worker_hash", side_effect=values):
+                self.assertFalse(release.legacy_worker_source_compatible(item, doc, release.DESIRED_WORKER_HASH))
+
+    def test_other_services_and_recreated_target_worker_never_use_legacy_compatibility(self):
+        for service, name in (("api", "api"), ("api", "worker"), ("worker", "api")):
+            with patch.object(release, "SERVICE", service), patch.object(release, "ORIGINAL_COMPOSE_HASH", return_value="normal"), patch.object(release.guard, "command") as command:
+                self.assertEqual(release.compose_hash(name), "normal")
+                command.assert_not_called()
+        item, _, _ = self.fixture()
+        item["Id"] = "new-candidate-worker"
+        item["Config"]["Labels"]["com.docker.compose.config-hash"] = "target-normal-hash"
+        with patch.object(release, "SERVICE", "worker"), patch.object(release, "ORIGINAL_COMPOSE_HASH", return_value="target-normal-hash"), patch.object(release.guard, "command", return_value=json.dumps([item]).encode()), patch.object(release, "legacy_worker_source_compatible") as legacy:
+            self.assertEqual(release.compose_hash("worker"), "target-normal-hash")
+            legacy.assert_not_called()
+
+    def test_normalization_uses_the_same_project_and_worker_service_only(self):
+        _, doc, _ = self.fixture()
+        with patch.object(release.guard, "command", return_value=("worker " + release.LEGACY_WORKER_HASH).encode()) as command:
+            self.assertEqual(release.normalized_worker_hash(doc), release.LEGACY_WORKER_HASH)
+        self.assertEqual(command.call_args.args[:5], ("docker", "compose", "-p", release.guard.UUID, "--project-directory"))
+        self.assertEqual(command.call_args.args[-5:], ("-f", "-", "config", "--hash", "worker"))
+        self.assertEqual(json.loads(command.call_args.kwargs["input_data"]), doc)
+
+
 class TransactionFixture:
     def __init__(self, service):
         self.service = service
