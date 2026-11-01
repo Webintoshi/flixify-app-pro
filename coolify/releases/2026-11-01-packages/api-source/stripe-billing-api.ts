@@ -31,7 +31,7 @@ export function createStripeBillingApi(stripe: Stripe, config: StripeRuntime, fi
             metadata.sale_price_id !== selected.priceId) throw new Error('stripe_price_mismatch');
       }
       const session = await stripe.checkout.sessions.create(params, { idempotencyKey });
-      if (session.livemode !== config.liveMode || session.mode !== 'payment' || session.ui_mode !== 'embedded') throw new Error('stripe_mode_mismatch');
+      if (session.livemode !== config.liveMode || session.mode !== 'payment' || session.ui_mode !== 'embedded_page') throw new Error('stripe_mode_mismatch');
       return { id: session.id, clientSecret: session.client_secret };
     },
     async retrieveCheckoutSession(sessionId) {

@@ -16,7 +16,7 @@
       "path": "apps/api/src/stripe-billing-api.ts",
       "source": "coolify/releases/2026-11-01-packages/api-source/stripe-billing-api.ts",
       "new": false,
-      "sha256": "2e5ca009da7001135ad369c374a5b6b5305fb59a720ec4a445f2f7c0685c1e63"
+      "sha256": "b2adc5390c38d1d20e88926a19cc493312e1c549fdbc952590410e6ce419757b"
     },
     {
       "path": "apps/api/src/stripe-billing-policy.ts",
@@ -28,7 +28,7 @@
       "path": "apps/api/src/stripe-billing-routes.ts",
       "source": "coolify/releases/2026-11-01-packages/api-source/stripe-billing-routes.ts",
       "new": false,
-      "sha256": "d3fae1f4aa978a080a48f400792d6015f668a3bf96418b1997d3e9f3081c9040"
+      "sha256": "0d6113de66b72f4ca373d715164b9910865e6b13612780236d89417f6b0aa90f"
     },
     {
       "path": "apps/api/src/stripe-billing-runtime.ts",

@@ -29,7 +29,7 @@ describe('package selection and payment handoff', () => {
     Object.defineProperty(window, 'location', { value: { assign: state.assign }, configurable: true });
     state.assign.mockReset(); state.request.mockReset(); state.mounted.mockReset(); state.destroyed.mockReset(); state.payment = { status: 'processing' };
     Object.defineProperty(window.HTMLElement.prototype, 'focus', { value: vi.fn(), configurable: true });
-    Object.defineProperty(window, 'Stripe', { value: () => ({ initEmbeddedCheckout: async (options: any) => { await options.fetchClientSecret(); state.complete = options.onComplete; return { mount: state.mounted, destroy: state.destroyed }; } }), configurable: true });
+    Object.defineProperty(window, 'Stripe', { value: () => ({ createEmbeddedCheckoutPage: async (options: any) => { await options.fetchClientSecret(); state.complete = options.onComplete; return { mount: state.mounted, destroy: state.destroyed }; } }), configurable: true });
     state.packages = slugs.map((slug, index) => ({ id: `plan-${index}`, slug, title: `${months[index]} Aylık`, durationMonths: months[index], isActive: true, priceLabel: `${prices[index]} ₺` }));
     state.packages.push({ id: 'legacy', slug: '3-ay', title: '3 Aylık', durationMonths: 3, isActive: true, priceLabel: '640 TL' });
     state.billing = { checkoutEnabled: false };
@@ -97,7 +97,7 @@ describe('package selection and payment handoff', () => {
   it('keeps immediate Stripe completion in verification state instead of reopening the form', async () => {
     state.billing = { checkoutEnabled: true, checkoutPackages: [{ packageSlug: '1-ay', amountTry: 250, users: 1, durationMonths: 1 }] };
     state.request.mockImplementation((path: string) => Promise.resolve(path.includes('payment-status') ? { status: 'processing' } : { sessionId: 'cs_live_fixture', clientSecret: 'cs_live_fixture_secret_example', publishableKey: 'pk_live_fixture' }));
-    Object.defineProperty(window, 'Stripe', { value: () => ({ initEmbeddedCheckout: async (options: any) => {
+    Object.defineProperty(window, 'Stripe', { value: () => ({ createEmbeddedCheckoutPage: async (options: any) => {
       options.onComplete();
       return { mount: state.mounted, destroy: state.destroyed };
     } }), configurable: true });

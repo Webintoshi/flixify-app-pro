@@ -11,7 +11,7 @@ import { formatPackagePrice, type PackageCard } from '../../app/paketler/package
 import s from './package-checkout.module.css';
 
 type CheckoutInstance = { mount: (element: HTMLElement) => void; destroy: () => void };
-type StripeCheckout = { initEmbeddedCheckout: (options: { fetchClientSecret: () => Promise<string>; onComplete: () => void }) => Promise<CheckoutInstance> };
+type StripeCheckout = { createEmbeddedCheckoutPage: (options: { fetchClientSecret: () => Promise<string>; onComplete: () => void }) => Promise<CheckoutInstance> };
 type StripeFactory = (key: string) => StripeCheckout;
 let stripeScript: Promise<StripeFactory> | null = null;
 
@@ -21,7 +21,7 @@ function loadStripe(): Promise<StripeFactory> {
   if (stripeScript) return stripeScript;
   stripeScript = new Promise<StripeFactory>((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = 'https://js.stripe.com/v3/';
+    script.src = 'https://js.stripe.com/endive/stripe.js';
     script.async = true;
     const timeout = window.setTimeout(() => { script.remove(); reject(new Error('payment_script_unavailable')); }, 15000);
     script.onload = () => { window.clearTimeout(timeout); current() ? resolve(current()!) : reject(new Error('payment_script_unavailable')); };
@@ -105,7 +105,7 @@ export function PackageCheckout({ checkout, plan, onBack }: { checkout: Embedded
     void (async () => {
       const Stripe = await loadStripe();
       if (disposed || expired) return;
-      const created = await Stripe(checkout.publishableKey).initEmbeddedCheckout({
+      const created = await Stripe(checkout.publishableKey).createEmbeddedCheckoutPage({
         fetchClientSecret: async () => checkout.clientSecret,
         onComplete: () => { if (!disposed && !expired) setPhase('complete'); }
       });

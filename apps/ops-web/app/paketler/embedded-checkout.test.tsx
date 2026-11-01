@@ -118,7 +118,7 @@ describe('embedded payment lifecycle and status polling', () => {
     const mount = vi.fn(); const destroy = vi.fn();
     let complete: () => void = () => {};
     const initialize = vi.fn((options: { onComplete: () => void }) => { complete = options.onComplete; return init.promise; });
-    Object.defineProperty(window, 'Stripe', { value: () => ({ initEmbeddedCheckout: initialize }), configurable: true });
+    Object.defineProperty(window, 'Stripe', { value: () => ({ createEmbeddedCheckoutPage: initialize }), configurable: true });
     await settle(() => root!.render(<PackageCheckout checkout={session} plan={plan} onBack={vi.fn()} />));
     expect(initialize).toHaveBeenCalledOnce();
     await advance(30000);
@@ -133,7 +133,7 @@ describe('embedded payment lifecycle and status polling', () => {
   it('destroys an initialization result arriving after the checkout screen was closed', async () => {
     const init = deferred<{ mount: ReturnType<typeof vi.fn>; destroy: ReturnType<typeof vi.fn> }>();
     const mount = vi.fn(); const destroy = vi.fn();
-    Object.defineProperty(window, 'Stripe', { value: () => ({ initEmbeddedCheckout: () => init.promise }), configurable: true });
+    Object.defineProperty(window, 'Stripe', { value: () => ({ createEmbeddedCheckoutPage: () => init.promise }), configurable: true });
     await settle(() => root!.render(<PackageCheckout checkout={session} plan={plan} onBack={vi.fn()} />));
     await unmount();
     await settle(() => init.resolve({ mount, destroy }));

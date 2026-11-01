@@ -42,7 +42,7 @@ describe('new checkout catalog and reservation version pins', () => {
     const f=fixture();expect((await f.buy('12-ay-2-kullanici')).statusCode).toBe(200);
     expect(f.verifyProviderPackage).toHaveBeenCalledWith(16,12,2);
     expect(f.store.beginCheckout).toHaveBeenCalledWith('fixture-user','12-ay-2-kullanici',false,'price_dual_twelve',SALE_CATALOG_VERSION);
-    expect(f.stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({line_items:[{price:'price_dual_twelve',quantity:1}],metadata:expect.objectContaining({package_slug:'12-ay-2-kullanici',catalog_version:SALE_CATALOG_VERSION,package_users:'2',sale_price_id:'price_dual_twelve'})}),'op_new');await f.app.close();
+    expect(f.stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({mode:'payment',ui_mode:'embedded_page',line_items:[{price:'price_dual_twelve',quantity:1}],metadata:expect.objectContaining({package_slug:'12-ay-2-kullanici',catalog_version:SALE_CATALOG_VERSION,package_users:'2',sale_price_id:'price_dual_twelve'})}),'op_new');await f.app.close();
   });
   it('rejects a new three-month purchase without creating any checkout',async()=>{const f=fixture();expect((await f.buy('3-ay')).statusCode).toBe(400);expect(f.stripe.createCheckoutSession).not.toHaveBeenCalled();await f.app.close();});
   it('holds old ambiguous creating reservations instead of replaying an old idempotency key at a new price',async()=>{
@@ -56,7 +56,7 @@ describe('new checkout catalog and reservation version pins', () => {
   });
   it('reuses only a matching new open checkout with exact price and quantity',async()=>{
     const f=fixture();f.store.pendingCheckout.mockResolvedValue({...f.pending,priceId:'price_new_one',catalogVersion:SALE_CATALOG_VERSION});
-    f.stripe.retrieveCheckoutSession.mockResolvedValue({...await f.stripe.retrieveCheckoutSession(),priceId:'price_new_one',mode:'payment',uiMode:'embedded',clientSecret:'cs_old_secret_fixture'});
+    f.stripe.retrieveCheckoutSession.mockResolvedValue({...await f.stripe.retrieveCheckoutSession(),priceId:'price_new_one',mode:'payment',uiMode:'embedded_page',clientSecret:'cs_old_secret_fixture'});
     expect((await f.buy()).json()).toEqual({clientSecret:'cs_old_secret_fixture',sessionId:'cs_old',publishableKey:STRIPE_PUBLISHABLE_KEY});expect(f.stripe.createCheckoutSession).not.toHaveBeenCalled();await f.app.close();
   });
   it('retries an exact new creating reservation with its original pinned operation key',async()=>{

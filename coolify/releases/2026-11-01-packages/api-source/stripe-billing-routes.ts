@@ -5,7 +5,7 @@ import { BlockedUserRouteError } from './user-route-error.js';
 
 type CheckoutParams = {
   mode: 'payment';
-  ui_mode: 'embedded';
+  ui_mode: 'embedded_page';
   redirect_on_completion: 'if_required';
   customer: string;
   client_reference_id: string;
@@ -133,7 +133,7 @@ export function registerStripeBillingRoutes(app: FastifyInstance, deps: Dependen
             if (!previous.priceId || previous.quantity !== 1) return reply.code(503).send({ error: 'checkout_state_unavailable' });
             if (pending.packageSlug === selected.slug && pending.priceId === selected.priceId &&
                 pending.catalogVersion === selected.catalogVersion && previous.priceId === selected.priceId && previous.mode === 'payment' &&
-                previous.uiMode === 'embedded' && previous.clientSecret) return { clientSecret: previous.clientSecret, sessionId: previous.id, publishableKey: STRIPE_PUBLISHABLE_KEY };
+                previous.uiMode === 'embedded_page' && previous.clientSecret) return { clientSecret: previous.clientSecret, sessionId: previous.id, publishableKey: STRIPE_PUBLISHABLE_KEY };
             if (!deps.stripe.expireCheckoutSession) return reply.code(503).send({ error: 'checkout_state_unavailable' });
             await deps.stripe.expireCheckoutSession(pending.sessionId);
             await deps.store.expireCheckout(pending.operationId, pending.sessionId);
@@ -161,7 +161,7 @@ export function registerStripeBillingRoutes(app: FastifyInstance, deps: Dependen
       sessionCreationStarted = true;
       const session = await deps.stripe.createCheckoutSession({
         mode: 'payment',
-        ui_mode: 'embedded',
+        ui_mode: 'embedded_page',
         redirect_on_completion: 'if_required',
         customer: customerId,
         client_reference_id: userId,
