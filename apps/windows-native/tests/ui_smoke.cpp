@@ -283,7 +283,7 @@ bool physicalPointerDoubleClick(QQuickWindow *video,QQuickWindow *overlay,Deskto
     if(SendInput(2,inputs,sizeof(INPUT))!=2) { evidence["error"]="Second physical click was rejected";return false; }
     const bool toggled=until([&]{return player.fullScreen()!=fullscreen;},3000);
     QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval()+80);
-    evidence={{"fullscreenBefore",fullscreen},{"fullscreenAfter",player.fullScreen()},{"playingBefore",playing},{"playingAfter",player.playing()},{"active",player.active()},{"qmlDoubleClicks",doubleClicks.size()},{"nativePointerEvents",nativeMoves.size()},{"cursorX",point.x},{"cursorY",point.y},{"hitWindowClass",QString::fromWCharArray(hitClass)}};
+    evidence={{"fullscreenBefore",fullscreen},{"fullscreenAfter",player.fullScreen()},{"playingBefore",playing},{"playingAfter",player.playing()},{"active",player.active()},{"qmlDoubleClicks",doubleClicks.size()},{"nativePointerEvents",nativeMoves.size()},{"cursorX",static_cast<int>(point.x)},{"cursorY",static_cast<int>(point.y)},{"hitWindowClass",QString::fromWCharArray(hitClass)}};
     const bool passed=toggled&&player.active()&&player.playing()==playing&&doubleClicks.size()==1;
     player.setFullScreen(fullscreen);until([&]{return video->visibility()==(fullscreen?QWindow::FullScreen:QWindow::Windowed);},3000);
     if(GetClientRect(hwnd,&bounds)) { POINT idle{(bounds.right-bounds.left)/2,(bounds.bottom-bounds.top)/2};if(ClientToScreen(hwnd,&idle))SetCursorPos(idle.x,idle.y); }
