@@ -125,7 +125,8 @@ Window {
         objectName: "playerOverlay"
         transientParent: videoWindow
         flags: Qt.Tool | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
-        color: "transparent"
+        // Zero-alpha Win32 pixels pass clicks through to VLC instead of the controls.
+        color: "#01000000"
         x: videoWindow.x
         y: videoWindow.y
         width: videoWindow.width
