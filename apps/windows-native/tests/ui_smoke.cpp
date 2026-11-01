@@ -24,6 +24,7 @@
 #include <QSet>
 #include <QStyleHints>
 #include <QSignalSpy>
+#include <QProcess>
 #include <cstring>
 #include <cstdlib>
 #ifdef Q_OS_WIN
@@ -216,6 +217,33 @@ bool duplicatePointerCoordinatesIgnored(QQuickWindow *video) {
     QMetaObject::invokeMethod(video,"pointerMoved",Q_ARG(QVariant,-776.0),Q_ARG(QVariant,-777.0));
     return changes.size()==2;
 }
+int isolatedCloseProbe(QGuiApplication &app,const QString &output,const QString &media) {
+    FixtureServer fixture;QTemporaryDir storage;RepositoryOptions options;options.apiBase=fixture.base();options.storageDirectory=storage.path();options.allowLoopbackForTests=true;
+    DesktopRepository repository(options);DesktopPlayer player(nullptr,true);QQmlApplicationEngine engine;installDesktop(engine,repository,player);
+    QJsonObject proof{{"isolatedStorage",storage.isValid()},{"loopbackFixture",fixture.isListening()},{"rootCloseAccepted",false},{"lastWindowClosed",false},{"aboutToQuit",false},{"timedOut",false},{"playbackMode",!media.isEmpty()},{"quitOnLastWindowClosed",app.quitOnLastWindowClosed()},{"stoppedPlaybackBeforeRootClose",app.arguments().contains("--close-probe-stopped")}};
+    auto snapshot=[] { QJsonArray result;for(auto window:QGuiApplication::topLevelWindows())result.append(QJsonObject{{"name",window->objectName()},{"title",window->title()},{"visible",window->isVisible()},{"type",int(window->type())},{"transientParent",window->transientParent()?window->transientParent()->objectName():QString()}});return result; };
+    auto save=[&] { proof["qmlErrors"]=QJsonArray::fromStringList(qmlErrors);QFile file(QDir(output).filePath("close-probe.json"));if(file.open(QIODevice::WriteOnly))file.write(QJsonDocument(proof).toJson()); };
+    QObject::connect(&app,&QGuiApplication::lastWindowClosed,&app,[&]{proof["lastWindowClosed"]=true;save();});
+    QObject::connect(&app,&QCoreApplication::aboutToQuit,&app,[&]{proof["aboutToQuit"]=true;player.close();proof["playerStopped"]=!player.active();proof["windowsAtQuit"]=snapshot();save();});
+    engine.load(QUrl("qrc:/qml/Root.qml"));if(engine.rootObjects().isEmpty())return 71;
+    auto root=qobject_cast<QQuickWindow*>(engine.rootObjects().first());repository.restore();
+    QTimer::singleShot(250,&app,[&] {
+        if(!media.isEmpty()) {
+            const QString scope="close-probe:local";
+            QVariantMap item{{"id","1"},{"kind","movie"},{"title","Isolated close verification"},{"scope",scope},{"extension","avi"}};
+            player.open({{"item",item},{"url",QUrl::fromLocalFile(QFileInfo(media).absoluteFilePath()).toString()},{"expiresAt",QDateTime::currentMSecsSinceEpoch()+60000},{"scope",scope},{"resumeMs",0},{"next",QVariantMap{}}});
+        }
+    });
+    if(app.arguments().contains("--close-probe-stopped"))QTimer::singleShot(800,&app,[&]{
+        QWindow *video=nullptr;for(auto window:QGuiApplication::topLevelWindows())if(window->objectName()=="playerWindow")video=window;
+        proof["videoCloseAccepted"]=video?video->close():true;proof["rootVisibleAfterVideoClose"]=root->isVisible();proof["playerStoppedAfterVideoClose"]=!player.active();
+    });
+    QTimer::singleShot(1200,&app,[&] { proof["windowsBeforeClose"]=snapshot();proof["playerActiveBeforeClose"]=player.active();proof["playingBeforeClose"]=player.playing();proof["videoFrameBeforeClose"]=player.hasVideoFrame();proof["rootCloseAccepted"]=root->close();proof["windowsAfterClose"]=snapshot();save(); });
+    QTimer::singleShot(5000,&app,[&] { proof["timedOut"]=true;proof["windowsAtTimeout"]=snapshot();save();app.exit(72); });
+    const int result=app.exec();proof["eventLoopExitCode"]=result;save();
+    const bool videoReturn= !app.arguments().contains("--close-probe-stopped")||(!proof["videoCloseAccepted"].toBool()&&proof["rootVisibleAfterVideoClose"].toBool()&&proof["playerStoppedAfterVideoClose"].toBool());
+    return !proof["timedOut"].toBool()&&proof["rootCloseAccepted"].toBool()&&proof["aboutToQuit"].toBool()&&proof["lastWindowClosed"].toBool()&&videoReturn&&qmlErrors.isEmpty()?0:73;
+}
 bool doubleClickOnlyChangesFullscreen(QQuickWindow *video,QQuickWindow *overlay,DesktopPlayer &player,QJsonObject &evidence) {
     auto pointer=overlay?visual(overlay->contentItem(),"videoPointerArea"):nullptr;
     auto pauseTimer=overlay?overlay->findChild<QObject *>("videoSingleClickTimer"):nullptr;
@@ -301,8 +329,9 @@ int main(int argc,char **argv) {
     const auto media=argument("--media");
     const auto codecs=argument("--codec-fixtures");
     const bool catalogOnly=app.arguments().contains("--catalog-only");
-    if(argument("--output").isEmpty() || (!catalogOnly&&!QFileInfo(media).isFile())) { qCritical("ui_smoke --output DIRECTORY --media LOCAL_VIDEO [--artwork-dir DIRECTORY]"); return 2; }
+    if(argument("--output").isEmpty() || (!catalogOnly&&!app.arguments().contains("--close-probe-child")&&!QFileInfo(media).isFile())) { qCritical("ui_smoke --output DIRECTORY --media LOCAL_VIDEO [--artwork-dir DIRECTORY]"); return 2; }
     QDir().mkpath(output);
+    if(app.arguments().contains("--close-probe-child"))return isolatedCloseProbe(app,output,media);
     QJsonObject report{{"passed",false},{"localMediaPlaying",false},{"fixtureHttp",false},{"catalogOnly",catalogOnly},{"platform",QSysInfo::productType()}};
     auto finish=[&](const QString &failure,int result) { report["error"]=failure;report["qmlErrors"]=QJsonArray::fromStringList(qmlErrors); QFile file(QDir(output).filePath("smoke.json"));if(file.open(QIODevice::WriteOnly))file.write(QJsonDocument(report).toJson()); if(!failure.isEmpty())qCritical("%s",qPrintable(failure));return result; };
     QString artwork=argument("--artwork-dir");
@@ -489,6 +518,18 @@ int main(int argc,char **argv) {
     if(!until([&]{return player.item()["id"]==second["id"]&&player.playing()&&player.hasVideoFrame()&&player.positionMs()>250;},30000))return finish("New selection did not supersede recovery",33);
     report["recoverySelectionPreserved"]=true;
     player.close();
+    QJsonArray closeProofs;
+    for(int mode=0;mode<3;++mode) {
+        const auto directory=QDir(output).filePath(QString("close-%1").arg(mode));QDir().mkpath(directory);
+        QStringList args{"--close-probe-child","--output",directory};if(mode>0)args<<"--media"<<QFileInfo(media).absoluteFilePath();if(mode==2)args<<"--close-probe-stopped";
+        QProcess child;child.start(QCoreApplication::applicationFilePath(),args);
+        const bool started=child.waitForStarted(3000);const bool exited=started&&until([&]{return child.state()==QProcess::NotRunning;},8000);
+        QFile log(QDir(directory).filePath("process.log"));if(log.open(QIODevice::WriteOnly))log.write(child.readAllStandardOutput()+child.readAllStandardError());
+        QFile proofFile(QDir(directory).filePath("close-probe.json"));QJsonObject proof;if(proofFile.open(QIODevice::ReadOnly))proof=QJsonDocument::fromJson(proofFile.readAll()).object();
+        proof["processStarted"]=started;proof["processExited"]=exited;proof["normalProcessExit"]=exited&&child.exitStatus()==QProcess::NormalExit;proof["processExitCode"]=exited?child.exitCode():-1;closeProofs.append(proof);report["closeLifecycle"]=closeProofs;
+        if(!exited||child.exitStatus()!=QProcess::NormalExit||child.exitCode()!=0||proof.value("timedOut").toBool()||!proof.value("aboutToQuit").toBool()||!proof.value("playerStopped").toBool())return finish("Isolated application close lifecycle failed: "+QString::fromUtf8(QJsonDocument(proof).toJson(QJsonDocument::Compact)),74);
+    }
+    report["normalCloseLifecycle"]=true;
     if(!qmlErrors.isEmpty())return finish("Player QML reported runtime errors",29);
     report["passed"]=true;return finish({},0);
 }

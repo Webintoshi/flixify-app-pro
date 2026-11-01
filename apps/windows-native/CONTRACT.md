@@ -25,3 +25,5 @@ App connects repository playbackReady -> player.open; sourceChanged/accessRevoke
 ## Native surface
 
 Register `NativeVideoSurface` in `Flixify.Native 1.0`: QQuickPaintedItem `surfaceHandle`, `mousePassthrough`, `frontSurface`; `pointerActivity(QPointF globalPosition)` signal, using Qt global cursor coordinates. Host window owns native surface, a separate transparent transient QML controls window stays above native child video. Never render decoded frames through a CPU image-copy loop. Physical HWND coordinates must account for devicePixelRatio.
+
+Root sets `shuttingDown` before application exit. The secondary player and overlay accept close events during owner shutdown; ordinary player-window closure stops playback and returns to the root. Hidden secondary native windows must not veto Qt’s application Quit event.

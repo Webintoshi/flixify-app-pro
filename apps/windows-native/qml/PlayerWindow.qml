@@ -39,7 +39,7 @@ Window {
         else showNormal()
     }
     onClosing: function (close) {
-        close.accepted = false;
+        close.accepted = owner && owner.shuttingDown;
         player.close();
     }
     onVisibleChanged: if (visible) {
@@ -135,7 +135,7 @@ Window {
         onVisibleChanged: if (visible)
             requestActivate()
         onClosing: function (close) {
-            close.accepted = false;
+            close.accepted = videoWindow.owner && videoWindow.owner.shuttingDown;
             player.close();
         }
         property bool menuOpen: audioMenu.visible || subtitleMenu.visible || episodeMenu.visible

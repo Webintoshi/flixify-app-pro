@@ -12,6 +12,12 @@ ApplicationWindow {
     minimumWidth: 900
     minimumHeight: 620
     visible: true
+    property bool shuttingDown: false
+    onClosing: {
+        shuttingDown = true
+        player.close()
+        Qt.quit()
+    }
     title: "Flixify Pro"
     color: "#07090C"
     font.family: "Segoe UI"
