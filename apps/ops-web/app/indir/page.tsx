@@ -7,6 +7,7 @@ import HomeFooter from "../components/home/HomeFooter";
 import styles from "./page.module.css";
 import { tvDownload } from "../platform/tv-download";
 import { macDownload } from "../platform/mac-download";
+import { windowsDownload } from "../platform/windows-download";
 
 export default function DownloadsPage() {
   const [userCode, setUserCode] = useState<string | null>(null);
@@ -25,7 +26,7 @@ export default function DownloadsPage() {
 
   useEffect(() => {
     const id = window.location.hash.slice(1);
-    if (id !== "macos" && id !== "android-tv") return;
+    if (id !== "macos" && id !== "android-tv" && id !== "windows") return;
     const frame = window.requestAnimationFrame(() => {
       document.getElementById(id)?.scrollIntoView({ block: "start" });
     });
@@ -46,8 +47,8 @@ export default function DownloadsPage() {
       <main className={styles.content}>
         <span className={styles.eyebrow}>FLIXIFY PRO · UYGULAMALAR</span>
         <h1>Flixify’ı cihazına indir.</h1>
-        <p>TV’nde veya Mac’inde aynı kullanıcı kodunla giriş yap. Cihazına uygun sürümü seç.</p>
-        <nav className={styles.platformLinks} aria-label="Uygulama seç"><a href="#android-tv">Android TV</a><a href="#macos">macOS · Test</a></nav>
+        <p>TV’nde, Mac’inde veya Windows bilgisayarında aynı kullanıcı kodunla giriş yap. Cihazına uygun sürümü seç.</p>
+        <nav className={styles.platformLinks} aria-label="Uygulama seç"><a href="#android-tv">Android TV</a><a href="#macos">macOS · Test</a><a href="#windows">Windows · Test</a></nav>
         <div className={styles.platforms}>
           <section className={styles.platform} id="android-tv" aria-labelledby="android-tv-heading">
             <h2 id="android-tv-heading">Android TV</h2>
@@ -72,6 +73,19 @@ export default function DownloadsPage() {
               <li>DMG dosyasını Mac’ine indir ve aç.</li>
               <li>Flixify Pro’yu Uygulamalar klasörüne sürükle.</li>
               <li>Uygulamalar’dan Flixify Pro’yu aç ve mevcut 16 karakterli kullanıcı kodunla giriş yap.</li>
+            </ol>
+          </section>
+          <section className={styles.platform} id="windows" aria-labelledby="windows-heading">
+            <div className={styles.platformTitle}><h2 id="windows-heading">Windows</h2><span className={styles.testBadge}>{windowsDownload.status}</span></div>
+            <p>Film, dizi ve canlı TV’yi Windows bilgisayarında izle. Mevcut kullanıcı kodunla giriş yap.</p>
+            <p className={styles.notice} id="windows-notice">{windowsDownload.notice}</p>
+            <a className={styles.download} href={windowsDownload.href} download={windowsDownload.filename} aria-describedby="windows-release windows-notice">Windows EXE indir <span aria-hidden="true">↓</span></a>
+            <p className={styles.release} id="windows-release">{windowsDownload.version} · {windowsDownload.minimumWindows}<br/>{windowsDownload.architecture} · {windowsDownload.size}</p>
+            <h3>Windows’a nasıl kurulur?</h3>
+            <ol className={styles.steps}>
+              <li>EXE kurulum dosyasını Windows bilgisayarına indir.</li>
+              <li>İndirilen dosyayı aç ve kurulum sihirbazındaki adımları izle. Güvenlik uyarısı kurulumu engellerse korumaları kapatmadan destek bölümüne ulaş.</li>
+              <li>Başlat menüsünden Flixify Pro’yu aç ve mevcut 16 karakterli kullanıcı kodunla giriş yap.</li>
             </ol>
           </section>
         </div>

@@ -15,6 +15,7 @@ export function Icon({ name, filled = false }: { name: string; filled?: boolean 
     settings: <><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 1v3m0 16v3M1 12h3m16 0h3"/></>,
     device: <><rect x="2" y="3" width="15" height="13" rx="2"/><path d="M7 20h6m-3-4v4"/><rect x="17" y="10" width="5" height="11" rx="1"/></>,
     desktop: <><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M8 21h8m-4-5v5"/></>,
+    windows: <path d="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z" fill="currentColor" stroke="none"/>,
   };
   return <svg width="22" height="22" viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name] ?? paths.movie}</svg>;
 }

@@ -68,4 +68,4 @@
 @media (max-width: 1050px) { .interface { grid-template-columns: 88px minmax(0, 1fr); } .previewNav { padding: 13px 7px; gap: 16px; } .previewNav>div { font-size: 7px; gap: 5px; } .previewNav>div>span { padding-inline: 5px; gap: 4px; } .previewNav>div svg { width: 10px; height: 10px; } }
 @media (max-width: 400px) { .interface { grid-template-columns: 74px minmax(0, 1fr); } .previewNav>div { font-size: 6px; } .previewHero strong { font-size: 19px; } }
 
-.heroCopy>p.macNotice{max-width:510px;margin:18px 0 0;font-size:12px;line-height:1.6;color:#b6becb}
+.heroCopy>p.downloadNotice{max-width:510px;margin:18px 0 0;font-size:12px;line-height:1.6;color:#b6becb}

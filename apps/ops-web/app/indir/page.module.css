@@ -6,7 +6,7 @@
 .content a:hover { color: #ff4054; }
 .content a:focus-visible { outline: 2px solid #ff4054; outline-offset: 6px; }
 .eyebrow { display: block; color: #ff4054; font-size: 12px; font-weight: 700; letter-spacing: .12em; margin-bottom: 22px; }
-.content a.download { padding: 16px 24px; border-radius: 8px; background: #ff3545; color: #fff; }
+.content a.download { padding: 16px 24px; border-radius: 8px; background: #ff3545; color: #fff; font-size: 18px; }
 .content .release { font-size: 13px; margin-top: 14px; }
 .content h2 { margin: 0; font-size: 28px; }
 .content h3 { margin-top: 30px; font-size: 20px; }
@@ -15,7 +15,7 @@
 .content p a { padding: 0; margin: 0; display: inline; text-decoration: underline; font-weight: inherit; }
 .platformLinks { display: flex; flex-wrap: wrap; gap: 12px; margin: 26px 0; }
 .platformLinks a { min-height: 44px; margin: 0; padding: 10px 18px; border: 1px solid #353b47; border-radius: 999px; font-size: 14px; }
-.platforms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-bottom: 36px; }
+.platforms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin-bottom: 36px; }
 .platform { min-width: 0; padding: 30px; border: 1px solid #2c313d; border-radius: 20px; background: #11151c; scroll-margin-top: 110px; }
 .platform > p { font-size: 16px; }
 .platformTitle { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
@@ -26,4 +26,7 @@
   .platforms { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   .platform { padding: 24px; }
   .content a.download { width: 100%; justify-content: space-between; gap: 12px; padding: 16px 20px; }
+}
+@media (min-width: 721px) and (max-width: 980px) {
+  .platforms { grid-template-columns: minmax(0, 1fr); }
 }
