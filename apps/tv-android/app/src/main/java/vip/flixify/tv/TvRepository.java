@@ -10,6 +10,8 @@ public interface TvRepository {
     default AutoCloseable observeCatalog(CatalogObserver observer) {return ()->{};}
     /** Bounded metadata preparation; never downloads media or delays navigation. */
     default void prepareOfflineData() {}
+    /** Releases memory, retaining only a visible catalogue and private disk snapshots. */
+    default void trimMemory(Kind keep) {}
     boolean hasSession();
     String currentScope();
     void login(String code,Callback<Account> callback);

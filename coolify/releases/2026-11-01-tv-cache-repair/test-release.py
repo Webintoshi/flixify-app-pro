@@ -3,6 +3,7 @@ import copy
 import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import subprocess
 import sys
@@ -130,7 +131,7 @@ class DeviceContracts(unittest.TestCase):
         for bad in (paths+['../escape'],paths+['/data/local/tmp/file'],paths+paths[:1],paths[:2]):
             with self.assertRaises(upgrade.GateError):upgrade.validate_paths(bad)
     def test_upgrade_retains_first_install_time_and_exact_reviewed_file_digests(self):
-        old={'versionCode':12,'versionName':'1.4.4','firstInstallTime':'same'};new={'versionCode':13,'versionName':'1.4.5','firstInstallTime':'same'}
+        old={'versionCode':12,'versionName':'1.4.4','firstInstallTime':'same','uid':10123};new={'versionCode':13,'versionName':'1.4.5','firstInstallTime':'same','uid':10123}
         upgrade.require_upgrade(old,new,{'session':'a'},{'session':'a'})
         for actual,files in ((dict(new,firstInstallTime='new'),{'session':'a'}),(new,{'session':'b'})):
             with self.assertRaises(upgrade.GateError):upgrade.require_upgrade(old,actual,{'session':'a'},files)
@@ -143,6 +144,45 @@ class DeviceContracts(unittest.TestCase):
         upgrade.require_install_success('Performing Streamed Install\nSuccess\n')
         for value in ('Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]','Success\nFailure [bad]','not installed'):
             with self.assertRaises(upgrade.GateError):upgrade.require_install_success(value)
+    def test_package_only_mode_requires_explicit_selection_and_rejects_unused_private_paths(self):
+        self.assertEqual(upgrade.preservation_mode(True,None),'package-only')
+        self.assertEqual(upgrade.preservation_mode(False,Path('/reviewed/paths.json')),'private-files')
+        for package_only,path in ((True,Path('/reviewed/paths.json')),(False,None)):
+            with self.assertRaises(upgrade.GateError):upgrade.preservation_mode(package_only,path)
+    def test_public_package_uid_is_required_unambiguous_and_preserved(self):
+        text='  userId=10123\n  versionCode=12 minSdk=23 targetSdk=35\n  versionName=1.4.4\n  firstInstallTime=2026-11-01 12:00:00\n'
+        before=upgrade.installed(text);self.assertEqual(before['uid'],10123)
+        self.assertEqual(upgrade.installed(text.replace('userId=','appId='))['uid'],10123)
+        after=dict(before,versionCode=13,versionName='1.4.5')
+        upgrade.require_package_upgrade(before,after)
+        for value in (dict(after,uid=10124),dict(after,firstInstallTime='changed'),dict(after,uid=None)):
+            with self.assertRaises(upgrade.GateError):upgrade.require_package_upgrade(before,value)
+        for value in (text.replace('  userId=10123\n',''),text+'  userId=10124\n',text.replace('userId=10123','userId=0')):
+            with self.assertRaises(upgrade.GateError):upgrade.installed(value)
+    def test_package_only_full_flow_uses_install_r_without_root_or_private_file_claims(self):
+        f=Fixture();self.addCleanup(f.temp.cleanup)
+        proof=f.repo/'proof.json';proof.write_text(json.dumps(f.proof()));proof_sha=hashlib.sha256(proof.read_bytes()).hexdigest()
+        output=f.repo/'upgrade.json';apk=f.repo/web.APK;calls=[];state={'installed':False}
+        def run(args,**kwargs):
+            values=args[3:];calls.append(values)
+            if values==['shell','getprop','ro.kernel.qemu']:value='1\n'
+            elif values==['shell','dumpsys','package',upgrade.PACKAGE]:value='  userId=10123\n  versionCode='+('13' if state['installed'] else '12')+' minSdk=23 targetSdk=35\n  versionName='+('1.4.5' if state['installed'] else '1.4.4')+'\n  firstInstallTime=2026-11-01 12:00:00\n'
+            elif values==['shell','pm','path',upgrade.PACKAGE]:value='package:/data/app/owned/base.apk\n'
+            elif values==['shell','sha256sum /data/app/owned/base.apk']:value=(f.sha if state['installed'] else web.BASELINE_APK_SHA256)+'  /data/app/owned/base.apk\n'
+            elif values==['shell','am','force-stop',upgrade.PACKAGE]:value=''
+            elif values==['install','-r',str(apk)]:state['installed']=True;value='Performing Streamed Install\nSuccess\n'
+            elif values==['shell','am','start','-W','-n',upgrade.PACKAGE+'/.MainActivity']:value='Status: ok\n'
+            elif values==['shell','pidof',upgrade.PACKAGE]:value='12345\n'
+            elif values==['logcat','-d','--pid=12345','-v','brief']:value='clean\n'
+            elif values==['shell','dumpsys','window']:value='mCurrentFocus=Window{owned '+upgrade.PACKAGE+'/.MainActivity}\n'
+            else:self.fail('Unexpected emulator command: '+repr(values))
+            return subprocess.CompletedProcess(args,0,value.encode(),b'')
+        argv=['verify-upgrade.py','--serial','emulator-5554','--adb','/mock/adb','--apk',str(apk),'--apk-proof-file',str(proof),'--apk-proof-sha256',proof_sha,'--output',str(output),'--package-only','--run']
+        with patch.object(sys,'argv',argv),patch.object(upgrade.subprocess,'run',side_effect=run),patch.object(upgrade.time,'sleep'),contextlib.redirect_stdout(io.StringIO()):upgrade.main()
+        evidence=json.loads(output.read_text());self.assertFalse(evidence['privateFilesVerified']);self.assertFalse(evidence['sessionDecryptionVerified']);self.assertTrue(evidence['publicUidPreserved']);self.assertEqual(evidence['verificationMode'],'package-only')
+        self.assertFalse(evidence['privateFilesPreservedBeforeLaunch']);self.assertEqual(evidence['fileDigestsBefore'],{});self.assertEqual(evidence['fileDigestsAfterInstall'],{})
+        self.assertEqual([call for call in calls if call[0]=='install'],[['install','-r',str(apk)]])
+        self.assertFalse(any('id' in call or any('/data/user/' in value for value in call) for call in calls))
 
 class ReleaseContracts(unittest.TestCase):
     def test_web_only_transaction_preserves_latest_payment_api_worker_and_fence(self):

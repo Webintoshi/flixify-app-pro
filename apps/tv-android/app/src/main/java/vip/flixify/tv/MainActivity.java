@@ -149,8 +149,16 @@ public final class MainActivity extends Activity {
         updatePanel.cancel();if(dialog!=null)dialog.dismiss();super.onStop();
     }
     @Override protected void onDestroy() { destroyed=true; generation++;if(startup!=null)startup.close();if(posterSound!=null)posterSound.close();if(artwork!=null)artwork.close();if(updatePanel!=null)updatePanel.close();super.onDestroy(); }
-    @Override public void onTrimMemory(int level){super.onTrimMemory(level);if(artwork!=null)artwork.trimMemory(level);}
-    @Override public void onLowMemory(){super.onLowMemory();if(artwork!=null)artwork.trimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE);}
+    @Override public void onTrimMemory(int level){super.onTrimMemory(level);if(artwork!=null)artwork.trimMemory(level);trimMetadataMemory(level);}
+    @Override public void onLowMemory(){super.onLowMemory();if(artwork!=null)artwork.trimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE);trimMetadataMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE);}
+    private void trimMetadataMemory(int level){
+        if(repository==null || page==null || level<android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)return;
+        Kind keep=!stopped && page.section!=Section.FAVORITES && page.section!=Section.ACCOUNT?pageKind():null;
+        clearPendingCatalogs();preparedScope="";
+        for(Page target:pages.values())if(stopped || target!=page){target.catalog=null;target.catalogScope="";}
+        if(stopped){if(grid!=null)grid.setAdapter(null);grid=null;if(body!=null)body.removeAllViews();}
+        repository.trimMemory(keep);
+    }
     @Override protected void onSaveInstanceState(Bundle out) {
         if(!searchPlayerReturn)captureGrid(); out.putString("section",page.section.name()); out.putString("query",page.query); out.putString("category",page.category);
         out.putString("categoryTitle",page.categoryTitle); out.putString("focusKey",page.focusKey); out.putInt("scroll",page.scroll);

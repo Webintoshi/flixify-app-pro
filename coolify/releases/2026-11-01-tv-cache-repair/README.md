@@ -18,7 +18,7 @@ The verifier invokes real signing/metadata tools, pins both old/new signatures a
 
 ## Same-signer upgrade and cold launch
 
-`verify-upgrade.py` is read-only by default. It requires an explicitly selected already-rooted owned Android emulator, exact published1.4.4 installed bytes, the independent new artifact proof/hash, and a reviewed JSON list of existing private fixture paths. It never roots a device, changes Play Protect/settings, grants permissions, clears/uninstalls the app or creates synthetic session/cache data itself. Prepare isolated fixture data beforehand; never point this QA at a customer's device/account.
+`verify-upgrade.py` is read-only by default. Its default strict mode requires an explicitly selected already-rooted owned Android emulator, exact published1.4.4 installed bytes, the independent new artifact proof/hash, and a reviewed JSON list of existing private fixture paths. It never roots a device, changes Play Protect/settings, grants permissions, clears/uninstalls the app or creates synthetic session/cache data itself. Prepare isolated fixture data beforehand; never point this QA at a customer's device/account. A production emulator that refuses root must use the explicit package-only mode below; failure in strict mode never falls back automatically.
 
 The path list must include `shared_prefs/tv_encrypted_session.xml`, at least one file under `files/catalog-cache-v1/`, and at least one under `cache/artwork-v1/`. Only regular files in these narrow roots are hashed; file contents/tokens are not printed. Example shape:
 
@@ -30,7 +30,15 @@ The path list must include `shared_prefs/tv_encrypted_session.xml`, at least one
 python3 coolify/releases/2026-11-01-tv-cache-repair/verify-upgrade.py --adb /Users/Celebix/Library/Android/sdk/platform-tools/adb --serial emulator-OWNED_SERIAL --apk BUILT_145_APK --apk-proof-file NEW_ARTIFACT_PROOF.json --apk-proof-sha256 ACCEPTED_PROOF_SHA256 --preserved-paths-file REVIEWED_PATHS.json --output NEW_UPGRADE_PROOF.json
 ```
 
-Add `--run` after reviewing preflight. That explicitly force-stops only Flixify, installs the exact new APK with `adb install -r`, verifies installed1.4.5 bytes/code/name and unchanged firstInstallTime, then compares all reviewed private file digests **before launching**. It cold-launches MainActivity, requires the same process still alive after five seconds, checks app focus and rejects fatal app logs. The result distinguishes file preservation from a real decrypted-login test (`sessionDecryptionVerified:false`); use the separate Android repository/session tests to verify decryption and cache migration. It makes no physical-TV/long-duration-playback claim and opens no provider media itself. Runtime network behavior still depends on the prepared isolated fixture and must be controlled by its operator.
+Add `--run` after reviewing preflight. That explicitly force-stops only Flixify, installs the exact new APK with `adb install -r`, verifies installed1.4.5 bytes/code/name and unchanged firstInstallTime and public package UID, then compares all reviewed private file digests **before launching**. It cold-launches MainActivity, requires the same process still alive after five seconds, checks app focus and rejects fatal app logs. The result distinguishes file preservation from a real decrypted-login test (`sessionDecryptionVerified:false`); use the separate Android repository/session tests to verify decryption and cache migration. It makes no physical-TV/long-duration-playback claim and opens no provider media itself. Runtime network behavior still depends on the prepared isolated fixture and must be controlled by its operator.
+
+For an owned emulator running an unrooted production image, select `--package-only` and omit `--preserved-paths-file`:
+
+```sh
+python3 coolify/releases/2026-11-01-tv-cache-repair/verify-upgrade.py --adb /Users/Celebix/Library/Android/sdk/platform-tools/adb --serial emulator-OWNED_SERIAL --apk BUILT_145_APK --apk-proof-file NEW_ARTIFACT_PROOF.json --apk-proof-sha256 ACCEPTED_PROOF_SHA256 --package-only --output NEW_PACKAGE_UPGRADE_PROOF.json
+```
+
+This explicit mode performs the same exact old/new APK, accepted signer proof, version, install-r, firstInstallTime, public UID and cold-launch checks without issuing a root command or reading private files. Add `--run` only after reviewing its preflight. Passing a private path list in package-only mode is rejected. Evidence records `verificationMode:"package-only"`, `privateFilesVerified:false`, `privateFilesPreservedBeforeLaunch:false` and `sessionDecryptionVerified:false`; it proves package upgrade and launch only, with no real-login or private-cache preservation claim.
 
 ## Narrow static publication
 

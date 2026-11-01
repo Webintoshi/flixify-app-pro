@@ -275,6 +275,50 @@ public class NetworkTvRepositoryTest {
             Result<Playback> foreground=new Result<>();h.repository.playback(live,foreground);h.deliver();assertNull(foreground.error);assertNotNull(foreground.value);assertTrue(h.repository.hasSession());
         }finally{BackgroundWorkGate.endPlayback(player);h.fixture.releaseResponseRead.countDown();h.repository.logout();}
     }
+    @Test public void memoryTrimRetainsCurrentKindSessionFavoritesAndDiskRestore() throws Exception {
+        Harness h=new Harness(true);try{
+            h.fixture.includeLiveFavorite=true;
+            Result<Catalog> movies=new Result<>();h.repository.catalog(Kind.MOVIE,false,movies);h.deliver();assertNull(movies.error);
+            Item live=warmLive(h);warmSeries(h);String scope=h.repository.currentScope();
+            assertNotNull(field(h.repository,"curatedLive"));assertFalse(((java.util.Map<?,?>)field(h.repository,"details")).isEmpty());
+            MetadataDiskCache disk=(MetadataDiskCache)field(h.repository,"metadataDisk");assertNotNull(disk.readCatalog(scope,Kind.LIVE,h.fixture.leaseExpiry,h.clock.value));
+            h.repository.trimMemory(Kind.MOVIE);
+            java.util.Map<?,?> catalogs=(java.util.Map<?,?>)field(h.repository,"catalogs");assertEquals(java.util.Collections.singleton(Kind.MOVIE),catalogs.keySet());
+            assertEquals(java.util.Collections.singleton(Kind.MOVIE),((java.util.Map<?,?>)field(h.repository,"catalogIndexes")).keySet());
+            assertNull(field(h.repository,"curatedLive"));assertTrue(((java.util.Map<?,?>)field(h.repository,"details")).isEmpty());
+            assertTrue(h.repository.hasSession());assertEquals(scope,h.repository.currentScope());assertTrue(h.repository.isFavorite(movies.value.items.get(0)));assertTrue(h.repository.isFavorite(live));
+            Result<Catalog> restored=new Result<>();h.repository.catalog(Kind.LIVE,false,restored);h.deliver();assertNull(restored.error);assertEquals(live.id,restored.value.items.get(0).id);
+            assertEquals("Foreground restores raw metadata from disk after RAM trim",1,h.fixture.liveStreamReads.get());assertEquals(1,h.fixture.liveCategoryReads.get());
+            assertNotNull(disk.readLibrary(scope,h.fixture.leaseExpiry,h.clock.value));
+        }finally{h.repository.logout();}
+    }
+    @Test public void memoryTrimCancelsOptionalBodyAndPreventsRefillDuringCooldown() throws Exception {
+        Harness h=new Harness(true);try{
+            h.fixture.leaseExpiry=NOW+10L*86400000;
+            Result<Catalog> movies=new Result<>();h.repository.catalog(Kind.MOVIE,false,movies);h.deliver();assertNull(movies.error);
+            warmLive(h);h.clock.value+=MetadataDiskCache.FRESH_MS;h.fixture.holdLiveResponse=true;
+            h.repository.catalog(Kind.LIVE,false,new Result<>());h.deliver();assertTrue(h.fixture.responseReadStarted.await(3,TimeUnit.SECONDS));
+            h.repository.trimMemory(Kind.MOVIE);assertTrue("Trim must close the optional connection promptly",h.fixture.responseDisconnected.await(2,TimeUnit.SECONDS));
+            CountDownLatch drained=new CountDownLatch(1);((ThreadPoolExecutor)field(h.repository,"metadataWorker")).execute(drained::countDown);assertTrue(drained.await(2,TimeUnit.SECONDS));
+            assertEquals(java.util.Collections.singleton(Kind.MOVIE),((java.util.Map<?,?>)field(h.repository,"catalogs")).keySet());assertNull(field(h.repository,"curatedLive"));
+            int reads=h.fixture.liveStreamReads.get(),libraryReads=h.fixture.libraryReads;h.clock.value+=59999;h.repository.prepareOfflineData();h.deliver();Thread.sleep(150);
+            assertEquals(reads,h.fixture.liveStreamReads.get());assertEquals(libraryReads,h.fixture.libraryReads);assertEquals(java.util.Collections.singleton(Kind.MOVIE),((java.util.Map<?,?>)field(h.repository,"catalogs")).keySet());
+            Result<Playback> playback=new Result<>();h.repository.playback(movies.value.items.get(0),playback);h.deliver();assertNull(playback.error);assertNotNull(playback.value);assertTrue(h.repository.hasSession());
+        }finally{h.fixture.releaseResponseRead.countDown();h.repository.logout();}
+    }
+    @Test public void memoryTrimDoesNotInvalidateQueuedLivePlaybackCallback() throws Exception {
+        for(boolean cold:new boolean[]{false,true}){
+        Harness h=new Harness(true);try{
+            Item live=cold?liveCandidate("34"):warmLive(h);
+            Result<Playback> playback=new Result<>();h.repository.playback(live,playback);h.awaitQueued(1);String scope=h.repository.currentScope();
+            h.repository.trimMemory(null);h.deliver();
+            assertNull("RAM eviction must not reject an already-prepared foreground playback",playback.error);assertNotNull(playback.value);
+            assertEquals(live.id,playback.value.item.id);assertEquals(scope,playback.value.scope);assertTrue(h.repository.hasSession());
+            assertTrue(((java.util.Map<?,?>)field(h.repository,"pending")).isEmpty());
+            h.repository.trimMemory(null);assertTrue("A later trim can release the completed foreground dependency",((java.util.Map<?,?>)field(h.repository,"catalogs")).isEmpty());
+        }finally{h.repository.logout();}
+        }
+    }
     @Test public void coldVerifiedScopeReadsCatalogFromDiskWithoutProviderRefetch() throws Exception {
         Harness h=new Harness(true);NetworkTvRepository restored=null;
         try {

@@ -86,6 +86,8 @@ public final class NetworkTvRepository implements TvRepository {
     private Set<String> favoriteMembership=Collections.emptySet();
     private final Map<Kind,Map<String,Item>> catalogIndexes=new EnumMap<>(Kind.class);
     private static final long LIBRARY_FRESH_MS=60000;
+    private volatile long optionalWorkPausedUntil;
+    private long memoryEpoch;
 
     private Catalog curatedInput;
     private String curatedRevision="";
@@ -399,9 +401,28 @@ public final class NetworkTvRepository implements TvRepository {
             @Override public void onError(Failure issue){if(callback!=null)callback.onError(issue);}
         },auth->{ProviderParser.Bootstrap b=bootstrap(auth,false);boolean refs=restoreLibrary(auth,b);Catalog local=force?null:cachedCatalog(auth,b,kind);if(local!=null){rebuildFavorites();return local;}if(!refs)library(auth,b,false);return catalogFor(auth,b,kind,force);});
     }
+    private boolean optionalWorkAllowed(){return !BackgroundWorkGate.isPlaybackActive() && clock.now()>=optionalWorkPausedUntil;}
+    private boolean pendingLivePlaybackLocked(String scope){
+        if(scope.isEmpty())return false;
+        for(Map.Entry<String,Pending<?>> entry:pending.entrySet()){
+            Pending<?> operation=entry.getValue();
+            if(entry.getKey().startsWith("playback-LIVE::") && operation.auth==authGeneration && operation.sourceBound && !operation.callbacks.isEmpty() && (operation.scope.isEmpty() || operation.scope.equals(scope)))return true;
+        }
+        return false;
+    }
+    @Override public void trimMemory(Kind keep){
+        synchronized(lock){
+            long now=clock.now();optionalWorkPausedUntil=Math.max(optionalWorkPausedUntil,now>Long.MAX_VALUE-60000?Long.MAX_VALUE:now+60000);memoryEpoch++;
+            // A prepared main-thread playback callback still validates its canonical LIVE projection.
+            boolean pendingLive=pendingLivePlaybackLocked(currentScope());
+            for(Kind kind:new Kind[]{Kind.LIVE,Kind.MOVIE,Kind.SERIES})if(kind!=keep && !(kind==Kind.LIVE && pendingLive)){catalogs.remove(kind);catalogIndexes.remove(kind);catalogSavedAt.remove(kind);catalogValidUntil.remove(kind);}
+            if(keep!=Kind.LIVE && !pendingLive){curatedInput=null;curatedLive=null;curatedRevision="";}
+            details.clear();detailSavedAt.clear();detailValidUntil.clear();
+        }
+    }
     @Override public void prepareOfflineData(){
         enqueue("offline-preparation",true,null,auth->{
-            if(BackgroundWorkGate.isPlaybackActive())return Boolean.FALSE;
+            if(!optionalWorkAllowed())return Boolean.FALSE;
             ProviderParser.Bootstrap b=bootstrap(auth,false);restoreLibrary(auth,b);long source=guard.generation();String key="offline:"+auth+":"+source;
             synchronized(lock){if(!metadataRefreshes.add(key))return Boolean.FALSE;}
             try{metadataWorker.execute(()->{
@@ -411,7 +432,7 @@ public final class NetworkTvRepository implements TvRepository {
                     for(Kind kind:new Kind[]{Kind.LIVE,Kind.MOVIE,Kind.SERIES}){
                         metadataActive(auth,source,b.scope(),true);
                         try{
-                            Catalog cached=cachedCatalog(auth,b,kind);long ticket;Long saved;synchronized(lock){Long current=catalogFetches.get(kind);ticket=current==null?0:current;saved=catalogSavedAt.get(kind);}
+                            Catalog cached=cachedCatalog(auth,b,kind,true);long ticket;Long saved;synchronized(lock){Long current=catalogFetches.get(kind);ticket=current==null?0:current;saved=catalogSavedAt.get(kind);}
                             if(cached==null || cacheStale(saved))fetchCatalog(auth,b,source,kind,true,ticket,cached==null);
                         }catch(Exception ignored){}
                     }
@@ -427,12 +448,13 @@ public final class NetworkTvRepository implements TvRepository {
         return ()->{synchronized(lock){catalogObservers.remove(observer);}};
     }
     private static Map<String,Item> indexCatalog(Catalog value){Map<String,Item> index=new HashMap<>();if(value.kind!=Kind.LIVE)for(Item item:value.items)index.put(item.id,item);return Collections.unmodifiableMap(index);}
-    private Catalog cachedCatalog(long auth,ProviderParser.Bootstrap b,Kind kind)throws Exception{
-        long source=guard.generation();active(auth,source,b.scope());if(kind==null || kind==Kind.EPISODE)throw new ProviderParser.Invalid();
-        Catalog memory=null;final Long previousTicket;synchronized(lock){previousTicket=catalogFetches.get(kind);if(cacheAgeValid(catalogSavedAt.get(kind),catalogValidUntil.get(kind)))memory=catalogs.get(kind);}if(memory!=null)return currentLiveCatalog(memory);
-        MetadataDiskCache.Snapshot<Catalog> cached=metadataDisk.readCatalog(b.scope(),kind,b.expiresAtMs,clock.now());active(auth,source,b.scope());if(cached==null)return null;
+    private Catalog cachedCatalog(long auth,ProviderParser.Bootstrap b,Kind kind)throws Exception{return cachedCatalog(auth,b,kind,false);}
+    private Catalog cachedCatalog(long auth,ProviderParser.Bootstrap b,Kind kind,boolean optional)throws Exception{
+        long source=guard.generation();metadataActive(auth,source,b.scope(),optional);if(kind==null || kind==Kind.EPISODE)throw new ProviderParser.Invalid();
+        Catalog memory=null;final Long previousTicket;final long epoch;synchronized(lock){epoch=memoryEpoch;previousTicket=catalogFetches.get(kind);if(cacheAgeValid(catalogSavedAt.get(kind),catalogValidUntil.get(kind)))memory=catalogs.get(kind);}if(memory!=null)return currentLiveCatalog(memory);
+        MetadataDiskCache.Snapshot<Catalog> cached=metadataDisk.readCatalog(b.scope(),kind,b.expiresAtMs,clock.now());metadataActive(auth,source,b.scope(),optional);if(cached==null)return null;
         Map<String,Item> index=indexCatalog(cached.value);
-        synchronized(lock){active(auth,source,b.scope());if(!java.util.Objects.equals(previousTicket,catalogFetches.get(kind)))memory=catalogs.get(kind);else{catalogs.put(kind,cached.value);catalogIndexes.put(kind,index);catalogSavedAt.put(kind,cached.savedAt);catalogValidUntil.put(kind,cached.expiresAt);memory=cached.value;}}
+        synchronized(lock){metadataActive(auth,source,b.scope(),optional);if(optional && epoch!=memoryEpoch)throw new Problem(Failure.Code.STALE);if(!java.util.Objects.equals(previousTicket,catalogFetches.get(kind)))memory=catalogs.get(kind);else{catalogs.put(kind,cached.value);catalogIndexes.put(kind,index);catalogSavedAt.put(kind,cached.savedAt);catalogValidUntil.put(kind,cached.expiresAt);memory=cached.value;}}
         if(memory==null)return null;Catalog result=currentLiveCatalog(memory);rebuildFavorites();persistLibrary(auth,b,source);return result;
     }
     private Catalog catalogFor(long auth,ProviderParser.Bootstrap b,Kind kind,boolean force) throws Exception {
@@ -465,14 +487,14 @@ public final class NetworkTvRepository implements TvRepository {
             if(!optional)synchronized(lock){Long current=foregroundCatalogFetches.get(kind);if(current!=null && current==ticket)foregroundCatalogFetches.remove(kind);}
         }
     }
-    private void metadataActive(long auth,long source,String scope,boolean optional)throws Problem {active(auth,source,scope);if(optional && BackgroundWorkGate.isPlaybackActive())throw new Problem(Failure.Code.NETWORK);}
+    private void metadataActive(long auth,long source,String scope,boolean optional)throws Problem {active(auth,source,scope);if(optional && !optionalWorkAllowed())throw new Problem(Failure.Code.NETWORK);}
     private void catalogFetchActive(long auth,long source,String scope,Kind kind,long ticket,boolean optional)throws Problem{synchronized(lock){metadataActive(auth,source,scope,optional);Long current=catalogFetches.get(kind);if(current==null || current!=ticket)throw new Problem(Failure.Code.STALE);}}
     private boolean catalogWriteLease(long auth,long source,String scope,Kind kind,long ticket){try{catalogFetchActive(auth,source,scope,kind,ticket,true);return true;}catch(Problem ignored){return false;}}
     private boolean cacheAgeValid(Long saved,Long until){long now=clock.now();return saved!=null && until!=null && saved<=now && now-saved<MetadataDiskCache.MAX_AGE_MS && until>now;}
     private boolean cacheStale(Long saved){return saved==null || clock.now()-saved>=MetadataDiskCache.FRESH_MS;}
     private void refreshCatalogIfStale(Kind kind) {
         final ProviderParser.Bootstrap b;final long auth,source,queuedTicket;final String key;
-        synchronized(lock){b=guard.current();if(b==null || !catalogs.containsKey(kind) || !cacheStale(catalogSavedAt.get(kind)) || BackgroundWorkGate.isPlaybackActive())return;auth=authGeneration;source=guard.generation();Long current=catalogFetches.get(kind);queuedTicket=current==null?0:current;key="catalog:"+kind+":"+auth+":"+source;if(!metadataRefreshes.add(key))return;}
+        synchronized(lock){b=guard.current();if(b==null || !catalogs.containsKey(kind) || !cacheStale(catalogSavedAt.get(kind)) || !optionalWorkAllowed())return;auth=authGeneration;source=guard.generation();Long current=catalogFetches.get(kind);queuedTicket=current==null?0:current;key="catalog:"+kind+":"+auth+":"+source;if(!metadataRefreshes.add(key))return;}
         try{metadataWorker.execute(()->{try{fetchCatalog(auth,b,source,kind,true,queuedTicket);}catch(Exception ignored){}finally{synchronized(lock){metadataRefreshes.remove(key);}}});}
         catch(RejectedExecutionException ignored){synchronized(lock){metadataRefreshes.remove(key);}}
     }
@@ -559,7 +581,7 @@ public final class NetworkTvRepository implements TvRepository {
     private void trimDetailsLocked(){while(details.size()>12){String first=details.keySet().iterator().next();details.remove(first);detailSavedAt.remove(first);detailValidUntil.remove(first);}}
     private void refreshSeriesIfStale(Item parent){
         final ProviderParser.Bootstrap b;final long auth,source,queuedTicket;final String key;
-        synchronized(lock){b=guard.current();if(b==null || parent==null || !parent.scope.equals(b.scope()) || !details.containsKey(parent.id) || !cacheStale(detailSavedAt.get(parent.id)) || BackgroundWorkGate.isPlaybackActive())return;auth=authGeneration;source=guard.generation();Long current=detailFetches.get(parent.id);queuedTicket=current==null?0:current;key="series:"+parent.id+":"+auth+":"+source;if(!metadataRefreshes.add(key))return;}
+        synchronized(lock){b=guard.current();if(b==null || parent==null || !parent.scope.equals(b.scope()) || !details.containsKey(parent.id) || !cacheStale(detailSavedAt.get(parent.id)) || !optionalWorkAllowed())return;auth=authGeneration;source=guard.generation();Long current=detailFetches.get(parent.id);queuedTicket=current==null?0:current;key="series:"+parent.id+":"+auth+":"+source;if(!metadataRefreshes.add(key))return;}
         try{metadataWorker.execute(()->{try{fetchSeries(auth,b,source,parent,true,queuedTicket);}catch(Exception ignored){}finally{synchronized(lock){metadataRefreshes.remove(key);}}});}catch(RejectedExecutionException ignored){synchronized(lock){metadataRefreshes.remove(key);}}
     }
     private Object provider(long auth,ProviderParser.Bootstrap b,long source,String action,String id) throws Exception {return provider(auth,b,source,action,id,this::readJson);}
@@ -649,11 +671,11 @@ public final class NetworkTvRepository implements TvRepository {
     private void persistLibrary(long auth,ProviderParser.Bootstrap b,long source){
         final MetadataDiskCache.Library value;final Map<String,Item> resolved;final long saved,until,epoch;
         synchronized(lock){if(!b.scope().equals(libraryScope) || librarySavedAt<=0)return;resolved=resolvedFavorites;value=new MetadataDiskCache.Library(favoriteRefs,watchedRefs,resolved);saved=librarySavedAt;until=Math.min(libraryValidUntil,b.expiresAtMs);epoch=libraryEpoch;}
-        metadataDisk.writeLibrary(b.scope(),until,saved,value,()->{synchronized(lock){return auth==authGeneration && guard.active(source,b.scope(),clock.now()) && epoch==libraryEpoch && resolvedFavorites==resolved && !BackgroundWorkGate.isPlaybackActive();}});
+        metadataDisk.writeLibrary(b.scope(),until,saved,value,()->{synchronized(lock){return auth==authGeneration && guard.active(source,b.scope(),clock.now()) && epoch==libraryEpoch && resolvedFavorites==resolved && optionalWorkAllowed();}});
     }
     private void refreshLibraryIfStale(){
         final ProviderParser.Bootstrap b;final long auth,source,epoch;final String key;
-        synchronized(lock){b=guard.current();if(b==null || BackgroundWorkGate.isPlaybackActive() || b.scope().equals(libraryScope) && clock.now()-librarySavedAt<LIBRARY_FRESH_MS)return;auth=authGeneration;source=guard.generation();epoch=libraryEpoch;key="library:"+auth+":"+source;if(!metadataRefreshes.add(key))return;}
+        synchronized(lock){b=guard.current();if(b==null || !optionalWorkAllowed() || b.scope().equals(libraryScope) && clock.now()-librarySavedAt<LIBRARY_FRESH_MS)return;auth=authGeneration;source=guard.generation();epoch=libraryEpoch;key="library:"+auth+":"+source;if(!metadataRefreshes.add(key))return;}
         try{metadataWorker.execute(()->{try{if(fetchLibrary(auth,b,source,true,epoch))notifyFavoriteCatalogs(auth,source,b.scope());}catch(Exception ignored){}finally{synchronized(lock){metadataRefreshes.remove(key);}}});}
         catch(RejectedExecutionException ignored){synchronized(lock){metadataRefreshes.remove(key);}}
     }
@@ -748,7 +770,7 @@ public final class NetworkTvRepository implements TvRepository {
             if(bearer!=null)connection.setRequestProperty("Authorization","Bearer "+bearer);
             synchronized(lock){checkAuth(auth);connections.add(connection);}
             HttpURLConnection timed=connection;deadline=timeout.schedule(timed::disconnect,TIMEOUT_MS,TimeUnit.MILLISECONDS);
-            if(optional)playbackCancellation=timeout.scheduleWithFixedDelay(()->{if(BackgroundWorkGate.isPlaybackActive())timed.disconnect();},100,100,TimeUnit.MILLISECONDS);
+            if(optional)playbackCancellation=timeout.scheduleWithFixedDelay(()->{if(!optionalWorkAllowed())timed.disconnect();},100,100,TimeUnit.MILLISECONDS);
             long started=System.nanoTime();
             if(body!=null){byte[] encoded=body.toString().getBytes(StandardCharsets.UTF_8);if(encoded.length>65536)throw new ProviderParser.Invalid();connection.setDoOutput(true);connection.setRequestProperty("Content-Type","application/json; charset=utf-8");connection.setFixedLengthStreamingMode(encoded.length);try(OutputStream out=connection.getOutputStream()){out.write(encoded);}}
             int status=connection.getResponseCode();checkAuth(auth);if(scope!=null)metadataActive(auth,source,scope,optional);

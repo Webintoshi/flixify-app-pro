@@ -69,6 +69,25 @@ public class StartupScreenTest {
         instrumentation.runOnMainSync(repository::releaseDelayedCatalog);awaitReady(repository.movie.title,1500);
         instrumentation.runOnMainSync(()->{assertTrue(repository.preparationRequests>0);assertEquals("Ana Sayfa",((TextView)activity.getCurrentFocus()).getText().toString());});
     }
+    @Test public void memoryPressureKeepsVisibleCatalogueRemoteFocusAndLogin(){
+        launch(false);awaitReady(repository.movie.title,1500);
+        instrumentation.runOnMainSync(()->{
+            View focused=activity.getCurrentFocus();activity.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW);
+            assertTrue(repository.hasSession());assertEquals(Kind.MOVIE,repository.retainedOnTrim);assertSame(focused,activity.getCurrentFocus());assertNotNull(text(activity.findViewById(android.R.id.content),repository.movie.title));
+        });
+    }
+    @Test public void stoppedMemoryTrimRestoresTheSameSectionPosterAndSession(){
+        instrumentation.runOnMainSync(()->{repository.session=true;TvApplication.setRepositoryForTests(repository);});
+        try(androidx.test.core.app.ActivityScenario<MainActivity> scenario=androidx.test.core.app.ActivityScenario.launch(MainActivity.class)){
+            scenario.onActivity(a->activity=a);awaitReady(repository.movie.title,1500);
+            scenario.onActivity(a->text(a.findViewById(android.R.id.content),"Diziler").performClick());awaitReady(repository.show.title,1500);
+            scenario.onActivity(a->{View card=a.findViewById(android.R.id.content).findViewWithTag(repository.show.key());assertNotNull(card);assertTrue(card.requestFocus());});
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
+            instrumentation.runOnMainSync(()->{activity.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE);assertTrue(repository.hasSession());assertNull(repository.retainedOnTrim);});
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);awaitReady(repository.show.title,1500);
+            instrumentation.waitForIdleSync();scenario.onActivity(a->{assertNotNull(a.getCurrentFocus());assertEquals(repository.show.key(),a.getCurrentFocus().getTag());assertTrue(repository.hasSession());});
+        }finally{activity=null;}
+    }
     @Test public void alternateConfirmCannotActivateHiddenRail() {
         launch(true);assertLoading();TvRepository.Callback<Catalog> pending=repository.delayedCatalog;
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_SPACE);instrumentation.waitForIdleSync();

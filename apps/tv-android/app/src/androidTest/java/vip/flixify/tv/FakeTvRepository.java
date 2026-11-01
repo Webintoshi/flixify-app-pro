@@ -7,6 +7,9 @@ import vip.flixify.tv.TvModels.*;
 final class FakeTvRepository implements TvRepository {
     boolean session;
     int preparationRequests;
+    Kind retainedOnTrim;
+    int trimRequests;
+    @Override public void trimMemory(Kind keep){retainedOnTrim=keep;trimRequests++;}
     @Override public void prepareOfflineData(){preparationRequests++;}
     boolean failCatalog;
     boolean delayFavorites;
