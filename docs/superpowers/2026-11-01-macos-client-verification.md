@@ -1,5 +1,7 @@
 # macOS client verification — 2026-11-01
 
+> Historical build 1 record. The current build 2 branding, performance and local-test installer evidence is in `2026-11-01-macos-branding-performance.md`; its final artifact supersedes the hashes below.
+
 ## Delivered source and scope
 
 `apps/macos-native` is a native SwiftUI/AppKit client using the current Android TV 1.4.7 contract. It targets macOS 13+ and builds Apple Silicon and Intel slices. The existing Qt viewer was not used for its obsolete network implementation. No API, website, Android, provider-panel or production-server changes form part of this delivery.

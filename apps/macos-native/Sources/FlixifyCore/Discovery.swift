@@ -119,7 +119,11 @@ public enum Discovery {
             if !row.other.isEmpty { shelves.append(Shelf(id: "series-other", title: "Diğer Diziler", items: row.other)) }; return shelves.filter { !$0.items.isEmpty }
         case .live:
             let sorted = LiveLineup.sort(items.filter { $0.kind == .live })
-            return LiveLineup.categoryIDs.compactMap { id in let matches = sorted.filter { LiveLineup.info($0).categoryID == id }; return matches.isEmpty ? nil : Shelf(id: "live-" + id, title: LiveLineup.categoryTitle(id), items: matches) }
+            let grouped = Dictionary(grouping: sorted) { LiveLineup.info($0).categoryID }
+            return LiveLineup.categoryIDs.compactMap { id in
+                guard let matches = grouped[id], !matches.isEmpty else { return nil }
+                return Shelf(id: "live-" + id, title: LiveLineup.categoryTitle(id), items: matches)
+            }
         case .episode: return []
         }
     }

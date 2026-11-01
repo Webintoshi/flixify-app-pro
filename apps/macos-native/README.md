@@ -1,6 +1,6 @@
 # Flixify Pro for macOS
 
-Native SwiftUI/AppKit client for macOS 13 or newer, using the current Android TV 1.4.7 feature contract. Bundle identifier `vip.flixify.mac`; version 1.0.0, build 1. Public builds contain both Apple Silicon and Intel code.
+Native SwiftUI/AppKit client for macOS 13 or newer, using the current Android TV 1.4.7 feature contract. Bundle identifier `vip.flixify.mac`; version 1.0.0, build 2. Public builds contain both Apple Silicon and Intel code.
 
 The client uses the existing account-code, provider-session, personal-library and welcome-offer services. Provider metadata and media requests originate from the viewer's Mac. The TV branding, discovery collections, live channel identities and access/payment policies remain the reference. Keyboard, pointer, menus and a resizable window adapt those features to the desktop.
 
@@ -36,6 +36,18 @@ The preparation script downloads only the official VideoLAN HTTPS archive and re
 - The framework executable contains `arm64` and `x86_64`; runtime proof is retained under ignored `Vendor/runtime-proof.json`.
 
 Only the macOS XCFramework slice and `COPYING.txt` are retained. Samples, AppleDouble files and the 339 MB debugging-symbol file are excluded. The XCFramework's unshipped `DebugSymbolsPath` entry is omitted. Temporary archives are removed automatically. Runtime downloads, build outputs and distribution staging stay project-local and outside Git.
+
+## Local-test installation image
+
+After building the universal release app:
+
+```sh
+python3 scripts/package-local-test.py
+```
+
+This creates `dist/local-test/Flixify-Pro-1.0.0-macos-universal-LOCAL-TEST-<hash>.dmg` and a matching local proof. Open the image and drag Flixify Pro to the Applications shortcut. The image includes these steps in Turkish. It copies the existing ad hoc app unchanged, verifies the image, mounts it read-only, and rechecks the contained app's signature, privacy report and file manifest before saving the result. It never replaces an existing package or deletes files outside its own temporary staging directory.
+
+This is an **unnotarized local-test package**. The disk image itself is unsigned, and macOS may show a developer-verification warning after an Internet download. No security settings are changed, no signing identity is selected, and no Apple submission is made. Its proof explicitly records `publicDistributionReady: false`; it produces no update descriptor and is not published to the website. The public release requirements below remain separate.
 
 ## Public distribution
 

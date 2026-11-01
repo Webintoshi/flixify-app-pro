@@ -23,7 +23,7 @@ PRODUCT = "FlixifyMac"
 APP_NAME = "Flixify Pro"
 BUNDLE_ID = "vip.flixify.mac"
 VERSION = "1.0.0"
-BUILD = 1
+BUILD = 2
 MINIMUM_SYSTEM = "13.0"
 DMG_NAME = f"Flixify-Pro-{VERSION}-macos-universal.dmg"
 DOWNLOAD_URL = f"https://flixify.vip/downloads/{DMG_NAME}"
@@ -312,7 +312,7 @@ def build_app(configuration: str, host_only: bool) -> Path:
                 if source_manifest(other / bundle.name) != reference:
                     raise ReleaseError("Architecture resource bundles differ")
             shutil.copytree(bundle, resources / bundle.name, symlinks=True)
-        icon = ROOT.parent / "viewer-native-qt/resources/icon.icns"
+        icon = ROOT / "Sources/FlixifyMac/Resources/Flixify.icns"
         shutil.copyfile(icon, resources / "Flixify.icns")
         shutil.copyfile(ROOT / "Vendor/COPYING.txt", resources / "COPYING-VLCKit.txt")
         (resources / "VLCKit-origin.json").write_text((ROOT / "Vendor/runtime-proof.json").read_text())

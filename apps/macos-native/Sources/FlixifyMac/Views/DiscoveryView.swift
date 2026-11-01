@@ -47,6 +47,7 @@ struct DiscoveryView: View {
                 }
             }.padding(.horizontal, 30).padding(.top, 24).padding(.bottom, 48)
         }
+        .id([store.route.rawValue, store.searchText, store.category, store.country, store.session?.sourceScope ?? ""])
         .background(FlixTheme.background)
         .sheet(isPresented: $showCategories) {
             CategoryPicker(items: items, current: store.category, liveOnly: live, country: store.country, revision: store.catalogRevision) { id, title in store.category = id; selectedCategoryTitle = title }

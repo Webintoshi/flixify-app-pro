@@ -35,6 +35,23 @@ public enum LiveLineup {
         let country: String?
         let score: [Int]
     }
+    private final class Analysis: NSObject {
+        let details: Description
+        let info: LiveInfo
+        init(details: Description, info: LiveInfo) { self.details = details; self.info = info }
+    }
+    private static let analyses: NSCache<NSString, Analysis> = {
+        let cache = NSCache<NSString, Analysis>(); cache.countLimit = 32000; cache.totalCostLimit = 32 * 1024 * 1024; return cache
+    }()
+    private static func analysis(_ item: CatalogItem) -> Analysis {
+        let usesSource = !item.sourceTitle.isEmpty, source = usesSource ? item.sourceTitle : item.title
+        // Include the source/fallback distinction because country inference uses the original source field.
+        let key = "\(usesSource ? 1 : 0)\(source.utf8.count):\(source)\(item.categoryName)" as NSString
+        if let cached = analyses.object(forKey: key) { return cached }
+        let details = describe(item), result = Analysis(details: details, info: info(item, details: details))
+        let cost = 512 + 2 * (source.utf16.count + item.categoryName.utf16.count + details.name.utf16.count + details.groupKey.utf16.count)
+        analyses.setObject(result, forKey: key, cost: cost); return result
+    }
     private static func smallcaps(_ input: String) -> String {
         String(input.precomposedStringWithCompatibilityMapping.map { smallcapMap[$0] ?? $0 })
     }
@@ -96,7 +113,8 @@ public enum LiveLineup {
         name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = Text.replace(Text.replace(Text.fold(name), #"[’'`"]"#, ""), #"[^\p{L}\p{N}+\s]"#, " ").split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let languageWords = [("ar", "arabic|arapca"), ("de", "german|deutsch|almanca"), ("en", "english|ingilizce|eng"), ("es", "spanish|espanol|ispanyolca"), ("fr", "french|francais|fransizca"), ("it", "italian|italiano|italyanca"), ("ku", "kurdish|kurtce"), ("pt", "portuguese|portugues|portekizce"), ("ru", "russian|rusca"), ("tr", "turkish|turkce")]
-        let languages = languageWords.filter { Text.matches(Text.fold(name + " " + item.categoryName), "\\b(?:" + $0.1 + ")\\b") }.map(\.0).joined(separator: ",")
+        let languageText = Text.fold(name + " " + item.categoryName)
+        let languages = languageWords.filter { Text.matches(languageText, "\\b(?:" + $0.1 + ")\\b") }.map(\.0).joined(separator: ",")
         let conflict = p.country != nil && fromGroup != nil && p.country != fromGroup ? "!" + fromGroup! : ""
         let unknown = Text.replace(Text.fold(item.categoryName), #"[^\p{L}\p{N}\s]"#, " ").split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return Description(name: name, groupKey: (country ?? "unknown:" + unknown) + conflict + "|" + languages + "|" + normalized, country: country, score: [hevc ? 1 : 0, quality, Text.matches(analysis, event) ? 1 : 0, Text.matches(analysis, low) ? 1 : 0, raw ? 1 : 0])
@@ -106,7 +124,7 @@ public enum LiveLineup {
         for item in raw.items {
             originals[item.id] = item
             guard !excluded.contains(item.id) else { continue }
-            let d = describe(item)
+            let d = analysis(item).details
             guard !d.name.isEmpty, !d.groupKey.hasSuffix("|"), search(d.name) != "trt4k", !search(d.name).contains("sifirpanelbilgilendirme") else { continue }
             groups[d.groupKey, default: []].append((item, d))
         }
@@ -143,7 +161,10 @@ public enum LiveLineup {
         return "national"
     }
     public static func info(_ item: CatalogItem) -> LiveInfo {
-        let d = describe(item), name = station(d.name), group = Text.fold(item.categoryName), category = category(group: group, name: name, title: Text.fold(d.name))
+        analysis(item).info
+    }
+    private static func info(_ item: CatalogItem, details d: Description) -> LiveInfo {
+        let name = station(d.name), group = Text.fold(item.categoryName), category = category(group: group, name: name, title: Text.fold(d.name))
         var position = positions[aliases[name] ?? name]
         if position == nil && category == "sports" {
             let bein = ["beinsport1", "beinsport2", "beinsport3", "beinsport4", "beinsport5", "beinsportmax1", "beinsportmax2", "beinsport4k"]

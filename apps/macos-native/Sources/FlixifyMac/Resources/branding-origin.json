@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "wordmark": {
+    "url": "https://flixify.vip/logo/flixify-logo.png",
+    "sha256": "b085c5e5ad426a7d4efdac247331e78d8561d8e94cbe3c3001640da4bba5075d"
+  },
+  "appIcon": {
+    "sourceUrl": "https://flixify.vip/logo/icon-512.png",
+    "sourceSha256": "1ffbbd46f5d7134e16e18c2e15e57912b52b1377c2d94f469e4b3d15e4fdf147",
+    "faviconUrl": "https://flixify.vip/favicon.ico",
+    "faviconSha256": "c3aad6de3d0d8cc9cb13c40e002e4707ff7a1602fe9d2c5574e8fdf94100daa9",
+    "icnsSha256": "32f25e9eef1881d92363ee1553d664c6b92d0c0c62bd20f54cf6271ab02572d5",
+    "conversion": "Apple sips and iconutil; website favicon PNG master resized to standard macOS icon representations, original artwork retained."
+  }
+}
