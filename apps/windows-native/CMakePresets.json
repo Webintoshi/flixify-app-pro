@@ -1,0 +1,28 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {"major": 3, "minor": 28, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "windows-x64-release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-x64-release",
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Release", "BUILD_TESTING": "ON"},
+      "environment": {"CMAKE_PREFIX_PATH": "$env{QT_ROOT}"}
+    },
+    {
+      "name": "local-qa",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/local-qa",
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Release", "BUILD_TESTING": "ON"},
+      "environment": {"CMAKE_PREFIX_PATH": "$env{QT_ROOT}"}
+    }
+  ],
+  "buildPresets": [
+    {"name": "windows-x64-release", "configurePreset": "windows-x64-release", "jobs": 2},
+    {"name": "local-qa", "configurePreset": "local-qa", "jobs": 2}
+  ],
+  "testPresets": [
+    {"name": "windows-x64-release", "configurePreset": "windows-x64-release", "output": {"outputOnFailure": true}},
+    {"name": "local-qa", "configurePreset": "local-qa", "output": {"outputOnFailure": true}}
+  ]
+}

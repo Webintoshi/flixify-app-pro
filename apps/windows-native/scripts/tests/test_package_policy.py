@@ -1,0 +1,89 @@
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+import unittest
+
+SCRIPT = Path(__file__).resolve().parents[1] / 'package_policy.py'
+spec = importlib.util.spec_from_file_location('package_policy', SCRIPT)
+policy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(policy)
+
+
+class PackagePolicyTests(unittest.TestCase):
+    def test_digest_rejects_corrupt_download(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / 'runtime.7z'
+            archive.write_bytes(b'corrupted')
+            with self.assertRaises(ValueError):
+                policy.verify_digest(archive, '0' * 64)
+
+    def test_absolute_home_paths_found_in_utf8_and_utf16(self):
+        for data in [b'C:\\Users\\Builder\\private.cpp', '/Users/person/private.cpp'.encode('utf-16le')]:
+            self.assertTrue(policy.privacy_findings(data))
+        self.assertFalse(policy.privacy_findings(b'C:\\flixify\\source\\main.cpp'))
+
+    def test_rejects_missing_runtime_and_debug_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'private.pdb').write_bytes(b'x')
+            errors = policy.stage_findings(root)
+            self.assertTrue(any('private.pdb' in error for error in errors))
+            self.assertTrue(any('libvlc.dll' in error for error in errors))
+            self.assertTrue(any('qwindows.dll' in error for error in errors))
+
+    def test_smoke_proof_requires_every_screen_and_actual_playback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'smoke.json').write_text(json.dumps({'passed': True, 'localMediaPlaying': False}))
+            with self.assertRaises(ValueError):
+                policy.verify_smoke(root)
+
+    def test_smoke_proof_requires_nonempty_pngs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proof = {'passed': True, 'localMediaPlaying': True, 'fixtureHttp': True}
+            (root / 'smoke.json').write_text(json.dumps(proof))
+            for name in policy.SMOKE_SCREENS:
+                (root / (name + '.png')).write_bytes(b'')
+            with self.assertRaises(ValueError):
+                policy.verify_smoke(root)
+
+    def test_lock_is_https_versioned_and_sha256_pinned(self):
+        lock = json.loads((SCRIPT.parent / 'dependencies.lock.json').read_text())
+        policy.verify_lock(lock)
+        lock['archives'][0]['sha256'] = 'wrong'
+        with self.assertRaises(ValueError):
+            policy.verify_lock(lock)
+
+    def test_uninstaller_manifest_deletes_only_payload_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'plugins').mkdir()
+            (root / 'Flixify Pro.exe').write_bytes(b'app')
+            (root / 'plugins' / 'codec.dll').write_bytes(b'codec')
+            manifest = policy.uninstall_manifest(root)
+            self.assertIn('Delete \"$INSTDIR\\Flixify Pro.exe\"', manifest)
+            self.assertIn('Delete \"$INSTDIR\\plugins\\codec.dll\"', manifest)
+            self.assertNotIn('RMDir /r', manifest)
+            self.assertNotIn('Delete \"$INSTDIR\\*', manifest)
+            self.assertNotIn('user-created', manifest)
+
+    def test_uninstaller_manifest_escapes_nsis_variables_in_filenames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / '$PROFILE.txt').write_bytes(b'notice')
+            self.assertIn('$$PROFILE.txt', policy.uninstall_manifest(root))
+
+    def test_pe_parser_rejects_non_pe_without_external_command(self):
+        with self.assertRaises(ValueError):
+            policy.pe_imports(b'not a PE executable')
+
+    def test_zip_path_traversal_rejected(self):
+        for name in ['../escape.dll', '/absolute.dll', 'C:/escape.dll', 'foo/../../escape.dll']:
+            with self.assertRaises(ValueError):
+                policy.safe_archive_name(name)
+
+
+if __name__ == '__main__':
+    unittest.main()

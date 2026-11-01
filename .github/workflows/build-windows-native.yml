@@ -1,0 +1,127 @@
+name: Windows native TEST package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/windows-native-20261101]
+    paths:
+      - 'apps/windows-native/**'
+      - '.github/workflows/build-windows-native.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-native-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-package:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      CTEST_PARALLEL_LEVEL: '1'
+      QT_QPA_PLATFORM: windows
+      QT_QUICK_BACKEND: software
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          path: checkout
+
+      - name: Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12.9'
+          check-latest: false
+
+      - name: Pinned MSVC 2022 x64 toolset
+        uses: ilammy/msvc-dev-cmd@a102174a2b586eec2ea151a69e6fd14404a8ce7c # v1.13.0
+        with:
+          arch: x64
+          vsversion: '2022'
+          toolset: '14.44'
+
+      - name: Prepare neutral source and bounded build space
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((Get-PSDrive C).Free -lt 10GB) { throw 'At least 10 GiB free disk is required' }
+          New-Item -ItemType Directory -Path C:\flixify -ErrorAction Stop | Out-Null
+          Copy-Item -Recurse "$env:GITHUB_WORKSPACE\checkout\apps\windows-native" C:\flixify\src
+          New-Item -ItemType Directory -Path C:\flixify\test-artwork | Out-Null
+          foreach ($name in @('movie-0.jpg','movie-1.jpg','movie-2.jpg','series.jpg','series-boroughs.jpg','series-mahsun.jpg')) {
+            Copy-Item "$env:GITHUB_WORKSPACE\checkout\apps\tv-android\app\src\androidTest\assets\discovery\$name" C:\flixify\test-artwork -ErrorAction Stop
+          }
+          python -m pip install --require-hashes --no-deps --only-binary=:all: -r C:\flixify\src\scripts\build-tools-windows.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned CMake/Ninja installation failed' }
+          python -m unittest discover -s C:\flixify\src\scripts\tests -v
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging policy checks failed' }
+
+      - name: Verify and provision official Qt VLC NSIS inputs
+        run: |
+          python C:\flixify\src\scripts\provision.py --root C:\flixify --github-env $env:GITHUB_ENV
+          if ($LASTEXITCODE -ne 0) { throw 'Verified dependency provisioning failed' }
+
+      - name: Compile production application and independent tests
+        run: |
+          $env:PATH = "$env:QT_ROOT\bin;$env:PATH"
+          cmake -S C:\flixify\src -B C:\flixify\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON "-DCMAKE_PREFIX_PATH=$env:QT_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
+          cmake --build C:\flixify\build --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Native compile failed' }
+
+      - name: Run catalog repository expiry and packaging tests
+        run: |
+          $env:PATH = "$env:QT_ROOT\bin;$env:PATH"
+          ctest --test-dir C:\flixify\build --output-on-failure --no-tests=error --timeout 90
+          if ($LASTEXITCODE -ne 0) { throw 'Native CTest verification failed' }
+
+      - name: Deployed UI media proof dependencies privacy installer and hashes
+        run: |
+          $env:PATH = "$env:QT_ROOT\bin;$env:PATH"
+          python C:\flixify\src\scripts\package_windows.py --source C:\flixify\src --build C:\flixify\build --output C:\flixify\output --qt "$env:QT_ROOT" --vlc "$env:FLIXIFY_VLC_ROOT" --dependencies "$env:FLIXIFY_DEPENDENCY_ROOT" --nsis "$env:NSIS_ROOT" --artwork C:\flixify\test-artwork
+          if ($LASTEXITCODE -ne 0) { throw 'Windows package or rendered verification failed' }
+          @{
+            sourceCommit = '${{ github.sha }}'
+            runnerImage = $env:ImageVersion
+            qt = '6.11.3'
+            vlc = '3.0.24'
+            nsis = '3.11'
+            msvcToolset = $env:VCToolsVersion
+            cmake = (& cmake --version | Select-Object -First 1)
+            ninja = (& ninja --version)
+            distribution = 'unsigned TEST'
+            automaticRelease = $false
+          } | ConvertTo-Json | Set-Content C:\flixify\output\proof\build-provenance.json -Encoding utf8
+          if ((Get-PSDrive C).Free -lt 2GB) { throw 'Build exceeded reserved disk budget' }
+
+      - name: Upload verified installer portable ZIP hashes and proof
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Flixify-Pro-Windows-x64-TEST-${{ github.sha }}
+          path: |
+            C:/flixify/output/*-TEST-Setup.exe
+            C:/flixify/output/*-TEST-portable.zip
+            C:/flixify/output/SHA256SUMS.txt
+            C:/flixify/output/proof/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Windows-native-failure-${{ github.run_id }}
+          path: |
+            C:/flixify/build/Testing/Temporary/LastTest.log
+            C:/flixify/build/CMakeFiles/CMakeConfigureLog.yaml
+            C:/flixify/output/proof/**
+          if-no-files-found: ignore
+          retention-days: 7
