@@ -244,10 +244,10 @@ bool focusedPlayerControls(QQuickWindow *root,QQuickWindow *video,QQuickWindow *
     if(opened)QTest::keyClick(QGuiApplication::focusWindow()?QGuiApplication::focusWindow():overlay,Qt::Key_Escape);
     player.setVolume(30);volume->forceActiveFocus();const bool volumeFocused=volume->hasActiveFocus();
     QTest::keyClick(overlay,Qt::Key_Right);QTest::qWait(50);const int rightVolume=player.volume();player.setVolume(originalVolume);
-    bool timelineKeys=true;auto timeline=visual(overlay->contentItem(),"playerTimeline");
+    bool timelineKeys=true;qint64 timelineBefore=-1,timelineAfter=-1;double timelineValue=-1;auto timeline=visual(overlay->contentItem(),"playerTimeline");
     if(player.hasVideoFrame()&&timeline&&player.durationMs()>15000) {
-        const auto beforeSeek=player.positionMs();timeline->forceActiveFocus();QTest::keyClick(overlay,Qt::Key_Right);
-        timelineKeys=until([&]{return player.positionMs()>=beforeSeek+8000&&player.positionMs()<=beforeSeek+12000;},1000);player.seek(beforeSeek);
+        const auto beforeSeek=player.positionMs();timelineBefore=beforeSeek;timeline->forceActiveFocus();QTest::keyClick(overlay,Qt::Key_Right);
+        timelineKeys=until([&]{return player.positionMs()>=beforeSeek+8000&&player.positionMs()<=beforeSeek+12000;},1000);timelineAfter=player.positionMs();timelineValue=timeline->property("value").toDouble();player.seek(beforeSeek);
     }
     auto surfaceFocus=overlay->contentItem()->childItems().value(0);bool surfaceSpace=true;
     if(player.hasVideoFrame()&&surfaceFocus) {
@@ -262,7 +262,7 @@ bool focusedPlayerControls(QQuickWindow *root,QQuickWindow *video,QQuickWindow *
     const bool backgroundKeysIgnored=player.fullScreen()==beforeBackground&&qAbs(player.positionMs()-beforePosition)<3000;
     player.setFullScreen(originalFullscreen);until([&]{return video->visibility()==(originalFullscreen?QWindow::FullScreen:QWindow::Windowed);},3000);
     overlay->requestActivate();QTest::qWait(70);if(surfaceFocus)surfaceFocus->forceActiveFocus();
-    evidence={{"subtitleFocused",subtitleFocused},{"subtitleOwnsKeys",QJsonValue::fromVariant(subtitleOwned)},{"subtitleSpaceOpened",opened},{"volumeFocused",volumeFocused},{"volumeBefore",30},{"volumeAfterRight",rightVolume},{"timelineArrowSeeks",player.hasVideoFrame()?QJsonValue(timelineKeys):QJsonValue()},{"mainWindowActive",mainActive},{"ownsWindowDuringBackground",QJsonValue::fromVariant(ownedBackground)},{"backgroundKeysIgnored",backgroundKeysIgnored},{"surfaceSpaceTogglesPlayback",player.hasVideoFrame()?QJsonValue(surfaceSpace):QJsonValue()},{"nativeSurfaceKeysChecked",player.hasVideoFrame()}};
+    evidence={{"subtitleFocused",subtitleFocused},{"subtitleOwnsKeys",QJsonValue::fromVariant(subtitleOwned)},{"subtitleSpaceOpened",opened},{"volumeFocused",volumeFocused},{"volumeBefore",30},{"volumeAfterRight",rightVolume},{"timelineArrowSeeks",player.hasVideoFrame()?QJsonValue(timelineKeys):QJsonValue()},{"timelinePositionBefore",timelineBefore},{"timelinePositionAfter",timelineAfter},{"timelineSliderValue",timelineValue},{"mainWindowActive",mainActive},{"ownsWindowDuringBackground",QJsonValue::fromVariant(ownedBackground)},{"backgroundKeysIgnored",backgroundKeysIgnored},{"surfaceSpaceTogglesPlayback",player.hasVideoFrame()?QJsonValue(surfaceSpace):QJsonValue()},{"nativeSurfaceKeysChecked",player.hasVideoFrame()}};
     return subtitleFocused&&opened&&volumeFocused&&rightVolume>30&&timelineKeys&&mainActive&&backgroundKeysIgnored&&surfaceSpace&&player.active();
 }
 #ifdef Q_OS_WIN
@@ -417,23 +417,33 @@ int main(int argc,char **argv) {
     report["doubleClickPreservedPlayback"]=true;
     if(!duplicatePointerCoordinatesIgnored(video))return finish("Duplicate pointer coordinates counted as new movement",56);
     report["pointerCoordinateDedupe"]=true;
+    QString firstUiFailure;int firstUiExit=0;QJsonArray uiFailures;
+    auto recordUiFailure=[&](int code,const QString &message) { if(firstUiFailure.isEmpty()){firstUiFailure=message;firstUiExit=code;}uiFailures.append(QJsonObject{{"exitCode",code},{"message",message}});report["uiGateFailures"]=uiFailures; };
     QJsonObject focused;const bool focusedPassed=focusedPlayerControls(root,video,overlay,player,focused);report["focusedControls"]=focused;
-    if(!focusedPassed)return finish("Focused player controls failed: "+QString::fromUtf8(QJsonDocument(focused).toJson(QJsonDocument::Compact)),53);
-    report["focusedPlayerControls"]=true;
+    report["focusedPlayerControls"]=focusedPassed;
+    if(!focusedPassed)recordUiFailure(53,"Focused player controls failed: "+QString::fromUtf8(QJsonDocument(focused).toJson(QJsonDocument::Compact)));
 #ifdef Q_OS_WIN
-    QJsonObject physical;const bool physicalPassed=physicalPointerDoubleClick(video,overlay,player,physical);report["physicalPointer"]=physical;
-    if(!physicalPassed)return finish("Physical desktop double-click failed: "+QString::fromUtf8(QJsonDocument(physical).toJson(QJsonDocument::Compact)),54);
-    report["physicalPointerPassed"]=true;
+    QJsonObject physical;bool physicalPassed=false;
+    if(player.active()&&player.playing()&&player.hasVideoFrame())physicalPassed=physicalPointerDoubleClick(video,overlay,player,physical);
+    else physical={{"skipped",true},{"reason","Native playback prerequisites no longer hold"},{"active",player.active()},{"playing",player.playing()},{"hasVideoFrame",player.hasVideoFrame()}};
+    report["physicalPointer"]=physical;report["physicalPointerPassed"]=physicalPassed;
+    if(!physicalPassed)recordUiFailure(54,"Physical desktop double-click failed: "+QString::fromUtf8(QJsonDocument(physical).toJson(QJsonDocument::Compact)));
 #endif
-    auto nativeSurface=visual(video->contentItem(),"nativeVideoSurface"),mouseArea=visual(overlay->contentItem(),"videoPointerArea");
-    auto hover=overlay->findChild<QObject *>("videoHover");
-    QSignalSpy nativeMoves(nativeSurface,SIGNAL(pointerActivity(QPointF))),hoverPoints(hover,SIGNAL(pointChanged())),mousePositions(mouseArea,SIGNAL(positionChanged(QQuickMouseEvent*)));
-    player.interact();
-    if(!until([&]{return !player.controlsVisible();},4000)) {
+    if(player.active()&&player.playing()&&player.hasVideoFrame()) {
+        auto nativeSurface=visual(video->contentItem(),"nativeVideoSurface"),mouseArea=visual(overlay->contentItem(),"videoPointerArea");
+        auto hover=overlay->findChild<QObject *>("videoHover");
+        QSignalSpy nativeMoves(nativeSurface,SIGNAL(pointerActivity(QPointF))),hoverPoints(hover,SIGNAL(pointChanged())),mousePositions(mouseArea,SIGNAL(positionChanged(QQuickMouseEvent*)));
+        player.interact();QElapsedTimer idleClock;idleClock.start();
+        const bool hidden=until([&]{return !player.controlsVisible();},4000);report["controlsAutoHide"]=hidden;
         auto timeline=visual(overlay->contentItem(),"playerTimeline"),volume=visual(overlay->contentItem(),"playerVolume");
-        QJsonObject idle{{"playing",player.playing()},{"positionMs",player.positionMs()},{"durationMs",player.durationMs()},{"controlsVisible",player.controlsVisible()},{"loading",player.loading()},{"error",player.error()},{"held",overlay->property("held").toBool()},{"menuOpen",overlay->property("menuOpen").toBool()},{"controlFocused",overlay->property("controlFocused").toBool()},{"timelinePressed",timeline&&timeline->property("pressed").toBool()},{"volumePressed",volume&&volume->property("pressed").toBool()},{"nativeHoldCount",player.controlHoldCount()},{"nativePointerEvents",nativeMoves.size()},{"hoverPointEvents",hoverPoints.size()},{"mousePositionEvents",mousePositions.size()},{"overlayActive",overlay->isActive()},{"videoActive",video->isActive()}};
-        report["idleDiagnostics"]=idle;return finish("Player controls did not hide after idle: "+QString::fromUtf8(QJsonDocument(idle).toJson(QJsonDocument::Compact)),26);
+        QJsonObject idle{{"elapsedMs",idleClock.elapsed()},{"playing",player.playing()},{"positionMs",player.positionMs()},{"durationMs",player.durationMs()},{"controlsVisible",player.controlsVisible()},{"loading",player.loading()},{"error",player.error()},{"held",overlay->property("held").toBool()},{"menuOpen",overlay->property("menuOpen").toBool()},{"controlFocused",overlay->property("controlFocused").toBool()},{"timelinePressed",timeline&&timeline->property("pressed").toBool()},{"volumePressed",volume&&volume->property("pressed").toBool()},{"nativeHoldCount",player.controlHoldCount()},{"nativePointerEvents",nativeMoves.size()},{"hoverPointEvents",hoverPoints.size()},{"mousePositionEvents",mousePositions.size()},{"overlayActive",overlay->isActive()},{"videoActive",video->isActive()}};
+        report["idleDiagnostics"]=idle;
+        if(!hidden)recordUiFailure(26,"Player controls did not hide after idle: "+QString::fromUtf8(QJsonDocument(idle).toJson(QJsonDocument::Compact)));
+    } else {
+        report["controlsAutoHide"]=false;report["idleDiagnostics"]=QJsonObject{{"skipped",true},{"reason","Native playback prerequisites no longer hold"},{"active",player.active()},{"playing",player.playing()},{"hasVideoFrame",player.hasVideoFrame()}};
+        recordUiFailure(26,"Idle test skipped because native playback prerequisites no longer hold");
     }
+    if(!firstUiFailure.isEmpty())return finish(firstUiFailure,firstUiExit);
     player.togglePause();if(!until([&]{return !player.playing()&&player.controlsVisible();}))return finish("Pause/controls state failed",27);
     player.close();if(!until([&]{return !player.active();}))return finish("Player did not close",28);
     auto openLocal=[&](QVariantMap selected,const QString &path) { player.open({{"item",selected},{"url",QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath()).toString()},{"expiresAt",fixture.expiry},{"scope",repository.scope()},{"resumeMs",0},{"next",QVariantMap{}}}); };

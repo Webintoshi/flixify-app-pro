@@ -371,13 +371,26 @@ Window {
                             from: 0
                             to: Math.max(1, player.durationMs)
                             stepSize: 10000
-                            value: player.positionMs
+                            property real pendingSeek: 0
+                            Binding {
+                                target: timeline
+                                property: "value"
+                                value: player.positionMs
+                                when: !timeline.pressed
+                                restoreMode: Binding.RestoreNone
+                            }
                             enabled: player.durationMs > 0
                             Accessible.name: "Oynatma konumu"
-                            onMoved: player.interact()
+                            onMoved: {
+                                pendingSeek = value
+                                player.interact()
+                                if (!pressed) player.seek(Math.round(pendingSeek))
+                            }
                             onPressedChanged: {
-                                if (!pressed)
-                                    player.seek(Math.round(value));
+                                if (pressed)
+                                    pendingSeek = value;
+                                else
+                                    player.seek(Math.round(pendingSeek));
                                 player.interact();
                             }
                             background: Rectangle {
