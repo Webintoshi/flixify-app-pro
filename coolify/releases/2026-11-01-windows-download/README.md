@@ -34,9 +34,9 @@ python3 -m py_compile coolify/releases/2026-11-01-windows-download/build-web.py 
 
 Tests use synthetic Git repositories, mocked Docker calls and an in-process mocked fetch implementation in Node. They do not contact Docker, a real HTTP server, production or accounts. They are not evidence of native compilation, real website compilation or a real installer. The installer reader uses its own exact verified byte limit; the shared 32 MiB APK limit remains unchanged. Both local validation and candidate HTTP checks validate MZ, a bounded PE-header offset, `PE\0\0` and the pinned SHA256.
 
-## Owner-operated production sequence after accepting CI
+## Guarded production sequence after accepting CI
 
-These commands document the later owner-operated process. They have not been run as part of profile preparation. Keep the full measurement JSON private and run host operations serially.
+These commands document the guarded publication process completed below. Keep the full measurement JSON private and run host operations serially.
 
 ```sh
 python3 coolify/releases/2026-11-01-windows-download/build-web.py --measure
@@ -54,3 +54,16 @@ python3 coolify/releases/2026-11-01-windows-download/release-web.py --revision F
 The standalone release command requires the inherited PyYAML dependency in the production Python environment. Offline contracts stub only the unused YAML parser and do not prove real YAML parsing. Default is preflight. The owner may then run explicit `--apply` and `--recreate` serially. The inherited exclusive release lock, protected services/other-project snapshots, literal-empty web `REGISTRATION_GUARD_SECRET`, raw environment digest `c64b280b5c24f67964259a5de5e8aa883bd9d925ec1336614cd23e8fb5f46a42` and original registration fence are retained. The fence continues to reference the original `249006...` API proof, independently of the current `241bbd...` API service. `--rollback` restores the exact `52fc1c...` Mac-download website source.
 
 After cutover, the owner must repeat public HEAD/range/full-checksum Windows and retained Mac/TV download checks, check API health and inspect hydrated home and `/indir#windows` for the working test link, full visible unsigned warning and responsive layout. No migration, trusted Windows update JSON, updater activation, backend recreation, pruning or unrelated deployment is part of this profile.
+
+## Completed publication
+
+Website source `3af295bf1eac40974461757757a9ac63e8a016e5` was built and published as `flixify-ops-web:windows-test-download-3af295bf1eac-20261101`, image `sha256:a2a57bf8cb381a159921344d7e3c9e3165aea2bfebc3733d6f959dc97b4008a3`. Preparation, fresh measurement, preflight, bounded build, release apply and web-only recreation all returned zero. The protected environment, registration fence and other services remained unchanged. The rollback image remains `52fc1c...` above.
+
+Public verification completed at `2026-11-01T21:12:47Z`:
+
+- The actual Windows download button produced the pinned 70,307,673-byte installer with the accepted SHA256. Public HEAD returned 200 with the correct length and MIME; range returned 206.
+- The retained Mac DMG returned 200/206 with its original full-file SHA256. Both Android APK and update manifest retained their exact bytes and SHA256.
+- `/`, `/indir` and `/paketler` returned 200; public API health returned `ok: true`.
+- Desktop and mobile download layouts were inspected. The Windows card exposes its version, compatibility, size, unsigned notice and working download link alongside the retained Mac and Android cards.
+
+Private verification receipts and screenshots are kept outside this repository's tracked files in the task artifact directory. No live provider stream or customer playback session was opened by this verification.
