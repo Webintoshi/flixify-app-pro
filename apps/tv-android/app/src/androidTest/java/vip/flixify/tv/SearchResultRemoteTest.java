@@ -48,6 +48,19 @@ public final class SearchResultRemoteTest {
         Instrumentation.ActivityMonitor monitor=instrumentation.addMonitor(PlayerActivity.class.getName(),null,false);
         try{key(KeyEvent.KEYCODE_DPAD_CENTER);player=(PlayerActivity)monitor.waitForActivityWithTimeout(5000);assertNotNull("OK on the search result opens playback without Ara or another poster click",player);await("Player is foreground before returning",()->ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(player)==Stage.RESUMED && ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(activity)==Stage.STOPPED);return (Item)player.getIntent().getSerializableExtra(PlayerActivity.EXTRA_ITEM);}finally{instrumentation.removeMonitor(monitor);}
     }
+    @Test public void lateFavoriteRefreshCannotSwallowSearchSelectionAfterDialogDismissal(){
+        repository.saved.add(repository.movie2.key());launch();
+        instrumentation.runOnMainSync(()->text(activity.findViewById(android.R.id.content),"Favoriler").performClick());
+        await("Favorites ready",()->text(activity.findViewById(android.R.id.content),repository.movie2.title)!=null);
+        instrumentation.runOnMainSync(()->{repository.delayFavorites=true;repository.publishCatalog(new Catalog(Kind.MOVIE,Arrays.asList(repository.movie,repository.movie2),Arrays.asList(new Category("2","Drama"))));});
+        assertNotNull(repository.delayedFavorites);openSearch("Deniz");awaitResult(repository.movie2.title);
+        Instrumentation.ActivityMonitor monitor=instrumentation.addMonitor(PlayerActivity.class.getName(),null,false);
+        try{
+            instrumentation.runOnMainSync(()->{result(repository.movie2.title).performClick();repository.delayFavorites=false;repository.delayedFavorites.onResult(Arrays.asList(repository.movie2));});
+            player=(PlayerActivity)monitor.waitForActivityWithTimeout(5000);assertNotNull("Late Favorites data must not replace the search handoff owner",player);
+            assertEquals(repository.movie2.key(),((Item)player.getIntent().getSerializableExtra(PlayerActivity.EXTRA_ITEM)).key());
+        }finally{instrumentation.removeMonitor(monitor);}
+    }
     @Test public void resultOkOpensTheSelectedMovieDirectly(){
         launch();openSearch("Deniz");Item chosen=selectResultWithRemote(repository.movie2.title);
         assertEquals(Kind.MOVIE,chosen.kind);assertEquals(repository.movie2.key(),chosen.key());

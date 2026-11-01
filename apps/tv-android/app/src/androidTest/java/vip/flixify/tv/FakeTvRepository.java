@@ -6,7 +6,11 @@ import vip.flixify.tv.TvModels.*;
 /** Entirely offline account/catalog fixture. No provider or media connection is opened. */
 final class FakeTvRepository implements TvRepository {
     boolean session;
+    int preparationRequests;
+    @Override public void prepareOfflineData(){preparationRequests++;}
     boolean failCatalog;
+    boolean delayFavorites;
+    Callback<List<Item>> delayedFavorites;
     boolean failAccount;
     boolean delayAccount;
     Callback<Account> delayedAccount;
@@ -49,7 +53,7 @@ final class FakeTvRepository implements TvRepository {
         catalogObserver=observer;
         return ()->{if(catalogObserver==observer)catalogObserver=null;};
     }
-    void publishCatalog(Catalog catalog) {if(catalogObserver!=null)catalogObserver.onCatalog(catalog);}
+    void publishCatalog(Catalog catalog) {catalogOverrides.put(catalog.kind,catalog);if(catalogObserver!=null)catalogObserver.onCatalog(catalog);}
     public void catalog(Kind kind,boolean force,Callback<Catalog> cb) {
         lastCatalogForced=force;
         if(bootstrapOnCatalog)bootstrapped=true;
@@ -67,7 +71,13 @@ final class FakeTvRepository implements TvRepository {
     public void series(Item item,Callback<SeriesDetail> cb) { cb.onResult(new SeriesDetail(show,Arrays.asList(new Season(1,Arrays.asList(episode)),new Season(2,Arrays.asList(episode2))))); }
     public void startingEpisode(Item item,Callback<Item> cb) { cb.onResult(episode); }
     public void favorites(Callback<List<Item>> cb) {
-        List<Item> rows=new ArrayList<>(); for (Item i:Arrays.asList(movie,movie2,show,live)) if(saved.contains(i.key()))rows.add(i); cb.onResult(rows);
+        if(delayFavorites){delayedFavorites=cb;return;}
+        List<Item> rows=new ArrayList<>();
+        for(Kind kind:new Kind[]{Kind.MOVIE,Kind.SERIES,Kind.LIVE}){
+            List<Item> source=catalogOverrides.containsKey(kind)?catalogOverrides.get(kind).items:kind==Kind.MOVIE?Arrays.asList(movie,movie2):kind==Kind.SERIES?Arrays.asList(show):Arrays.asList(live);
+            for(Item item:source)if(saved.contains(item.key()))rows.add(item);
+        }
+        cb.onResult(rows);
     }
     public boolean isFavorite(Item item) { return saved.contains(item.key()); }
     public void toggleFavorite(Item item,Callback<Boolean> cb) { if(!saved.remove(item.key()))saved.add(item.key()); cb.onResult(saved.contains(item.key())); }

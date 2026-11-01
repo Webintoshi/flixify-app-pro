@@ -55,6 +55,8 @@ final class TvUpdatePanel implements AutoCloseable {
         });
     }
     private void download() {
+        TvRepository repository=TvApplication.repository(activity);
+        if(repository.hasSession())repository.prepareOfflineData();
         final long ticket=++generation;busy=true;status="Güncelleme indiriliyor…";paint();
         updater.download(available,new TvUpdater.DownloadCallback() {
             public void onProgress(int percent){if(current(ticket)){status="Güncelleme indiriliyor · %"+percent;paint();}}

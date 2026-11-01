@@ -49,7 +49,8 @@ public class NetworkTvRepositoryTest {
         SimpleDateFormat format=new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",Locale.US);format.setTimeZone(TimeZone.getTimeZone("UTC"));return format.format(new Date(time));
     }
     private static final class Fixture implements NetworkTvRepository.ConnectionFactory {
-        volatile boolean eligible=true,denyLibrary=false;
+        volatile boolean eligible=true,denyLibrary=false,holdLibrary;
+        final CountDownLatch libraryStarted=new CountDownLatch(1),releaseLibrary=new CountDownLatch(1);
         volatile boolean emptyEpisodes;
         volatile boolean emptyLive;
         volatile JSONObject livePolicy;
@@ -60,9 +61,11 @@ public class NetworkTvRepositoryTest {
         volatile long leaseExpiry=NOW+600000;
         final AtomicInteger bootstrapReads=new AtomicInteger(),liveCategoryReads=new AtomicInteger(),liveStreamReads=new AtomicInteger(),epgReads=new AtomicInteger();
         final AtomicInteger seriesCategoryReads=new AtomicInteger(),seriesListReads=new AtomicInteger(),seriesDetailReads=new AtomicInteger();
+        final AtomicInteger movieCategoryReads=new AtomicInteger(),movieStreamReads=new AtomicInteger();
         final CountDownLatch epgStarted=new CountDownLatch(1),releaseEpg=new CountDownLatch(1);
         volatile boolean holdEpg;
-        volatile boolean holdCatalog,holdSeriesDetail;
+        volatile boolean holdCatalog,holdSeriesDetail,holdLiveResponse;
+        final CountDownLatch responseReadStarted=new CountDownLatch(1),releaseResponseRead=new CountDownLatch(1),responseDisconnected=new CountDownLatch(1);
         final CountDownLatch seriesDetailStarted=new CountDownLatch(1),releaseSeriesDetail=new CountDownLatch(1);
         volatile String liveTitle="Fixture Kanal";
         final CountDownLatch catalogStarted=new CountDownLatch(1),releaseCatalog=new CountDownLatch(1);
@@ -73,7 +76,7 @@ public class NetworkTvRepositoryTest {
             private byte[] response;
             private int status;
             @Override public void connect(){}
-            @Override public void disconnect(){}
+            @Override public void disconnect(){if(holdLiveResponse && url.getQuery()!=null && url.getQuery().contains("action=get_live_streams")){responseDisconnected.countDown();releaseResponseRead.countDown();}}
             @Override public boolean usingProxy(){return false;}
             @Override public OutputStream getOutputStream(){return body;}
             private void resolve() {
@@ -90,6 +93,7 @@ public class NetworkTvRepositoryTest {
                         raw=new JSONObject().put("accountId","fixture-account").put("sourceVersion",source).put("providerOrigin","https://provider.test").put("username","fixture-user").put("password","fixture-password").put("expiresAt",date(leaseExpiry)).put("moviePolicy","general-audience-only").put("livePolicy",livePolicy);
                     }
                     else if(path.equals("/me/personal-library")) {
+                        if(holdLibrary){libraryStarted.countDown();if(!releaseLibrary.await(10,TimeUnit.SECONDS))throw new AssertionError("Library fixture was not released");}
                         libraryReads++;if(denyLibrary){status=401;raw=new JSONObject();}
                         else {
                             JSONArray watched=new JSONArray();for(String id:watchedEpisodes)watched.put(new JSONObject().put("source","personal").put("sourceVersion",source).put("kind","episode").put("seriesId","56").put("id",id));
@@ -103,8 +107,8 @@ public class NetworkTvRepositoryTest {
                         synchronized(favoriteMethods){favoriteMethods.add(getRequestMethod());}raw=new JSONObject().put("ok",true);
                     } else if(path.equals("/player_api.php")) {
                         String query=url.getQuery();
-                        if(query.contains("action=get_vod_categories"))raw=new JSONArray().put(new JSONObject().put("category_id","9").put("category_name","Filmler"));
-                        else if(query.contains("action=get_vod_streams"))raw=new JSONArray().put(new JSONObject().put("stream_id","12").put("name","Fixture Film").put("category_id","9").put("container_extension","mp4"));
+                        if(query.contains("action=get_vod_categories")){movieCategoryReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("category_id","9").put("category_name","Filmler"));}
+                        else if(query.contains("action=get_vod_streams")){movieStreamReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("stream_id","12").put("name","Fixture Film").put("category_id","9").put("container_extension","mp4"));}
                         else if(query.contains("action=get_series_categories")) {
                             seriesCategoryReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("category_id","8").put("category_name","Diziler"));
                         } else if(query.contains("action=get_series_info")) {
@@ -129,7 +133,16 @@ public class NetworkTvRepositoryTest {
             }
             @Override public int getResponseCode(){resolve();return status;}
             @Override public String getHeaderField(String name){resolve();return "Content-Length".equals(name)?Integer.toString(response.length):null;}
-            @Override public InputStream getInputStream(){resolve();return new ByteArrayInputStream(response);}
+            @Override public InputStream getInputStream(){
+                resolve();InputStream bytes=new ByteArrayInputStream(response);
+                if(!holdLiveResponse || url.getQuery()==null || !url.getQuery().contains("action=get_live_streams"))return bytes;
+                return new java.io.FilterInputStream(bytes){
+                    @Override public int read(byte[] value,int offset,int length)throws java.io.IOException{
+                        responseReadStarted.countDown();try{if(!releaseResponseRead.await(5,TimeUnit.SECONDS))throw new java.io.IOException();}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new java.io.IOException();}
+                        if(responseDisconnected.getCount()==0)throw new java.io.IOException();return super.read(value,offset,length);
+                    }
+                };
+            }
         };}
         private JSONObject episode(String id,int season,int episode) throws Exception {
             return new JSONObject().put("id",id).put("title","Fixture Bölüm "+id).put("season",season).put("episode_num",episode).put("container_extension","mp4");
@@ -160,6 +173,108 @@ public class NetworkTvRepositoryTest {
             }finally{h.repository.logout();}
         }
     }
+    @Test public void coldCatalogAndResolvedFavoritesDoNotWaitForAnotherLibraryOrFullCatalogDownload() throws Exception {
+        Harness h=new Harness(true);NetworkTvRepository restored=null;Fixture next=new Fixture();next.holdLibrary=true;
+        try {
+            Result<Catalog> initial=new Result<>();h.repository.catalog(Kind.MOVIE,false,initial);h.deliver();assertNull(initial.error);
+            restored=new NetworkTvRepository(h.context,next,h.clock,h.deliveries::add);
+            Result<Catalog> catalog=new Result<>();restored.catalog(Kind.MOVIE,false,catalog);h.deliver();assertNull(catalog.error);assertEquals(1,catalog.value.items.size());
+            Result<List<Item>> favorites=new Result<>();restored.favorites(favorites);h.deliver();assertNull(favorites.error);assertEquals("12",favorites.value.get(0).id);
+            assertEquals(0,next.movieStreamReads.get());assertEquals(0,next.liveStreamReads.get());assertEquals(0,next.seriesListReads.get());
+            assertEquals("Fresh local library must not be reacquired",0,next.libraryReads);
+            assertTrue(restored.isFavorite(catalog.value.items.get(0)));
+        } finally {next.releaseLibrary.countDown();if(restored!=null)restored.logout();h.repository.logout();}
+    }
+    @Test public void warmMoviePlaybackUsesCanonicalMetadataButStillForcesCurrentAccess() throws Exception {
+        Harness h=new Harness(true);try {
+            Result<Catalog> catalog=new Result<>();h.repository.catalog(Kind.MOVIE,false,catalog);h.deliver();assertNull(catalog.error);
+            int reads=h.fixture.movieStreamReads.get(),bootstraps=h.fixture.bootstrapReads.get();
+            Result<Playback> playback=new Result<>();h.repository.playback(catalog.value.items.get(0),playback);h.deliver();assertNull(playback.error);assertNotNull(playback.value);
+            assertEquals(reads,h.fixture.movieStreamReads.get());assertEquals(bootstraps+1,h.fixture.bootstrapReads.get());
+        } finally {h.repository.logout();}
+    }
+    @Test public void coldMovieFavoriteAndExcludedLiveRefDoNotHydrateTheLiveCatalog() throws Exception {
+        Harness h=new Harness(true);NetworkTvRepository restored=null;
+        try{
+            h.fixture.includeLiveFavorite=true;Result<Catalog> initial=new Result<>();h.repository.catalog(Kind.MOVIE,false,initial);h.deliver();assertNull(initial.error);
+            assertEquals(0,h.fixture.liveStreamReads.get());
+            Fixture next=new Fixture();next.includeLiveFavorite=true;next.livePolicy=livePolicy(true);
+            restored=new NetworkTvRepository(h.context,next,h.clock,h.deliveries::add);
+            Result<List<Item>> favorites=new Result<>();restored.favorites(favorites);h.deliver();assertNull(favorites.error);assertEquals(1,favorites.value.size());assertEquals(Kind.MOVIE,favorites.value.get(0).kind);
+            assertEquals("Known-excluded refs need no categories",0,next.liveCategoryReads.get());assertEquals("Known-excluded refs need no streams",0,next.liveStreamReads.get());
+            assertEquals("Resolved movie metadata comes from its scoped snapshot",0,next.movieStreamReads.get());assertEquals(1,next.bootstrapReads.get());
+        }finally{if(restored!=null)restored.logout();h.repository.logout();}
+    }
+    @Test public void heldOptionalLibraryRefreshDoesNotBlockCachedFavoritesOrPlayback() throws Exception {
+        Harness h=new Harness(true);NetworkTvRepository restored=null;Fixture next=new Fixture();next.holdLibrary=true;
+        try {
+            Result<Catalog> initial=new Result<>();h.repository.catalog(Kind.MOVIE,false,initial);h.deliver();assertNull(initial.error);
+            h.clock.value+=61000;
+            restored=new NetworkTvRepository(h.context,next,h.clock,h.deliveries::add);
+            Result<Catalog> catalog=new Result<>();restored.catalog(Kind.MOVIE,false,catalog);h.deliver();assertNull(catalog.error);
+            assertTrue(next.libraryStarted.await(3,TimeUnit.SECONDS));
+            Result<List<Item>> favorites=new Result<>();restored.favorites(favorites);h.deliver();assertNull(favorites.error);assertEquals(1,favorites.value.size());
+            Result<Playback> playback=new Result<>();restored.playback(catalog.value.items.get(0),playback);h.deliver();assertNull(playback.error);assertNotNull(playback.value);
+            assertEquals(0,next.movieStreamReads.get());assertTrue(restored.hasSession());
+        } finally {next.releaseLibrary.countDown();if(restored!=null)restored.logout();h.repository.logout();}
+    }
+    @Test public void localLibraryCannotExposeFavoritesAfterAuthoritativeBootstrapDenial() throws Exception {
+        Harness h=new Harness(true);NetworkTvRepository restored=null;
+        try {
+            Result<Catalog> initial=new Result<>();h.repository.catalog(Kind.MOVIE,false,initial);h.deliver();assertNull(initial.error);
+            Fixture denied=new Fixture();denied.bootstrapStatus=403;
+            restored=new NetworkTvRepository(h.context,denied,h.clock,h.deliveries::add);
+            Result<List<Item>> favorites=new Result<>();restored.favorites(favorites);h.deliver();assertEquals(Failure.Code.INELIGIBLE,favorites.error.code);assertNull(favorites.value);
+            assertEquals("",restored.currentScope());assertEquals(0,denied.libraryReads);
+        } finally {if(restored!=null)restored.logout();h.repository.logout();}
+    }
+    @Test public void offlinePreparationWarmsEachMissingKindOnceAndYieldsWhilePlayerIsActive() throws Exception {
+        Harness h=new Harness(true);Object player=new Object();try {
+            Result<Catalog> initial=new Result<>();h.repository.catalog(Kind.MOVIE,false,initial);h.deliver();assertNull(initial.error);
+            BackgroundWorkGate.beginPlayback(player);h.repository.prepareOfflineData();h.deliver();Thread.sleep(100);
+            assertEquals(0,h.fixture.liveStreamReads.get());assertEquals(0,h.fixture.seriesListReads.get());
+            BackgroundWorkGate.endPlayback(player);h.repository.prepareOfflineData();h.deliver();
+            CountDownLatch drained=new CountDownLatch(1);((ThreadPoolExecutor)field(h.repository,"metadataWorker")).execute(drained::countDown);assertTrue(drained.await(5,TimeUnit.SECONDS));
+            assertEquals(1,h.fixture.movieStreamReads.get());assertEquals(1,h.fixture.liveStreamReads.get());assertEquals(1,h.fixture.seriesListReads.get());
+            h.repository.prepareOfflineData();h.deliver();CountDownLatch again=new CountDownLatch(1);((ThreadPoolExecutor)field(h.repository,"metadataWorker")).execute(again::countDown);assertTrue(again.await(5,TimeUnit.SECONDS));
+            assertEquals(1,h.fixture.movieStreamReads.get());assertEquals(1,h.fixture.liveStreamReads.get());assertEquals(1,h.fixture.seriesListReads.get());
+        }finally{BackgroundWorkGate.endPlayback(player);h.repository.logout();}
+    }
+    @Test public void livePolicyProjectionIsPreparedBeforeItsMainThreadCallbacks() throws Exception {
+        Harness h=new Harness(true);try {
+            warmLive(h);h.fixture.livePolicy=livePolicy(true);Result<Account> changed=new Result<>();h.repository.refreshAccess(changed);h.awaitQueued(1);
+            LiveChannelCuration.Projection prepared=(LiveChannelCuration.Projection)field(h.repository,"curatedLive");
+            assertNotNull(prepared);assertTrue("Full curation must finish on the worker, before callback dispatch",prepared.catalog.items.isEmpty());
+            h.deliver();assertNull(changed.error);assertSame(prepared,field(h.repository,"curatedLive"));
+        }finally{h.repository.logout();}
+    }
+    @Test public void delayedLibraryWriterCannotOverwriteNewerResolvedFavoriteMetadata() throws Exception {
+        Harness h=new Harness(true);CountDownLatch finished=new CountDownLatch(1);Thread delayed=null;
+        try{
+            Result<Catalog> initial=new Result<>();h.repository.catalog(Kind.MOVIE,false,initial);h.deliver();assertNull(initial.error);
+            MetadataDiskCache disk=(MetadataDiskCache)field(h.repository,"metadataDisk");SourceGuard guard=(SourceGuard)field(h.repository,"guard");ProviderParser.Bootstrap b=guard.current();
+            java.lang.reflect.Method persist=NetworkTvRepository.class.getDeclaredMethod("persistLibrary",long.class,ProviderParser.Bootstrap.class,long.class);persist.setAccessible(true);
+            final long auth=(Long)field(h.repository,"authGeneration"),source=guard.generation();
+            synchronized(disk){
+                delayed=new Thread(()->{try{persist.invoke(h.repository,auth,b,source);}catch(Exception invalid){throw new AssertionError(invalid);}finally{finished.countDown();}},"held-library-writer");delayed.start();
+                long until=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);while(delayed.getState()!=Thread.State.BLOCKED && System.nanoTime()<until)Thread.yield();assertEquals(Thread.State.BLOCKED,delayed.getState());
+                Item updated=new Item(Kind.MOVIE,"12","New resolved title","9","Filmler","","mp4",b.scope(),"",0,0,"");
+                java.util.Map<String,Item> newer=java.util.Collections.singletonMap("MOVIE::12",updated);
+                java.lang.reflect.Field resolved=NetworkTvRepository.class.getDeclaredField("resolvedFavorites");resolved.setAccessible(true);Object repositoryLock=field(h.repository,"lock");synchronized(repositoryLock){resolved.set(h.repository,newer);}
+                disk.writeLibrary(b.scope(),b.expiresAtMs,NOW+1,new MetadataDiskCache.Library(java.util.Collections.singleton("MOVIE::12"),java.util.Collections.emptySet(),newer),()->true);
+            }
+            assertTrue(finished.await(3,TimeUnit.SECONDS));assertEquals("New resolved title",disk.readLibrary(b.scope(),b.expiresAtMs,NOW+2).value.items.get(0).title);
+        }finally{if(delayed!=null)delayed.join(3000);h.repository.logout();}
+    }
+    @Test public void optionalResponseIsDisconnectedMidReadWhenPlaybackStarts() throws Exception {
+        Harness h=new Harness(true);Object player=new Object();try{
+            h.fixture.leaseExpiry=NOW+10L*86400000;Item live=warmLive(h);h.clock.value+=MetadataDiskCache.FRESH_MS;
+            h.fixture.holdLiveResponse=true;h.repository.catalog(Kind.LIVE,false,new Result<>());h.deliver();assertTrue(h.fixture.responseReadStarted.await(3,TimeUnit.SECONDS));
+            BackgroundWorkGate.beginPlayback(player);assertTrue("Optional blocked read must yield without waiting for15s timeout",h.fixture.responseDisconnected.await(2,TimeUnit.SECONDS));
+            CountDownLatch drained=new CountDownLatch(1);((ThreadPoolExecutor)field(h.repository,"metadataWorker")).execute(drained::countDown);assertTrue(drained.await(2,TimeUnit.SECONDS));
+            Result<Playback> foreground=new Result<>();h.repository.playback(live,foreground);h.deliver();assertNull(foreground.error);assertNotNull(foreground.value);assertTrue(h.repository.hasSession());
+        }finally{BackgroundWorkGate.endPlayback(player);h.fixture.releaseResponseRead.countDown();h.repository.logout();}
+    }
     @Test public void coldVerifiedScopeReadsCatalogFromDiskWithoutProviderRefetch() throws Exception {
         Harness h=new Harness(true);NetworkTvRepository restored=null;
         try {
@@ -172,14 +287,14 @@ public class NetworkTvRepositoryTest {
             assertEquals("Verified current-scope snapshot skips provider stream download",0,fresh.liveStreamReads.get());
         }finally{if(restored!=null)restored.logout();h.repository.logout();}
     }
-    @Test public void coldSeriesDetailUsesPrivateSnapshotButPlaybackStillRevalidatesEverything() throws Exception {
+    @Test public void coldSeriesDetailUsesPrivateSnapshotButPlaybackStillRevalidatesAccess() throws Exception {
         Harness h=new Harness(true);NetworkTvRepository restored=null;
         try {
             SeriesDetail first=warmSeries(h);Fixture fresh=new Fixture();restored=new NetworkTvRepository(h.context,fresh,h.clock,h.deliveries::add);
             Result<SeriesDetail> cached=new Result<>();restored.series(seriesCandidate("fixture-account:source-a"),cached);h.deliver();assertNull(cached.error);assertEquals(first.seasons.size(),cached.value.seasons.size());
             assertEquals(0,fresh.seriesDetailReads.get());assertEquals(0,fresh.seriesCategoryReads.get());assertEquals(0,fresh.seriesListReads.get());
             Result<Playback> playback=new Result<>();restored.playback(cached.value.seasons.get(0).episodes.get(0),playback);h.deliver();assertNull(playback.error);assertNotNull(playback.value);
-            assertEquals("Playback still freshly verifies the parent catalog",1,fresh.seriesListReads.get());assertEquals(1,fresh.seriesDetailReads.get());assertEquals(2,fresh.bootstrapReads.get());
+            assertEquals("Fresh canonical series metadata is already scoped on disk",0,fresh.seriesListReads.get());assertEquals(0,fresh.seriesDetailReads.get());assertEquals("Playback still freshly verifies access",2,fresh.bootstrapReads.get());
         }finally{if(restored!=null)restored.logout();h.repository.logout();}
     }
     @Test public void forcedRefreshBypassesDiskAndStoredExpiryCannotBeExtendedByNewBootstrap() throws Exception {
@@ -542,8 +657,8 @@ public class NetworkTvRepositoryTest {
                 Result<Catalog> catalog=new Result<>();Result<Playback> record=new Result<>();
                 if(playback)h.repository.playback(item,record);else h.repository.catalog(Kind.LIVE,false,catalog);
                 h.awaitQueued(1);h.fixture.livePolicy=livePolicy(true);h.repository.refreshAccess(new Result<Account>());h.awaitQueued(2);
-                h.deliver();if(playback){assertNull(record.value);assertNotNull(record.error);}else{assertNull(catalog.error);assertTrue(catalog.value.items.isEmpty());}
-                h.deliver();
+                h.deliver();if(playback){assertNull(record.value);assertNotNull(record.error);}else{assertEquals("Changed policy is reprojected on the worker before callback delivery",0,catalog.calls);}
+                h.deliver();if(!playback){h.deliver();assertNull(catalog.error);assertTrue(catalog.value.items.isEmpty());}
             } finally {h.repository.logout();}
         }
     }

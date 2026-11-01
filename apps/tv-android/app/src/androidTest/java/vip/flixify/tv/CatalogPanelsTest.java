@@ -47,6 +47,16 @@ public class CatalogPanelsTest {
     void draft(ActivityScenario<MainActivity> s,String tag,String value){s.onActivity(a->((EditText)tag(a,tag)).setText(value));}
     void focusSearchApply(ActivityScenario<MainActivity> s){AtomicBoolean focused=new AtomicBoolean();for(int n=0;n<5;n++){key(KeyEvent.KEYCODE_DPAD_DOWN);s.onActivity(a->focused.set(tag(a,"tv_search_apply").hasFocus()));if(focused.get())return;}fail("Ara remains reachable after preview results");}
     void applySearch(ActivityScenario<MainActivity> s){focusSearchApply(s);key(KeyEvent.KEYCODE_DPAD_CENTER);}
+    @Test public void backgroundMovieLibraryChangeRefreshesVisibleFavoritesWithoutLosingRemoteFocus(){
+        repository.saved.add(repository.movie.key());
+        try(ActivityScenario<MainActivity> s=launch()){
+            s.onActivity(a->text(a.findViewById(android.R.id.content),"Favoriler").performClick());
+            await(s,"Initial saved movie",a->text(a.findViewById(android.R.id.content),repository.movie.title)!=null);
+            s.onActivity(a->{repository.saved.add(repository.movie2.key());repository.catalogObserver.onCatalog(new Catalog(Kind.MOVIE,java.util.Arrays.asList(repository.movie,repository.movie2),java.util.Collections.emptyList()));});
+            await(s,"Refreshed saved movie",a->text(a.findViewById(android.R.id.content),repository.movie2.title)!=null);
+            s.onActivity(a->assertTrue(a.getCurrentFocus()!=null && a.getCurrentFocus().isShown()));
+        }
+    }
     @Test public void searchPreviewIsDraftUntilApplyAndCancelRestoresOpener(){
         try(ActivityScenario<MainActivity> s=launch()){
             openSearch(s);draft(s,"tv_search_input","Deniz");

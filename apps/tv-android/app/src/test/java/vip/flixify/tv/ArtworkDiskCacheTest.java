@@ -19,6 +19,18 @@ public class ArtworkDiskCacheTest {
     private ArtworkDiskCache cache(File directory,long budget) {return new ArtworkDiskCache(directory,budget,7000,512,now::get,free::get);}
     private byte[] bytes(int value) {byte[] result=new byte[16];Arrays.fill(result,(byte)value);return result;}
 
+    @Test public void constructionDefersFilesystemMaintenanceUntilACacheOperation() throws Exception {
+        AtomicLong calls=new AtomicLong();
+        File directory=new File(temporary.newFolder().getPath()) {
+            @Override public boolean isDirectory(){calls.incrementAndGet();return super.isDirectory();}
+            @Override public File[] listFiles(){calls.incrementAndGet();return super.listFiles();}
+        };
+        ArtworkDiskCache cache=cache(directory,1024);
+        assertEquals("Creating the UI loader must not scan the disk",0,calls.get());
+        assertNull(cache.read("scope",ADDRESS));
+        assertTrue("The worker's cache operation initializes maintenance",calls.get()>0);
+    }
+
     @Test public void survivesColdReopenWithoutPersistingIdentityOrUrl() throws Exception {
         File directory=temporary.newFolder();ArtworkDiskCache first=cache(directory,1024);
         assertTrue(first.write("account-one:source-one",ADDRESS,bytes(1),()->true));
@@ -48,7 +60,7 @@ public class ArtworkDiskCacheTest {
         try(RandomAccessFile file=new RandomAccessFile(stored,"rw")){file.seek(file.length()-1);file.write(99);}
         assertNull(cache.read("scope",ADDRESS));assertFalse(stored.exists());
         File interrupted=new File(directory,"uncommitted.tmp");Files.write(interrupted.toPath(),bytes(7));
-        cache(directory,1024);assertFalse(interrupted.exists());
+        cache(directory,1024).read("scope",ADDRESS);assertFalse(interrupted.exists());
     }
     @Test public void diskBudgetEvictsLeastRecentlyReadEntryAndPersistsRecency() throws Exception {
         File directory=temporary.newFolder();ArtworkDiskCache cache=cache(directory,160);

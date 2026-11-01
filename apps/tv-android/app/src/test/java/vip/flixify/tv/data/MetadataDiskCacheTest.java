@@ -19,6 +19,29 @@ public class MetadataDiskCacheTest {
     private Item item(Kind kind,String id,String scope) {return new Item(kind,id,"Fixture","9","Filmler","https://images.test/poster.jpg",kind==Kind.SERIES?"":"mp4",scope,kind==Kind.EPISODE?"56":"",kind==Kind.EPISODE?1:0,kind==Kind.EPISODE?1:0,"Description");}
     private Catalog catalog(String scope) {return new Catalog(Kind.MOVIE,Collections.singletonList(item(Kind.MOVIE,"12",scope)),Collections.singletonList(new Category("9","Filmler")));}
     private File directory() throws Exception {return Files.createTempDirectory("flixify-metadata-test-").toFile();}
+    @Test public void scopedLibraryRestoresRefsAndResolvedFavoritesWithoutCredentials() throws Exception {
+        File root=directory();MetadataDiskCache first=new MetadataDiskCache(root);
+        MetadataDiskCache.Library library=new MetadataDiskCache.Library(
+            new java.util.HashSet<>(Arrays.asList("MOVIE::12","LIVE::34")),
+            new java.util.HashSet<>(Collections.singletonList("EPISODE:56:61")),
+            Collections.singletonList(item(Kind.MOVIE,"12",SCOPE)));
+        first.writeLibrary(SCOPE,EXPIRY,NOW,library,()->true);
+        MetadataDiskCache second=new MetadataDiskCache(root);
+        MetadataDiskCache.Snapshot<MetadataDiskCache.Library> restored=second.readLibrary(SCOPE,EXPIRY,NOW+1);
+        assertNotNull(restored);assertEquals(library.favorites,restored.value.favorites);assertEquals(library.watched,restored.value.watched);
+        assertEquals("12",restored.value.items.get(0).id);assertEquals(SCOPE,restored.value.items.get(0).scope);
+        assertNull(second.readLibrary("other:source",EXPIRY,NOW+1));assertNull(second.readLibrary(SCOPE,NOW+1,NOW+1));
+    }
+    @Test public void malformedOrUnownedResolvedLibraryItemsCannotReplaceAnExistingSnapshot() throws Exception {
+        File root=directory();MetadataDiskCache cache=new MetadataDiskCache(root);
+        MetadataDiskCache.Library valid=new MetadataDiskCache.Library(new java.util.HashSet<>(Collections.singletonList("MOVIE::12")),Collections.emptySet(),Collections.singletonList(item(Kind.MOVIE,"12",SCOPE)));
+        cache.writeLibrary(SCOPE,EXPIRY,NOW,valid,()->true);
+        MetadataDiskCache.Library malformed=new MetadataDiskCache.Library(new java.util.HashSet<>(Collections.singletonList("MOVIE::bad")),Collections.emptySet(),Collections.emptyList());
+        cache.writeLibrary(SCOPE,EXPIRY,NOW+1,malformed,()->true);
+        MetadataDiskCache.Library wrongScope=new MetadataDiskCache.Library(valid.favorites,valid.watched,Collections.singletonList(item(Kind.MOVIE,"12","other:source")));
+        cache.writeLibrary(SCOPE,EXPIRY,NOW+1,wrongScope,()->true);
+        assertEquals(NOW,cache.readLibrary(SCOPE,EXPIRY,NOW+2).savedAt);
+    }
     @Test public void oldRawLiveDiskSnapshotGetsCurrentCurationWithoutLosingAlternatives() throws Exception {
         Item hd=new Item(Kind.LIVE,"41","TR | ATV HD","9","TR: Ulusal","","ts",SCOPE,"",0,0,"");
         Item fhd=new Item(Kind.LIVE,"42","TR | ATV FHD","9","TR: Ulusal","","ts",SCOPE,"",0,0,"");

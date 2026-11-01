@@ -1,8 +1,11 @@
 package vip.flixify.tv.data;
 
 import java.io.File;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.FilterInputStream;
+import java.io.FilterOutputStream;
+import java.io.RandomAccessFile;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.FileInputStream;
@@ -13,6 +16,9 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.DigestInputStream;
+import java.security.DigestOutputStream;
+import java.util.Collections;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -37,6 +43,40 @@ final class MetadataDiskCache {
         final T value;final long savedAt,expiresAt;
         Snapshot(T value,long savedAt,long expiresAt){this.value=value;this.savedAt=savedAt;this.expiresAt=expiresAt;}
         boolean stale(long now){return now-savedAt>=FRESH_MS;}
+    }
+    static final class Library {
+        final Set<String> favorites,watched;final List<Item> items;final java.util.Map<String,Item> resolved;
+        Library(Set<String> favorites,Set<String> watched,List<Item> items){
+            this(favorites,watched,index(items));
+        }
+        Library(Set<String> favorites,Set<String> watched,java.util.Map<String,Item> resolved){
+            this.favorites=Collections.unmodifiableSet(new HashSet<>(favorites));this.watched=Collections.unmodifiableSet(new HashSet<>(watched));this.resolved=Collections.unmodifiableMap(new java.util.LinkedHashMap<>(resolved));
+            java.util.Map<String,Item> unique=new java.util.LinkedHashMap<>();for(Item item:resolved.values())unique.put(reference(item),item);this.items=Collections.unmodifiableList(new ArrayList<>(unique.values()));
+        }
+        private static java.util.Map<String,Item> index(List<Item> items){java.util.Map<String,Item> result=new java.util.LinkedHashMap<>();for(Item item:items)result.put(reference(item),item);return result;}
+    }
+    Snapshot<Library> readLibrary(String scope,long expiry,long now){
+        return read(scope,"library:refs-v1",expiry,now,input->{
+            Set<String> favorites=references(input,false),watched=references(input,true);java.util.Map<String,Item> resolved=new java.util.LinkedHashMap<>();int size=count(input,500);
+            for(int n=0;n<size;n++){String key=string(input,64);Item value=item(input,scope);if(!resolvedFavorite(key,value,favorites) || resolved.put(key,value)!=null)throw new IOException();}
+            return new Library(favorites,watched,resolved);
+        });
+    }
+    void writeLibrary(String scope,long expiry,long now,Library value,Valid valid){
+        if(value==null)return;
+        write(scope,"library:refs-v1",expiry,now,valid,output->{
+            references(output,value.favorites,false);references(output,value.watched,true);count(output,value.resolved.size(),500);
+            for(java.util.Map.Entry<String,Item> resolved:value.resolved.entrySet()){String key=resolved.getKey();Item entry=resolved.getValue();if(!resolvedFavorite(key,entry,value.favorites))throw new IOException();string(output,key,64);item(output,entry,scope);}
+        });
+    }
+    private static boolean resolvedFavorite(String key,Item value,Set<String> favorites){return value!=null && value.kind!=Kind.EPISODE && favorites.contains(key) && (key.equals(reference(value)) || (value.kind==Kind.LIVE && key.startsWith("LIVE::")));}
+    private static String reference(Item value){return value.kind.name()+":"+value.seriesId+":"+value.id;}
+    private static boolean reference(String value,boolean watched){return value!=null && value.matches(watched?"EPISODE:[1-9][0-9]{0,14}:[1-9][0-9]{0,14}":"(?:LIVE|MOVIE|SERIES)::[1-9][0-9]{0,14}");}
+    private static Set<String> references(DataInputStream input,boolean watched)throws IOException{
+        Set<String> values=new HashSet<>();int size=count(input,watched?20000:500);for(int n=0;n<size;n++){String value=string(input,64);if(!reference(value,watched) || !values.add(value))throw new IOException();}return values;
+    }
+    private static void references(DataOutputStream output,Set<String> values,boolean watched)throws IOException{
+        count(output,values.size(),watched?20000:500);for(String value:new java.util.TreeSet<>(values)){if(!reference(value,watched))throw new IOException();string(output,value,64);}
     }
     MetadataDiskCache(File root){this(root,BUDGET,ENTRY,FLOOR,root::getUsableSpace);}
     MetadataDiskCache(File root,long budget,long maxEntry,long floor,FreeSpace free){
@@ -88,32 +128,41 @@ final class MetadataDiskCache {
         try {
             if(!scope(scope) || expiry<=now)return null;byte[] hash=hash(scope+"\u0000"+key);file=file(hash);
             if(!file.isFile() || file.length()<92 || file.length()>maxEntry)return null;
-            try(DataInputStream input=new DataInputStream(new FileInputStream(file))){
+            try(DataInputStream input=new DataInputStream(new BufferedInputStream(new FileInputStream(file)))){
                 if(input.readInt()!=MAGIC)throw new IOException();byte[] storedKey=new byte[32];input.readFully(storedKey);if(!Arrays.equals(hash,storedKey))throw new IOException();
                 long saved=input.readLong(),until=input.readLong();if(saved>now || saved<0 || now-saved>=MAX_AGE_MS || Math.min(until,expiry)<=now)return null;
                 int size=input.readInt();if(size<0 || size>maxEntry-88 || file.length()!=size+88L)throw new IOException();
-                byte[] checksum=new byte[32];input.readFully(checksum);byte[] payload=new byte[size];input.readFully(payload);if(!Arrays.equals(checksum,hash(payload)))throw new IOException();
-                DataInputStream data=new DataInputStream(new ByteArrayInputStream(payload));T value=decoder.read(data);if(data.read()!=-1)throw new IOException();file.setLastModified(System.currentTimeMillis());return new Snapshot<>(value,saved,Math.min(until,expiry));
+                byte[] checksum=new byte[32];input.readFully(checksum);MessageDigest digest=MessageDigest.getInstance("SHA-256");
+                FilterInputStream bounded=new FilterInputStream(input){
+                    private int remaining=size;
+                    @Override public int read()throws IOException{if(remaining==0)return -1;int value=in.read();if(value<0)throw new IOException();remaining--;return value;}
+                    @Override public int read(byte[] bytes,int offset,int length)throws IOException{if(length==0)return 0;if(remaining==0)return -1;int count=in.read(bytes,offset,Math.min(length,remaining));if(count<0)throw new IOException();remaining-=count;return count;}
+                };
+                DataInputStream data=new DataInputStream(new DigestInputStream(bounded,digest));T value=decoder.read(data);
+                if(data.read()!=-1 || !MessageDigest.isEqual(checksum,digest.digest()))throw new IOException();
+                file.setLastModified(System.currentTimeMillis());return new Snapshot<>(value,saved,Math.min(until,expiry));
             }
         }catch(Exception ignored){if(file!=null)file.delete();return null;}
     }
     private synchronized void write(String scope,String key,long expiry,long now,Valid valid,Encoder encoder){
         File temporary=null;long lease=epoch.get();
         try {
-            if(!scope(scope) || expiry<=now || !valid.get() || (!root.isDirectory() && !root.mkdirs()))return;
-            ByteArrayOutputStream bytes=new ByteArrayOutputStream();DataOutputStream output=new DataOutputStream(new java.io.FilterOutputStream(bytes){
-                private long size;
-                @Override public void write(int value)throws IOException{if(++size>maxEntry-88)throw new IOException();out.write(value);}
-                @Override public void write(byte[] value,int offset,int length)throws IOException{if((size+=length)>maxEntry-88)throw new IOException();out.write(value,offset,length);}
-            });encoder.write(output);output.flush();byte[] payload=bytes.toByteArray();long length=payload.length+88L;
-            if(length>maxEntry || length>budget || free.get()<floor+length || lease!=epoch.get() || !valid.get())return;
-            byte[] hash=hash(scope+"\u0000"+key);temporary=File.createTempFile("metadata-",".tmp",root);
-            try(FileOutputStream stream=new FileOutputStream(temporary);DataOutputStream file=new DataOutputStream(stream)){
-                file.writeInt(MAGIC);file.write(hash);file.writeLong(now);file.writeLong(expiry);file.writeInt(payload.length);file.write(hash(payload));
-                for(int offset=0;offset<payload.length;offset+=8192){if(lease!=epoch.get() || !valid.get())throw new IOException();file.write(payload,offset,Math.min(8192,payload.length-offset));}
-                file.flush();stream.getFD().sync();
+            if(!scope(scope) || expiry<=now || !valid.get() || (!root.isDirectory() && !root.mkdirs()) || free.get()<floor+88)return;
+            byte[] hash=hash(scope+"\u0000"+key);temporary=File.createTempFile("metadata-",".tmp",root);MessageDigest digest=MessageDigest.getInstance("SHA-256");long[] size={0};
+            try(FileOutputStream stream=new FileOutputStream(temporary)){
+                DataOutputStream header=new DataOutputStream(stream);header.writeInt(MAGIC);header.write(hash);header.writeLong(now);header.writeLong(expiry);header.writeInt(0);header.write(new byte[32]);header.flush();
+                FilterOutputStream bounded=new FilterOutputStream(stream){
+                    @Override public void write(int value)throws IOException{byte[] one={(byte)value};write(one,0,1);}
+                    @Override public void write(byte[] bytes,int offset,int length)throws IOException{
+                        if(length<0 || size[0]+length>maxEntry-88 || size[0]+length+88>budget || lease!=epoch.get() || !valid.get() || free.get()<floor+length)throw new IOException();
+                        out.write(bytes,offset,length);size[0]+=length;
+                    }
+                };
+                DataOutputStream output=new DataOutputStream(new DigestOutputStream(new BufferedOutputStream(bounded),digest));encoder.write(output);output.flush();
             }
-            if(lease!=epoch.get() || !valid.get() || free.get()<floor || !temporary.renameTo(file(hash)))return;
+            if(lease!=epoch.get() || !valid.get() || free.get()<floor)return;
+            try(RandomAccessFile header=new RandomAccessFile(temporary,"rw")){header.seek(52);header.writeInt((int)size[0]);header.write(digest.digest());header.getFD().sync();}
+            if(lease!=epoch.get() || !valid.get() || !temporary.renameTo(file(hash)))return;
             temporary=null;trim(file(hash));
         }catch(Exception ignored){ /* Metadata caching never changes network admission or its result. */ }
         finally{if(temporary!=null)temporary.delete();}

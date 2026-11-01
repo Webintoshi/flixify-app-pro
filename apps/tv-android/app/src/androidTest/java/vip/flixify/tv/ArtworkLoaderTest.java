@@ -1,7 +1,9 @@
 package vip.flixify.tv;
 
 import android.content.Context;
+import android.content.ComponentCallbacks2;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
 import android.os.SystemClock;
@@ -48,7 +50,8 @@ public class ArtworkLoaderTest {
     }
     private void create(ArtworkLoader.ConnectionFactory factory) {main(()->loader=new ArtworkLoader(context,disk,address->{opens.incrementAndGet();return factory.open(address);}));}
     private void load(String address,String scope) {main(()->loader.load(image,address,scope));}
-    private Bitmap bitmap() {AtomicReference<Bitmap> result=new AtomicReference<>();main(()->{if(image.getDrawable() instanceof BitmapDrawable)result.set(((BitmapDrawable)image.getDrawable()).getBitmap());});return result.get();}
+    private Bitmap bitmap() {return bitmap(image);}
+    private Bitmap bitmap(ImageView target) {AtomicReference<Bitmap> result=new AtomicReference<>();main(()->{if(target.getDrawable() instanceof BitmapDrawable)result.set(((BitmapDrawable)target.getDrawable()).getBitmap());});return result.get();}
     private Bitmap awaitBitmap() {
         long until=SystemClock.uptimeMillis()+4000;Bitmap value;
         do {value=bitmap();if(value!=null)return value;SystemClock.sleep(20);}while(SystemClock.uptimeMillis()<until);
@@ -106,21 +109,67 @@ public class ArtworkLoaderTest {
         }
         int before=opens.get();load("http://art.invalid/a.png",SCOPE);load("https://user:password@art.invalid/a.png",SCOPE);load(ADDRESS+"#fragment",SCOPE);load(ADDRESS,"");SystemClock.sleep(100);assertEquals(before,opens.get());assertNull(bitmap());
     }
+    @Test public void retiringAScreenDisconnectsOldRequestsAndAdmitsTheNewVisibleImage() throws Exception {
+        FakeConnection first=new FakeConnection(red),second=new FakeConnection(red);first.block=second.block=true;first.releaseOnDisconnect=second.releaseOnDisconnect=true;
+        create(address->address.endsWith("first.png")?first:address.endsWith("second.png")?second:new FakeConnection(blue));
+        ImageView[] old=new ImageView[34];main(()->{for(int n=0;n<old.length;n++){old[n]=new ImageView(context);loader.load(old[n],"https://art.invalid/"+(n==0?"first.png":n==1?"second.png":"queued-"+n+".png"),SCOPE);}});
+        assertTrue(first.readStarted.await(3,TimeUnit.SECONDS));assertTrue(second.readStarted.await(3,TimeUnit.SECONDS));
+        main(()->loader.retireScreen());load("https://art.invalid/current.png",SCOPE);
+        assertEquals(Color.BLUE,awaitBitmap().getPixel(0,0));assertEquals("Old queued screens never consume network",3,opens.get());
+        assertNull(disk.read(SCOPE,"https://art.invalid/first.png"));assertNull(disk.read(SCOPE,"https://art.invalid/second.png"));
+    }
+    @Test public void sameScopedImageSharesARequestAndOneRetiredViewDoesNotCancelTheOther() throws Exception {
+        FakeConnection slow=new FakeConnection(blue);slow.block=true;create(address->slow);load(ADDRESS,SCOPE);
+        assertTrue(slow.readStarted.await(3,TimeUnit.SECONDS));ImageView[] second=new ImageView[1];
+        main(()->{second[0]=new ImageView(context);loader.load(second[0],ADDRESS,SCOPE);loader.unbind(image);});slow.release.countDown();
+        long until=SystemClock.uptimeMillis()+4000;while(bitmap(second[0])==null && SystemClock.uptimeMillis()<until)SystemClock.sleep(20);
+        assertNotNull(bitmap(second[0]));assertEquals(Color.BLUE,bitmap(second[0]).getPixel(0,0));assertNull(bitmap());assertEquals(1,opens.get());
+    }
+    @Test public void memoryPressureDropsDecodedRamButKeepsTheScopedDiskHit() throws Exception {
+        create(address->new FakeConnection(blue));load(ADDRESS,SCOPE);Bitmap first=awaitBitmap();
+        main(()->{loader.unbind(image);loader.trimMemory(ComponentCallbacks2.TRIM_MEMORY_COMPLETE);});load(ADDRESS,SCOPE);
+        Bitmap restored=awaitBitmap();assertNotSame(first,restored);assertEquals(Color.BLUE,restored.getPixel(0,0));assertEquals(1,opens.get());
+    }
+    @Test public void allocationFailureRetriesASmallerDecodeWithoutCrashingTheProcess() throws Exception {
+        AtomicInteger attempts=new AtomicInteger();
+        main(()->loader=new ArtworkLoader(context,disk,address->{opens.incrementAndGet();return new FakeConnection(blue);},(bytes,width,height)->{
+            if(attempts.getAndIncrement()==0)throw new OutOfMemoryError("fixture allocation failure");
+            assertTrue(width<=256);assertTrue(height<=384);return BitmapFactory.decodeByteArray(bytes,0,bytes.length);
+        }));
+        load(ADDRESS,SCOPE);assertEquals(Color.BLUE,awaitBitmap().getPixel(0,0));assertEquals(2,attempts.get());
+    }
+    @Test public void retiringOrClosingNeverDisconnectsOnTheUiThread() throws Exception {
+        FakeConnection slow=new FakeConnection(red);slow.block=true;slow.releaseOnDisconnect=true;create(address->slow);load(ADDRESS,SCOPE);
+        assertTrue(slow.readStarted.await(3,TimeUnit.SECONDS));main(()->{loader.retireScreen();loader.close();});
+        assertTrue(slow.done.await(3,TimeUnit.SECONDS));assertFalse("Potentially blocking disconnect stays off main",slow.disconnectedOnMain);
+    }
+    @Test public void closeDoesNotWaitForAWorkerHoldingTheDiskCacheLock() throws Exception {
+        CountDownLatch writing=new CountDownLatch(1),release=new CountDownLatch(1),returned=new CountDownLatch(1);
+        disk=new ArtworkDiskCache(directory,64L*1024*1024,ArtworkDiskCache.TTL_MS,0,System::currentTimeMillis,()->{
+            writing.countDown();long until=SystemClock.uptimeMillis()+4000;
+            while(release.getCount()!=0 && SystemClock.uptimeMillis()<until)try{release.await(50,TimeUnit.MILLISECONDS);}catch(InterruptedException ignored){}
+            return 128L*1024*1024;
+        });
+        create(address->new FakeConnection(blue));load(ADDRESS,SCOPE);assertTrue(writing.await(3,TimeUnit.SECONDS));
+        Thread escape=new Thread(()->{try{if(!returned.await(1,TimeUnit.SECONDS))release.countDown();}catch(InterruptedException ignored){release.countDown();}});escape.start();
+        try{main(()->{loader.close();returned.countDown();});assertEquals("UI close returns before the blocked disk writer",1,release.getCount());}
+        finally{release.countDown();escape.join(2000);}
+    }
     private static final class FakeConnection extends HttpURLConnection {
         final byte[] data;final CountDownLatch readStarted=new CountDownLatch(1),release=new CountDownLatch(1),done=new CountDownLatch(1),streamClosed=new CountDownLatch(1);
-        volatile boolean block,inputOpened;int status=200,declaredLength;String mime="image/png";
+        volatile boolean block,inputOpened,releaseOnDisconnect,disconnectedOnMain;int status=200,declaredLength;String mime="image/png";
         FakeConnection(byte[] data) throws Exception {super(new URL(ADDRESS));this.data=data;declaredLength=data==null?0:data.length;}
         @Override public int getResponseCode() {return status;}
         @Override public int getContentLength() {return declaredLength;}
         @Override public String getContentType() {return mime;}
         @Override public InputStream getInputStream() {inputOpened=true;return new ByteArrayInputStream(data==null?new byte[0]:data) {
             @Override public synchronized int read(byte[] bytes,int offset,int length) {
-                if(block) {readStarted.countDown();try {release.await(3,TimeUnit.SECONDS);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}block=false;}
+                if(block) {readStarted.countDown();try {release.await(releaseOnDisconnect?8:3,TimeUnit.SECONDS);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}block=false;}
                 return super.read(bytes,offset,Math.min(length,128));
             }
             @Override public void close() {streamClosed.countDown();}
         };}
-        @Override public void disconnect() {done.countDown();}
+        @Override public void disconnect() {if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper())disconnectedOnMain=true;if(releaseOnDisconnect)release.countDown();done.countDown();}
         @Override public boolean usingProxy() {return false;}
         @Override public void connect() {}
     }

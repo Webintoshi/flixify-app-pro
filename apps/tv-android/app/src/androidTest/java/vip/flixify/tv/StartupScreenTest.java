@@ -64,6 +64,11 @@ public class StartupScreenTest {
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN);instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER);instrumentation.waitForIdleSync();
         assertSame("Remote cannot select a hidden section",pending,repository.delayedCatalog);assertLoading();capture("startup-normal");
     }
+    @Test public void optionalPreparationStartsAfterFirstUsableCatalogueAndKeepsRemoteFocus() {
+        launch(true);assertLoading();assertEquals(0,repository.preparationRequests);
+        instrumentation.runOnMainSync(repository::releaseDelayedCatalog);awaitReady(repository.movie.title,1500);
+        instrumentation.runOnMainSync(()->{assertTrue(repository.preparationRequests>0);assertEquals("Ana Sayfa",((TextView)activity.getCurrentFocus()).getText().toString());});
+    }
     @Test public void alternateConfirmCannotActivateHiddenRail() {
         launch(true);assertLoading();TvRepository.Callback<Catalog> pending=repository.delayedCatalog;
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_SPACE);instrumentation.waitForIdleSync();

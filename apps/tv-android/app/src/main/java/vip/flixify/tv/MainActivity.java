@@ -79,6 +79,9 @@ public final class MainActivity extends Activity {
     private TvLayout sizing;
     private int measuredWidth,measuredHeight;
     private boolean resizePosted;
+    private String preparedScope="";
+    private long favoritesRefreshSerial;
+    private boolean favoritesRefreshPending,favoritesRefreshAgain;
 
     @Override public void onCreate(Bundle state) {
         setTheme(R.style.TvTheme);
@@ -138,11 +141,16 @@ public final class MainActivity extends Activity {
     @Override protected void onPause() {posterSound.pause();super.onPause();}
     @Override protected void onStop() {
         startup.cancelPendingFrame();
+        artwork.retireScreen();
+        preparedScope="";
+        favoritesRefreshSerial++;favoritesRefreshPending=false;favoritesRefreshAgain=false;
         if(!searchPlayerReturn)captureGrid();stopped=true;resumeReload=true;generation++;observationEpoch++;clearPendingCatalogs();searchSelection=null;
         if(catalogObservation!=null){try{catalogObservation.close();}catch(Exception ignored){}catalogObservation=null;}
         updatePanel.cancel();if(dialog!=null)dialog.dismiss();super.onStop();
     }
     @Override protected void onDestroy() { destroyed=true; generation++;if(startup!=null)startup.close();if(posterSound!=null)posterSound.close();if(artwork!=null)artwork.close();if(updatePanel!=null)updatePanel.close();super.onDestroy(); }
+    @Override public void onTrimMemory(int level){super.onTrimMemory(level);if(artwork!=null)artwork.trimMemory(level);}
+    @Override public void onLowMemory(){super.onLowMemory();if(artwork!=null)artwork.trimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE);}
     @Override protected void onSaveInstanceState(Bundle out) {
         if(!searchPlayerReturn)captureGrid(); out.putString("section",page.section.name()); out.putString("query",page.query); out.putString("category",page.category);
         out.putString("categoryTitle",page.categoryTitle); out.putString("focusKey",page.focusKey); out.putInt("scroll",page.scroll);
@@ -191,6 +199,7 @@ public final class MainActivity extends Activity {
         return screenAlive(ticket) && (scope.equals(repository.currentScope()) || (scope.isEmpty() && repository.hasSession()));
     }
     private void invalidateScopedCatalogs() {
+        preparedScope="";favoritesRefreshSerial++;favoritesRefreshPending=false;favoritesRefreshAgain=false;
         clearPendingCatalogs();
         for(Page p:pages.values()){p.catalog=null;p.catalogScope="";p.focusKey="";p.scroll=0;p.category="";p.categoryTitle="Tümü";p.query="";}
     }
@@ -212,7 +221,7 @@ public final class MainActivity extends Activity {
         if(stopped || destroyed || isFinishing() || !repository.hasSession() || !catalogMatchesCurrentSource(catalog))return;
         pendingCatalogUpdates.put(catalog.kind,catalog);
         pendingCatalogScopes.put(catalog.kind,repository.currentScope());
-        if(!searchHandoffPending() && (dialog==null || !dialog.isShowing()))applyPendingCatalogs(true);
+        if(!searchHandoffPending() && !searchPlayerReturn && !playerLaunching && (dialog==null || !dialog.isShowing()))applyPendingCatalogs(true);
     }
     private void applyPendingCatalogs(boolean redraw) {
         if(stopped || destroyed || !repository.hasSession() || (dialog!=null && dialog.isShowing()))return;
@@ -220,22 +229,16 @@ public final class MainActivity extends Activity {
             if(redraw && page.section!=Section.ACCOUNT)showPage(false,false);
             return;
         }
-        boolean visibleChanged=false,posterFocused=isPosterCard(getCurrentFocus());
+        boolean visibleChanged=false,favoritesChanged=false,posterFocused=isPosterCard(getCurrentFocus());
         for(Catalog catalog:pendingCatalogUpdates.values()) {
             if(!repository.currentScope().equals(pendingCatalogScopes.get(catalog.kind)) || !catalogMatchesCurrentSource(catalog))continue;
             for(Page target:pages.values()) {
                 Kind kind=target.section==Section.LIVE?Kind.LIVE:target.section==Section.SERIES?Kind.SERIES:Kind.MOVIE;
                 if(target.section==Section.FAVORITES) {
-                    if(catalog.kind!=Kind.LIVE || target.catalog==null || !repository.currentScope().equals(target.catalogScope))continue;
-                    List<Item> merged=new ArrayList<>();Map<String,Item> liveFavorites=new LinkedHashMap<>();
-                    for(Item current:catalog.items)if(repository.isFavorite(current))liveFavorites.put(current.key(),current);
-                    for(Item previous:target.catalog.items) {
-                        if(previous.kind!=Kind.LIVE){merged.add(previous);continue;}
-                        Item current=liveFavorites.remove(previous.key());if(current!=null)merged.add(current);
-                    }
-                    merged.addAll(liveFavorites.values());
-                    if(target==page){visibleChanged=true;captureGrid();if(resizeFocus==null)resizeFocus=focusIdentity(getCurrentFocus());}
-                    target.catalog=new Catalog(Kind.MOVIE,merged,target.catalog.categories);continue;
+                    if(target.catalog==null || !repository.currentScope().equals(target.catalogScope))continue;
+                    if(target==page)favoritesChanged=true;
+                    else {target.catalog=null;target.catalogScope="";}
+                    continue;
                 }
                 if(target.section==Section.ACCOUNT || kind!=catalog.kind)continue;
                 if(target==page){visibleChanged=true;captureGrid();if(resizeFocus==null)resizeFocus=focusIdentity(getCurrentFocus());}
@@ -243,7 +246,26 @@ public final class MainActivity extends Activity {
             }
         }
         clearPendingCatalogs();
-        if(redraw && visibleChanged)replaceCatalog(posterFocused);
+        if(favoritesChanged)favoritesRefreshAgain=true;
+        if(redraw && page.section==Section.FAVORITES && favoritesRefreshAgain){
+            favoritesRefreshAgain=false;refreshFavoritesInPlace(posterFocused);
+        }else if(redraw && visibleChanged)replaceCatalog(posterFocused);
+    }
+    private void refreshFavoritesInPlace(boolean contentFocus){
+        if(favoritesRefreshPending){favoritesRefreshAgain=true;return;}
+        final Page owner=page;final long ticket=generation,id=++favoritesRefreshSerial;final String scope=repository.currentScope();
+        favoritesRefreshPending=true;captureGrid();
+        repository.favorites(new TvRepository.Callback<List<Item>>(){
+            public void onResult(List<Item> items){
+                if(id!=favoritesRefreshSerial)return;favoritesRefreshPending=false;
+                if(page!=owner || owner.section!=Section.FAVORITES || stopped || destroyed || !repository.hasSession() || !scope.equals(repository.currentScope()))return;
+                if(!valid(ticket,scope)){favoritesRefreshAgain=true;findViewById(android.R.id.content).post(MainActivity.this::flushFavoriteRefresh);return;}
+                if(searchHandoffPending() || searchPlayerReturn || playerLaunching || catalogDialog!=null || dialog!=null && dialog.isShowing()){favoritesRefreshAgain=true;return;}
+                owner.catalog=new Catalog(Kind.MOVIE,items,new ArrayList<>());owner.catalogScope=repository.currentScope();
+                replaceCatalog(contentFocus);
+            }
+            public void onError(Failure failure){if(id==favoritesRefreshSerial){favoritesRefreshPending=false;favoritesRefreshAgain=false;}}
+        });
     }
     private <T> TvRepository.Callback<T> callback(long ticket,String scope,Result<T> result,Runnable retry) {
         return new TvRepository.Callback<T>() {
@@ -295,6 +317,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void showLogin(String message) {
+        artwork.retireScreen();
         if(catalogDialog!=null && catalogDialog.isShowing())catalogDialog.dismiss();
         generation++; body=null; grid=null;resizeFocus=null;sizing=TvLayout.measure(this);measuredWidth=sizing.width;measuredHeight=sizing.height;
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
@@ -337,6 +360,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void shell(String title,String subtitle) {
+        artwork.retireScreen();
         if(catalogDialog!=null && catalogDialog.isShowing())catalogDialog.dismiss();
         generation++;grid=null;sizing=TvLayout.measure(this);measuredWidth=sizing.width;measuredHeight=sizing.height;
         LinearLayout root=TvUi.row(this);root.setTag("tv-catalog-shell");root.setGravity(Gravity.TOP);root.setBackgroundColor(TvUi.BACKGROUND);
@@ -397,7 +421,7 @@ public final class MainActivity extends Activity {
         if(!page.query.isEmpty())body.addView(TvUi.text(this,"Arama: "+page.query+" · "+filtered.size()+" sonuç",15,TvUi.MUTED),TvUi.space(this,-1,30));
         if(filtered.isEmpty()) {
             body.addView(TvUi.text(this,page.section==Section.FAVORITES?"Henüz favoriniz yok. Bir içeriği açıp favorilere ekleyin.":"İçerik bulunamadı.",18,TvUi.MUTED),TvUi.space(this,-1,72));
-            if(contentFocus)search.requestFocus();restoreResizeFocus(true);startup.ready();return;
+            if(contentFocus)search.requestFocus();restoreResizeFocus(true);startup.ready();prepareOfflineData();return;
         }
         grid=new RecyclerView(this); grid.setId(View.generateViewId()); grid.setClipToPadding(false); grid.setPadding(0,TvUi.dp(this,8),0,TvUi.dp(this,12)); grid.setItemAnimator(null);
         grid.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS); grid.setFocusable(false);
@@ -415,6 +439,15 @@ public final class MainActivity extends Activity {
         });
         restoreResizeFocus(true);
         startup.ready();
+        prepareOfflineData();
+    }
+    private void flushFavoriteRefresh(){
+        if(!stopped && !destroyed && !isFinishing() && page.section==Section.FAVORITES && favoritesRefreshAgain && !favoritesRefreshPending && !searchHandoffPending() && !searchPlayerReturn && !playerLaunching && catalogDialog==null && (dialog==null || !dialog.isShowing())){favoritesRefreshAgain=false;refreshFavoritesInPlace(isPosterCard(getCurrentFocus()));}
+    }
+    private void prepareOfflineData(){
+        flushFavoriteRefresh();
+        String scope=repository.currentScope();
+        if(!scope.isEmpty() && !scope.equals(preparedScope)){preparedScope=scope;repository.prepareOfflineData();}
     }
     private void addHomeHero(Item item) {
         FrameLayout hero=new FrameLayout(this);hero.setTag("tv-home-hero");hero.setBackground(TvUi.rounded(this,TvUi.PANEL,0,16,1));hero.setClipToOutline(true);hero.setContentDescription(item.title);

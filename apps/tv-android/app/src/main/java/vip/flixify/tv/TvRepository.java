@@ -8,6 +8,8 @@ public interface TvRepository {
     interface Callback<T> { void onResult(T value); void onError(Failure failure); }
     interface CatalogObserver {void onCatalog(Catalog catalog);}
     default AutoCloseable observeCatalog(CatalogObserver observer) {return ()->{};}
+    /** Bounded metadata preparation; never downloads media or delays navigation. */
+    default void prepareOfflineData() {}
     boolean hasSession();
     String currentScope();
     void login(String code,Callback<Account> callback);

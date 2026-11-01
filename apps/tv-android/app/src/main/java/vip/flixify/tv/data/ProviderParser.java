@@ -167,30 +167,39 @@ public final class ProviderParser {
         catch(Invalid invalid){throw invalid;}catch(Exception ignored){throw new Invalid();}
     }
     public static Catalog catalog(Kind kind, Object raw, Object rawCategories, String scope) throws Invalid {
-        if (kind == null || kind == Kind.EPISODE) throw new Invalid();
-        JSONArray rows = list(raw, MAX_ROWS), categories = list(rawCategories, MAX_ROWS);
-        Map<String,String> groups = new LinkedHashMap<>();
-        for (int i=0; i<categories.length(); i++) {
-            JSONObject row = object(categories.opt(i)); String key = id(row.opt("category_id")), name = text(row.opt("category_name"),256);
-            if (!key.isEmpty() && !name.isEmpty()) { if (groups.containsKey(key) && !groups.get(key).equals(name)) throw new Invalid(); groups.put(key,name); }
+        JSONArray rows=list(raw,MAX_ROWS);
+        CatalogAccumulator accumulator=new CatalogAccumulator(kind,rawCategories,scope);
+        for(int i=0;i<rows.length();i++)accumulator.accept(rows.opt(i));
+        return accumulator.finish();
+    }
+    /** Retains validated display items, never a complete provider JSON tree. */
+    static final class CatalogAccumulator {
+        private final Kind kind;private final String scope;
+        private final Map<String,String> groups=new LinkedHashMap<>();
+        private final List<Item> result=new ArrayList<>();
+        private final Set<String> seen=new HashSet<>(),usedGroups=new HashSet<>();
+        private int count;
+        CatalogAccumulator(Kind kind,Object rawCategories,String scope)throws Invalid {
+            if(kind==null || kind==Kind.EPISODE)throw new Invalid();this.kind=kind;this.scope=scope;
+            JSONArray categories=list(rawCategories,MAX_ROWS);
+            for(int i=0;i<categories.length();i++) {
+                JSONObject row=object(categories.opt(i));String key=id(row.opt("category_id")),name=text(row.opt("category_name"),256);
+                if(!key.isEmpty() && !name.isEmpty()){if(groups.containsKey(key)&&!groups.get(key).equals(name))throw new Invalid();groups.put(key,name);}
+            }
         }
-        List<Item> result = new ArrayList<>(); Set<String> seen = new HashSet<>(); Set<String> usedGroups = new HashSet<>();
-        for (int i=0; i<rows.length(); i++) {
-            if (!(rows.opt(i) instanceof JSONObject)) continue;
-            JSONObject row = (JSONObject)rows.opt(i);
-            String key = id(row.opt(kind == Kind.SERIES ? "series_id" : "stream_id")), title = text(row.opt("name"),512);
-            String groupId = id(row.opt("category_id")), group = groups.containsKey(groupId) ? groups.get(groupId) : "";
-            if (key.isEmpty() || junk(title) || seen.contains(key)) continue;
-            Object declaredExtension=row.opt("container_extension");
-            boolean missingExtension=declaredExtension==null || declaredExtension==JSONObject.NULL || "".equals(declaredExtension);
-            String ext = extension(declaredExtension); if (ext.isEmpty() && kind == Kind.LIVE) ext=missingExtension?"ts":"m3u8";
-            if (kind == Kind.MOVIE && (group.isEmpty() || !SAFE_MOVIE_NAMES.contains(label(group)) || ext.isEmpty())) continue;
-            Object art = row.isNull("stream_icon") ? row.opt("cover") : row.opt("stream_icon");
+        void accept(Object value)throws Invalid {
+            if(++count>MAX_ROWS)throw new Invalid();if(!(value instanceof JSONObject))return;JSONObject row=(JSONObject)value;
+            String key=id(row.opt(kind==Kind.SERIES?"series_id":"stream_id")),title=text(row.opt("name"),512);
+            String groupId=id(row.opt("category_id")),group=groups.containsKey(groupId)?groups.get(groupId):"";
+            if(key.isEmpty() || junk(title) || seen.contains(key))return;
+            Object declared=row.opt("container_extension");boolean missing=declared==null || declared==JSONObject.NULL || "".equals(declared);
+            String ext=extension(declared);if(ext.isEmpty() && kind==Kind.LIVE)ext=missing?"ts":"m3u8";
+            if(kind==Kind.MOVIE && (group.isEmpty() || !SAFE_MOVIE_NAMES.contains(label(group)) || ext.isEmpty()))return;
+            Object art=row.isNull("stream_icon")?row.opt("cover"):row.opt("stream_icon");
             result.add(new Item(kind,key,title,groupId,group,artwork(art),ext,scope,"",0,0,text(row.opt("plot"),8192)));
-            seen.add(key); usedGroups.add(groupId);
+            seen.add(key);usedGroups.add(groupId);
         }
-        List<Category> outputGroups = new ArrayList<>(); for (Map.Entry<String,String> group : groups.entrySet()) if (usedGroups.contains(group.getKey())) outputGroups.add(new Category(group.getKey(),group.getValue()));
-        return new Catalog(kind,result,outputGroups);
+        Catalog finish(){List<Category> categories=new ArrayList<>();for(Map.Entry<String,String> group:groups.entrySet())if(usedGroups.contains(group.getKey()))categories.add(new Category(group.getKey(),group.getValue()));return new Catalog(kind,result,categories);}
     }
     private static int positive(Object value, int max) {
         String raw = value instanceof Number ? String.valueOf(value) : value instanceof String ? (String)value : "";

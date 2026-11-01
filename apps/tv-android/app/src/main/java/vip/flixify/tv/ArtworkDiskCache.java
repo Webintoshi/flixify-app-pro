@@ -18,6 +18,7 @@ final class ArtworkDiskCache {
     private final File directory;
     private final long budget,ttl,reserve;
     private final LongValue clock,freeSpace;
+    private boolean initialized;
     static final class Entry {
         final byte[] bytes;final long expiresAt;
         Entry(byte[] bytes,long expiresAt) {this.bytes=bytes;this.expiresAt=expiresAt;}
@@ -25,8 +26,8 @@ final class ArtworkDiskCache {
     ArtworkDiskCache(File directory) {this(directory,64L*1024*1024,TTL_MS,32L*1024*1024,System::currentTimeMillis,directory::getUsableSpace);}
     ArtworkDiskCache(File directory,long budget,long ttl,long reserve,LongValue clock,LongValue freeSpace) {
         this.directory=directory;this.budget=budget;this.ttl=ttl;this.reserve=reserve;this.clock=clock;this.freeSpace=freeSpace;
-        if(ready()) {for(File file:files())if(file.getName().endsWith(".tmp"))file.delete();trim();}
     }
+    private void initialize() {if(!initialized && ready()){for(File file:files())if(file.getName().endsWith(".tmp"))file.delete();trim();initialized=true;}}
     static String key(String scope,String address) {
         if(scope==null || scope.isEmpty() || address==null || address.isEmpty())return null;
         byte[] hash=digest((scope.length()+":"+scope+address).getBytes(StandardCharsets.UTF_8));
@@ -36,6 +37,7 @@ final class ArtworkDiskCache {
     synchronized byte[] read(String scope,String address) {Entry entry=readEntry(scope,address);return entry==null?null:entry.bytes;}
     synchronized Entry readEntry(String scope,String address) {
         String key=key(scope,address);if(key==null)return null;
+        initialize();
         File file=new File(directory,key+".art");if(!file.isFile())return null;
         try(DataInputStream input=new DataInputStream(new FileInputStream(file))) {
             if(input.readInt()!=MAGIC)throw new java.io.IOException();
@@ -49,6 +51,7 @@ final class ArtworkDiskCache {
     synchronized boolean write(String scope,String address,byte[] bytes,Allowed valid) {
         String key=key(scope,address);
         if(key==null || bytes==null || bytes.length==0 || bytes.length>MAX_RESPONSE || HEADER+(long)bytes.length>budget || !permitted(valid) || !ready())return false;
+        initialize();
         File temporary=null;
         try {
             if(freeSpace.getAsLong()-reserve<HEADER+(long)bytes.length)return false;
