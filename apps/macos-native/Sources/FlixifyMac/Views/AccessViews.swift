@@ -27,7 +27,12 @@ struct LoginView: View {
         }.padding(45).frame(maxWidth: .infinity, maxHeight: .infinity).background(FlixTheme.background)
             .onAppear { codeFocused = true }
     }
-    private func submit() { guard !store.signingIn else { return }; Task { await store.login(code: code) }; code = "" }
+    private func submit() {
+        guard !store.signingIn else { return }
+        let submittedCode = code
+        code = ""
+        Task { await store.login(code: submittedCode) }
+    }
 }
 
 struct WelcomeView: View {
