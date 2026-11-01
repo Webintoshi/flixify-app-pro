@@ -1,6 +1,12 @@
 # Flixify Pro for Android TV
 
-Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.4.6`, code 14, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
+Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.4.7`, code 15, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
+
+## Website and TV frontend parity
+
+User-facing frontend changes cover both the website and native TV app. A web deployment cannot replace these compiled Java screens: update the corresponding native presentation, verify it in the APK with remote navigation and actual screenshots, then publish a newly signed APK and update manifest. Review Home, Movies, Series, live channels, Search/Categories, Favorites and account/package entry points together; document deliberate platform adaptations such as the TV browser/phone checkout handoff. Keep brand colors, player controls, access rules and scoped caches intact.
+
+Home combines the full scoped movie, series and live catalogues for search while displaying verified 2026 heroes and separate shelves. Movies mirror the website's 2026/Marvel/covered-action/fantasy selections before the complete recycled archive; Series and Favorites use organized horizontal shelves. Live ordering and friendly country/category filters mirror the website without changing canonical feed/favorite identities. The release-year parser preserves conflicts as unknown. Metadata format2 still reads format1 quickly and refreshes legacy snapshots in the background.
 
 ## Build
 

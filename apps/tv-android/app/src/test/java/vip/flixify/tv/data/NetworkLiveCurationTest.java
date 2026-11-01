@@ -73,6 +73,7 @@ public class NetworkLiveCurationTest {
         void stopWorkers()throws Exception{for(String name:Arrays.asList("worker","epgWorker","metadataWorker","timeout")){Field f=NetworkTvRepository.class.getDeclaredField(name);f.setAccessible(true);((ExecutorService)f.get(repository)).shutdownNow();}}
         public void close()throws Exception{repository.logout();stopWorkers();}
     }
+    private Item station(Catalog catalog,String title){for(Item item:catalog.items)if(item.title.equals(title))return item;throw new AssertionError("Missing canonical station: "+title);}
     private Item legacy(){return new Item(Kind.LIVE,"34","TR | ATV SD","7","TR: Ulusal","","ts",SCOPE,"",0,0,"");}
     @Test public void savedRawAliasesAppearOnceAndDoNotWriteDuringRead()throws Exception{
         try(Harness h=new Harness()){h.catalog();Result<List<Item>> r=new Result<>();h.repository.favorites(r);List<Item> saved=h.deliver(r);assertEquals(1,saved.size());assertEquals("35",saved.get(0).id);assertTrue(h.fixture.writes.isEmpty());}
@@ -86,7 +87,7 @@ public class NetworkLiveCurationTest {
 
     @Test public void legacyFavoritePlaybackAndEpgResolveToOneFhdWithoutBackgroundWrites()throws Exception{
         try(Harness h=new Harness()){
-            Catalog c=h.catalog();assertEquals(2,c.items.size());Item atv=c.items.get(0);assertEquals("35",atv.id);assertEquals("ATV",atv.title);assertEquals("TRT 1",c.items.get(1).title);
+            Catalog c=h.catalog();assertEquals(2,c.items.size());Item atv=station(c,"ATV");assertEquals("35",atv.id);assertEquals("ATV",atv.title);assertEquals("TRT 1",c.items.get(0).title);
             Result<List<Item>> favorites=new Result<>();h.repository.favorites(favorites);List<Item> saved=h.deliver(favorites);assertEquals(1,saved.size());assertEquals("35",saved.get(0).id);assertTrue(h.repository.isFavorite(atv));assertTrue(h.fixture.writes.isEmpty());
             Result<Playback> playback=new Result<>();h.repository.playback(legacy(),playback);Playback playable=h.deliver(playback);assertEquals("35",playable.item.id);assertTrue(playable.url.endsWith("/35.ts"));
             Result<List<Programme>> epg=new Result<>();h.repository.epg(legacy(),epg);assertEquals(1,h.deliver(epg).size());assertEquals(Collections.singletonList("35"),h.fixture.epgIds);assertTrue(h.fixture.writes.isEmpty());
@@ -95,11 +96,11 @@ public class NetworkLiveCurationTest {
         }
     }
     @Test public void diskRestorationAndPolicyRefreshRecomputeAliasesWithoutProviderRefetch()throws Exception{
-        FixtureContext context=new FixtureContext();Harness first=new Harness(context,new Fixture());assertEquals("35",first.catalog().items.get(0).id);first.stopWorkers();
+        FixtureContext context=new FixtureContext();Harness first=new Harness(context,new Fixture());assertEquals("35",station(first.catalog(),"ATV").id);first.stopWorkers();
         Fixture fixture=new Fixture();fixture.exclusions.add("35");try(Harness h=new Harness(context,fixture)){
-            assertEquals("36",h.catalog().items.get(0).id);assertEquals(0,fixture.streams);
+            assertEquals("36",station(h.catalog(),"ATV").id);assertEquals(0,fixture.streams);
             Result<List<Item>> favorites=new Result<>();h.repository.favorites(favorites);assertEquals("36",h.deliver(favorites).get(0).id);assertTrue(fixture.writes.isEmpty());
-            fixture.exclusions.clear();Result<Account> access=new Result<>();h.repository.refreshAccess(access);h.deliver(access);assertEquals("35",h.catalog().items.get(0).id);assertEquals(0,fixture.streams);
+            fixture.exclusions.clear();Result<Account> access=new Result<>();h.repository.refreshAccess(access);h.deliver(access);assertEquals("35",station(h.catalog(),"ATV").id);assertEquals(0,fixture.streams);
         }finally{first.close();}
     }
     @Test public void newlyExcludedRequestedAliasCannotEscapeThroughQueuedCanonicalPlayback()throws Exception{
@@ -119,7 +120,7 @@ public class NetworkLiveCurationTest {
 
     @Test public void partialFavoriteRemovalRetriesOnlyUnacknowledgedExactAliases()throws Exception{
         try(Harness h=new Harness()){
-            Item canonical=h.catalog().items.get(0);h.fixture.failDeleteOnce="36";
+            Item canonical=station(h.catalog(),"ATV");h.fixture.failDeleteOnce="36";
             Result<Boolean> first=new Result<>();h.repository.toggleFavorite(canonical,first);h.await(first);assertNotNull(first.failure);
             assertEquals(Collections.singleton("36"),h.fixture.favorites);assertTrue(h.repository.isFavorite(canonical));
             Result<Boolean> retry=new Result<>();h.repository.toggleFavorite(canonical,retry);assertFalse(h.deliver(retry));
@@ -128,16 +129,16 @@ public class NetworkLiveCurationTest {
     }
     @Test public void sourceReplacementDoesNotReuseOldAliasOrSavedFavoriteIdentity()throws Exception{
         try(Harness h=new Harness()){
-            Item previous=h.catalog().items.get(0);assertTrue(h.repository.isFavorite(previous));h.fixture.source="source-b";
-            Result<Account> access=new Result<>();h.repository.refreshAccess(access);h.deliver(access);Catalog current=h.catalog();assertEquals("fixture-account:source-b",current.items.get(0).scope);assertFalse(h.repository.isFavorite(current.items.get(0)));
+            Item previous=station(h.catalog(),"ATV");assertTrue(h.repository.isFavorite(previous));h.fixture.source="source-b";
+            Result<Account> access=new Result<>();h.repository.refreshAccess(access);h.deliver(access);Catalog current=h.catalog();assertEquals("fixture-account:source-b",station(current,"ATV").scope);assertFalse(h.repository.isFavorite(station(current,"ATV")));
             Result<Playback> old=new Result<>();h.repository.playback(legacy(),old);h.await(old);assertNull(old.value);assertNotNull(old.failure);assertTrue(h.fixture.writes.isEmpty());
         }
     }
 
     @Test public void ownerExcludedAliasCannotBypassPolicyThroughFavoritesOrPlayback()throws Exception{
         try(Harness h=new Harness()){
-            h.fixture.exclusions.add("34");h.fixture.favorites.clear();h.fixture.favorites.add("34");Catalog c=h.catalog();assertEquals("35",c.items.get(0).id);
-            Result<List<Item>> saved=new Result<>();h.repository.favorites(saved);assertTrue(h.deliver(saved).isEmpty());assertFalse(h.repository.isFavorite(c.items.get(0)));assertTrue(h.fixture.writes.isEmpty());
+            h.fixture.exclusions.add("34");h.fixture.favorites.clear();h.fixture.favorites.add("34");Catalog c=h.catalog();assertEquals("35",station(c,"ATV").id);
+            Result<List<Item>> saved=new Result<>();h.repository.favorites(saved);assertTrue(h.deliver(saved).isEmpty());assertFalse(h.repository.isFavorite(station(c,"ATV")));assertTrue(h.fixture.writes.isEmpty());
             Result<Playback> playback=new Result<>();h.repository.playback(legacy(),playback);long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);while(!playback.done && System.nanoTime()<end){Runnable r=h.deliveries.poll(1,TimeUnit.SECONDS);if(r!=null)r.run();}assertTrue(playback.done);assertNull(playback.value);assertNotNull(playback.failure);
         }
     }

@@ -29,12 +29,12 @@ import vip.flixify.tv.TvModels.*;
 
 final class MetadataDiskCache {
     static final long FRESH_MS=6L*60*60*1000,MAX_AGE_MS=7L*24*60*60*1000;
-    private static final int MAGIC=0x46434d31,MAX_ROWS=50000,MAX_EPISODES=5000,MAX_RECORDS=128;
+    private static final int MAGIC=0x46434d32,LEGACY_MAGIC=0x46434d31,MAX_ROWS=50000,MAX_EPISODES=5000,MAX_RECORDS=128;
     private static final long BUDGET=64L*1024*1024,ENTRY=16L*1024*1024,FLOOR=32L*1024*1024;
     interface Valid {boolean get();}
     interface FreeSpace {long get();}
     private interface Encoder {void write(DataOutputStream output) throws Exception;}
-    private interface Decoder<T> {T read(DataInputStream input) throws Exception;}
+    private interface Decoder<T> {T read(DataInputStream input,boolean legacy) throws Exception;}
     private final File root;
     private final long budget,maxEntry,floor;
     private final FreeSpace free;
@@ -56,9 +56,9 @@ final class MetadataDiskCache {
         private static java.util.Map<String,Item> index(List<Item> items){java.util.Map<String,Item> result=new java.util.LinkedHashMap<>();for(Item item:items)result.put(reference(item),item);return result;}
     }
     Snapshot<Library> readLibrary(String scope,long expiry,long now){
-        return read(scope,"library:refs-v1",expiry,now,input->{
+        return read(scope,"library:refs-v1",expiry,now,(input,legacy)->{
             Set<String> favorites=references(input,false),watched=references(input,true);java.util.Map<String,Item> resolved=new java.util.LinkedHashMap<>();int size=count(input,500);
-            for(int n=0;n<size;n++){String key=string(input,64);Item value=item(input,scope);if(!resolvedFavorite(key,value,favorites) || resolved.put(key,value)!=null)throw new IOException();}
+            for(int n=0;n<size;n++){String key=string(input,64);Item value=item(input,scope,legacy);if(!resolvedFavorite(key,value,favorites) || resolved.put(key,value)!=null)throw new IOException();}
             return new Library(favorites,watched,resolved);
         });
     }
@@ -86,22 +86,22 @@ final class MetadataDiskCache {
     private static String catalogKey(Kind kind){return kind==Kind.LIVE?"catalog:LIVE:ts-default-v2":"catalog:"+kind.name();}
     Snapshot<Catalog> readCatalog(String scope,Kind kind,long expiry,long now){
         if(kind==null || kind==Kind.EPISODE)return null;
-        return read(scope,catalogKey(kind),expiry,now,input->{
+        return read(scope,catalogKey(kind),expiry,now,(input,legacy)->{
             List<Category> categories=new ArrayList<>();int groups=count(input,MAX_ROWS);
             for(int i=0;i<groups;i++)categories.add(new Category(string(input,15),string(input,256)));
             List<Item> items=new ArrayList<>();Set<String> ids=new HashSet<>();int size=count(input,MAX_ROWS);
-            for(int i=0;i<size;i++){Item value=item(input,scope);if(value.kind!=kind || !ids.add(value.id))throw new IOException();items.add(value);}
+            for(int i=0;i<size;i++){Item value=item(input,scope,legacy);if(value.kind!=kind || !ids.add(value.id))throw new IOException();items.add(value);}
             return new Catalog(kind,items,categories);
         });
     }
     Snapshot<SeriesDetail> readSeries(String scope,String id,long expiry,long now){
         if(!id(id))return null;
-        return read(scope,"series:"+id,expiry,now,input->{
-            Item parent=item(input,scope);if(parent.kind!=Kind.SERIES || !parent.id.equals(id))throw new IOException();
+        return read(scope,"series:"+id,expiry,now,(input,legacy)->{
+            Item parent=item(input,scope,legacy);if(parent.kind!=Kind.SERIES || !parent.id.equals(id))throw new IOException();
             List<Season> seasons=new ArrayList<>();Set<String> seen=new HashSet<>();int total=0,size=count(input,MAX_EPISODES);
             for(int i=0;i<size;i++){
                 int number=input.readInt(),length=count(input,MAX_EPISODES);if(number<1 || number>999 || (total+=length)>MAX_EPISODES)throw new IOException();
-                List<Item> episodes=new ArrayList<>();for(int j=0;j<length;j++){Item value=item(input,scope);if(value.kind!=Kind.EPISODE || !id.equals(value.seriesId) || value.season!=number || !seen.add(value.id))throw new IOException();episodes.add(value);}
+                List<Item> episodes=new ArrayList<>();for(int j=0;j<length;j++){Item value=item(input,scope,legacy);if(value.kind!=Kind.EPISODE || !id.equals(value.seriesId) || value.season!=number || !seen.add(value.id))throw new IOException();episodes.add(value);}
                 seasons.add(new Season(number,episodes));
             }
             return new SeriesDetail(parent,seasons);
@@ -129,7 +129,7 @@ final class MetadataDiskCache {
             if(!scope(scope) || expiry<=now)return null;byte[] hash=hash(scope+"\u0000"+key);file=file(hash);
             if(!file.isFile() || file.length()<92 || file.length()>maxEntry)return null;
             try(DataInputStream input=new DataInputStream(new BufferedInputStream(new FileInputStream(file)))){
-                if(input.readInt()!=MAGIC)throw new IOException();byte[] storedKey=new byte[32];input.readFully(storedKey);if(!Arrays.equals(hash,storedKey))throw new IOException();
+                int magic=input.readInt();if(magic!=MAGIC && magic!=LEGACY_MAGIC)throw new IOException();boolean legacy=magic==LEGACY_MAGIC;byte[] storedKey=new byte[32];input.readFully(storedKey);if(!Arrays.equals(hash,storedKey))throw new IOException();
                 long saved=input.readLong(),until=input.readLong();if(saved>now || saved<0 || now-saved>=MAX_AGE_MS || Math.min(until,expiry)<=now)return null;
                 int size=input.readInt();if(size<0 || size>maxEntry-88 || file.length()!=size+88L)throw new IOException();
                 byte[] checksum=new byte[32];input.readFully(checksum);MessageDigest digest=MessageDigest.getInstance("SHA-256");
@@ -138,9 +138,9 @@ final class MetadataDiskCache {
                     @Override public int read()throws IOException{if(remaining==0)return -1;int value=in.read();if(value<0)throw new IOException();remaining--;return value;}
                     @Override public int read(byte[] bytes,int offset,int length)throws IOException{if(length==0)return 0;if(remaining==0)return -1;int count=in.read(bytes,offset,Math.min(length,remaining));if(count<0)throw new IOException();remaining-=count;return count;}
                 };
-                DataInputStream data=new DataInputStream(new DigestInputStream(bounded,digest));T value=decoder.read(data);
+                DataInputStream data=new DataInputStream(new DigestInputStream(bounded,digest));T value=decoder.read(data,legacy);
                 if(data.read()!=-1 || !MessageDigest.isEqual(checksum,digest.digest()))throw new IOException();
-                file.setLastModified(System.currentTimeMillis());return new Snapshot<>(value,saved,Math.min(until,expiry));
+                file.setLastModified(System.currentTimeMillis());return new Snapshot<>(value,legacy?Math.min(saved,now-FRESH_MS):saved,Math.min(until,expiry));
             }
         }catch(Exception ignored){if(file!=null)file.delete();return null;}
     }
@@ -185,11 +185,13 @@ final class MetadataDiskCache {
     private static String artwork(String value){try{URI uri=new URI(value);String path=uri.getPath();return "https".equalsIgnoreCase(uri.getScheme()) && uri.getHost()!=null && uri.getRawUserInfo()==null && uri.getRawQuery()==null && uri.getRawFragment()==null && path!=null && !path.toLowerCase(java.util.Locale.ROOT).matches(".*/(live|movie|series)/.*")?value:"";}catch(Exception ignored){return "";}}
     private static void item(DataOutputStream output,Item value,String scope)throws IOException{
         if(value==null || value.kind==null || !scope.equals(value.scope) || !id(value.id) || (value.kind==Kind.EPISODE?!id(value.seriesId):!value.seriesId.isEmpty()))throw new IOException();
-        output.writeByte(value.kind.ordinal());string(output,value.id,15);string(output,display(value.title),512);string(output,value.categoryId,15);string(output,display(value.categoryName),256);string(output,artwork(value.artwork),2048);string(output,value.extension,5);string(output,value.seriesId,15);output.writeInt(value.season);output.writeInt(value.episode);string(output,display(value.description),8192);
+        output.writeByte(value.kind.ordinal());string(output,value.id,15);string(output,display(value.title),512);string(output,value.categoryId,15);string(output,display(value.categoryName),256);string(output,artwork(value.artwork),2048);string(output,value.extension,5);string(output,value.seriesId,15);output.writeInt(value.season);output.writeInt(value.episode);string(output,display(value.description),8192);output.writeInt(value.releaseYear);
     }
-    private static Item item(DataInputStream input,String scope)throws IOException{
+    private static Item item(DataInputStream input,String scope,boolean legacy)throws IOException{
         int type=input.readUnsignedByte();if(type>=Kind.values().length)throw new IOException();Kind kind=Kind.values()[type];
-        Item value=new Item(kind,string(input,15),string(input,512),string(input,15),string(input,256),artwork(string(input,2048)),string(input,5),scope,string(input,15),input.readInt(),input.readInt(),string(input,8192));
+        String id=string(input,15),title=string(input,512),categoryId=string(input,15),categoryName=string(input,256),art=artwork(string(input,2048)),extension=string(input,5),seriesId=string(input,15);int season=input.readInt(),episode=input.readInt();String description=string(input,8192);
+        int releaseYear=legacy?vip.flixify.tv.CatalogReleaseYear.title(title):input.readInt();if(releaseYear!=0 && (releaseYear<1900 || releaseYear>2099))throw new IOException();
+        Item value=new Item(kind,id,title,categoryId,categoryName,art,extension,scope,seriesId,season,episode,description,releaseYear);
         if(!id(value.id) || value.title.isEmpty() || (kind==Kind.EPISODE?(!id(value.seriesId) || value.season<1 || value.season>999 || value.episode<1 || value.episode>9999):!value.seriesId.isEmpty()) || (!value.extension.isEmpty() && !Arrays.asList("mp4","mkv","avi","m3u8","ts").contains(value.extension)))throw new IOException();return value;
     }
 }

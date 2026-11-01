@@ -7,7 +7,6 @@ import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
-import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -54,19 +53,34 @@ public final class LiveCardsRemoteTest {
     }
     @Test public void mixedFavoritesKeepLiveWideAndMoviesPortrait(){
         repository.saved.add(repository.movie.key());repository.saved.add(repository.show.key());repository.saved.add(repository.live.key());launch();openSection(4);
+        instrumentation.runOnMainSync(()->{DiscoveryScreen screen=activity.getWindow().getDecorView().findViewWithTag("tv-discovery");assertNotNull(screen);assertTrue(screen.focusItem(repository.movie.key()));});awaitCardFocus(repository.movie.key());awaitArtworkShape(repository.movie.key(),true);
         instrumentation.runOnMainSync(()->{
-            RecyclerView list=grid(activity.getWindow().getDecorView());GridLayoutManager layout=(GridLayoutManager)list.getLayoutManager();
-            View movie=list.findViewHolderForAdapterPosition(0).itemView;ImageView poster=artwork(movie);
+            View movie=activity.getCurrentFocus();assertEquals(repository.movie.key(),movie.getTag());ImageView poster=artwork(movie);assertNotNull(poster);
             assertTrue("Movie poster keeps portrait proportions",poster.getHeight()>poster.getWidth());
-            assertEquals("Live cards occupy a separate wide row",layout.getSpanCount(),layout.getSpanSizeLookup().getSpanSize(2));
-            list.scrollToPosition(2);
-        });idle();
+            assertTrue("The visible movie belongs to a horizontal movie shelf",movie.getParent() instanceof RecyclerView && ((View)movie.getParent()).getParent() instanceof View && "tv-rail-favorites-movie".equals(((View)((View)movie.getParent()).getParent()).getTag()));
+            assertTrue(((DiscoveryScreen)activity.getWindow().getDecorView().findViewWithTag("tv-discovery")).focusItem(repository.live.key()));
+        });awaitCardFocus(repository.live.key());awaitArtworkShape(repository.live.key(),false);
         instrumentation.runOnMainSync(()->{
-            RecyclerView list=grid(activity.getWindow().getDecorView());ImageView logo=artwork(list.findViewHolderForAdapterPosition(2).itemView);
+            View live=activity.getCurrentFocus();assertEquals(repository.live.key(),live.getTag());ImageView logo=artwork(live);assertNotNull(logo);
+            assertTrue("Live favorites have their own shelf",live.getParent() instanceof RecyclerView && ((View)live.getParent()).getParent() instanceof View && "tv-rail-favorites-live".equals(((View)((View)live.getParent()).getParent()).getTag()));
             assertTrue("Favorites live logo stays landscape",logo.getWidth()>logo.getHeight()*1.4f);
             assertEquals(ImageView.ScaleType.FIT_CENTER,logo.getScaleType());
+            assertTrue(logo.getPaddingLeft()>0 && logo.getPaddingTop()>0);assertNotNull("Live logo keeps its backplate",logo.getBackground());
         });
     }
+    void awaitArtworkShape(String key,boolean portrait){
+        long deadline=SystemClock.uptimeMillis()+3000;boolean[] ready={false};String[] measured={"No focused artwork"};
+        do{
+            idle();instrumentation.runOnMainSync(()->{
+                View card=activity.getCurrentFocus();ImageView image=card!=null && key.equals(card.getTag())?artwork(card):null;android.graphics.Rect imageBounds=new android.graphics.Rect();
+                ready[0]=image!=null && image.getWidth()>0 && image.getHeight()>0 && image.getGlobalVisibleRect(imageBounds) && (portrait?image.getHeight()>image.getWidth():image.getWidth()>image.getHeight()*1.4f);
+                View shelf=card!=null && card.getParent() instanceof View?(View)card.getParent():null;View surface=activity.getWindow().getDecorView().findViewWithTag("tv-discovery");
+                measured[0]="image="+geometry(image)+", card="+geometry(card)+", shelfRecycler="+geometry(shelf)+", discoveryRecycler="+geometry(surface)+", density="+activity.getResources().getDisplayMetrics().density;
+            });if(!ready[0])SystemClock.sleep(25);
+        }while(!ready[0] && SystemClock.uptimeMillis()<deadline);
+        assertTrue((portrait?"Portrait movie":"Landscape live")+" artwork is measured and visible after nested layout; "+measured[0],ready[0]);
+    }
+    String geometry(View view){if(view==null)return "missing";android.graphics.Rect visible=new android.graphics.Rect();view.getGlobalVisibleRect(visible);return view.getWidth()+"x"+view.getHeight()+" visible="+visible;}
     @Test public void removingFavoriteInsidePlayerRefreshesListOnReturn(){
         repository.saved.add(repository.movie.key());repository.saved.add(repository.live.key());launch();openSection(4);key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_DOWN);
         Instrumentation.ActivityMonitor monitor=instrumentation.addMonitor(PlayerActivity.class.getName(),null,false);

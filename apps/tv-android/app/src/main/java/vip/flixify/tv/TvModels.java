@@ -14,17 +14,25 @@ public final class TvModels {
         private static final long serialVersionUID = 1L;
         public final Kind kind;
         public final String id, title, categoryId, categoryName, artwork, extension, scope, seriesId, description, sourceTitle;
-        public final int season, episode;
+        public final int season, episode, releaseYear;
         public Item(Kind kind, String id, String title, String categoryId, String categoryName, String artwork,
                     String extension, String scope, String seriesId, int season, int episode, String description) {
-            this(kind,id,title,categoryId,categoryName,artwork,extension,scope,seriesId,season,episode,description,title);
+            this(kind,id,title,categoryId,categoryName,artwork,extension,scope,seriesId,season,episode,description,title,CatalogReleaseYear.title(title));
         }
         public Item(Kind kind, String id, String title, String categoryId, String categoryName, String artwork,
                     String extension, String scope, String seriesId, int season, int episode, String description, String sourceTitle) {
+            this(kind,id,title,categoryId,categoryName,artwork,extension,scope,seriesId,season,episode,description,sourceTitle,CatalogReleaseYear.title(title));
+        }
+        public Item(Kind kind, String id, String title, String categoryId, String categoryName, String artwork,
+                    String extension, String scope, String seriesId, int season, int episode, String description, int releaseYear) {
+            this(kind,id,title,categoryId,categoryName,artwork,extension,scope,seriesId,season,episode,description,title,releaseYear);
+        }
+        public Item(Kind kind, String id, String title, String categoryId, String categoryName, String artwork,
+                    String extension, String scope, String seriesId, int season, int episode, String description, String sourceTitle, int releaseYear) {
             this.kind=kind; this.id=text(id); this.title=text(title); this.categoryId=text(categoryId);
             this.categoryName=text(categoryName); this.artwork=text(artwork); this.extension=text(extension);
             this.scope=text(scope); this.seriesId=text(seriesId); this.season=season; this.episode=episode;
-            this.description=text(description);this.sourceTitle=text(sourceTitle);
+            this.description=text(description);this.sourceTitle=text(sourceTitle);this.releaseYear=CatalogReleaseYear.normalize(releaseYear);
         }
         public String key() { return kind.name()+":"+id; }
     }

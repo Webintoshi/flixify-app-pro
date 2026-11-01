@@ -37,10 +37,15 @@ public final class PosterSoundRemoteTest {
     @After public void tearDown(){InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{
         PosterFocusSound.setOutputFactoryForTests(null);TvApplication.setRepositoryForTests(null);
     });}
-    ActivityScenario<MainActivity> launch(){return ActivityScenario.launch(new Intent(ApplicationProvider.getApplicationContext(),MainActivity.class));}
+    ActivityScenario<MainActivity> launch(){ActivityScenario<MainActivity> scenario=ActivityScenario.launch(new Intent(ApplicationProvider.getApplicationContext(),MainActivity.class));key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_CENTER);return scenario;}
     void key(int code){InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(code);InstrumentationRegistry.getInstrumentation().waitForIdleSync();}
-    void enterGrid(){key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_DOWN);}
-    void assertFocus(ActivityScenario<MainActivity> scenario,String key){scenario.onActivity(a->assertEquals(key,a.getCurrentFocus().getTag()));}
+    void enterGrid(ActivityScenario<MainActivity> scenario){enterGrid(scenario,repository.movie.key());}
+    void enterGrid(ActivityScenario<MainActivity> scenario,String first){key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_DOWN);assertFocus(scenario,first);}
+    void assertFocus(ActivityScenario<MainActivity> scenario,String key){
+        long deadline=SystemClock.uptimeMillis()+3000;AtomicBoolean ready=new AtomicBoolean();String[] actual={"No focused view"};
+        do{scenario.onActivity(a->{View focus=a.getCurrentFocus();android.graphics.Rect visible=new android.graphics.Rect();ready.set(a.hasWindowFocus() && focus!=null && key.equals(focus.getTag()) && focus.getGlobalVisibleRect(visible));actual[0]=focus==null?"No focused view":String.valueOf(focus.getTag());});if(!ready.get())SystemClock.sleep(25);}while(!ready.get() && SystemClock.uptimeMillis()<deadline);
+        assertTrue("Focused poster "+key+" after layout; actual "+actual[0],ready.get());
+    }
     void awaitStage(Activity target,Stage expected){
         AtomicBoolean ready=new AtomicBoolean();long end=SystemClock.uptimeMillis()+5000;
         do{InstrumentationRegistry.getInstrumentation().runOnMainSync(()->ready.set(ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(target)==expected));if(!ready.get())SystemClock.sleep(25);}while(!ready.get() && SystemClock.uptimeMillis()<end);
@@ -60,7 +65,7 @@ public final class PosterSoundRemoteTest {
     }
     @Test public void playerBackResizeAndPauseRestoreDoNotDuplicateTheSamePoster(){
         try(ActivityScenario<MainActivity> s=launch()){
-            enterGrid();key(KeyEvent.KEYCODE_DPAD_RIGHT);assertEquals(2,cues.size());
+            enterGrid(s);key(KeyEvent.KEYCODE_DPAD_RIGHT);assertFocus(s,repository.movie2.key());assertEquals(2,cues.size());
             final MainActivity[] main={null};s.onActivity(a->main[0]=a);
             Instrumentation instrumentation=InstrumentationRegistry.getInstrumentation();
             Instrumentation.ActivityMonitor monitor=instrumentation.addMonitor(PlayerActivity.class.getName(),null,false);
@@ -82,7 +87,7 @@ public final class PosterSoundRemoteTest {
     }
     @Test public void posterDirectionsAreConsumedWithoutChangingNormalToolbarDispatch(){
         try(ActivityScenario<MainActivity> s=launch()){
-            enterGrid();
+            enterGrid(s);
             s.onActivity(a->assertTrue("Poster navigation must avoid ViewRoot's second stock cue",a.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT))));
             assertFocus(s,repository.movie2.key());assertEquals(2,cues.size());
             key(KeyEvent.KEYCODE_DPAD_UP);int count=cues.size();key(KeyEvent.KEYCODE_DPAD_DOWN);assertEquals(count+1,cues.size());
@@ -91,7 +96,7 @@ public final class PosterSoundRemoteTest {
     @Test public void offscreenPosterRowsKeepOneCuePerMoveThroughRecycling(){
         InstrumentationRegistry.getInstrumentation().runOnMainSync(()->TvApplication.setRepositoryForTests((TvRepository)java.lang.reflect.Proxy.newProxyInstance(
                 TvRepository.class.getClassLoader(),new Class<?>[]{TvRepository.class},(proxy,method,args)->{
-                    if(method.getName().equals("catalog")) {
+                    if(method.getName().equals("catalog") || method.getName().equals("homeCatalog")) {
                         List<TvModels.Item> items=new ArrayList<>();
                         for(int n=0;n<80;n++)items.add(new TvModels.Item(TvModels.Kind.MOVIE,""+(1000+n),"Poster "+n,"","","","mp4",repository.scope,"",0,0,""));
                         ((TvRepository.Callback<TvModels.Catalog>)args[2]).onResult(new TvModels.Catalog(TvModels.Kind.MOVIE,items,new ArrayList<>()));return null;
@@ -99,9 +104,9 @@ public final class PosterSoundRemoteTest {
                     return method.invoke(repository,args);
                 })));
         try(ActivityScenario<MainActivity> s=launch()){
-            enterGrid();assertEquals(1,cues.size());
+            enterGrid(s,"MOVIE:1000");assertEquals(1,cues.size());int[] columns={0};s.onActivity(a->columns[0]=((androidx.recyclerview.widget.GridLayoutManager)((DiscoveryScreen)a.findViewById(android.R.id.content).findViewWithTag("tv-discovery")).getLayoutManager()).getSpanCount());int position=0;
             for(int direction:new int[]{KeyEvent.KEYCODE_DPAD_DOWN,KeyEvent.KEYCODE_DPAD_UP})for(int n=0;n<8;n++) {
-                String prior=cues.get(cues.size()-1);int count=cues.size();key(direction);
+                String prior=cues.get(cues.size()-1);int count=cues.size();key(direction);position+=direction==KeyEvent.KEYCODE_DPAD_DOWN?columns[0]:-columns[0];assertFocus(s,"MOVIE:"+(1000+position));
                 s.onActivity(a->{assertTrue(a.getCurrentFocus().getTag() instanceof String);assertNotEquals(prior,a.getCurrentFocus().getTag());});
                 assertEquals("Every offscreen change emits once",count+1,cues.size());
             }

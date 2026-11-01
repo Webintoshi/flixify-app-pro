@@ -108,8 +108,8 @@ public final class LiveChannelCuration {
     }
     public static Projection curate(Catalog raw,Set<String> excluded){
         List<Channel> rows=new ArrayList<>();Map<String,Item> originals=new HashMap<>();for(Item item:raw.items){rows.add(new Channel(item.id,item.title,item.categoryName,item.sourceTitle,item.id,true,true,false));originals.put(item.id,item);}
-        Selection selection=curateChannels(rows,excluded);List<Item> items=new ArrayList<>();Map<String,Item> selected=new HashMap<>();Set<String> groups=new HashSet<>();for(Channel channel:selection.items){Item r=originals.get(channel.id);Item item=new Item(r.kind,r.id,channel.title,r.categoryId,r.categoryName,r.artwork,r.extension,r.scope,r.seriesId,r.season,r.episode,r.description,channel.sourceTitle);items.add(item);selected.put(item.id,item);groups.add(item.categoryId);}
+        Selection selection=curateChannels(rows,excluded);List<Item> items=new ArrayList<>();Map<String,Item> selected=new HashMap<>();Set<String> groups=new HashSet<>();for(Channel channel:selection.items){Item r=originals.get(channel.id);Item item=new Item(r.kind,r.id,channel.title,r.categoryId,r.categoryName,r.artwork,r.extension,r.scope,r.seriesId,r.season,r.episode,r.description,channel.sourceTitle,r.releaseYear);items.add(item);selected.put(item.id,item);groups.add(item.categoryId);}
         List<Category> categories=new ArrayList<>();for(Category category:raw.categories)if(groups.contains(category.id))categories.add(category);
-        return new Projection(new Catalog(raw.kind,items,categories),selection.canonicalById,Collections.unmodifiableMap(originals),Collections.unmodifiableMap(selected));
+        return new Projection(new Catalog(raw.kind,LiveChannelLineup.sort(items),categories),selection.canonicalById,Collections.unmodifiableMap(originals),Collections.unmodifiableMap(selected));
     }
 }

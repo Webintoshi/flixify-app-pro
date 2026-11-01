@@ -10,7 +10,6 @@ import android.os.Bundle;
 import android.text.InputFilter;
 import android.text.InputType;
 import android.text.TextUtils;
-import android.graphics.drawable.GradientDrawable;
 import android.widget.FrameLayout;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -36,6 +35,7 @@ import java.util.Date;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Collections;
 import vip.flixify.tv.TvModels.*;
 
 /** Native Android TV navigation. Items carry scoped identifiers; playback URLs stay in the repository. */
@@ -45,8 +45,8 @@ public final class MainActivity extends Activity {
     private static final class Page {
         final Section section;
         Catalog catalog;
-        String query="",category="",categoryTitle="Tümü",focusKey="",catalogScope="";
-        int scroll;
+        String query="",category="",categoryTitle="Tümü",focusKey="",catalogScope="",discoveryFocus="",heroKey="";
+        int scroll,scrollOffset;
         Page(Section section) { this.section=section; }
     }
     private final EnumMap<Section,Page> pages=new EnumMap<>(Section.class);
@@ -62,6 +62,10 @@ public final class MainActivity extends Activity {
     private LinearLayout body;
     private Button[] rail;
     private RecyclerView grid;
+    private DiscoveryScreen discovery;
+    private final EnumMap<Kind,Catalog> homeSources=new EnumMap<>(Kind.class);
+    private long homeLoadSerial;
+    private boolean homeRefreshPending;
     private Page page;
     private long generation;
     private boolean stopped,destroyed,initialized,resumeReload,playerLaunching,searchPlayerReturn;
@@ -71,6 +75,7 @@ public final class MainActivity extends Activity {
         SearchSelection(Page owner,Catalog snapshot,long ticket,String scope,String query,Item item){this.owner=owner;this.snapshot=snapshot;this.ticket=ticket;this.scope=scope;this.query=query;this.item=item;}
     }
     private SearchSelection searchSelection;
+    private Item informationSelection;
     private boolean resizeAfterCatalog;
     private EditText loginCode;
     private LinearLayout loginForm;
@@ -84,6 +89,7 @@ public final class MainActivity extends Activity {
     private String preparedScope="";
     private long favoritesRefreshSerial;
     private boolean favoritesRefreshPending,favoritesRefreshAgain;
+    private final Map<String,Object> favoriteMutations=new LinkedHashMap<>();
     private boolean welcomeResolved,welcomeBusy;
     private long welcomeSerial;
     private String welcomeAccount="",welcomeError="";
@@ -104,6 +110,7 @@ public final class MainActivity extends Activity {
             try { page=pages.get(Section.valueOf(state.getString("section","HOME"))); } catch(IllegalArgumentException ignored) {}
             page.query=state.getString("query",""); page.category=state.getString("category",""); page.categoryTitle=state.getString("categoryTitle","Tümü");
             page.focusKey=state.getString("focusKey",""); page.scroll=state.getInt("scroll",0);
+            page.discoveryFocus=state.getString("discoveryFocus","");page.heroKey=state.getString("heroKey","");page.scrollOffset=state.getInt("scrollOffset",0);
             resizeFocus=state.getString("controlFocus");
             welcomeUsers=state.getInt("welcomeUsers",1)==2?2:1;
         }
@@ -153,7 +160,7 @@ public final class MainActivity extends Activity {
         preparedScope="";
         favoritesRefreshSerial++;favoritesRefreshPending=false;favoritesRefreshAgain=false;
         welcomeSerial++;welcomeBusy=false;
-        if(!searchPlayerReturn)captureGrid();stopped=true;resumeReload=true;generation++;observationEpoch++;clearPendingCatalogs();searchSelection=null;
+        if(!searchPlayerReturn)captureGrid();stopped=true;resumeReload=true;generation++;homeLoadSerial++;observationEpoch++;clearPendingCatalogs();searchSelection=null;informationSelection=null;
         if(catalogObservation!=null){try{catalogObservation.close();}catch(Exception ignored){}catalogObservation=null;}
         updatePanel.cancel();if(dialog!=null)dialog.dismiss();super.onStop();
     }
@@ -166,11 +173,14 @@ public final class MainActivity extends Activity {
         clearPendingCatalogs();preparedScope="";
         for(Page target:pages.values())if(stopped || target!=page){target.catalog=null;target.catalogScope="";}
         if(stopped){if(grid!=null)grid.setAdapter(null);grid=null;if(body!=null)body.removeAllViews();}
+        if(stopped || page.section!=Section.HOME){homeLoadSerial++;homeSources.clear();homeRefreshPending=false;}
+        if(stopped)discovery=null;
         repository.trimMemory(keep);
     }
     @Override protected void onSaveInstanceState(Bundle out) {
         if(!searchPlayerReturn)captureGrid(); out.putString("section",page.section.name()); out.putString("query",page.query); out.putString("category",page.category);
         out.putString("categoryTitle",page.categoryTitle); out.putString("focusKey",page.focusKey); out.putInt("scroll",page.scroll);
+        out.putString("discoveryFocus",page.discoveryFocus);out.putString("heroKey",page.heroKey);out.putInt("scrollOffset",page.scrollOffset);
         out.putString("controlFocus",searchPlayerReturn?"poster:"+page.focusKey:focusIdentity(getCurrentFocus()));
         startup.saveInstanceState(out);
         out.putInt("welcomeUsers",welcomeUsers);
@@ -195,6 +205,9 @@ public final class MainActivity extends Activity {
         if(event.getAction()==KeyEvent.ACTION_DOWN && hasWindowFocus()
                 && grid!=null && (dialog==null || !dialog.isShowing())) {
             View focused=getCurrentFocus();
+            String focus=focusIdentity(focused);
+            if(discovery!=null && direction==View.FOCUS_DOWN && focus!=null && focus.startsWith("catalog:")){discovery.focusFirst();return true;}
+            if(discovery!=null && discovery.moveFocus(focused,direction))return true;
             View destination=focused==null?null:focused.focusSearch(direction);
             if(isPosterCard(focused) || isPosterCard(destination)) {
                 if(destination==null || destination==focused)return true;
@@ -223,7 +236,7 @@ public final class MainActivity extends Activity {
         String account=repository.currentAccountId();
         if(welcomeBusy && account.equals(welcomeAccount))return;
         welcomeAccount=account;welcomeResolved=false;welcomeBusy=true;welcomeError="";welcomeOffer=null;
-        generation++;clearPendingCatalogs();body=null;grid=null;artwork.retireScreen();
+        generation++;homeLoadSerial++;clearPendingCatalogs();body=null;grid=null;discovery=null;artwork.retireScreen();
         final long serial=++welcomeSerial;final String owner=welcomeAccount;
         renderWelcome();
         repository.welcomeOffer(new TvRepository.Callback<WelcomeOffer>(){
@@ -284,7 +297,7 @@ public final class MainActivity extends Activity {
         try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE));}
         catch(ActivityNotFoundException|SecurityException unavailable){notice("TV’de tarayıcı bulunamadı. Telefonunda "+url+" adresini aç ve aynı 16 karakterli hesap kodunla giriş yap. Ödeme tamamlandığında erişimin bu hesabına otomatik tanımlanır.");}
     }
-    @Override public void onWindowFocusChanged(boolean focused) {super.onWindowFocusChanged(focused);if(focused)openSearchSelection();}
+    @Override public void onWindowFocusChanged(boolean focused) {super.onWindowFocusChanged(focused);if(focused){openSearchSelection();if(informationSelection!=null && (dialog==null || !dialog.isShowing())){Item item=informationSelection;informationSelection=null;play(item);}}}
     private boolean valid(long ticket,String scope) {
         // A remembered session bootstraps its first source inside the repository operation.
         // The repository rejects stale auth/source generations before delivering this callback.
@@ -292,8 +305,10 @@ public final class MainActivity extends Activity {
     }
     private void invalidateScopedCatalogs() {
         preparedScope="";favoritesRefreshSerial++;favoritesRefreshPending=false;favoritesRefreshAgain=false;
+        favoriteMutations.clear();
+        homeLoadSerial++;homeSources.clear();homeRefreshPending=false;
         clearPendingCatalogs();
-        for(Page p:pages.values()){p.catalog=null;p.catalogScope="";p.focusKey="";p.scroll=0;p.category="";p.categoryTitle="Tümü";p.query="";}
+        for(Page p:pages.values()){p.catalog=null;p.catalogScope="";p.focusKey="";p.discoveryFocus="";p.heroKey="";p.scroll=0;p.scrollOffset=0;p.category="";p.categoryTitle="Tümü";p.query="";}
     }
     private void clearPendingCatalogs(){pendingCatalogUpdates.clear();pendingCatalogScopes.clear();}
     private boolean discardPreviousSource() {
@@ -324,6 +339,7 @@ public final class MainActivity extends Activity {
         boolean visibleChanged=false,favoritesChanged=false,posterFocused=isPosterCard(getCurrentFocus());
         for(Catalog catalog:pendingCatalogUpdates.values()) {
             if(!repository.currentScope().equals(pendingCatalogScopes.get(catalog.kind)) || !catalogMatchesCurrentSource(catalog))continue;
+            if(pages.get(Section.HOME).catalog!=null || page.section==Section.HOME){homeSources.put(catalog.kind,catalog);homeRefreshPending=true;}
             for(Page target:pages.values()) {
                 Kind kind=target.section==Section.LIVE?Kind.LIVE:target.section==Section.SERIES?Kind.SERIES:Kind.MOVIE;
                 if(target.section==Section.FAVORITES) {
@@ -332,12 +348,16 @@ public final class MainActivity extends Activity {
                     else {target.catalog=null;target.catalogScope="";}
                     continue;
                 }
-                if(target.section==Section.ACCOUNT || kind!=catalog.kind)continue;
+                if(target.section==Section.ACCOUNT || target.section==Section.HOME || kind!=catalog.kind)continue;
                 if(target==page){visibleChanged=true;captureGrid();if(resizeFocus==null)resizeFocus=focusIdentity(getCurrentFocus());}
                 target.catalog=catalog;target.catalogScope=repository.currentScope();
             }
         }
         clearPendingCatalogs();
+        if(homeRefreshPending){
+            if(page.section==Section.HOME){captureGrid();if(resizeFocus==null)resizeFocus=focusIdentity(getCurrentFocus());visibleChanged=true;}
+            rebuildHomeCatalog();
+        }
         if(favoritesChanged)favoritesRefreshAgain=true;
         if(redraw && page.section==Section.FAVORITES && favoritesRefreshAgain){
             favoritesRefreshAgain=false;refreshFavoritesInPlace(posterFocused);
@@ -391,11 +411,13 @@ public final class MainActivity extends Activity {
     private void markFocus(View view,String key){view.setTag(new FocusToken(key));}
     private String focusIdentity(View view) {
         if(view==null)return null;Object tag=view.getTag();
+        if(discovery!=null && discovery.isDescendant(view))return "discovery:"+discovery.focusPath(view);
         if(tag instanceof FocusToken)return ((FocusToken)tag).key;
         return tag instanceof String?"poster:"+tag:null;
     }
     private View findFocus(View root,String key) {
         if(key.equals(focusIdentity(root)) && root.isFocusable() && root.getVisibility()==View.VISIBLE)return root;
+        if(key.startsWith("poster:") && root.getTag() instanceof String && key.substring(7).equals(root.getTag()) && root.isFocusable() && root.getVisibility()==View.VISIBLE)return root;
         if(root instanceof ViewGroup)for(int n=0;n<((ViewGroup)root).getChildCount();n++){View found=findFocus(((ViewGroup)root).getChildAt(n),key);if(found!=null)return found;}
         return null;
     }
@@ -405,6 +427,7 @@ public final class MainActivity extends Activity {
         View content=findViewById(android.R.id.content);
         content.post(()->{
             if(destroyed || !wanted.equals(resizeFocus))return;
+            if(discovery!=null && wanted.startsWith("discovery:")){discovery.restore(page.scroll,page.scrollOffset,wanted.substring(10),true);resizeFocus=null;return;}
             View target=findFocus(content,wanted);
             if(target!=null){target.requestFocus();resizeFocus=null;}else if(completeSurface)resizeFocus=null;
         });
@@ -412,7 +435,7 @@ public final class MainActivity extends Activity {
     private void showLogin(String message) {
         artwork.retireScreen();
         if(catalogDialog!=null && catalogDialog.isShowing())catalogDialog.dismiss();
-        generation++; body=null; grid=null;resizeFocus=null;sizing=TvLayout.measure(this);measuredWidth=sizing.width;measuredHeight=sizing.height;
+        generation++;homeLoadSerial++;body=null;grid=null;discovery=null;resizeFocus=null;sizing=TvLayout.measure(this);measuredWidth=sizing.width;measuredHeight=sizing.height;
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         ScrollView background=new ScrollView(this);loginScroll=background;background.setTag("tv-login");background.setFillViewport(true);background.setBackgroundColor(TvUi.BACKGROUND);
         background.setClipToPadding(false);background.setPadding(TvUi.dp(this,sizing.inset),TvUi.dp(this,14),TvUi.dp(this,sizing.inset),TvUi.dp(this,14));
@@ -455,7 +478,7 @@ public final class MainActivity extends Activity {
     private void shell(String title,String subtitle) {
         artwork.retireScreen();
         if(catalogDialog!=null && catalogDialog.isShowing())catalogDialog.dismiss();
-        generation++;grid=null;sizing=TvLayout.measure(this);measuredWidth=sizing.width;measuredHeight=sizing.height;
+        generation++;grid=null;discovery=null;sizing=TvLayout.measure(this);measuredWidth=sizing.width;measuredHeight=sizing.height;
         LinearLayout root=TvUi.row(this);root.setTag("tv-catalog-shell");root.setGravity(Gravity.TOP);root.setBackgroundColor(TvUi.BACKGROUND);
         root.setPadding(TvUi.dp(this,sizing.inset),TvUi.dp(this,sizing.shortScreen?10:18),TvUi.dp(this,sizing.inset),TvUi.dp(this,sizing.shortScreen?10:16));
         ScrollView railScroll=new ScrollView(this);railScroll.setVerticalScrollBarEnabled(false);railScroll.setFillViewport(false);railScroll.setClipToPadding(false);
@@ -471,8 +494,10 @@ public final class MainActivity extends Activity {
         }
         for(int n=0;n<rail.length;n++){if(n>0)rail[n].setNextFocusUpId(rail[n-1].getId());if(n<rail.length-1)rail[n].setNextFocusDownId(rail[n+1].getId());rail[n].setNextFocusLeftId(rail[n].getId());}
         body=TvUi.column(this);body.setPadding(TvUi.dp(this,sizing.gap),0,0,0);root.addView(body,new LinearLayout.LayoutParams(0,-1,1));
-        TextView heading=TvUi.text(this,title,sizing.shortScreen?22:28,TvUi.WHITE);TvUi.heading(heading);heading.setSingleLine(true);heading.setEllipsize(TextUtils.TruncateAt.END);body.addView(heading,TvUi.space(this,-1,sizing.heading));
-        if(subtitle!=null && !subtitle.isEmpty() && !sizing.shortScreen){TextView sub=TvUi.text(this,subtitle,14,TvUi.MUTED);sub.setSingleLine(true);sub.setEllipsize(TextUtils.TruncateAt.END);body.addView(sub,TvUi.space(this,-1,24));}
+        if(page.section!=Section.HOME){
+            TextView heading=TvUi.text(this,title,sizing.shortScreen?22:28,TvUi.WHITE);TvUi.heading(heading);heading.setSingleLine(true);heading.setEllipsize(TextUtils.TruncateAt.END);body.addView(heading,TvUi.space(this,-1,sizing.heading));
+            if(subtitle!=null && !subtitle.isEmpty() && !sizing.shortScreen){TextView sub=TvUi.text(this,subtitle,14,TvUi.MUTED);sub.setSingleLine(true);sub.setEllipsize(TextUtils.TruncateAt.END);body.addView(sub,TvUi.space(this,-1,24));}
+        }
         startup.show(root);rail[page.section.ordinal()].requestFocus();restoreResizeFocus();
     }
     private void navigate(Section target) {
@@ -486,26 +511,62 @@ public final class MainActivity extends Activity {
         discardPreviousSource();
         applyPendingCatalogs(false);
         shell(pageTitle(),page.section==Section.HOME?"Filmler, diziler ve canlı yayınlar tek yerde.":"");
-        if(!reload && page.catalog!=null) { renderCatalog(contentFocus); return; }
+        if(!reload && page.catalog!=null) {
+            renderCatalog(contentFocus);
+            if(page.section==Section.HOME && homeSources.size()<3)loadHomeCatalogs(false,contentFocus);
+            return;
+        }
         TextView loading=TvUi.text(this,"Yükleniyor…",20,TvUi.MUTED); body.addView(loading,TvUi.space(this,-1,64));
         final long ticket=generation; final String scope=repository.currentScope();
         if(page.section==Section.FAVORITES) repository.favorites(callback(ticket,scope,items->{
             page.catalog=new Catalog(Kind.MOVIE,items,new ArrayList<>());page.catalogScope=repository.currentScope();replaceCatalog(contentFocus);
         },()->showPage(true,true)));
+        else if(page.section==Section.HOME)loadHomeCatalogs(reload,contentFocus);
         else repository.catalog(pageKind(),reload,callback(ticket,scope,catalog->{page.catalog=catalog;page.catalogScope=repository.currentScope();replaceCatalog(contentFocus);},()->showPage(true,true)));
+    }
+    private void loadHomeCatalogs(boolean force,boolean contentFocus){
+        final Page owner=pages.get(Section.HOME);final long serial=++homeLoadSerial;final String account=repository.currentAccountId();
+        if(force){homeSources.clear();owner.catalog=null;owner.catalogScope="";}
+        List<Kind> missing=new ArrayList<>();for(Kind kind:new Kind[]{Kind.MOVIE,Kind.SERIES,Kind.LIVE})if(!homeSources.containsKey(kind))missing.add(kind);
+        final int[] remaining={missing.size()};final boolean[] ready={owner.catalog!=null};
+        for(Kind kind:missing)repository.homeCatalog(kind,force,new TvRepository.Callback<Catalog>(){
+            private boolean current(){return serial==homeLoadSerial && !stopped && !destroyed && !isFinishing() && repository.hasSession() && (account.isEmpty() || account.equals(repository.currentAccountId())) && !welcomeBlocked();}
+            public void onResult(Catalog catalog){
+                if(!current() || !catalogMatchesCurrentSource(catalog))return;
+                homeSources.put(catalog.kind,catalog);homeRefreshPending=true;remaining[0]--;
+                if(page!=owner){rebuildHomeCatalog();ready[0]=true;}
+                else if(!searchHandoffPending() && !searchPlayerReturn && !playerLaunching && (dialog==null || !dialog.isShowing())){
+                    boolean restore=contentFocus || discovery!=null && discovery.isDescendant(getCurrentFocus());captureGrid();
+                    rebuildHomeCatalog();replaceCatalog(restore);ready[0]=true;
+                }
+            }
+            public void onError(Failure failure){
+                if(!current() || failure.code==Failure.Code.STALE)return;remaining[0]--;
+                if(failure.code==Failure.Code.AUTH){sessionEnded(failure.message);return;}
+                if(remaining[0]==0 && !ready[0] && homeSources.isEmpty() && page==owner)showFailure(failure.message,()->showPage(true,true));
+            }
+        });
+    }
+    private void rebuildHomeCatalog(){
+        List<Item> items=new ArrayList<>();Map<String,Category> categories=new LinkedHashMap<>();
+        for(Kind kind:new Kind[]{Kind.MOVIE,Kind.SERIES,Kind.LIVE}){
+            Catalog source=homeSources.get(kind);if(source==null || !catalogMatchesCurrentSource(source))continue;
+            items.addAll(source.items);for(Category category:source.categories)if(!categories.containsKey(category.id))categories.put(category.id,category);
+        }
+        Page home=pages.get(Section.HOME);home.catalog=new Catalog(Kind.MOVIE,items,new ArrayList<>(categories.values()));home.catalogScope=repository.currentScope();homeRefreshPending=false;
     }
     private void replaceCatalog(boolean contentFocus) { shell(pageTitle(),page.section==Section.HOME?"Filmler, diziler ve canlı yayınlar tek yerde.":""); renderCatalog(contentFocus); }
     private void captureGrid() {
         if(grid==null || page==null)return;
         RecyclerView.LayoutManager layout=grid.getLayoutManager(); if(layout instanceof GridLayoutManager)page.scroll=Math.max(0,((GridLayoutManager)layout).findFirstVisibleItemPosition());
         View focus=getCurrentFocus(); if(focus!=null && focus.getTag() instanceof String)page.focusKey=(String)focus.getTag();
+        if(discovery!=null){page.scrollOffset=discovery.scrollOffset();page.discoveryFocus=discovery.focusPath(focus);page.heroKey=discovery.selectedHero();}
     }
     private void linkContent(View first) { for(Button b:rail)b.setNextFocusRightId(first.getId()); first.setNextFocusLeftId(rail[page.section.ordinal()].getId()); }
     private void renderCatalog(boolean contentFocus) {
         String effectiveCategory=page.section==Section.FAVORITES?CatalogFilterData.effectiveFavoriteCategory(page.catalog,page.category):CatalogFilterData.effectiveCategory(page.catalog,page.category);
         if(!effectiveCategory.equals(page.category)){page.category=effectiveCategory;page.categoryTitle="Tümü";page.scroll=0;page.focusKey="";}
         List<Item> filtered=CatalogFilterData.filtered(page.catalog,page.category,page.query);
-        if(page.section==Section.HOME && sizing.hero>0 && !filtered.isEmpty())addHomeHero(filtered.get(0));
         LinearLayout controls=TvUi.row(this);body.addView(controls,TvUi.space(this,-1,50));
         Button search=TvUi.button(this,"Ara",this::search);search.setBackground(TvUi.catalogActionBackground(this,!page.query.isEmpty()));search.setPadding(TvUi.dp(this,10),0,TvUi.dp(this,10),0);search.setCompoundDrawablesWithIntrinsicBounds(TvUi.catalogIcon(this,0,16),null,null,null);search.setCompoundDrawablePadding(TvUi.dp(this,6));markFocus(search,"catalog:search");controls.addView(search,TvUi.space(this,sizing.compact?86:96,42));
         Button category=TvUi.button(this,"Kategori: "+page.categoryTitle,this::categories);category.setBackground(TvUi.catalogActionBackground(this,!page.category.isEmpty()));category.setPadding(TvUi.dp(this,10),0,TvUi.dp(this,10),0);category.setCompoundDrawablesWithIntrinsicBounds(TvUi.catalogIcon(this,1,16),null,null,null);category.setCompoundDrawablePadding(TvUi.dp(this,6));markFocus(category,"catalog:category");category.setSingleLine(true);category.setEllipsize(TextUtils.TruncateAt.END);
@@ -516,6 +577,9 @@ public final class MainActivity extends Activity {
         if(filtered.isEmpty()) {
             body.addView(TvUi.text(this,page.section==Section.FAVORITES?"Henüz favoriniz yok. Bir içeriği açıp favorilere ekleyin.":"İçerik bulunamadı.",18,TvUi.MUTED),TvUi.space(this,-1,72));
             if(contentFocus)search.requestFocus();restoreResizeFocus(true);startup.ready();prepareOfflineData();return;
+        }
+        if(page.query.isEmpty() && page.category.isEmpty() && (page.section==Section.HOME || page.section==Section.MOVIES || page.section==Section.SERIES || page.section==Section.FAVORITES)){
+            renderDiscovery(filtered,search,contentFocus);restoreResizeFocus(true);startup.ready();prepareOfflineData();return;
         }
         grid=new RecyclerView(this); grid.setId(View.generateViewId()); grid.setClipToPadding(false); grid.setPadding(0,TvUi.dp(this,8),0,TvUi.dp(this,12)); grid.setItemAnimator(null);
         grid.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS); grid.setFocusable(false);
@@ -543,16 +607,77 @@ public final class MainActivity extends Activity {
         String scope=repository.currentScope();
         if(!scope.isEmpty() && !scope.equals(preparedScope)){preparedScope=scope;repository.prepareOfflineData();}
     }
-    private void addHomeHero(Item item) {
-        FrameLayout hero=new FrameLayout(this);hero.setTag("tv-home-hero");hero.setBackground(TvUi.rounded(this,TvUi.PANEL,0,16,1));hero.setClipToOutline(true);hero.setContentDescription(item.title);
-        body.addView(hero,TvUi.space(this,-1,sizing.hero));
-        ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);hero.addView(image,new FrameLayout.LayoutParams(-1,-1));loadArtwork(image,item.artwork);
-        View shade=new View(this);shade.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,new int[]{TvUi.BACKGROUND,TvUi.alpha(TvUi.BACKGROUND,210),TvUi.alpha(TvUi.BACKGROUND,16)}));hero.addView(shade,new FrameLayout.LayoutParams(-1,-1));
-        LinearLayout story=TvUi.column(this);story.setGravity(Gravity.CENTER_VERTICAL);story.setPadding(TvUi.dp(this,22),TvUi.dp(this,12),TvUi.dp(this,12),TvUi.dp(this,12));
-        int storyWidth=Math.round((sizing.contentWidth()-8)*(sizing.compact?0.76f:0.64f));hero.addView(story,new FrameLayout.LayoutParams(TvUi.dp(this,storyWidth),-1,Gravity.START));
-        TextView eyebrow=TvUi.text(this,item.categoryName.isEmpty()?"FLIXIFY":item.categoryName.toUpperCase(Locale.forLanguageTag("tr-TR")),12,TvUi.ACCENT);eyebrow.setSingleLine(true);eyebrow.setEllipsize(TextUtils.TruncateAt.END);story.addView(eyebrow,new LinearLayout.LayoutParams(-1,-2));
-        TextView title=TvUi.text(this,item.title,sizing.compact?26:32,TvUi.WHITE);TvUi.heading(title);title.setMaxLines(2);title.setEllipsize(TextUtils.TruncateAt.END);story.addView(title,new LinearLayout.LayoutParams(-1,-2));
-        if(!item.description.isEmpty()){TextView description=TvUi.text(this,item.description,14,TvUi.MUTED);description.setMaxLines(1);description.setEllipsize(TextUtils.TruncateAt.END);LinearLayout.LayoutParams descriptionSpace=new LinearLayout.LayoutParams(-1,-2);descriptionSpace.topMargin=TvUi.dp(this,6);story.addView(description,descriptionSpace);}
+    private void renderDiscovery(List<Item> items,Button search,boolean contentFocus){
+        String day=CatalogShowcase.dayKey();CatalogShowcase.Result selected;List<Item> archive=null;String archiveTitle="";boolean emptyHero=false;
+        if(page.section==Section.HOME){
+            selected=CatalogShowcase.home(items,day);boolean current=false;for(Item item:items)if(item.kind!=Kind.LIVE && item.releaseYear==2026){current=true;break;}
+            selected=retainFocusedHomeHero(selected,items);
+            emptyHero=selected.hero.isEmpty();
+            if(!current){
+                List<CatalogShowcase.Rail> fallback=new ArrayList<>();
+                for(Kind kind:new Kind[]{Kind.MOVIE,Kind.SERIES}){List<Item> rows=new ArrayList<>();for(Item item:items)if(item.kind==kind && rows.size()<18)rows.add(item);if(!rows.isEmpty())fallback.add(new CatalogShowcase.Rail(kind==Kind.MOVIE?"home-archive-movies":"home-archive-series",kind==Kind.MOVIE?"Filmler":"Diziler",rows));}
+                for(CatalogShowcase.Rail row:selected.rails)if("home-live".equals(row.id) && !row.items.isEmpty())fallback.add(row);
+                selected=new CatalogShowcase.Result(selected.hero,fallback);
+            }
+        }else if(page.section==Section.MOVIES){selected=CatalogShowcase.movies(items,day);archive=items;archiveTitle="Tüm Filmler";emptyHero=selected.hero.isEmpty();}
+        else if(page.section==Section.SERIES){selected=CatalogShowcase.series(items,day);archive=items;archiveTitle="Tüm Diziler";}
+        else{
+            List<CatalogShowcase.Rail> rows=new ArrayList<>();for(Kind kind:new Kind[]{Kind.LIVE,Kind.MOVIE,Kind.SERIES}){List<Item> entries=new ArrayList<>();for(Item item:items)if(item.kind==kind)entries.add(item);if(!entries.isEmpty())rows.add(new CatalogShowcase.Rail("favorites-"+kind.name().toLowerCase(Locale.ROOT),kind==Kind.LIVE?"Canlı TV":kind==Kind.MOVIE?"Filmler":"Diziler",entries));}selected=new CatalogShowcase.Result(Collections.emptyList(),rows);
+        }
+        final Page owner=page;final String scope=repository.currentScope();final long ticket=generation;
+        int viewportHeight=Math.max(80,sizing.height-(sizing.shortScreen?20:34)-(page.section==Section.HOME?0:sizing.heading+8)-58);
+        discovery=new DiscoveryScreen(this,sizing,viewportHeight,selected,archive,archiveTitle,emptyHero,page.heroKey,new DiscoveryScreen.Actions(){
+            private boolean current(Item item){return page==owner && screenAlive(ticket) && scope.equals(repository.currentScope()) && item!=null && scope.equals(item.scope);}
+            public void play(Item item){if(current(item)){captureGrid();MainActivity.this.play(item);}}
+            public void information(Item item){if(current(item)){captureGrid();showInformation(item);}}
+            public boolean isFavorite(Item item){return repository.isFavorite(item);}
+            public void favorite(Item item,Button button){
+                String key=scope+"\0"+item.key();if(!current(item) || favoriteMutations.containsKey(key))return;
+                Object operation=new Object();favoriteMutations.put(key,operation);button.setClickable(false);button.setContentDescription("Favori kaydediliyor");
+                repository.toggleFavorite(item,new TvRepository.Callback<Boolean>(){
+                    private boolean release(){
+                        if(favoriteMutations.get(key)!=operation)return false;favoriteMutations.remove(key);
+                        if(discovery!=null && discovery.isDescendant(button) && discovery.selectedHero().equals(item.key()))button.setClickable(true);
+                        return true;
+                    }
+                    public void onResult(Boolean saved){if(!release() || !current(item))return;pages.get(Section.FAVORITES).catalog=null;if(discovery!=null && discovery.selectedHero().equals(item.key())){button.setText(Boolean.TRUE.equals(saved)?"♥":"♡");button.setContentDescription(Boolean.TRUE.equals(saved)?"Favorilerden çıkar":"Favorilere ekle");}}
+                    public void onError(Failure failure){if(!release() || !current(item))return;if(discovery!=null && discovery.selectedHero().equals(item.key()))button.setContentDescription(repository.isFavorite(item)?"Favorilerden çıkar":"Favorilere ekle");if(failure.code==Failure.Code.STALE)return;if(failure.code==Failure.Code.AUTH)sessionEnded(failure.message);else notice("Favori kaydedilemedi. Tekrar deneyebilirsin.");}
+                });
+            }
+            public void focused(Item item){if(current(item)){owner.focusKey=item.key();if(hasWindowFocus())posterSound.focused(scope,owner.section.name()+":"+item.key());}}
+            public void sidebar(){rail[owner.section.ordinal()].requestFocus();posterSound.leftPosters();}
+            public void toolbar(){search.requestFocus();posterSound.leftPosters();}
+            public void bind(ImageView image,Item item){loadArtwork(image,item.artwork);}
+            public void unbind(ImageView image){artwork.unbind(image);}
+        });
+        grid=discovery;body.addView(discovery,new LinearLayout.LayoutParams(-1,0,1));search.setNextFocusDownId(discovery.getId());
+        String wanted=page.discoveryFocus;
+        if(contentFocus && wanted.isEmpty() && !page.focusKey.isEmpty()){discovery.restore(page.scroll,page.scrollOffset,"",false);if(!discovery.focusItem(page.focusKey))discovery.restore(page.scroll,page.scrollOffset,"",true);}
+        else discovery.restore(page.scroll,page.scrollOffset,wanted,contentFocus);
+    }
+    private CatalogShowcase.Result retainFocusedHomeHero(CatalogShowcase.Result selected,List<Item> items){
+        if(!page.discoveryFocus.startsWith("hero/") || page.heroKey.isEmpty())return selected;
+        for(Item item:selected.hero)if(item.key().equals(page.heroKey))return selected;
+        Item retained=null;for(Item item:items)if(item.key().equals(page.heroKey) && item.kind!=Kind.LIVE && item.releaseYear==2026 && !item.artwork.trim().isEmpty()){retained=item;break;}
+        if(retained==null)return selected;
+        int limit=Math.max(1,selected.hero.size());List<Item> hero=new ArrayList<>();hero.add(retained);for(Item item:selected.hero)if(hero.size()<limit)hero.add(item);
+        java.util.Set<String> heroKeys=new java.util.HashSet<>(),heroTitles=new java.util.HashSet<>();for(Item item:hero){heroKeys.add(item.key());heroTitles.add(showcaseTitle(item));}
+        List<CatalogShowcase.Rail> rows=new ArrayList<>();
+        for(CatalogShowcase.Rail row:selected.rails){
+            List<Item> candidates=new ArrayList<>();
+            for(Item item:selected.hero)if(!heroKeys.contains(item.key()) && (item.kind==Kind.MOVIE && row.id.equals("home-movies") || item.kind==Kind.SERIES && row.id.equals("home-series")))candidates.add(item);
+            candidates.addAll(row.items);List<Item> entries=new ArrayList<>();java.util.Set<String> ids=new java.util.HashSet<>(),titles=new java.util.HashSet<>();
+            for(Item item:candidates)if(entries.size()<18 && !heroKeys.contains(item.key()) && !heroTitles.contains(showcaseTitle(item)) && ids.add(item.key()) && titles.add(showcaseTitle(item)))entries.add(item);
+            rows.add(new CatalogShowcase.Rail(row.id,row.title,entries));
+        }
+        return new CatalogShowcase.Result(hero,rows);
+    }
+    private static String showcaseTitle(Item item){return item.kind.name()+":"+java.text.Normalizer.normalize(item.title,java.text.Normalizer.Form.NFKC).trim().replaceAll("\\s+"," ").toLowerCase(Locale.ROOT);}
+    private void showInformation(Item item){
+        String metadata=(item.releaseYear>0?item.releaseYear+" · ":"")+(item.kind==Kind.SERIES?"Dizi":"Film")+(item.categoryName.isEmpty()?"":" · "+item.categoryName);
+        String message=metadata+(item.description.isEmpty()?"":"\n\n"+item.description);
+        AlertDialog detail=new AlertDialog.Builder(this).setTitle(item.title).setMessage(message).setNegativeButton("Kapat",null).setPositiveButton("İzle",(d,w)->informationSelection=item).create();
+        dialog=detail;afterOrdinaryDialog(detail);detail.setOnShowListener(d->detail.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus());detail.show();
     }
     private final class PosterAdapter extends RecyclerView.Adapter<PosterHolder> {
         private final List<Item> items; private final int toolbar,columns;private final boolean liveOnly;
@@ -579,7 +704,8 @@ public final class MainActivity extends Activity {
             holder.itemView.setElevation(TvUi.dp(MainActivity.this,holder.itemView.hasFocus()?8:0));
             holder.itemView.setOnFocusChangeListener((v,focus)->{v.setElevation(TvUi.dp(MainActivity.this,focus?8:0));if(focus){if(hasWindowFocus() && item.scope.equals(repository.currentScope()))posterSound.focused(item.scope,page.section.name()+":"+item.key());page.focusKey=item.key();int positionNow=holder.getBindingAdapterPosition();if(grid!=null && positionNow!=RecyclerView.NO_POSITION)grid.scrollToPosition(positionNow);}});
             holder.itemView.setOnClickListener(v->{captureGrid();play(item);}); loadArtwork(holder.image,item.artwork);
-            if(item.kind==Kind.LIVE){holder.image.setScaleType(ImageView.ScaleType.FIT_CENTER);int pad=TvUi.dp(MainActivity.this,14);holder.image.setPadding(pad,pad,pad,pad);}
+            if(item.kind==Kind.LIVE){holder.image.setBackground(TvUi.rounded(MainActivity.this,android.graphics.Color.WHITE,0,10,1));holder.image.setScaleType(ImageView.ScaleType.FIT_CENTER);int pad=TvUi.dp(MainActivity.this,14);holder.image.setPadding(pad,pad,pad,pad);}
+            else holder.image.setBackground(TvUi.rounded(MainActivity.this,TvUi.PANEL,0,10,1));
         }
         @Override public void onViewRecycled(PosterHolder holder) { artwork.unbind(holder.image); holder.itemView.setOnFocusChangeListener(null);holder.itemView.setElevation(0); }
     }
@@ -647,7 +773,7 @@ public final class MainActivity extends Activity {
         if(page.catalog==null)return;
         final Page owner=page;final Catalog snapshot=page.catalog;final long ticket=generation;final String scope=repository.currentScope();
         final Dialog[] panel={null};final boolean[] committed={false};
-        panel[0]=CatalogDialogs.categories(this,pageTitle(),CatalogFilterData.categories(snapshot,owner.query),owner.category,option->{
+        panel[0]=CatalogDialogs.categories(this,pageTitle(),owner.section==Section.FAVORITES?CatalogFilterData.favoriteCategories(snapshot,owner.query):CatalogFilterData.categories(snapshot,owner.query),owner.category,option->{
             committed[0]=true;
             if(!catalogOwner(owner,snapshot,ticket,scope)){panel[0].dismiss();return;}
             owner.category=option.id;owner.categoryTitle=option.title;owner.focusKey="";owner.scroll=0;
@@ -704,7 +830,8 @@ public final class MainActivity extends Activity {
     }
     private String safeMessage(String message) { return message==null || message.trim().isEmpty()?"İşlem tamamlanamadı. Lütfen tekrar deneyin.":message; }
     private void showFailure(String message,Runnable retry) {
-        while(body.getChildCount()>1)body.removeViewAt(1);
+        int headingCount=page.section==Section.HOME?0:1;
+        while(body.getChildCount()>headingCount)body.removeViewAt(headingCount);
         LinearLayout inner=scrollContent();
         TextView text=TvUi.text(this,safeMessage(message),20,TvUi.MUTED);inner.addView(text,TvUi.space(this,-1,-2));
         if(page.section==Section.ACCOUNT)addAccountActions(inner);

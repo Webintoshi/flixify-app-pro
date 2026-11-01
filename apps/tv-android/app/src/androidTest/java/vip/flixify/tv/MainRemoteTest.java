@@ -198,8 +198,13 @@ public class MainRemoteTest {
         down(1); focused("Yıldız Günlükleri");directPlayer(repository.show);focused("Yıldız Günlükleri");
     }
     @Test public void movieStartsDirectlyAndReturnsToSamePoster() {
-        launch(true); down(2); click(); key(KeyEvent.KEYCODE_DPAD_RIGHT); down(1); focused("Uzay Yolculuğu");
-        directPlayer(repository.movie);focused("Uzay Yolculuğu");
+        launch(true); down(2); click(); key(KeyEvent.KEYCODE_DPAD_RIGHT); down(1);awaitPosterFocus(repository.movie);focused("Uzay Yolculuğu");
+        directPlayer(repository.movie);awaitPosterFocus(repository.movie);focused("Uzay Yolculuğu");
+    }
+    private void awaitPosterFocus(Item item){
+        long deadline=SystemClock.uptimeMillis()+3000;boolean[] ready={false};String[] actual={"No focused view"};
+        do{idle();instrumentation.runOnMainSync(()->{View focus=activity.getCurrentFocus();android.graphics.Rect visible=new android.graphics.Rect();ready[0]=activity.hasWindowFocus() && focus!=null && item.key().equals(focus.getTag()) && focus.getGlobalVisibleRect(visible) && !visible.isEmpty();actual[0]=focus==null?"No focused view":"text="+(focus instanceof TextView?((TextView)focus).getText():focus.getContentDescription())+", tag="+focus.getTag()+", visible="+visible+", windowFocused="+activity.hasWindowFocus();});if(!ready[0])SystemClock.sleep(25);}while(!ready[0] && SystemClock.uptimeMillis()<deadline);
+        assertTrue("Remote reaches "+item.title+" ["+item.key()+"] after its RecyclerView layout frame; actual "+actual[0],ready[0]);
     }
     @Test public void repeatedCardClickInSameEventLoopLaunchesOnlyOnePlayer() {
         launch(true);down(2);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);focused("Uzay Yolculuğu");
@@ -227,7 +232,7 @@ public class MainRemoteTest {
         waitForFocusedCategoryList();down(2); click(); visible("Sessiz Deniz"); absent("Uzay Yolculuğu");
         key(KeyEvent.KEYCODE_BACK); visible("Uzay Yolculuğu");
     }
-    @Test public void curatedLiveRefreshLeavesVanishedVipCategoryAndKeepsRemoteCatalogUsable() {
+    @Test public void curatedLiveRefreshPreservesFriendlyCategoryAndKeepsRemoteCatalogUsable() {
         String scope=repository.scope;
         Item firstVip=new Item(Kind.LIVE,"34","TR | ATV FHD","vip","TR | VIP","","ts",scope,"",0,0,"");
         Item trt=new Item(Kind.LIVE,"45","TR | TRT1","public","TR | TRT","","ts",scope,"",0,0,"");
@@ -235,26 +240,28 @@ public class MainRemoteTest {
         Catalog initial=vip.flixify.tv.data.LiveChannelCuration.curate(new Catalog(Kind.LIVE,java.util.Arrays.asList(firstVip,trt),initialGroups),java.util.Collections.emptySet()).catalog;
         repository.catalogOverrides.put(Kind.LIVE,initial);
         launch(true);down(1);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_RIGHT);focused("Kategori: Tümü");click();
-        waitForFocusedCategoryList();down(1);click();visible("Kategori: TR | VIP");absent("TRT1");
+        waitForFocusedCategoryList();down(2);click();visible("Kategori: Türkiye · Ulusal");visible("TRT1");
         Item old=new Item(Kind.LIVE,"34","TR | ATV HD","vip","TR | VIP","","ts",scope,"",0,0,"");
         Item fhd=new Item(Kind.LIVE,"35","TR | ATV FHD","regular","TR | Ulusal","","ts",scope,"",0,0,"");
         java.util.List<Category> groups=java.util.Arrays.asList(new Category("vip","TR | VIP"),new Category("regular","TR | Ulusal"),new Category("public","TR | TRT"));
         Catalog updated=vip.flixify.tv.data.LiveChannelCuration.curate(new Catalog(Kind.LIVE,java.util.Arrays.asList(old,fhd,trt),groups),java.util.Collections.emptySet()).catalog;
         instrumentation.runOnMainSync(()->{repository.catalogOverrides.put(Kind.LIVE,updated);repository.publishCatalog(updated);});idle();
-        visible("Kategori: Tümü");visible("ATV");visible("TRT1");absent("İçerik bulunamadı.");
+        visible("Kategori: Türkiye · Ulusal");visible("ATV");visible("TRT1");absent("İçerik bulunamadı.");
         instrumentation.runOnMainSync(()->{View card=activity.getWindow().getDecorView().findViewWithTag(fhd.key());assertNotNull(card);assertTrue(card.requestFocus());});idle();focused("ATV");directPlayer(fhd);focused("ATV");
     }
     @Test public void favoriteAliasRefreshResetsOnlyVanishedCategoryAndKeepsValidMovieCategory() {
         repository.saved.add(repository.movie.key());repository.saved.add(repository.live.key());
         launch(true);down(4);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_RIGHT);click();
-        waitForFocusedCategoryList();down(2);click();visible("Kategori: Genel");visible("Örnek TV");absent("Uzay Yolculuğu");
+        waitForFocusedCategoryList();down(1);click();visible("Kategori: Canlı TV");visible("Örnek TV");absent("Uzay Yolculuğu");
         Item selected=new Item(Kind.LIVE,"450","Örnek TV","regular","Ulusal","","ts",repository.scope,"",0,0,"");
         Catalog updated=new Catalog(Kind.LIVE,java.util.Collections.singletonList(selected),java.util.Collections.singletonList(new Category("regular","Ulusal")));
         instrumentation.runOnMainSync(()->{repository.saved.add(selected.key());repository.publishCatalog(updated);});idle();
-        visible("Kategori: Tümü");visible("Örnek TV");visible("Uzay Yolculuğu");absent("İçerik bulunamadı.");
+        visible("Kategori: Canlı TV");visible("Örnek TV");absent("Uzay Yolculuğu");
+        instrumentation.runOnMainSync(()->{repository.saved.remove(repository.live.key());repository.saved.remove(selected.key());repository.publishCatalog(updated);});idle();
+        visible("Kategori: Tümü");absent("Örnek TV");visible("Uzay Yolculuğu");absent("İçerik bulunamadı.");
         instrumentation.runOnMainSync(()->{View category=find(activity.getWindow().getDecorView(),"Kategori: Tümü");assertNotNull(category);assertTrue(category.requestFocus());});idle();click();
-        waitForFocusedCategoryList();down(1);click();visible("Kategori: Bilim Kurgu");visible("Uzay Yolculuğu");absent("Örnek TV");
-        instrumentation.runOnMainSync(()->repository.publishCatalog(updated));idle();visible("Kategori: Bilim Kurgu");visible("Uzay Yolculuğu");absent("Örnek TV");
+        waitForFocusedCategoryList();down(1);click();visible("Kategori: Filmler");visible("Uzay Yolculuğu");absent("Örnek TV");
+        instrumentation.runOnMainSync(()->repository.publishCatalog(updated));idle();visible("Kategori: Filmler");visible("Uzay Yolculuğu");absent("Örnek TV");
     }
     @Test public void failedLoadHasRemoteRetryAndLateResultsCannotReplaceAccount() {
         repository.failCatalog=true; launch(true); visible("Bağlantı kurulamadı");

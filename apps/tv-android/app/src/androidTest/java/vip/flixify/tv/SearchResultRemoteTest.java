@@ -72,7 +72,8 @@ public final class SearchResultRemoteTest {
         Item second=new Item(Kind.MOVIE,"second","Avengers","2","Drama","","mp4",repository.scope,"",0,0,"");
         repository.catalogOverrides.put(Kind.MOVIE,new Catalog(Kind.MOVIE,Arrays.asList(first,second),Arrays.asList(new Category("1","Bilim Kurgu"),new Category("2","Drama"))));
         launch();instrumentation.runOnMainSync(()->text(activity.findViewById(android.R.id.content),"Kategori: Tümü").requestFocus());key(KeyEvent.KEYCODE_DPAD_CENTER);await("Category panel focused",()->tag("tv_categories_list")!=null && tag("tv_categories_list").hasFocus());key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_CENTER);
-        await("Drama category applied",()->text(activity.findViewById(android.R.id.content),"Kategori: Drama")!=null);
+        await("Drama category applied",()->text(activity.findViewById(android.R.id.content),"Kategori: Film · Drama")!=null);
+        instrumentation.runOnMainSync(()->{try{Field pageField=MainActivity.class.getDeclaredField("page");pageField.setAccessible(true);Object page=pageField.get(activity);Field category=page.getClass().getDeclaredField("category");category.setAccessible(true);assertEquals("@catalog/MOVIE/2",category.get(page));}catch(ReflectiveOperationException error){throw new AssertionError(error);}});
         openSearch("Avengers");Item chosen=selectResultWithRemote("Avengers");assertEquals("second",chosen.id);
     }
     @Test public void seriesResultUsesTheExistingDirectSeriesPlayer(){

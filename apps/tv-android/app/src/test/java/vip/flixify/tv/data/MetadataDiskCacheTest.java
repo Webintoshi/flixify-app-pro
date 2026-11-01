@@ -157,4 +157,37 @@ public class MetadataDiskCacheTest {
         cache.writeCatalog(SCOPE,EXPIRY,NOW,live,()->true);
         assertEquals("ts",cache.readCatalog(SCOPE,Kind.LIVE,EXPIRY,NOW+1).value.items.get(0).extension);
     }
+
+    @Test public void releaseEvidenceSurvivesCatalogSeriesAndFavoriteSnapshots()throws Exception{
+        File root=directory();MetadataDiskCache cache=new MetadataDiskCache(root);
+        Item explicit=new Item(Kind.MOVIE,"12","Film (2026)","9","Filmler","","mp4",SCOPE,"",0,0,"",2025);
+        Item conflict=new Item(Kind.MOVIE,"13","Conflict (2026)","9","Filmler","","mp4",SCOPE,"",0,0,"",0);
+        cache.writeCatalog(SCOPE,EXPIRY,NOW,new Catalog(Kind.MOVIE,Arrays.asList(explicit,conflict),Collections.emptyList()),()->true);
+        Catalog restored=new MetadataDiskCache(root).readCatalog(SCOPE,Kind.MOVIE,EXPIRY,NOW+1).value;
+        assertEquals(2025,restored.items.get(0).releaseYear);assertEquals(0,restored.items.get(1).releaseYear);
+        cache.writeLibrary(SCOPE,EXPIRY,NOW,new MetadataDiskCache.Library(Collections.singleton("MOVIE::13"),Collections.emptySet(),Collections.singletonList(conflict)),()->true);
+        assertEquals(0,new MetadataDiskCache(root).readLibrary(SCOPE,EXPIRY,NOW+1).value.items.get(0).releaseYear);
+        Item parent=new Item(Kind.SERIES,"56","Series (2026)","9","Diziler","","",SCOPE,"",0,0,"",2025);
+        cache.writeSeries(SCOPE,EXPIRY,NOW,new SeriesDetail(parent,Collections.singletonList(new Season(1,Collections.singletonList(item(Kind.EPISODE,"61",SCOPE))))),()->true);
+        assertEquals(2025,new MetadataDiskCache(root).readSeries(SCOPE,"56",EXPIRY,NOW+1).value.series.releaseYear);
+    }
+    private void legacyString(java.io.DataOutputStream output,String value)throws Exception{byte[] bytes=value.getBytes(StandardCharsets.UTF_8);output.writeInt(bytes.length);output.write(bytes);}
+    private void legacyItem(java.io.DataOutputStream output,Kind kind,String id,String title,String parent)throws Exception{
+        output.writeByte(kind.ordinal());for(String value:new String[]{id,title,"9","Filmler","","mp4",parent})legacyString(output,value);output.writeInt(kind==Kind.EPISODE?1:0);output.writeInt(kind==Kind.EPISODE?1:0);legacyString(output,"Description");
+    }
+    private void legacyRecord(File root,String key,byte[] payload)throws Exception{
+        byte[] identity=java.security.MessageDigest.getInstance("SHA-256").digest((SCOPE+"\u0000"+key).getBytes(StandardCharsets.UTF_8));StringBuilder name=new StringBuilder();for(byte value:identity)name.append(String.format(java.util.Locale.ROOT,"%02x",value&255));
+        try(java.io.DataOutputStream output=new java.io.DataOutputStream(new java.io.FileOutputStream(new File(root,name+".bin")))){output.writeInt(0x46434d31);output.write(identity);output.writeLong(NOW);output.writeLong(EXPIRY);output.writeInt(payload.length);output.write(java.security.MessageDigest.getInstance("SHA-256").digest(payload));output.write(payload);}
+    }
+    @Test public void legacySnapshotsRemainImmediatelyUsableAndRefreshMissingReleaseMetadata()throws Exception{
+        File root=directory();java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();java.io.DataOutputStream payload=new java.io.DataOutputStream(bytes);
+        payload.writeInt(1);legacyString(payload,"9");legacyString(payload,"Filmler");payload.writeInt(1);legacyItem(payload,Kind.MOVIE,"12","Legacy (2026)","");payload.flush();legacyRecord(root,"catalog:MOVIE",bytes.toByteArray());
+        MetadataDiskCache cache=new MetadataDiskCache(root);MetadataDiskCache.Snapshot<Catalog> restored=cache.readCatalog(SCOPE,Kind.MOVIE,EXPIRY,NOW+1);assertNotNull(restored);assertEquals(2026,restored.value.items.get(0).releaseYear);assertTrue(restored.stale(NOW+1));
+        bytes.reset();payload=new java.io.DataOutputStream(bytes);payload.writeInt(1);legacyString(payload,"MOVIE::12");payload.writeInt(0);payload.writeInt(1);legacyString(payload,"MOVIE::12");legacyItem(payload,Kind.MOVIE,"12","Legacy (2026)","");payload.flush();legacyRecord(root,"library:refs-v1",bytes.toByteArray());
+        assertEquals(2026,cache.readLibrary(SCOPE,EXPIRY,NOW+1).value.items.get(0).releaseYear);
+        bytes.reset();payload=new java.io.DataOutputStream(bytes);legacyItem(payload,Kind.SERIES,"56","Legacy series (2026)","");payload.writeInt(1);payload.writeInt(1);payload.writeInt(1);legacyItem(payload,Kind.EPISODE,"61","Episode","56");payload.flush();legacyRecord(root,"series:56",bytes.toByteArray());
+        assertEquals(2026,cache.readSeries(SCOPE,"56",EXPIRY,NOW+1).value.series.releaseYear);
+        cache.writeCatalog(SCOPE,EXPIRY,NOW+2,new Catalog(Kind.MOVIE,Collections.singletonList(new Item(Kind.MOVIE,"12","Legacy (2026)","9","Filmler","","mp4",SCOPE,"",0,0,"",0)),Collections.emptyList()),()->true);
+        assertEquals(0,new MetadataDiskCache(root).readCatalog(SCOPE,Kind.MOVIE,EXPIRY,NOW+3).value.items.get(0).releaseYear);
+    }
 }

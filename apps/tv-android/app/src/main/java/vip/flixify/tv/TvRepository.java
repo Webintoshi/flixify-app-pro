@@ -21,6 +21,8 @@ public interface TvRepository {
     void account(boolean force,Callback<Account> callback);
     void refreshAccess(Callback<Account> callback);
     void catalog(Kind kind,boolean force,Callback<Catalog> callback);
+    /** Home shelves may yield provider-only work when a player opens. */
+    default void homeCatalog(Kind kind,boolean force,Callback<Catalog> callback){catalog(kind,force,callback);}
     void series(Item series,Callback<SeriesDetail> callback);
     /** Latest resumable episode, then first unwatched; completed series restart at the first episode. */
     void startingEpisode(Item series,Callback<Item> callback);

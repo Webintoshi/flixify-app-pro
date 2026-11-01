@@ -14,6 +14,8 @@ import android.widget.TextView;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import java.util.Collections;
+import java.util.EnumMap;
+import java.util.Map;
 import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -25,8 +27,9 @@ public class StartupScreenTest {
     private final Instrumentation instrumentation=InstrumentationRegistry.getInstrumentation();
     private final FakeTvRepository repository=new FakeTvRepository();
     private MainActivity activity;
-    private void launch(boolean delayed) {
-        instrumentation.runOnMainSync(()->{repository.session=true;repository.delayCatalog=delayed;TvApplication.setRepositoryForTests(repository);});
+    private void launch(boolean delayed) {launch(delayed,repository);}
+    private void launch(boolean delayed,TvRepository source) {
+        instrumentation.runOnMainSync(()->{repository.session=true;repository.delayCatalog=delayed;TvApplication.setRepositoryForTests(source);});
         activity=(MainActivity)instrumentation.startActivitySync(new Intent(instrumentation.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
         instrumentation.waitForIdleSync();
     }
@@ -109,14 +112,21 @@ public class StartupScreenTest {
         instrumentation.runOnMainSync(repository::releaseDelayedCatalog);awaitReady(repository.movie.title,1500);
     }
     @Test public void networkFailureRevealsRetryInsteadOfHidingItBehindSpinner() {
-        launch(true);assertLoading();instrumentation.runOnMainSync(()->repository.delayedCatalog.onError(new Failure(Failure.Code.NETWORK,"Bağlantı kurulamadı")));awaitReady("Tekrar dene",1500);
-        instrumentation.runOnMainSync(()->{repository.delayCatalog=false;text(activity.getWindow().getDecorView(),"Tekrar dene").performClick();});awaitReady(repository.movie.title,1500);
+        Map<Kind,TvRepository.Callback<Catalog>> pending=new EnumMap<>(Kind.class);boolean[] delaying={true};
+        TvRepository source=(TvRepository)java.lang.reflect.Proxy.newProxyInstance(TvRepository.class.getClassLoader(),new Class<?>[]{TvRepository.class},(proxy,method,args)->{
+            if(delaying[0] && (method.getName().equals("catalog") || method.getName().equals("homeCatalog"))){pending.put((Kind)args[0],(TvRepository.Callback<Catalog>)args[2]);return null;}
+            return method.invoke(repository,args);
+        });
+        launch(true,source);assertLoading();assertEquals("All Home catalogs are pending",3,pending.size());
+        instrumentation.runOnMainSync(()->{pending.get(Kind.MOVIE).onError(new Failure(Failure.Code.NETWORK,"Bağlantı kurulamadı"));pending.get(Kind.SERIES).onError(new Failure(Failure.Code.NETWORK,"Bağlantı kurulamadı"));});assertLoading();
+        instrumentation.runOnMainSync(()->pending.get(Kind.LIVE).onError(new Failure(Failure.Code.NETWORK,"Bağlantı kurulamadı")));awaitReady("Tekrar dene",1500);
+        instrumentation.runOnMainSync(()->{assertNull("Ready Home failure must not retain a loading label above retry",text(activity.findViewById(android.R.id.content),"Yükleniyor…"));delaying[0]=false;repository.delayCatalog=false;text(activity.getWindow().getDecorView(),"Tekrar dene").performClick();});awaitReady(repository.movie.title,1500);
     }
     @Test public void authorizationFailureRevealsLogin() {
         launch(true);assertLoading();instrumentation.runOnMainSync(()->repository.delayedCatalog.onError(new Failure(Failure.Code.AUTH,"Tekrar giriş yapın")));awaitReady("Giriş yap",1500);
     }
     @Test public void emptyCatalogIsAReadySurface() {
-        repository.catalogOverrides.put(Kind.MOVIE,new Catalog(Kind.MOVIE,Collections.emptyList(),Collections.emptyList()));launch(false);awaitReady("İçerik bulunamadı.",1500);
+        for(Kind kind:new Kind[]{Kind.MOVIE,Kind.SERIES,Kind.LIVE})repository.catalogOverrides.put(kind,new Catalog(kind,Collections.emptyList(),Collections.emptyList()));launch(false);awaitReady("İçerik bulunamadı.",1500);
     }
     @Test public void stoppedActivityCallbackCannotDismissReplacementStartup() {
         launch(true);assertLoading();TvRepository.Callback<Catalog> old=repository.delayedCatalog;

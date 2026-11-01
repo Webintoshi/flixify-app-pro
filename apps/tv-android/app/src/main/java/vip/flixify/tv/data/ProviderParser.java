@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TimeZone;
 import vip.flixify.tv.TvModels.*;
+import vip.flixify.tv.CatalogReleaseYear;
 
 /** Pure validation of untrusted, personally scoped provider data. Never includes source data in failures. */
 public final class ProviderParser {
@@ -196,7 +197,9 @@ public final class ProviderParser {
             String ext=extension(declared);if(ext.isEmpty() && kind==Kind.LIVE)ext=missing?"ts":"m3u8";
             if(kind==Kind.MOVIE && (group.isEmpty() || !SAFE_MOVIE_NAMES.contains(label(group)) || ext.isEmpty()))return;
             Object art=row.isNull("stream_icon")?row.opt("cover"):row.opt("stream_icon");
-            result.add(new Item(kind,key,title,groupId,group,artwork(art),ext,scope,"",0,0,text(row.opt("plot"),8192)));
+            Map<String,Object> release=new HashMap<>();for(String field:new String[]{"year","release_year","releaseYear","releaseDate","release_date"})if(!row.isNull(field))release.put(field,row.opt(field));
+            int releaseYear=kind==Kind.LIVE?0:CatalogReleaseYear.fromMetadata(release,title);
+            result.add(new Item(kind,key,title,groupId,group,artwork(art),ext,scope,"",0,0,text(row.opt("plot"),8192),releaseYear));
             seen.add(key);usedGroups.add(groupId);
         }
         Catalog finish(){List<Category> categories=new ArrayList<>();for(Map.Entry<String,String> group:groups.entrySet())if(usedGroups.contains(group.getKey()))categories.add(new Category(group.getKey(),group.getValue()));return new Catalog(kind,result,categories);}

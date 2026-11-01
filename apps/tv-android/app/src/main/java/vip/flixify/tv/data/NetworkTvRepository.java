@@ -161,8 +161,9 @@ public final class NetworkTvRepository implements TvRepository {
         Pending(long auth,String scope,boolean sourceBound) {this.auth=auth;this.scope=scope;this.sourceBound=sourceBound;}
     }
     private static final class Prepared<T> {
-        final Work<T> work; final long source; final String scope;
-        Prepared(Work<T> work,long source,String scope) {this.work=work;this.source=source;this.scope=scope;}
+        final Work<T> work; final long source; final String scope; final java.util.concurrent.Executor background;
+        Prepared(Work<T> work,long source,String scope) {this(work,source,scope,null);}
+        Prepared(Work<T> work,long source,String scope,java.util.concurrent.Executor background) {this.work=work;this.source=source;this.scope=scope;this.background=background;}
     }
     private interface Preparation<T> { Prepared<T> run(long auth) throws Exception; }
     private <T> void enqueue(String name,boolean sourceBound,Callback<T> callback,Work<T> work) {
@@ -182,7 +183,7 @@ public final class NetworkTvRepository implements TvRepository {
             try {
                 checkAuth(operation.auth);Prepared<T> prepared=preparation.run(operation.auth);checkAuth(operation.auth);
                 Runnable request=()->runPrepared(key,operation,prepared);
-                if(optional)epgWorker.execute(request);else request.run();
+                if(prepared.background!=null)prepared.background.execute(request);else if(optional)epgWorker.execute(request);else request.run();
             } catch(RejectedExecutionException rejected) {complete(key,operation,null,failure(new Problem(Failure.Code.LIMIT)),-1,null);}
             catch(Exception error) {complete(key,operation,null,failure(error),-1,null);}
         }); } catch(RejectedExecutionException ignored) {
@@ -431,6 +432,24 @@ public final class NetworkTvRepository implements TvRepository {
             @Override public void onError(Failure issue){if(callback!=null)callback.onError(issue);}
         },auth->{ProviderParser.Bootstrap b=bootstrap(auth,false);boolean refs=restoreLibrary(auth,b);Catalog local=force?null:cachedCatalog(auth,b,kind);if(local!=null){rebuildFavorites();return local;}if(!refs)library(auth,b,false);return catalogFor(auth,b,kind,force);});
     }
+    @Override public void homeCatalog(Kind kind,boolean force,Callback<Catalog> callback){
+        enqueuePrepared("home-catalog-"+kind+(force?"-fresh":""),true,new Callback<Catalog>(){
+            public void onResult(Catalog value){if(callback!=null)callback.onResult(value);if(!force)refreshCatalogIfStale(kind);refreshLibraryIfStale();}
+            public void onError(Failure issue){if(callback!=null)callback.onError(issue);}
+        },auth->{
+            ProviderParser.Bootstrap b=bootstrap(auth,false);boolean refs=restoreLibrary(auth,b);
+            Catalog local=force?null:cachedCatalog(auth,b,kind);long source=guard.generation();
+            if(local!=null)return new Prepared<>(cachedAuth->{active(cachedAuth,source,b.scope());return local;},source,b.scope());
+            if(!refs)library(auth,b,false);
+            // Only provider metadata runs here; API calls and token rotation stay in preparation.
+            return new Prepared<>(optionalAuth->{
+                metadataActive(optionalAuth,source,b.scope(),true);
+                Catalog cached=force?null:cachedCatalog(optionalAuth,b,kind,true);if(cached!=null)return cached;
+                long ticket;synchronized(lock){Long current=catalogFetches.get(kind);ticket=current==null?0:current;}
+                return fetchCatalog(optionalAuth,b,source,kind,true,ticket,true,force);
+            },source,b.scope(),metadataWorker);
+        },false);
+    }
     private boolean optionalWorkAllowed(){return !BackgroundWorkGate.isPlaybackActive() && clock.now()>=optionalWorkPausedUntil;}
     private boolean pendingLivePlaybackLocked(String scope){
         if(scope.isEmpty())return false;
@@ -492,11 +511,12 @@ public final class NetworkTvRepository implements TvRepository {
         return fetchCatalog(auth,b,guard.generation(),kind,false,-1);
     }
     private Catalog fetchCatalog(long auth,ProviderParser.Bootstrap b,long source,Kind kind,boolean optional,long queuedTicket) throws Exception {return fetchCatalog(auth,b,source,kind,optional,queuedTicket,false);}
-    private Catalog fetchCatalog(long auth,ProviderParser.Bootstrap b,long source,Kind kind,boolean optional,long queuedTicket,boolean allowMissing) throws Exception {
+    private Catalog fetchCatalog(long auth,ProviderParser.Bootstrap b,long source,Kind kind,boolean optional,long queuedTicket,boolean allowMissing) throws Exception {return fetchCatalog(auth,b,source,kind,optional,queuedTicket,allowMissing,false);}
+    private Catalog fetchCatalog(long auth,ProviderParser.Bootstrap b,long source,Kind kind,boolean optional,long queuedTicket,boolean allowMissing,boolean allowFresh) throws Exception {
         final long ticket;
         synchronized(lock){
             metadataActive(auth,source,b.scope(),optional);Long previous=catalogFetches.get(kind);long current=previous==null?0:previous;
-            if(optional && (current!=queuedTicket || foregroundCatalogFetches.containsKey(kind) || !allowMissing && !catalogs.containsKey(kind) || catalogs.containsKey(kind) && !cacheStale(catalogSavedAt.get(kind))))throw new Problem(Failure.Code.STALE);
+            if(optional && (current!=queuedTicket || foregroundCatalogFetches.containsKey(kind) || !allowMissing && !catalogs.containsKey(kind) || !allowFresh && catalogs.containsKey(kind) && !cacheStale(catalogSavedAt.get(kind))))throw new Problem(Failure.Code.STALE);
             ticket=current+1;catalogFetches.put(kind,ticket);if(!optional)foregroundCatalogFetches.put(kind,ticket);
         }
         try {
@@ -553,7 +573,7 @@ public final class NetworkTvRepository implements TvRepository {
         String art=item.artwork;
         String decoded=art;try{decoded=new java.net.URI(art).getPath();}catch(Exception ignored){art="";}
         if(art.contains(b.username) || art.contains(b.password) || art.contains(ProviderParser.encode(b.username)) || art.contains(ProviderParser.encode(b.password)) || (decoded!=null && (decoded.contains(b.username) || decoded.contains(b.password))))art="";
-        return new Item(item.kind,item.id,item.title,item.categoryId,item.categoryName,art,item.extension,item.scope,item.seriesId,item.season,item.episode,item.description,item.sourceTitle);
+        return new Item(item.kind,item.id,item.title,item.categoryId,item.categoryName,art,item.extension,item.scope,item.seriesId,item.season,item.episode,item.description,item.sourceTitle,item.releaseYear);
     }
     @Override public void series(Item series,Callback<SeriesDetail> callback) {
         enqueue("series-"+(series==null?"":series.id),true,new Callback<SeriesDetail>(){

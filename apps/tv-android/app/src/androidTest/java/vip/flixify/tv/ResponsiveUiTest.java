@@ -95,7 +95,7 @@ public class ResponsiveUiTest {
         instrumentation.runOnMainSync(()->{ViewGroup.LayoutParams p=viewport.getLayoutParams();p.width=TvUi.dp(activity,420);p.height=TvUi.dp(activity,280);viewport.setLayoutParams(p);});
         settle();instrumentation.runOnMainSync(repository::releaseLogin);settle();
         focusVisible("Ana Sayfa");
-        instrumentation.runOnMainSync(()->assertNotNull("Accepted login result must render home",find(viewport,"Sizin için")));
+        instrumentation.runOnMainSync(()->{assertTrue("Accepted login retains its authenticated session",repository.hasSession());assertNotNull("Accepted login result must render Home discovery",viewport.findViewWithTag("tv-discovery"));assertNotNull("Home retains its active navigation rail",find(viewport,"Ana Sayfa"));});
     }
     @Test public void longPosterRemainsReachableInShortVirtualizedCatalog() {
         launch(true,620,330);down(2);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);

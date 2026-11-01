@@ -114,10 +114,10 @@ public class ProviderParserTest {
         Catalog raw=ProviderParser.catalog(Kind.LIVE,rows,categories("TR: Ulusal"),b.scope());
         Catalog result=ProviderParser.filterLiveCatalog(raw,b);
         assertEquals("Exactly one variant and the unlabeled TRT channel must remain",2,result.items.size());
-        assertEquals("42",result.items.get(0).id);assertEquals("ATV",result.items.get(0).title);
-        assertEquals("44",result.items.get(1).id);assertEquals("TRT 1",result.items.get(1).title);
+        assertEquals("Website lineup puts TRT 1 before ATV","44",result.items.get(0).id);assertEquals("TRT 1",result.items.get(0).title);
+        assertEquals("42",result.items.get(1).id);assertEquals("ATV",result.items.get(1).title);
         assertEquals("TR | ATV HD",raw.items.get(0).title);assertEquals(4,raw.items.size());
-        assertEquals("https://provider.test/live/private%20user/secret%2Fpassword/42.ts",ProviderParser.mediaUrl(b,result.items.get(0),NOW));
+        assertEquals("https://provider.test/live/private%20user/secret%2Fpassword/42.ts",ProviderParser.mediaUrl(b,result.items.get(1),NOW));
     }
 
     @Test public void liveOwnerExclusionPrecedesCurationAndEmptyPolicyRestoresRawWinner() throws Exception {

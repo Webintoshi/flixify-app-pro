@@ -13,7 +13,7 @@ import vip.flixify.tv.TvModels.*;
 
 /** Parses one provider row at a time; unknown metadata never becomes a JSON tree. */
 final class ProviderCatalogReader {
-    private static final Set<String> FIELDS=new HashSet<>(Arrays.asList("stream_id","series_id","name","category_id","container_extension","stream_icon","cover","plot"));
+    private static final Set<String> FIELDS=new HashSet<>(Arrays.asList("stream_id","series_id","name","category_id","container_extension","stream_icon","cover","plot","year","release_year","releaseYear","releaseDate","release_date"));
     private ProviderCatalogReader(){}
     static Catalog read(Reader input,Kind kind,Object categories,String scope)throws IOException,ProviderParser.Invalid {
         JsonReader reader=new JsonReader(new BoundedJsonInput(input));reader.setLenient(false);

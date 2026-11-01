@@ -75,16 +75,16 @@ public class CatalogPanelsTest {
     @Test public void categoriesHaveCountsSelectedMarkerAndLocalFinder(){
         try(ActivityScenario<MainActivity> s=launch()){
             openCategories(s);
-            s.onActivity(a->{ListView list=(ListView)tag(a,"tv_categories_list");assertEquals(3,list.getAdapter().getCount());View selected=list.getSelectedView();assertTrue(selected instanceof Checkable && ((Checkable)selected).isChecked());assertTrue(selected.getContentDescription().toString().contains("2 içerik"));});
+            s.onActivity(a->{ListView list=(ListView)tag(a,"tv_categories_list");assertEquals(6,list.getAdapter().getCount());View selected=list.getSelectedView();assertTrue(selected instanceof Checkable && ((Checkable)selected).isChecked());assertTrue(selected.getContentDescription().toString().contains("4 içerik"));});
             key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_CENTER);
-            await(s,"Drama commits",a->text(a.findViewById(android.R.id.content),"Kategori: Drama")!=null);
+            await(s,"Drama commits",a->text(a.findViewById(android.R.id.content),"Kategori: Film · Drama")!=null);
             key(KeyEvent.KEYCODE_DPAD_UP);key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_CENTER);
-            await(s,"Selected Drama stays checked",a->{ListView list=(ListView)tag(a,"tv_categories_list");return list!=null && list.getSelectedView()!=null && "tv_category_2".equals(list.getSelectedView().getTag()) && ((Checkable)list.getSelectedView()).isChecked();});
+            await(s,"Selected Drama stays checked",a->{ListView list=(ListView)tag(a,"tv_categories_list");return list!=null && list.getSelectedView()!=null && "tv_category_@catalog/MOVIE/2".equals(list.getSelectedView().getTag()) && ((Checkable)list.getSelectedView()).isChecked();});
             key(KeyEvent.KEYCODE_DPAD_LEFT);draft(s,"tv_categories_filter","Bilim");
             await(s,"Category filtering stays local",a->((ListView)tag(a,"tv_categories_list")).getAdapter().getCount()==1);
-            s.onActivity(a->assertNotNull(text(a.findViewById(android.R.id.content),"Kategori: Drama")));
+            s.onActivity(a->assertNotNull(text(a.findViewById(android.R.id.content),"Kategori: Film · Drama")));
             key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_CENTER);
-            await(s,"Filtered category commits by ID",a->text(a.findViewById(android.R.id.content),"Kategori: Bilim Kurgu")!=null);
+            await(s,"Filtered category commits by ID",a->text(a.findViewById(android.R.id.content),"Kategori: Film · Bilim Kurgu")!=null);
         }
     }
     @Test public void searchEditorAndDraftSurviveUnderlyingResizeThenSubmit(){
@@ -120,7 +120,7 @@ public class CatalogPanelsTest {
                 android.util.Log.i("FlixifyFixture",state);
                 try{java.io.File directory=a.getExternalFilesDir(null);if(directory!=null)try(java.io.FileOutputStream output=new java.io.FileOutputStream(new java.io.File(directory,forceTouchMode?"native-category-forced-touch-after-ime.txt":"native-category-after-ime.txt"))){output.write(state.getBytes(java.nio.charset.StandardCharsets.UTF_8));}}catch(java.io.IOException diagnosticOnly){}
             });
-            key(KeyEvent.KEYCODE_DPAD_CENTER);await(s,"Category chosen after keyboard",a->text(a.findViewById(android.R.id.content),"Kategori: Drama")!=null);
+            key(KeyEvent.KEYCODE_DPAD_CENTER);await(s,"Category chosen after keyboard",a->text(a.findViewById(android.R.id.content),"Kategori: Film · Drama")!=null);
         }finally{if(forceTouchMode)InstrumentationRegistry.getInstrumentation().setInTouchMode(false);}
     }
     @Test public void changedSourceCannotApplyOldDialogDraft(){
@@ -134,7 +134,7 @@ public class CatalogPanelsTest {
     }
     @Test public void hundredsOfCategoriesStayVirtualizedAndFinderReachesLastId(){
         InstrumentationRegistry.getInstrumentation().runOnMainSync(()->TvApplication.setRepositoryForTests((TvRepository)Proxy.newProxyInstance(TvRepository.class.getClassLoader(),new Class<?>[]{TvRepository.class},(proxy,method,args)->{
-            if(method.getName().equals("catalog")){
+            if(method.getName().equals("catalog") || method.getName().equals("homeCatalog")){
                 List<Item> items=new ArrayList<>();List<Category> categories=new ArrayList<>();
                 for(int n=0;n<600;n++){String title="Kategori "+n+" · Uzun kategori açıklaması ve içerikler";categories.add(new Category("c"+n,title));items.add(new Item(Kind.MOVIE,""+n,"Film "+n,"c"+n,title,"","mp4",repository.scope,"",0,0,""));}
                 ((TvRepository.Callback<Catalog>)args[2]).onResult(new Catalog(Kind.MOVIE,items,categories));return null;

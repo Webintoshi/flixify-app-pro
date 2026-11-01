@@ -122,7 +122,10 @@ public class DeviceCacheUiTest {
     }
     @Test public void reorderingTheCatalogKeepsTheFocusedPosterEvenOffScreen() {
         launch();click("Filmler");
-        instrumentation.runOnMainSync(()->((View)find(activity.getWindow().getDecorView(),repository.movie.title).getParent()).requestFocus());
+        instrumentation.runOnMainSync(()->{DiscoveryScreen screen=activity.getWindow().getDecorView().findViewWithTag("tv-discovery");assertNotNull(screen);assertTrue(screen.focusItem(repository.movie.key()));});
+        long initialEnd=SystemClock.uptimeMillis()+4000;boolean[] initiallyFocused={false};
+        while(SystemClock.uptimeMillis()<initialEnd){instrumentation.runOnMainSync(()->{View focus=activity.getCurrentFocus();initiallyFocused[0]=focus!=null && repository.movie.key().equals(focus.getTag());});if(initiallyFocused[0])break;SystemClock.sleep(25);}
+        assertTrue("The source poster is focused before catalog insertions",initiallyFocused[0]);
         List<Item> moved=new ArrayList<>();for(int i=0;i<60;i++)moved.add(movie(Integer.toString(500+i),"Ek Film "+i));moved.add(repository.movie);
         instrumentation.runOnMainSync(()->repository.publishCatalog(new Catalog(Kind.MOVIE,moved,Collections.singletonList(new Category("1","Bilim Kurgu")))));
         long end=SystemClock.uptimeMillis()+4000;boolean[] restored={false};
