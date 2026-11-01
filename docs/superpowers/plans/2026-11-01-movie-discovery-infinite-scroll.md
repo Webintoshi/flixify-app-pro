@@ -28,7 +28,7 @@
 - [x] Integrate consumer catalogs and live list; retain explicit error retry and terminal-page detection. Preserve hover detail actions.
 - [x] Run selector, rendered lifecycle, pagination/root and existing catalog/search/payment regression tests. Check web TypeScript.
 - [x] Validate desktop/mobile in the browser with isolated fixture data; verify four sections, filters, continuing scroll, loading/error/end states and no horizontal page overflow. Do not start a real provider stream.
-- [ ] Measure independent source fingerprints for exact runtime leaves, build one guarded web candidate, publish and verify live browser results. Preserve all unrelated runtime and public files.
+- [x] Measure independent source fingerprints for exact runtime leaves, build one guarded web candidate, publish and verify live browser results. Preserve all unrelated runtime and public files.
 
 ## Review focus
 
