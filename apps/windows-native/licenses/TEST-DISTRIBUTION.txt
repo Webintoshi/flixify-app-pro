@@ -2,6 +2,6 @@ Flixify Pro Windows TEST distribution
 
 This test build is unsigned. Windows may display an unknown-publisher or SmartScreen warning. No verified publisher, warning-free installation, or production release status is claimed.
 
-The installer runs for the current user and includes its own Qt and VLC playback runtime. No separate VLC installation is needed. Account access remains subject to the existing Flixify service and subscription rules.
+The installer runs for the current user and includes its own Qt and VLC playback runtime. No separate VLC installation is needed. Account access remains subject to the existing Flixify service and package rules.
 
-The portable ZIP is a diagnostic package. Third-party licensing and exact runtime provenance are included under licenses/. Upstream third-party terms remain in force. No license to access unauthorized media is granted.
+The portable ZIP is a diagnostic package. Third-party licensing and exact runtime provenance are included under licenses/. Upstream third-party terms remain in force.
