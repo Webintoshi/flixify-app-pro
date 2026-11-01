@@ -178,6 +178,7 @@ QQuickItem *visual(QQuickItem *parent,const QString &name) {
 bool click(QQuickWindow *window, const QString &objectName) {
     auto item=visual(window->contentItem(),objectName);
     if(!item||!item->isVisible()||!item->isEnabled())return false;
+    window->requestActivate();QTest::qWait(50);
     const auto position=item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint();
     QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,position);QTest::qWait(30);return true;
 }
@@ -206,6 +207,7 @@ int main(int argc,char **argv) {
     auto argument=[&](const QString &name) { const auto args=app.arguments();const auto index=args.indexOf(name);return index>=0&&index+1<args.size()?args[index+1]:QString(); };
     const auto output=QFileInfo(argument("--output")).absoluteFilePath();
     const auto media=argument("--media");
+    const auto codecs=argument("--codec-fixtures");
     const bool catalogOnly=app.arguments().contains("--catalog-only");
     if(argument("--output").isEmpty() || (!catalogOnly&&!QFileInfo(media).isFile())) { qCritical("ui_smoke --output DIRECTORY --media LOCAL_VIDEO [--artwork-dir DIRECTORY]"); return 2; }
     QDir().mkpath(output);
@@ -261,6 +263,7 @@ int main(int argc,char **argv) {
     const auto seriesControl=visibleSeriesButton(root->contentItem(),QRectF(230,80,root->width()-250,root->height()-100));
     if(seriesControl.isEmpty()||!click(root,seriesControl))return finish("Series details control failed",18);
     if(!until([&]{return repository.seriesDetail()["seasons"].toList().size()==2;}))return finish("Series detail failed",18);
+    const auto verifiedDetail=repository.seriesDetail();
     if(!capture(root,QDir(output).filePath("series.png")))return finish("Series screenshot failed",19);
     QTest::keyClick(root,Qt::Key_Escape); if(!click(root,"nav-account"))return finish("Account navigation failed",20); QTest::qWait(100);
     if(!capture(root,QDir(output).filePath("account.png")))return finish("Account screenshot failed",20);
@@ -271,8 +274,23 @@ int main(int argc,char **argv) {
     report["fixtureHttp"]=http;
     if(!http)return finish("Required fixture HTTP flows were not exercised",22);
     if(!qmlErrors.isEmpty())return finish("Production QML reported runtime errors",23);
-    if(catalogOnly)return finish("Catalog preview only; native Windows playback remains unverified",0);
-    QVariantMap item=repository.seriesDetail()["seasons"].toList().first().toMap()["episodes"].toList().first().toMap();
+    if(catalogOnly) {
+        if(QFileInfo(media).isFile()) {
+            const auto probeItem=verifiedDetail["seasons"].toList().first().toMap()["episodes"].toList().first().toMap();
+            player.open({{"item",probeItem},{"url",QUrl::fromLocalFile(QFileInfo(media).absoluteFilePath()).toString()},{"expiresAt",fixture.expiry},{"scope",repository.scope()},{"resumeMs",0},{"next",QVariantMap{}}});
+            QQuickWindow *overlay=nullptr;
+            if(!until([&]{for(auto window:QGuiApplication::topLevelWindows())if(window->objectName()=="playerOverlay"&&window->isVisible())overlay=qobject_cast<QQuickWindow *>(window);return overlay!=nullptr;}))return finish("Menu probe player overlay missing",40);
+            if(!click(overlay,"playerSubtitleAction"))return finish("Menu probe subtitle button missing",40);
+            auto menu=overlay->findChild<QObject *>("playerSubtitleMenu");
+            if(!menu||!until([&]{return menu->property("visible").toBool();}))return finish("Menu probe subtitle menu missing",41);
+            QTest::keyClick(QGuiApplication::focusWindow()?QGuiApplication::focusWindow():overlay,Qt::Key_Escape);
+            if(!until([&]{return !menu->property("visible").toBool();})||!player.active())return finish(QString("Subtitle menu Escape failed: active=%1 visible=%2").arg(player.active()).arg(menu->property("visible").toBool()),42);
+            report["menuEscapePreserved"]=true;player.close();
+        }
+        return finish("Catalog preview only; native Windows playback remains unverified",0);
+    }
+    if(!QFileInfo(QDir(codecs).filePath("h264-mp2.ts")).isFile()||!QFileInfo(QDir(codecs).filePath("two-audio-subtitles.mkv")).isFile())return finish("Full playback verification requires --codec-fixtures DIRECTORY",34);
+    QVariantMap item=verifiedDetail["seasons"].toList().first().toMap()["episodes"].toList().first().toMap();
     player.open({{"item",item},{"url",QUrl::fromLocalFile(QFileInfo(media).absoluteFilePath()).toString()},{"expiresAt",fixture.expiry},{"scope",repository.scope()},{"resumeMs",0},{"next",repository.nextEpisode(item)}});
     if(!until([&]{return player.active()&&player.playing()&&player.hasVideoFrame()&&player.positionMs()>250;},30000))return finish("Native VLC did not produce real local video: "+player.error(),24);
     report["localMediaPlaying"]=true;
@@ -283,6 +301,33 @@ int main(int argc,char **argv) {
     if(!until([&]{return !player.controlsVisible();},4000))return finish("Player controls did not hide after idle",26);
     player.togglePause();if(!until([&]{return !player.playing()&&player.controlsVisible();}))return finish("Pause/controls state failed",27);
     player.close();if(!until([&]{return !player.active();}))return finish("Player did not close",28);
+    auto openLocal=[&](QVariantMap selected,const QString &path) { player.open({{"item",selected},{"url",QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath()).toString()},{"expiresAt",fixture.expiry},{"scope",repository.scope()},{"resumeMs",0},{"next",QVariantMap{}}}); };
+    auto playable=[](const QVariantList &tracks) { QList<int> result;for(const auto &entry:tracks)if(entry.toMap()["id"].toInt()>=0)result.append(entry.toMap()["id"].toInt());return result; };
+    QVariantMap live=channel;live["extension"]="ts";
+    QSignalSpy falseEnd(&player,&DesktopPlayer::playRequested);
+    openLocal(live,QDir(codecs).filePath("h264-mp2.ts"));
+    if(!until([&]{return player.playing()&&player.hasVideoFrame()&&player.positionMs()>250&&playable(player.audioTracks()).size()>=1;},30000))return finish("TS/MP2 fixture did not decode video and audio: "+player.error(),35);
+    if(!player.live()||!falseEnd.isEmpty()||player.nextCountdown()!=0)return finish("Live TS fixture incorrectly advanced an episode",36);
+    player.interact();if(!capture(video,QDir(output).filePath("ts-player.png")))return finish("TS player screenshot failed",37);
+    player.close();
+    openLocal(item,QDir(codecs).filePath("two-audio-subtitles.mkv"));
+    if(!until([&]{return player.playing()&&player.hasVideoFrame()&&playable(player.audioTracks()).size()>=2&&playable(player.subtitleTracks()).size()>=1;},30000))return finish("MKV fixture did not expose both audio tracks and subtitles: "+player.error(),38);
+    const auto audio=playable(player.audioTracks()),subtitles=playable(player.subtitleTracks());
+    player.selectAudio(audio[1]);player.selectSubtitle(subtitles[0]);
+    QTest::qWait(2400);
+    if(player.audioTrack()!=audio[1]||player.subtitleTrack()!=subtitles[0]||!player.playing())return finish("MKV selected audio/subtitle IDs did not persist after native track polling",39);
+    auto overlay=root->findChild<QQuickWindow *>("playerOverlay");
+    if(!overlay)for(auto window:QGuiApplication::topLevelWindows())if(window->objectName()=="playerOverlay")overlay=qobject_cast<QQuickWindow *>(window);
+    for(const auto &names:QList<QPair<QString,QString>>{{"playerAudioAction","playerAudioMenu"},{"playerSubtitleAction","playerSubtitleMenu"}}) {
+        player.interact();if(!overlay||!click(overlay,names.first))return finish("Track menu control failed",40);
+        auto menu=overlay->findChild<QObject *>(names.second);
+        if(!menu||!until([&]{return menu->property("visible").toBool();}))return finish("Track menu did not open",41);
+        QTest::keyClick(QGuiApplication::focusWindow()?QGuiApplication::focusWindow():overlay,Qt::Key_Escape);
+        if(!until([&]{return !menu->property("visible").toBool();})||!player.active())return finish(QString("Track menu Escape failed: active=%1 visible=%2").arg(player.active()).arg(menu->property("visible").toBool()),42);
+    }
+    player.interact();if(!capture(video,QDir(output).filePath("mkv-player.png")))return finish("MKV player screenshot failed",43);
+    report["codecFixtures"]=QJsonObject{{"tsMp2",true},{"mkvTracks",true}};
+    player.close();
     QFile corrupt(QDir(storage.path()).filePath("corrupt.avi"));
     if(!corrupt.open(QIODevice::WriteOnly))return finish("Corrupt-media fixture could not be created",30);
     corrupt.write("RIFF\x20\x00\x00\x00" "AVI LIST\x10\x00\x00\x00" "hdrlinvalid-local-fixture");corrupt.close();
@@ -290,7 +335,7 @@ int main(int argc,char **argv) {
     QSignalSpy refresh(&player,&DesktopPlayer::refreshRequested);
     player.open({{"item",item},{"url",QUrl::fromLocalFile(corrupt.fileName()).toString()},{"expiresAt",fixture.expiry},{"scope",repository.scope()},{"resumeMs",0},{"next",repository.nextEpisode(item)}});
     if(!until([&]{return !refresh.isEmpty();},35000))return finish("Corrupt local media did not enter bounded recovery",31);
-    const auto episodes=repository.seriesDetail()["seasons"].toList().first().toMap()["episodes"].toList();
+    const auto episodes=verifiedDetail["seasons"].toList().first().toMap()["episodes"].toList();
     if(episodes.size()<2)return finish("Second episode fixture missing",32);
     const auto second=episodes[1].toMap();
     player.open({{"item",second},{"url",QUrl::fromLocalFile(QFileInfo(media).absoluteFilePath()).toString()},{"expiresAt",fixture.expiry},{"scope",repository.scope()},{"resumeMs",0},{"next",repository.nextEpisode(second)}});

@@ -1,0 +1,9 @@
+{
+  "syntheticGeneratedLocally": true,
+  "inputs": "FFmpeg testsrc2 and sine lavfi generators, authored verification subtitles; no provider or user media",
+  "encoderPackage": "imageio-ffmpeg==0.6.0",
+  "sha256": {
+    "h264-mp2.ts": "0ce73f960ca17720fe6d707d2e2088bcb792760e65a3b59a7c9340eb2f6e70ae",
+    "two-audio-subtitles.mkv": "b8cc507c5cd2385806c1e4378a24558c44c2aec68c0beec12fa081dcf5c3fc97"
+  }
+}

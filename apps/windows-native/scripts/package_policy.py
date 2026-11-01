@@ -6,7 +6,8 @@ import re
 import struct
 from urllib.parse import urlparse
 
-SMOKE_SCREENS = ('home', 'live', 'search', 'series', 'account', 'player')
+SMOKE_SCREENS = ('home', 'live', 'search', 'series', 'account', 'player', 'ts-player', 'mkv-player')
+CODEC_FIXTURES = ('h264-mp2.ts', 'two-audio-subtitles.mkv')
 REQUIRED_FILES = ('Flixify Pro.exe', 'libvlc.dll', 'libvlccore.dll', 'Qt6Core.dll',
                   'Qt6Gui.dll', 'Qt6Quick.dll', 'platforms/qwindows.dll',
                   'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll',
@@ -83,11 +84,28 @@ def verify_smoke(root):
     for key in ('passed', 'localMediaPlaying', 'fixtureHttp'):
         if proof.get(key) is not True:
             raise ValueError('UI smoke did not verify ' + key)
+    codecs = proof.get('codecFixtures')
+    if not isinstance(codecs, dict) or any(codecs.get(key) is not True for key in ('tsMp2', 'mkvTracks')):
+        raise ValueError('UI smoke did not verify TS/MP2 playback and MKV track switching')
     for name in SMOKE_SCREENS:
         path = root / (name + '.png')
         if not path.is_file() or path.stat().st_size < 1024 or path.read_bytes()[:8] != b'\x89PNG\r\n\x1a\n':
             raise ValueError('Missing rendered screenshot: ' + name)
     return proof
+
+
+def verify_codec_fixtures(root):
+    root = Path(root)
+    provenance = json.loads((root / 'provenance.json').read_text(encoding='utf-8'))
+    hashes = provenance.get('sha256')
+    if provenance.get('syntheticGeneratedLocally') is not True or not isinstance(hashes, dict) or set(hashes) != set(CODEC_FIXTURES):
+        raise ValueError('Incomplete synthetic codec fixture provenance')
+    for name in CODEC_FIXTURES:
+        path = root / name
+        if not path.is_file() or path.is_symlink() or path.stat().st_size == 0:
+            raise ValueError('Missing synthetic codec fixture: ' + name)
+        verify_digest(path, hashes[name])
+    return provenance
 
 
 def pe_imports(data):

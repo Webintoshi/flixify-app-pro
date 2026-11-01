@@ -34,7 +34,7 @@ Packaging deploys Qt/QML/compiler libraries, the full VLC plugin tree and upstre
 The package gate requires:
 
 - Passing catalog, repository, player-policy and packaging checks.
-- A rendered fixture session with home/live/search/series/account/player PNGs and explicit successful local-media playback proof.
+- A rendered fixture session with home/live/search/series/account/player PNGs, TS/MP2 and MKV playback screenshots, successful local-media playback, and verified multiple audio/subtitle track switching.
 - AMD64 PE import closure against bundled libraries and Windows system DLLs.
 - An owned-content privacy scan, no debug symbols, and preserved upstream license/provenance files.
 - A real NSIS installer, successful silent install, matching installed executable, a visible application window, normal shutdown, and upgrade/uninstall checks preserving an extra user-created file.
@@ -49,9 +49,9 @@ The workflow fails when compilation, deployment, smoke evidence, dependencies, p
 ## Smoke harness contract
 
 ```text
-ui_smoke.exe --output <proof-directory> --media <local-file>
+ui_smoke.exe --output <proof-directory> --media <local-file> --codec-fixtures <tests/media> --artwork-dir <fixture-artwork>
 ```
 
-The harness writes `smoke.json` with boolean `passed`, `localMediaPlaying` and `fixtureHttp`, all true only after the associated checks, plus nonempty rendered `home.png`, `live.png`, `search.png`, `series.png`, `account.png` and `player.png`. Packaging generates an original 20-second moving AVI test pattern locally; no production account, provider content or remote test movie is used.
+The harness writes `smoke.json` with boolean `passed`, `localMediaPlaying` and `fixtureHttp`, all true only after the associated checks, plus `codecFixtures.tsMp2` and `codecFixtures.mkvTracks`, and nonempty rendered `home.png`, `live.png`, `search.png`, `series.png`, `account.png`, `player.png`, `ts-player.png` and `mkv-player.png`. The codec clips are synthetic test-only files whose SHA256 digests are checked against their committed provenance before the smoke harness runs. They are excluded from the installed and portable payloads. Packaging generates an original 20-second moving AVI test pattern locally; no production account, provider content or remote test movie is used.
 
 Original website favicon is copied verbatim to `resources/app.ico`. Original wordmark, app image and poster navigation sound are embedded under `/brand/`. See `CONTRACT.md` for app/QML interfaces and `licenses/` for distribution notices.

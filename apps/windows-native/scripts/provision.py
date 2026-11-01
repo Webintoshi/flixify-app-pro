@@ -61,6 +61,43 @@ def extract_licenses(archive, destination):
             raise ValueError('No upstream licenses in ' + archive.name)
 
 
+def required_layout(qt, dependencies, vlc_version, nsis_version):
+    qt_files = (
+        'bin/windeployqt.exe', 'bin/qtpaths.exe', 'bin/moc.exe', 'bin/rcc.exe',
+        'bin/qmlimportscanner.exe', 'bin/Qt6Core.dll', 'bin/Qt6Quick.dll',
+        'bin/Qt6Qml.dll', 'bin/Qt6Network.dll', 'bin/Qt6Concurrent.dll',
+        'bin/Qt6Test.dll', 'bin/Qt6Multimedia.dll', 'lib/cmake/Qt6/Qt6Config.cmake',
+        'plugins/platforms/qwindows.dll', 'qml/QtQuick/qmldir',
+        'qml/QtQuick/Controls/qmldir', 'qml/QtMultimedia/qmldir'
+    )
+    vlc = dependencies / 'vlc' / ('vlc-' + vlc_version)
+    nsis = dependencies / 'nsis' / ('nsis-' + nsis_version)
+    vlc_files = ('libvlc.dll', 'libvlccore.dll', 'COPYING.txt',
+                 'plugins/codec/libavcodec_plugin.dll',
+                 'plugins/demux/libmp4_plugin.dll',
+                 'plugins/video_output/libdirect3d11_plugin.dll')
+    # The official ZIP ships a root launcher and a separate Bin compiler.
+    nsis_files = ('makensis.exe', 'Bin/makensis.exe', 'Include/MUI2.nsh',
+                  'Contrib/Modern UI 2/MUI2.nsh', 'Stubs/zlib-x86-unicode',
+                  'Stubs/lzma_solid-x86-unicode', 'Plugins/x86-unicode/nsDialogs.dll', 'COPYING')
+    return ([qt / name for name in qt_files] + [vlc / name for name in vlc_files]
+            + [nsis / name for name in nsis_files])
+
+
+def validate_layout(qt, dependencies, vlc_version, nsis_version):
+    missing = [str(path) for path in required_layout(qt, dependencies, vlc_version, nsis_version)
+               if not path.is_file() or path.stat().st_size == 0]
+    if missing:
+        raise ValueError('Dependency layout incomplete; missing or empty required files:\n'
+                         + '\n'.join(missing))
+    return {
+        'QT_ROOT': str(qt),
+        'FLIXIFY_VLC_ROOT': str(dependencies / 'vlc' / ('vlc-' + vlc_version)),
+        'NSIS_ROOT': str(dependencies / 'nsis' / ('nsis-' + nsis_version)),
+        'FLIXIFY_DEPENDENCY_ROOT': str(dependencies)
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', required=True, type=Path)
@@ -102,15 +139,8 @@ def main():
         report.append({'name': entry['name'], 'url': entry['url'], 'sha256': sha256(archive)})
         archive.unlink()
     (qt / 'bin' / 'qt.conf').write_text('[Paths]\nPrefix=..\n', encoding='utf-8')
-    vlc_candidates = list((dependencies / 'vlc').rglob('libvlc.dll'))
-    nsis_candidates = list((dependencies / 'nsis').rglob('makensis.exe'))
-    if len(vlc_candidates) != 1 or len(nsis_candidates) != 1 or not (qt / 'bin' / 'windeployqt.exe').is_file():
-        raise ValueError('Dependency layout incomplete')
+    environment = validate_layout(qt, dependencies, lock['vlcVersion'], lock['nsisVersion'])
     (dependencies / 'provenance.json').write_text(json.dumps({'inputs': report}, indent=2) + '\n')
-    environment = {
-        'QT_ROOT': str(qt), 'FLIXIFY_VLC_ROOT': str(vlc_candidates[0].parent),
-        'NSIS_ROOT': str(nsis_candidates[0].parent), 'FLIXIFY_DEPENDENCY_ROOT': str(dependencies)
-    }
     if args.github_env:
         with args.github_env.open('a', encoding='utf-8') as output:
             for key, value in environment.items():

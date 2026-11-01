@@ -42,12 +42,56 @@ class PackagePolicyTests(unittest.TestCase):
     def test_smoke_proof_requires_nonempty_pngs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            proof = {'passed': True, 'localMediaPlaying': True, 'fixtureHttp': True}
+            proof = {'passed': True, 'localMediaPlaying': True, 'fixtureHttp': True,
+                     'codecFixtures': {'tsMp2': True, 'mkvTracks': True}}
             (root / 'smoke.json').write_text(json.dumps(proof))
             for name in policy.SMOKE_SCREENS:
                 (root / (name + '.png')).write_bytes(b'')
             with self.assertRaises(ValueError):
                 policy.verify_smoke(root)
+
+    def smoke_proof(self, root, codecs=None, omit=None):
+        proof = {'passed': True, 'localMediaPlaying': True, 'fixtureHttp': True}
+        if codecs is not None:
+            proof['codecFixtures'] = codecs
+        (root / 'smoke.json').write_text(json.dumps(proof))
+        for name in ('home', 'live', 'search', 'series', 'account', 'player', 'ts-player', 'mkv-player'):
+            if name != omit:
+                (root / (name + '.png')).write_bytes(b'\x89PNG\r\n\x1a\n' + b'x' * 2048)
+
+    def test_smoke_requires_both_codec_results(self):
+        for codecs in (None, {'tsMp2': True, 'mkvTracks': False}, {'tsMp2': False, 'mkvTracks': True}):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.smoke_proof(root, codecs)
+                with self.assertRaises(ValueError):
+                    policy.verify_smoke(root)
+
+    def test_smoke_requires_each_codec_screenshot(self):
+        for missing in ('ts-player', 'mkv-player'):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.smoke_proof(root, {'tsMp2': True, 'mkvTracks': True}, missing)
+                with self.assertRaises(ValueError):
+                    policy.verify_smoke(root)
+
+    def test_complete_codec_smoke_proof_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.smoke_proof(root, {'tsMp2': True, 'mkvTracks': True})
+            self.assertTrue(policy.verify_smoke(root)['passed'])
+
+    def test_codec_fixture_hash_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('h264-mp2.ts', 'two-audio-subtitles.mkv'):
+                (root / name).write_bytes(b'corrupt fixture')
+            (root / 'provenance.json').write_text(json.dumps({
+                'syntheticGeneratedLocally': True,
+                'sha256': {'h264-mp2.ts': '0' * 64, 'two-audio-subtitles.mkv': '0' * 64}
+            }))
+            with self.assertRaises(ValueError):
+                policy.verify_codec_fixtures(root)
 
     def test_lock_is_https_versioned_and_sha256_pinned(self):
         lock = json.loads((SCRIPT.parent / 'dependencies.lock.json').read_text())

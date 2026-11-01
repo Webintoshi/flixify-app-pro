@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import zipfile
 
-from package_policy import dependency_report, sha256, stage_findings, uninstall_manifest, verify_smoke
+from package_policy import dependency_report, sha256, stage_findings, uninstall_manifest, verify_codec_fixtures, verify_smoke
 
 
 def run(arguments, **kwargs):
@@ -98,9 +98,12 @@ def main():
                         'QT_PLUGIN_PATH': str(stage), 'QML2_IMPORT_PATH': str(stage / 'qml'),
                         'VLC_PLUGIN_PATH': str(stage / 'plugins'), 'LOCALAPPDATA': str(isolated),
                         'APPDATA': str(isolated), 'QT_QUICK_BACKEND': 'software'})
+    codec_fixtures = source / 'tests' / 'media'
+    codec_provenance = verify_codec_fixtures(codec_fixtures)
+    (proof / 'codec-fixtures-provenance.json').write_text(json.dumps(codec_provenance, indent=2) + '\n')
     with (proof / 'ui-smoke.log').open('w', encoding='utf-8') as log:
-        run([stage / 'ui_smoke.exe', '--output', proof, '--media', media, '--artwork-dir', args.artwork.resolve()], env=environment,
-            cwd=stage, stdout=log, stderr=subprocess.STDOUT, timeout=150)
+        run([stage / 'ui_smoke.exe', '--output', proof, '--media', media, '--artwork-dir', args.artwork.resolve(), '--codec-fixtures', codec_fixtures], env=environment,
+            cwd=stage, stdout=log, stderr=subprocess.STDOUT, timeout=180)
     verify_smoke(proof)
     (stage / 'ui_smoke.exe').unlink()
     errors = stage_findings(stage)

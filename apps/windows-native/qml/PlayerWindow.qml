@@ -18,15 +18,22 @@ Window {
     x: owner ? owner.x : 100
     y: owner ? owner.y : 100
     color: "black"
-    visible: player.active
-    visibility: player.active ? player.fullScreen ? Window.FullScreen : Window.Windowed : Window.Hidden
+    property bool playbackActive: player.active
+    property bool playbackFullScreen: player.fullScreen
+    onPlaybackActiveChanged: Qt.callLater(synchronizeVisibility)
+    onPlaybackFullScreenChanged: Qt.callLater(synchronizeVisibility)
+    Component.onCompleted: synchronizeVisibility()
+    function synchronizeVisibility() {
+        if (!playbackActive) hide()
+        else if (playbackFullScreen) showFullScreen()
+        else showNormal()
+    }
     onClosing: function (close) {
         close.accepted = false;
         player.close();
     }
     onVisibleChanged: if (visible) {
         requestActivate();
-        player.interact();
     }
     function clock(milliseconds) {
         const seconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -43,12 +50,14 @@ Window {
         playbackController: player
         anchors.fill: parent
         mousePassthrough: false
+        focus: true
+        Keys.onEscapePressed: if (!controlsWindow.menuOpen) player.close()
         onSurfaceHandleChanged: player.setSurface(surfaceHandle)
         onPointerActivity: player.interact()
     }
     Shortcut {
         sequence: "Space"
-        enabled: player.active
+        enabled: player.active && !controlsWindow.menuOpen
         context: Qt.ApplicationShortcut
         onActivated: {
             player.togglePause();
@@ -57,7 +66,7 @@ Window {
     }
     Shortcut {
         sequence: "Left"
-        enabled: player.active && !player.live
+        enabled: player.active && !player.live && !controlsWindow.menuOpen
         context: Qt.ApplicationShortcut
         onActivated: {
             player.seekBy(-10);
@@ -66,7 +75,7 @@ Window {
     }
     Shortcut {
         sequence: "Right"
-        enabled: player.active && !player.live
+        enabled: player.active && !player.live && !controlsWindow.menuOpen
         context: Qt.ApplicationShortcut
         onActivated: {
             player.seekBy(10);
@@ -74,14 +83,8 @@ Window {
         }
     }
     Shortcut {
-        sequence: "Escape"
-        enabled: player.active
-        context: Qt.ApplicationShortcut
-        onActivated: player.close()
-    }
-    Shortcut {
         sequence: "F"
-        enabled: player.active
+        enabled: player.active && !controlsWindow.menuOpen
         context: Qt.ApplicationShortcut
         onActivated: {
             player.setFullScreen(!player.fullScreen);
@@ -90,7 +93,7 @@ Window {
     }
     Shortcut {
         sequence: "Up"
-        enabled: player.active
+        enabled: player.active && !controlsWindow.menuOpen
         context: Qt.ApplicationShortcut
         onActivated: {
             player.setVolume(Math.min(100, player.volume + 5));
@@ -99,7 +102,7 @@ Window {
     }
     Shortcut {
         sequence: "Down"
-        enabled: player.active
+        enabled: player.active && !controlsWindow.menuOpen
         context: Qt.ApplicationShortcut
         onActivated: {
             player.setVolume(Math.max(0, player.volume - 5));
@@ -123,11 +126,13 @@ Window {
             close.accepted = false;
             player.close();
         }
-        property bool held: audioMenu.visible || subtitleMenu.visible || episodeMenu.visible || timeline.pressed || volumeSlider.pressed
+        property bool menuOpen: audioMenu.visible || subtitleMenu.visible || episodeMenu.visible
+        property bool held: menuOpen || timeline.pressed || volumeSlider.pressed
         onHeldChanged: player.holdControls(held)
         Item {
             anchors.fill: parent
             focus: true
+            Keys.onEscapePressed: if (!controlsWindow.menuOpen) player.close()
             HoverHandler {
                 id: hover
                 onPointChanged: player.interact()
@@ -433,6 +438,7 @@ Window {
                             Layout.fillWidth: true
                         }
                         ActionButton {
+                        objectName: "playerAudioAction"
                             text: "Ses"
                             quiet: true
                             enabled: player.audioTracks.length > 0
@@ -442,6 +448,7 @@ Window {
                             }
                         }
                         ActionButton {
+                        objectName: "playerSubtitleAction"
                             text: "Altyazı"
                             quiet: true
                             onClicked: {
@@ -500,6 +507,8 @@ Window {
             }
             Menu {
                 id: audioMenu
+                popupType: Popup.Item
+                objectName: "playerAudioMenu"
                 title: "Ses parçaları"
                 Instantiator {
                     model: player.audioTracks
@@ -520,6 +529,8 @@ Window {
             }
             Menu {
                 id: subtitleMenu
+                popupType: Popup.Item
+                objectName: "playerSubtitleMenu"
                 title: "Altyazılar"
                 MenuItem {
                     text: "Kapalı"
@@ -546,6 +557,7 @@ Window {
             }
             Menu {
                 id: episodeMenu
+                popupType: Popup.Item
                 title: "Bölümler"
                 MenuItem {
                     enabled: !!player.nextItem.id
