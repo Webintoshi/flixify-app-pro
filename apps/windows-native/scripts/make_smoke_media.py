@@ -12,7 +12,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
-    width, height, fps, frames = 320, 180, 10, 200
+    width, height, fps, frames = 320, 180, 10, 600
     frame_size = width * height * 3
     avih = struct.pack('<14I', 1000000 // fps, frame_size * fps, 0, 0x10, frames, 0, 1, frame_size, width, height, 0, 0, 0, 0)
     strh = struct.pack('<4s4sIHHIIIIIIIIhhhh', b'vids', b'DIB ', 0, 0, 0, 0, 1, fps, 0, frames,

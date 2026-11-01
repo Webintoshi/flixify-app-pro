@@ -1,6 +1,7 @@
 #include "native_surface.h"
 #include "player.h"
 #include <QEvent>
+#include <QCursor>
 #include <QPainter>
 #include <QPointer>
 #include <QQuickWindow>
@@ -57,7 +58,7 @@ void NativeVideoSurface::setFrontSurface(bool value) {
   front_ = value; synchronize(); emit frontSurfaceChanged();
 }
 void NativeVideoSurface::paint(QPainter *painter) { painter->fillRect(boundingRect(), Qt::black); }
-void NativeVideoSurface::notifyPointerActivity() { emit pointerActivity(); }
+void NativeVideoSurface::notifyPointerActivity() { emit pointerActivity(QCursor::pos()); }
 QObject *NativeVideoSurface::playbackController() const { return player_; }
 void NativeVideoSurface::setPlaybackController(QObject *controller) { player_ = qobject_cast<DesktopPlayer *>(controller); }
 bool NativeVideoSurface::eventFilter(QObject *object, QEvent *event) {

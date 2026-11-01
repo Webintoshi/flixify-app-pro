@@ -26,6 +26,9 @@
 #include <QSignalSpy>
 #include <cstring>
 #include <cstdlib>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 #include <functional>
 #include "repository.h"
 #include "player.h"
@@ -201,6 +204,18 @@ bool homeAtTop(QQuickWindow *window) {
     const auto titleY=title->mapToScene(QPointF()).y(),heroY=hero->mapToScene(QPointF()).y();
     return titleY>=66&&titleY<=150&&heroY>titleY&&heroY<270&&hero->height()>250;
 }
+bool readableSelectIndicator(QQuickItem *parent) {
+    if(parent->objectName()=="selectIndicator"&&parent->isVisible()&&parent->property("stroke").value<QColor>()==QColor("#A7B0BE"))return true;
+    for(auto child:parent->childItems())if(readableSelectIndicator(child))return true;
+    return false;
+}
+bool duplicatePointerCoordinatesIgnored(QQuickWindow *video) {
+    QSignalSpy changes(video,SIGNAL(lastPointerPositionChanged()));
+    for(int index=0;index<5;++index)QMetaObject::invokeMethod(video,"pointerMoved",Q_ARG(QVariant,-777.0),Q_ARG(QVariant,-777.0));
+    if(changes.size()!=1)return false;
+    QMetaObject::invokeMethod(video,"pointerMoved",Q_ARG(QVariant,-776.0),Q_ARG(QVariant,-777.0));
+    return changes.size()==2;
+}
 bool doubleClickOnlyChangesFullscreen(QQuickWindow *video,QQuickWindow *overlay,DesktopPlayer &player,QJsonObject &evidence) {
     auto pointer=overlay?visual(overlay->contentItem(),"videoPointerArea"):nullptr;
     auto pauseTimer=overlay?overlay->findChild<QObject *>("videoSingleClickTimer"):nullptr;
@@ -217,6 +232,64 @@ bool doubleClickOnlyChangesFullscreen(QQuickWindow *video,QQuickWindow *overlay,
     evidence={{"fullscreenBefore",beforeFullscreen},{"fullscreenAfter",player.fullScreen()},{"playingBefore",beforePlaying},{"playingAfter",player.playing()},{"active",player.active()},{"doubleClicks",doubleClicks.size()},{"pauseTimerTriggers",pauses.size()},{"geometrySettled",geometrySettled}};
     return geometrySettled&&player.active()&&player.playing()==beforePlaying&&player.fullScreen()!=beforeFullscreen&&doubleClicks.size()==1&&pauses.isEmpty();
 }
+bool focusedPlayerControls(QQuickWindow *root,QQuickWindow *video,QQuickWindow *overlay,DesktopPlayer &player,QJsonObject &evidence) {
+    auto subtitle=overlay?visual(overlay->contentItem(),"playerSubtitleAction"):nullptr;
+    auto volume=overlay?visual(overlay->contentItem(),"playerVolume"):nullptr;
+    auto menu=overlay?overlay->findChild<QObject *>("playerSubtitleMenu"):nullptr;
+    if(!subtitle||!volume||!menu)return false;
+    const int originalVolume=player.volume();const bool originalFullscreen=player.fullScreen();
+    overlay->requestActivate();QTest::qWait(70);player.interact();subtitle->forceActiveFocus();
+    const bool subtitleFocused=subtitle->hasActiveFocus();const auto subtitleOwned=overlay->property("controlFocused");QTest::keyClick(overlay,Qt::Key_Space);
+    const bool opened=until([&]{return menu->property("visible").toBool();},1000);
+    if(opened)QTest::keyClick(QGuiApplication::focusWindow()?QGuiApplication::focusWindow():overlay,Qt::Key_Escape);
+    player.setVolume(30);volume->forceActiveFocus();const bool volumeFocused=volume->hasActiveFocus();
+    QTest::keyClick(overlay,Qt::Key_Right);QTest::qWait(50);const int rightVolume=player.volume();player.setVolume(originalVolume);
+    bool timelineKeys=true;auto timeline=visual(overlay->contentItem(),"playerTimeline");
+    if(player.hasVideoFrame()&&timeline&&player.durationMs()>15000) {
+        const auto beforeSeek=player.positionMs();timeline->forceActiveFocus();QTest::keyClick(overlay,Qt::Key_Right);
+        timelineKeys=until([&]{return player.positionMs()>=beforeSeek+8000&&player.positionMs()<=beforeSeek+12000;},1000);player.seek(beforeSeek);
+    }
+    auto surfaceFocus=overlay->contentItem()->childItems().value(0);bool surfaceSpace=true;
+    if(player.hasVideoFrame()&&surfaceFocus) {
+        surfaceFocus->forceActiveFocus();const bool playing=player.playing();QTest::keyClick(overlay,Qt::Key_Space);
+        surfaceSpace=until([&]{return player.playing()!=playing;},1000);QTest::keyClick(overlay,Qt::Key_Space);
+        surfaceSpace=surfaceSpace&&until([&]{return player.playing()==playing;},1000);
+    }
+    player.setFullScreen(false);until([&]{return video->visibility()==QWindow::Windowed;},3000);
+    root->requestActivate();const bool mainActive=until([&]{return QGuiApplication::focusWindow()==root;},1000);
+    const bool beforeBackground=player.fullScreen();const auto beforePosition=player.positionMs();const auto ownedBackground=video->property("ownsActiveWindow");
+    QTest::keyClick(root,Qt::Key_F);QTest::keyClick(root,Qt::Key_Right);QTest::qWait(100);
+    const bool backgroundKeysIgnored=player.fullScreen()==beforeBackground&&qAbs(player.positionMs()-beforePosition)<3000;
+    player.setFullScreen(originalFullscreen);until([&]{return video->visibility()==(originalFullscreen?QWindow::FullScreen:QWindow::Windowed);},3000);
+    overlay->requestActivate();QTest::qWait(70);if(surfaceFocus)surfaceFocus->forceActiveFocus();
+    evidence={{"subtitleFocused",subtitleFocused},{"subtitleOwnsKeys",QJsonValue::fromVariant(subtitleOwned)},{"subtitleSpaceOpened",opened},{"volumeFocused",volumeFocused},{"volumeBefore",30},{"volumeAfterRight",rightVolume},{"timelineArrowSeeks",player.hasVideoFrame()?QJsonValue(timelineKeys):QJsonValue()},{"mainWindowActive",mainActive},{"ownsWindowDuringBackground",QJsonValue::fromVariant(ownedBackground)},{"backgroundKeysIgnored",backgroundKeysIgnored},{"surfaceSpaceTogglesPlayback",player.hasVideoFrame()?QJsonValue(surfaceSpace):QJsonValue()},{"nativeSurfaceKeysChecked",player.hasVideoFrame()}};
+    return subtitleFocused&&opened&&volumeFocused&&rightVolume>30&&timelineKeys&&mainActive&&backgroundKeysIgnored&&surfaceSpace&&player.active();
+}
+#ifdef Q_OS_WIN
+bool physicalPointerDoubleClick(QQuickWindow *video,QQuickWindow *overlay,DesktopPlayer &player,QJsonObject &evidence) {
+    const bool fullscreen=player.fullScreen(),playing=player.playing();
+    const auto hwnd=reinterpret_cast<HWND>(overlay->winId());RECT bounds{};
+    overlay->requestActivate();QTest::qWait(80);
+    if(!GetClientRect(hwnd,&bounds)) { evidence["error"]="GetClientRect failed";return false; }
+    POINT point{(bounds.right-bounds.left)/2,(bounds.bottom-bounds.top)/2};
+    if(!ClientToScreen(hwnd,&point)||!SetCursorPos(point.x,point.y)) { evidence["error"]="Physical cursor positioning failed";return false; }
+    QTest::qWait(80);
+    wchar_t hitClass[128]{};GetClassNameW(WindowFromPoint(point),hitClass,128);
+    auto pointer=visual(overlay->contentItem(),"videoPointerArea");auto surface=visual(video->contentItem(),"nativeVideoSurface");
+    QSignalSpy doubleClicks(pointer,SIGNAL(doubleClicked(QQuickMouseEvent*))),nativeMoves(surface,SIGNAL(pointerActivity(QPointF)));
+    INPUT inputs[2]{};inputs[0].type=INPUT_MOUSE;inputs[0].mi.dwFlags=MOUSEEVENTF_LEFTDOWN;inputs[1].type=INPUT_MOUSE;inputs[1].mi.dwFlags=MOUSEEVENTF_LEFTUP;
+    if(SendInput(2,inputs,sizeof(INPUT))!=2) { evidence["error"]="First physical click was rejected";return false; }
+    QTest::qWait(80);
+    if(SendInput(2,inputs,sizeof(INPUT))!=2) { evidence["error"]="Second physical click was rejected";return false; }
+    const bool toggled=until([&]{return player.fullScreen()!=fullscreen;},3000);
+    QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval()+80);
+    evidence={{"fullscreenBefore",fullscreen},{"fullscreenAfter",player.fullScreen()},{"playingBefore",playing},{"playingAfter",player.playing()},{"active",player.active()},{"qmlDoubleClicks",doubleClicks.size()},{"nativePointerEvents",nativeMoves.size()},{"cursorX",point.x},{"cursorY",point.y},{"hitWindowClass",QString::fromWCharArray(hitClass)}};
+    const bool passed=toggled&&player.active()&&player.playing()==playing&&doubleClicks.size()==1;
+    player.setFullScreen(fullscreen);until([&]{return video->visibility()==(fullscreen?QWindow::FullScreen:QWindow::Windowed);},3000);
+    if(GetClientRect(hwnd,&bounds)) { POINT idle{(bounds.right-bounds.left)/2,(bounds.bottom-bounds.top)/2};if(ClientToScreen(hwnd,&idle))SetCursorPos(idle.x,idle.y); }
+    QTest::qWait(80);return passed;
+}
+#endif
 }
 
 int main(int argc,char **argv) {
@@ -265,6 +338,7 @@ int main(int argc,char **argv) {
     if(!click(root,"categoryAction"))return finish("Category panel action failed",11);
     if(!until([&]{auto list=visual(root->contentItem(),"categoryList");return list&&list->isVisible()&&list->property("count").toInt()>1;}))return finish("Category panel list failed",11);
     if(!capture(root,QDir(output).filePath("categories.png")))return finish("Category screenshot failed",11);
+    if(!readableSelectIndicator(root->contentItem()))return finish("Country selector did not provide its readable indicator",55);
     QTest::keyClick(root,Qt::Key_Escape);
     auto channel=repository.items().first().toMap(); repository.toggleFavorite(channel);
     if(!until([&]{return repository.isFavorite(channel);}))return finish("Favorite action failed",12);
@@ -284,6 +358,8 @@ int main(int argc,char **argv) {
     if(!until([&]{return repository.seriesDetail()["seasons"].toList().size()==2;}))return finish("Series detail failed",18);
     const auto verifiedDetail=repository.seriesDetail();
     if(!capture(root,QDir(output).filePath("series.png")))return finish("Series screenshot failed",19);
+    if(!readableSelectIndicator(root->contentItem()))return finish("Season selector did not provide its readable indicator",55);
+    report["comboIndicators"]=true;
     QTest::keyClick(root,Qt::Key_Escape); if(!click(root,"nav-account"))return finish("Account navigation failed",20); QTest::qWait(100);
     if(!capture(root,QDir(output).filePath("account.png")))return finish("Account screenshot failed",20);
     root->resize(900,620); QTest::qWait(100);
@@ -318,6 +394,10 @@ int main(int argc,char **argv) {
             QQuickWindow *video=nullptr;for(auto window:QGuiApplication::topLevelWindows())if(window->objectName()=="playerWindow")video=qobject_cast<QQuickWindow *>(window);
             QJsonArray pointerChecks;
             for(int direction=0;direction<2;++direction) { QJsonObject evidence;const bool passed=doubleClickOnlyChangesFullscreen(video,overlay,player,evidence);pointerChecks.append(evidence);report["pointerDispatch"]=pointerChecks;if(!passed)return finish("Pointer fullscreen probe failed: "+QString::fromUtf8(QJsonDocument(evidence).toJson(QJsonDocument::Compact)),51); }
+            if(!duplicatePointerCoordinatesIgnored(video))return finish("Duplicate pointer coordinates counted as new movement",56);
+            report["pointerCoordinateDedupe"]=true;
+            QJsonObject focused;const bool focusedPassed=focusedPlayerControls(root,video,overlay,player,focused);report["focusedControlAudit"]=focused;
+            if(!focusedPassed)return finish("Focused player controls failed: "+QString::fromUtf8(QJsonDocument(focused).toJson(QJsonDocument::Compact)),53);
             report["menuEscapePreserved"]=true;player.close();
         }
         return finish("Catalog preview only; native Windows playback remains unverified",0);
@@ -335,8 +415,25 @@ int main(int argc,char **argv) {
     QJsonArray pointerChecks;
     for(int direction=0;direction<2;++direction) { QJsonObject evidence;const bool passed=doubleClickOnlyChangesFullscreen(video,overlay,player,evidence);pointerChecks.append(evidence);report["pointerDispatch"]=pointerChecks;if(!passed)return finish("Video double-click failed: "+QString::fromUtf8(QJsonDocument(evidence).toJson(QJsonDocument::Compact)),51); }
     report["doubleClickPreservedPlayback"]=true;
+    if(!duplicatePointerCoordinatesIgnored(video))return finish("Duplicate pointer coordinates counted as new movement",56);
+    report["pointerCoordinateDedupe"]=true;
+    QJsonObject focused;const bool focusedPassed=focusedPlayerControls(root,video,overlay,player,focused);report["focusedControls"]=focused;
+    if(!focusedPassed)return finish("Focused player controls failed: "+QString::fromUtf8(QJsonDocument(focused).toJson(QJsonDocument::Compact)),53);
+    report["focusedPlayerControls"]=true;
+#ifdef Q_OS_WIN
+    QJsonObject physical;const bool physicalPassed=physicalPointerDoubleClick(video,overlay,player,physical);report["physicalPointer"]=physical;
+    if(!physicalPassed)return finish("Physical desktop double-click failed: "+QString::fromUtf8(QJsonDocument(physical).toJson(QJsonDocument::Compact)),54);
+    report["physicalPointerPassed"]=true;
+#endif
+    auto nativeSurface=visual(video->contentItem(),"nativeVideoSurface"),mouseArea=visual(overlay->contentItem(),"videoPointerArea");
+    auto hover=overlay->findChild<QObject *>("videoHover");
+    QSignalSpy nativeMoves(nativeSurface,SIGNAL(pointerActivity(QPointF))),hoverPoints(hover,SIGNAL(pointChanged())),mousePositions(mouseArea,SIGNAL(positionChanged(QQuickMouseEvent*)));
     player.interact();
-    if(!until([&]{return !player.controlsVisible();},4000))return finish("Player controls did not hide after idle",26);
+    if(!until([&]{return !player.controlsVisible();},4000)) {
+        auto timeline=visual(overlay->contentItem(),"playerTimeline"),volume=visual(overlay->contentItem(),"playerVolume");
+        QJsonObject idle{{"playing",player.playing()},{"positionMs",player.positionMs()},{"durationMs",player.durationMs()},{"controlsVisible",player.controlsVisible()},{"loading",player.loading()},{"error",player.error()},{"held",overlay->property("held").toBool()},{"menuOpen",overlay->property("menuOpen").toBool()},{"controlFocused",overlay->property("controlFocused").toBool()},{"timelinePressed",timeline&&timeline->property("pressed").toBool()},{"volumePressed",volume&&volume->property("pressed").toBool()},{"nativeHoldCount",player.controlHoldCount()},{"nativePointerEvents",nativeMoves.size()},{"hoverPointEvents",hoverPoints.size()},{"mousePositionEvents",mousePositions.size()},{"overlayActive",overlay->isActive()},{"videoActive",video->isActive()}};
+        report["idleDiagnostics"]=idle;return finish("Player controls did not hide after idle: "+QString::fromUtf8(QJsonDocument(idle).toJson(QJsonDocument::Compact)),26);
+    }
     player.togglePause();if(!until([&]{return !player.playing()&&player.controlsVisible();}))return finish("Pause/controls state failed",27);
     player.close();if(!until([&]{return !player.active();}))return finish("Player did not close",28);
     auto openLocal=[&](QVariantMap selected,const QString &path) { player.open({{"item",selected},{"url",QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath()).toString()},{"expiresAt",fixture.expiry},{"scope",repository.scope()},{"resumeMs",0},{"next",QVariantMap{}}}); };

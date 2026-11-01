@@ -1,6 +1,7 @@
 #pragma once
 #include <QQuickPaintedItem>
 #include <QPointer>
+#include <QPointF>
 class DesktopPlayer;
 
 class NativeVideoSurface : public QQuickPaintedItem {
@@ -25,7 +26,7 @@ class NativeVideoSurface : public QQuickPaintedItem {
   void surfaceHandleChanged();
   void mousePassthroughChanged();
   void frontSurfaceChanged();
-  void pointerActivity();
+  void pointerActivity(QPointF globalPosition);
  protected:
   bool eventFilter(QObject *object, QEvent *event) override;
  private:

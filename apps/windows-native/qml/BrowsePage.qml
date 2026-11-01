@@ -418,7 +418,7 @@ Item {
                     border.color: categorySearch.activeFocus ? "#F5F6F8" : "#343D4B"
                 }
             }
-            ComboBox {
+            SelectBox {
                 visible: page.liveRoute || repository.countries.length > 0
                 Layout.fillWidth: true
                 model: [

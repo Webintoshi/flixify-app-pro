@@ -1,6 +1,6 @@
 # Desktop QObject contract
 
-This document fixes integration names for parallel implementation. QML context properties: `repository` (DesktopRepository), `player` (DesktopPlayer), `appVersion` string. Item maps use `id` numeric-string provider ID, `kind` live/movie/series/episode, `title`, `sourceTitle`, `categoryID`, `categoryName`, `artworkURL`, `extension`, `scope`, `seriesID`, `season`, `episode`, `description`, `releaseYear`. Key is kind:seriesID:id. Maps never persist a playable URL or provider password.
+This document fixes integration names for parallel implementation. QML context properties: `repository` (DesktopRepository), `player` (DesktopPlayer), `appVersion` string, `desktopFocusedWindow` (the exact QGuiApplication focus window, updated on focus changes). Item maps use `id` numeric-string provider ID, `kind` live/movie/series/episode, `title`, `sourceTitle`, `categoryID`, `categoryName`, `artworkURL`, `extension`, `scope`, `seriesID`, `season`, `episode`, `description`, `releaseYear`. Key is kind:seriesID:id. Maps never persist a playable URL or provider password.
 
 ## DesktopRepository
 
@@ -24,4 +24,4 @@ App connects repository playbackReady -> player.open; sourceChanged/accessRevoke
 
 ## Native surface
 
-Register `NativeVideoSurface` in `Flixify.Native 1.0`: QQuickPaintedItem `surfaceHandle`, `mousePassthrough`, `frontSurface`; `pointerActivity()` signal. Host window owns native surface, a separate transparent transient QML controls window stays above native child video. Never render decoded frames through a CPU image-copy loop. Physical HWND coordinates must account for devicePixelRatio.
+Register `NativeVideoSurface` in `Flixify.Native 1.0`: QQuickPaintedItem `surfaceHandle`, `mousePassthrough`, `frontSurface`; `pointerActivity(QPointF globalPosition)` signal, using Qt global cursor coordinates. Host window owns native surface, a separate transparent transient QML controls window stays above native child video. Never render decoded frames through a CPU image-copy loop. Physical HWND coordinates must account for devicePixelRatio.

@@ -104,7 +104,7 @@ Popup {
                 font.weight: Font.Bold
                 Layout.fillWidth: true
             }
-            ComboBox {
+            SelectBox {
                 id: seasonPicker
                 Layout.preferredWidth: 165
                 model: detail.seasons.map(function (s) {

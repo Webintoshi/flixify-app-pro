@@ -4,6 +4,8 @@
 #include "repository.h"
 #include <QDir>
 #include <QImageReader>
+#include <QGuiApplication>
+#include <QWindow>
 #include <QNetworkAccessManager>
 #include <QNetworkDiskCache>
 #include <QNetworkReply>
@@ -49,6 +51,11 @@ void installDesktop(QQmlApplicationEngine &engine, DesktopRepository &repository
   engine.rootContext()->setContextProperty("repository", &repository);
   engine.rootContext()->setContextProperty("player", &player);
   engine.rootContext()->setContextProperty("appVersion", QStringLiteral(FLIXIFY_APP_VERSION));
+  auto *context = engine.rootContext();
+  context->setContextProperty("desktopFocusedWindow", QGuiApplication::focusWindow());
+  QObject::connect(qGuiApp, &QGuiApplication::focusWindowChanged, context, [context](QWindow *window) {
+    context->setContextProperty("desktopFocusedWindow", window);
+  });
   QObject::connect(&repository, &DesktopRepository::playbackReady, &player, &DesktopPlayer::open);
   QObject::connect(&repository, &DesktopRepository::sourceChanged, &player, &DesktopPlayer::close);
   QObject::connect(&repository, &DesktopRepository::accessRevoked, &player, &DesktopPlayer::close);

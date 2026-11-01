@@ -7,6 +7,7 @@ Button {
     property bool light: false
     property bool selected: false
     property bool quiet: false
+    readonly property bool handlesPlaybackKeys: true
     property string symbol: ""
     property string accessibleLabel: text
     hoverEnabled: true

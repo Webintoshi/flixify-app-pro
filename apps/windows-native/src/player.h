@@ -36,6 +36,7 @@ class DesktopPlayer : public QObject {
   bool loading() const { return loading_; }
   bool live() const { return item_.value("kind").toString() == "live"; }
   bool controlsVisible() const { return controls_; }
+  int controlHoldCount() const { return held_; }
   bool muted() const { return muted_; }
   bool fullScreen() const { return fullScreen_; }
   bool hasVideoFrame() const { return hasFrame_; }

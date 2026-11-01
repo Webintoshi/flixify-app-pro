@@ -20,6 +20,13 @@ Window {
     color: "black"
     property bool playbackActive: player.active
     property bool playbackFullScreen: player.fullScreen
+    property bool ownsActiveWindow: desktopFocusedWindow === videoWindow || desktopFocusedWindow === controlsWindow
+    property point lastPointerPosition: Qt.point(-100000, -100000)
+    function pointerMoved(x, y) {
+        if (Math.abs(x - lastPointerPosition.x) < 0.5 && Math.abs(y - lastPointerPosition.y) < 0.5) return
+        lastPointerPosition = Qt.point(x, y)
+        player.interact()
+    }
     onPlaybackActiveChanged: {
         if (!playbackActive) pointerClick.stop()
         Qt.callLater(synchronizeVisibility)
@@ -50,17 +57,18 @@ Window {
     }
     NativeVideoSurface {
         id: surface
+        objectName: "nativeVideoSurface"
         playbackController: player
         anchors.fill: parent
         mousePassthrough: false
         focus: true
         Keys.onEscapePressed: if (!controlsWindow.menuOpen) player.close()
         onSurfaceHandleChanged: player.setSurface(surfaceHandle)
-        onPointerActivity: player.interact()
+        onPointerActivity: function(globalPosition) { videoWindow.pointerMoved(globalPosition.x, globalPosition.y) }
     }
     Shortcut {
         sequence: "Space"
-        enabled: player.active && !controlsWindow.menuOpen
+        enabled: player.active && videoWindow.ownsActiveWindow && !controlsWindow.menuOpen && !controlsWindow.controlFocused
         context: Qt.ApplicationShortcut
         onActivated: {
             player.togglePause();
@@ -69,7 +77,7 @@ Window {
     }
     Shortcut {
         sequence: "Left"
-        enabled: player.active && !player.live && !controlsWindow.menuOpen
+        enabled: player.active && videoWindow.ownsActiveWindow && !player.live && !controlsWindow.menuOpen && !controlsWindow.controlFocused
         context: Qt.ApplicationShortcut
         onActivated: {
             player.seekBy(-10);
@@ -78,7 +86,7 @@ Window {
     }
     Shortcut {
         sequence: "Right"
-        enabled: player.active && !player.live && !controlsWindow.menuOpen
+        enabled: player.active && videoWindow.ownsActiveWindow && !player.live && !controlsWindow.menuOpen && !controlsWindow.controlFocused
         context: Qt.ApplicationShortcut
         onActivated: {
             player.seekBy(10);
@@ -87,7 +95,7 @@ Window {
     }
     Shortcut {
         sequence: "F"
-        enabled: player.active && !controlsWindow.menuOpen
+        enabled: player.active && videoWindow.ownsActiveWindow && !controlsWindow.menuOpen
         context: Qt.ApplicationShortcut
         onActivated: {
             player.setFullScreen(!player.fullScreen);
@@ -96,7 +104,7 @@ Window {
     }
     Shortcut {
         sequence: "Up"
-        enabled: player.active && !controlsWindow.menuOpen
+        enabled: player.active && videoWindow.ownsActiveWindow && !controlsWindow.menuOpen && !controlsWindow.controlFocused
         context: Qt.ApplicationShortcut
         onActivated: {
             player.setVolume(Math.min(100, player.volume + 5));
@@ -105,7 +113,7 @@ Window {
     }
     Shortcut {
         sequence: "Down"
-        enabled: player.active && !controlsWindow.menuOpen
+        enabled: player.active && videoWindow.ownsActiveWindow && !controlsWindow.menuOpen && !controlsWindow.controlFocused
         context: Qt.ApplicationShortcut
         onActivated: {
             player.setVolume(Math.max(0, player.volume - 5));
@@ -130,21 +138,45 @@ Window {
             player.close();
         }
         property bool menuOpen: audioMenu.visible || subtitleMenu.visible || episodeMenu.visible
+        property bool controlFocused: isControlFocus(activeFocusItem)
+        function isControlFocus(item) {
+            while (item && item !== contentItem) {
+                if (item.handlesPlaybackKeys === true || item === timeline || item === volumeSlider) return true
+                item = item.parent
+            }
+            return false
+        }
         property bool held: menuOpen || timeline.pressed || volumeSlider.pressed
         onHeldChanged: player.holdControls(held)
+        onActiveFocusItemChanged: if (active && player.controlsVisible && controlFocused) player.interact()
         Item {
             anchors.fill: parent
             focus: true
             Keys.onEscapePressed: if (!controlsWindow.menuOpen) player.close()
+            Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                    player.interact()
+                    event.accepted = false
+                }
+            }
             HoverHandler {
                 id: hover
-                onPointChanged: player.interact()
+                objectName: "videoHover"
+                onPointChanged: if (hovered) {
+                    const globalPosition = parent.mapToGlobal(point.scenePosition.x, point.scenePosition.y)
+                    videoWindow.pointerMoved(globalPosition.x, globalPosition.y)
+                }
             }
             MouseArea {
                 objectName: "videoPointerArea"
                 anchors.fill: parent
                 hoverEnabled: true
-                onPositionChanged: player.interact()
+                onPositionChanged: function(event) {
+                    if (containsMouse) {
+                        const globalPosition = mapToGlobal(event.x, event.y)
+                        videoWindow.pointerMoved(globalPosition.x, globalPosition.y)
+                    }
+                }
                 onClicked: {
                     player.interact();
                     pointerClick.restart();
@@ -334,9 +366,11 @@ Window {
                         }
                         Slider {
                             id: timeline
+                            objectName: "playerTimeline"
                             Layout.fillWidth: true
                             from: 0
                             to: Math.max(1, player.durationMs)
+                            stepSize: 10000
                             value: player.positionMs
                             enabled: player.durationMs > 0
                             Accessible.name: "Oynatma konumu"
@@ -488,9 +522,11 @@ Window {
                         }
                         Slider {
                             id: volumeSlider
+                            objectName: "playerVolume"
                             Layout.preferredWidth: controlsWindow.width < 1050 ? 68 : 100
                             from: 0
                             to: 100
+                            stepSize: 1
                             value: player.muted ? 0 : player.volume
                             Accessible.name: "Ses düzeyi"
                             onMoved: {
