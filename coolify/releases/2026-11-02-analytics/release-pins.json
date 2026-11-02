@@ -10,7 +10,7 @@
       "tree": "280e0781ae30a1ad72fabb0f7ffba38478408a0d",
       "sha256": "261849966386c62ebbeb4cafa096b1a451331520f429c4c7cf4af74a6a0fec5c",
       "bytes": 2141040,
-      "evidenceSha256": "ROOT_FILL_ACCEPTED_PLATFORM_PROOF_SHA256",
+      "evidenceSha256": "af1ee0c218ff649d9bb5d2438527ee13d5f25d1b4951fefe4b75a7759b2f2f1a",
       "acceptance": "configured-release-same-signer"
     },
     "macos": {
@@ -18,16 +18,16 @@
       "tree": "18eef4f0ec558158336ad543173adb04f6876f5c",
       "sha256": "41d5ff671cdd7602052e3b15c6e0b63001a299421a5171eb315d98694f340785",
       "bytes": 46149316,
-      "evidenceSha256": "ROOT_FILL_ACCEPTED_PLATFORM_PROOF_SHA256",
+      "evidenceSha256": "687415c44653b028b95eeb97e7de662c4da33b5bb29d34a89becaafbaae03de5",
       "acceptance": "configured-universal-local-test"
     },
     "windows": {
-      "revision": "bdd44d8910e90adfe9d93f0849bf78bc3686ae69",
-      "tree": "df1ca757af1fbe96ba26d3ac263c78b31e2f70cc",
-      "sha256": "ROOT_FILL_ACCEPTED_ARTIFACT_SHA256",
-      "bytes": 0,
-      "evidenceSha256": "ROOT_FILL_ACCEPTED_PLATFORM_PROOF_SHA256",
-      "acceptance": "ROOT_FILL_ACTUAL_PLATFORM_PROOF_KIND"
+      "revision": "13e6f4b332f3b7682f6dd341f2e09a17b4d78a46",
+      "tree": "7685d32ec19f41285e490825783cffee9b077c44",
+      "sha256": "3df1d76ba33f654a36d0349e96fdb102d190ba89e3fec9152fa43dc277c1abe0",
+      "bytes": 70355546,
+      "evidenceSha256": "08a93886348e5ff1b0b11c2b43afea643a3d81b84dd27dbea66c20d7c56f2b1e",
+      "acceptance": "actual-windows-ci"
     }
   }
 }
