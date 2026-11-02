@@ -301,6 +301,9 @@ public final class NetworkTvRepository implements TvRepository {
     @Override public void account(boolean force,Callback<Account> callback) {
         enqueue(force?"access-refresh":"account",false,callback,auth->loadAccount(auth,force));
     }
+    @Override public void packages(Callback<java.util.List<vip.flixify.tv.PackagePlan>> callback){
+        enqueue("public-packages",false,callback,auth->PackageCatalogParser.parse(ProviderParser.object(request(API+"/admin/packages/public","GET",null,null,auth,-1,null))));
+    }
     @Override public void refreshAccess(Callback<Account> callback) { account(true,callback); }
     private Account loadAccount(long auth,boolean force) throws Exception {
         requireTokens(auth); long now=clock.now(); Account cached=currentAccount;
@@ -313,18 +316,21 @@ public final class NetworkTvRepository implements TvRepository {
         JSONObject pkg=user.optJSONObject("activePackage"); String title=pkg==null?"":ProviderParser.text(pkg.opt("title"),256);
         long appExpiry=pkg==null?0:ProviderParser.date(pkg.opt("endsAt"));
         boolean trial="3 Saat Deneme".equals(title) || "24 Saat Test".equals(title);
-        boolean eligible=!"blocked".equals(user.optString("status")) && user.optBoolean("hasAssignedLink") && user.optBoolean("hasActiveSubscription") && appExpiry>now;
+        boolean eligible=AccountAccessParser.reason(user,now)==Account.Access.ACTIVE;
         String suffix=ProviderParser.text(user.opt("codeSuffix"),16); if(suffix.isEmpty())suffix=t.codeSuffix;
         if(suffix.length()>4)suffix=suffix.substring(suffix.length()-4);
         String message=eligible?"İzleme erişimin açık.":"blocked".equals(user.optString("status"))?"Hesabın için destek ekibimizle iletişime geç.":!user.optBoolean("hasAssignedLink")?"İçerik bağlantın henüz hazır değil.":"Aktif izleme erişimin bulunmuyor.";
-        Account account=new Account(id,suffix,title,appExpiry,false,trial,message);
+        Account.Access reason=AccountAccessParser.reason(user,now);
+        if(reason==Account.Access.EXPIRED)message="Aktif paketin bulunmuyor veya paketinin süresi doldu.";
+        if(reason==Account.Access.TRIAL_PENDING)message="review".equals(user.optString("trialProvisionStatus"))?"Deneme erişimin inceleniyor. Destek ekibimizle iletişime geç.":"Deneme erişimin hazırlanıyor. Lütfen tekrar kontrol et.";
+        Account account=new Account(id,suffix,title,appExpiry,false,trial,message,reason);
         if(eligible) {
             try {
                 ProviderParser.Bootstrap b=bootstrap(auth,force);
                 if(!b.accountId.equals(id)) { clearProvider();throw new Problem(Failure.Code.STALE); }
                 account=new Account(id,suffix,title,b.expiresAtMs,true,trial,message);
             } catch(Problem issue) {
-                if(issue.code==Failure.Code.INELIGIBLE) account=new Account(id,suffix,title,0,false,trial,"İzleme erişimin şu anda açık değil.");
+                if(issue.code==Failure.Code.INELIGIBLE) account=new Account(id,suffix,title,appExpiry,false,trial,"Paketin aktif. İçerik hizmetine şu anda ulaşılamıyor.",Account.Access.SERVICE_UNAVAILABLE);
                 else if(issue.code==Failure.Code.NETWORK && cached!=null && cached.canPlay && guard.current()!=null && guard.current().expiresAtMs>clock.now()) account=new Account(id,suffix,title,guard.current().expiresAtMs,true,trial,"Son doğrulanan erişim bilgisi gösteriliyor.");
                 else throw issue;
             }
@@ -411,7 +417,7 @@ public final class NetworkTvRepository implements TvRepository {
                 if(expiredOnly?current.expiresAtMs>clock.now():!guard.active(source,scope,clock.now()))return;
             }
             guard.clear();bootstrapCheckedAt=0;clearMetadataLocked();
-            Account previous=currentAccount;if(previous!=null && previous.canPlay)currentAccount=new Account(previous.id,previous.codeSuffix,previous.packageTitle,previous.expiresAtMs,false,previous.trial,"İzleme erişimin şu anda açık değil.");
+            Account previous=currentAccount;if(previous!=null && previous.canPlay)currentAccount=new Account(previous.id,previous.codeSuffix,previous.packageTitle,previous.expiresAtMs,false,previous.trial,"İçerik hizmetine şu anda ulaşılamıyor.",Account.Access.SERVICE_UNAVAILABLE);
             accountCheckedAt=0;
             if(refreshTimer!=null)main.removeCallbacks(refreshTimer);if(expiryTimer!=null)main.removeCallbacks(expiryTimer);
             refreshTimer=null;expiryTimer=null;cancel=new ArrayList<>(connections);

@@ -41,6 +41,16 @@ export function packageCards(catalog: readonly CatalogPackage[], users: PackageU
   }));
 }
 
+export function packageLandingPlan(search: string, plans: readonly PackageCard[]): PackageCard | null {
+  const query = new URLSearchParams(search);
+  if (query.getAll('plan').length !== 1 || query.getAll('users').length !== 1) return null;
+  const requestedUsers = query.get('users');
+  if (requestedUsers !== '1' && requestedUsers !== '2') return null;
+  const canonical = PACKAGE_PLANS.find(plan => plan.slug === query.get('plan') && plan.users === Number(requestedUsers));
+  if (!canonical) return null;
+  return plans.find(plan => plan.available && plan.slug === canonical.slug && plan.users === canonical.users && plan.months === canonical.months) ?? null;
+}
+
 export function checkoutAvailable(plan: PackageCard, billing: BillingPackagesStatus | null | undefined): boolean {
   return plan.available && billing?.checkoutEnabled === true && billing.checkoutPackages?.some(pkg =>
     pkg.packageSlug === plan.slug && pkg.amountTry === plan.price && pkg.users === plan.users && pkg.durationMonths === plan.months && pkg.offerId === plan.offerId

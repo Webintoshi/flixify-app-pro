@@ -22,6 +22,16 @@ final class FakeTvRepository implements TvRepository {
     int trimRequests;
     @Override public void trimMemory(Kind keep){retainedOnTrim=keep;trimRequests++;}
     @Override public void prepareOfflineData(){preparationRequests++;}
+    Account accountOverride;
+    Failure.Code catalogFailureCode=Failure.Code.NETWORK;
+    boolean delayAccess;
+    Callback<Account> delayedAccess;
+    boolean failPackages,failAccess,expireAuth,delayPackages;
+    Callback<List<PackagePlan>> delayedPackages;
+    void releasePackages(){Callback<List<PackagePlan>> cb=delayedPackages;delayedPackages=null;delayPackages=false;if(cb!=null)packages(cb);}
+    public void packages(Callback<List<PackagePlan>> cb){if(delayPackages){delayedPackages=cb;return;}if(failPackages){cb.onError(new Failure(Failure.Code.NETWORK,"Offline fixture"));return;}List<PackagePlan> plans=new ArrayList<>();for(int users:new int[]{1,2})for(int months:new int[]{1,6,12})plans.add(new PackagePlan(PackagePlan.slug(months,users),months,users,(users==1?(months==1?"250 ₺":months==6?"699 ₺":"999 ₺"):(months==1?"399 ₺":months==6?"999 ₺":"1.399 ₺"))));cb.onResult(plans);}
+    boolean revokeCatalog;
+    int accessRequests;
     boolean failCatalog;
     boolean delayFavorites;
     Callback<List<Item>> delayedFavorites;
@@ -46,7 +56,7 @@ final class FakeTvRepository implements TvRepository {
     private Item item(Kind k,String id,String title,String category,String categoryName,String series,int season,int episode) {
         return new Item(k,id,title,category,categoryName,"","mp4",scope,series,season,episode,"Çevrimdışı test açıklaması");
     }
-    private Account user() { return new Account("fixture-account","1234","Test Paketi",1893456000000L,true,false,"Hesabınız aktif"); }
+    private Account user() { if(accountOverride!=null)return accountOverride;return new Account("fixture-account","1234","Test Paketi",1893456000000L,true,false,"Hesabınız aktif"); }
     public boolean hasSession() { return session; }
     public String currentScope() { return session && bootstrapped ? scope : ""; }
     public void login(String code,Callback<Account> cb) {
@@ -62,7 +72,8 @@ final class FakeTvRepository implements TvRepository {
         Callback<Account> cb=delayedAccount;delayedAccount=null;delayAccount=false;
         if(cb!=null)account(true,cb);
     }
-    public void refreshAccess(Callback<Account> cb) { cb.onResult(user()); }
+    public void refreshAccess(Callback<Account> cb) { accessRequests++; if(expireAuth){session=false;cb.onError(new Failure(Failure.Code.AUTH,"Oturumun sona erdi."));return;}if(failAccess){cb.onError(new Failure(Failure.Code.NETWORK,"Offline fixture"));return;} if(delayAccess){delayedAccess=cb;return;}cb.onResult(user()); }
+    void releaseAccess(){Callback<Account> cb=delayedAccess;delayedAccess=null;delayAccess=false;if(cb!=null)cb.onResult(user());}
     public AutoCloseable observeCatalog(CatalogObserver observer) {
         catalogObserver=observer;
         return ()->{if(catalogObserver==observer)catalogObserver=null;};
@@ -70,10 +81,11 @@ final class FakeTvRepository implements TvRepository {
     void publishCatalog(Catalog catalog) {catalogOverrides.put(catalog.kind,catalog);if(catalogObserver!=null)catalogObserver.onCatalog(catalog);}
     public void catalog(Kind kind,boolean force,Callback<Catalog> cb) {
         catalogRequests++;
+        if(revokeCatalog){scope="";cb.onError(new Failure(Failure.Code.STALE,"Revoked fixture lease"));return;}
         lastCatalogForced=force;
         if(bootstrapOnCatalog)bootstrapped=true;
         if (delayCatalog) { delayedCatalog=cb; return; }
-        if (failCatalog) { cb.onError(new Failure(Failure.Code.NETWORK,"Bağlantı kurulamadı")); return; }
+        if (failCatalog) { cb.onError(new Failure(catalogFailureCode,"Bağlantı kurulamadı")); return; }
         if(catalogOverrides.containsKey(kind)){cb.onResult(catalogOverrides.get(kind));return;}
         List<Item> rows = kind==Kind.SERIES?Arrays.asList(show):kind==Kind.LIVE?Arrays.asList(live):Arrays.asList(movie,movie2);
         List<Category> categories = kind==Kind.MOVIE?Arrays.asList(new Category("1","Bilim Kurgu"),new Category("2","Drama")):Arrays.asList(new Category(rows.get(0).categoryId,rows.get(0).categoryName));

@@ -71,6 +71,13 @@ public final class MainActivity extends Activity {
     private boolean homeRefreshPending;
     private Page page;
     private long generation;
+    private long accessSerial,packagesSerial;
+    private Account verifiedAccount;
+    private String verifiedOwner="",accessError="",packagesError="";
+    private boolean accessBusy,packagesVisible,packagesBusy,recoveringCatalog;
+    private int packageUsers=1;
+    private java.util.List<PackagePlan> packagePlans;
+
     private boolean stopped,destroyed,initialized,resumeReload,playerLaunching,searchPlayerReturn;
     private Dialog dialog,catalogDialog;
     private static final class SearchSelection {
@@ -139,22 +146,8 @@ public final class MainActivity extends Activity {
         boolean returning=resumeReload || searchPlayerReturn; resumeReload=false;if(searchPlayerReturn)resizeAfterCatalog=false;searchPlayerReturn=false;
         if(!repository.hasSession()) { if(returning)showLogin(""); return; }
         if(welcomeBlocked()){loadWelcome();return;}
-        discardPreviousSource();
-        if(body==null) { page=pages.get(Section.HOME);showPage(false,false); }
-        else if(returning) {
-            if(page.section==Section.ACCOUNT){resizeFocus=focusIdentity(getCurrentFocus());showAccount();}
-            else showPage(page.section==Section.FAVORITES,true);
-        }
-        final String scope=repository.currentScope(); final long ticket=generation;
-        repository.refreshAccess(new TvRepository.Callback<Account>() {
-            public void onResult(Account account) {
-                if(!screenAlive(ticket) || welcomeBlocked())return;
-                if(!scope.equals(repository.currentScope())) {
-                    invalidateScopedCatalogs();if(page.section==Section.ACCOUNT)showAccount();else showPage(false,false);
-                } else if(!account.canPlay && page.section!=Section.ACCOUNT)showAccount();
-            }
-            public void onError(Failure failure) { if(screenAlive(ticket) && failure.code==Failure.Code.AUTH)sessionEnded(failure.message); }
-        });
+        refreshVerifiedAccess(returning);
+
     }
     @Override protected void onPause() {posterSound.pause();super.onPause();}
     @Override protected void onStop() {
@@ -162,6 +155,7 @@ public final class MainActivity extends Activity {
         artwork.retireScreen();
         preparedScope="";
         favoritesRefreshSerial++;favoritesRefreshPending=false;favoritesRefreshAgain=false;
+        accessSerial++;accessBusy=false;packagesSerial++;packagesBusy=false;
         welcomeSerial++;welcomeBusy=false;
         if(!searchPlayerReturn)captureGrid();stopped=true;resumeReload=true;generation++;homeLoadSerial++;observationEpoch++;clearPendingCatalogs();searchSelection=null;informationSelection=null;
         if(catalogObservation!=null){try{catalogObservation.close();}catch(Exception ignored){}catalogObservation=null;}
@@ -295,7 +289,95 @@ public final class MainActivity extends Activity {
     }
     private void enterAfterWelcome(){
         welcomeResolved=true;welcomeBusy=false;welcomeError="";welcomeAccount=repository.currentAccountId();welcomeSerial++;
-        if(page.section==Section.ACCOUNT)showAccount();else showPage(false,false);
+        refreshVerifiedAccess(false);
+    }
+
+    private boolean accessCurrent(long serial,String owner){return !destroyed&&!stopped&&!isFinishing()&&serial==accessSerial&&repository.hasSession()&&owner.equals(repository.currentAccountId());}
+    private void refreshVerifiedAccess(boolean redraw){recoveringCatalog=false;resolveVerifiedAccess(redraw,false);}
+    private void resolveVerifiedAccess(boolean redraw,boolean accountScreen){
+        String owner=repository.currentAccountId();
+        if(!owner.equals(verifiedOwner)){accessBusy=false;accessSerial++;verifiedAccount=null;verifiedOwner=owner;packagePlans=null;packagesSerial++;}
+        if(accessBusy)return;
+        final boolean first=verifiedAccount==null;
+        accessBusy=true;accessError="";final long serial=++accessSerial;
+        if(verifiedAccount==null&&!accountScreen){shell("Hesabın kontrol ediliyor…","");LinearLayout inner=scrollContent();inner.addView(TvUi.text(this,"İzleme erişimin doğrulanıyor…",20,TvUi.MUTED));startup.ready();}
+        TvRepository.Callback<Account> authority=new TvRepository.Callback<Account>(){
+            public void onResult(Account account){
+                if(!accessCurrent(serial,owner))return;accessBusy=false;verifiedAccount=account;verifiedOwner=owner;accessError="";
+                boolean recovery=recoveringCatalog;recoveringCatalog=false;
+                if(!account.canPlay)invalidateScopedCatalogs();
+                if(page.section==Section.ACCOUNT&&!packagesVisible){renderAccount(account);return;}
+                if(!account.canPlay){if(account.access==Account.Access.EXPIRED)showPackages();else showAccessStatus();}
+                else if(recovery){showCatalogUnavailable();}
+                else {
+                    boolean changed=discardPreviousSource();
+                    if(first||packagesVisible||redraw||changed||body==null){packagesVisible=false;if(page.section==Section.ACCOUNT)showAccount();else showPage(redraw&&page.section==Section.FAVORITES,redraw);}
+                }
+            }
+            public void onError(Failure failure){
+                if(destroyed||stopped||isFinishing()||serial!=accessSerial)return;
+                if(failure.code==Failure.Code.AUTH&&(!repository.hasSession()||owner.equals(repository.currentAccountId()))){accessBusy=false;sessionEnded(failure.message);return;}
+                if(!accessCurrent(serial,owner))return;accessBusy=false;
+                accessError=accountScreen?safeMessage(failure.message):"Erişimin doğrulanamadı. Lütfen tekrar dene.";
+                if(page.section==Section.ACCOUNT&&!packagesVisible)showFailure(accessError,MainActivity.this::showAccount);
+                else if(recoveringCatalog||verifiedAccount==null||!verifiedAccount.canPlay)showAccessStatus();
+            }
+        };
+        if(accountScreen)repository.account(true,authority);else repository.refreshAccess(authority);
+    }
+    private boolean accessGate(){
+        if(!repository.currentAccountId().equals(verifiedOwner)){verifiedAccount=null;accessBusy=false;accessSerial++;}
+        if(verifiedAccount==null){refreshVerifiedAccess(false);return true;}
+        if(!verifiedAccount.canPlay){if(verifiedAccount.access==Account.Access.EXPIRED)showPackages();else showAccessStatus();return true;}
+        return false;
+    }
+    private Button recoveryButton(LinearLayout inner,String label,String key,Runnable action){Button button=TvUi.button(this,label,action);markFocus(button,key);inner.addView(button,TvUi.space(this,Math.min(330,sizing.contentWidth()-8),48));return button;}
+    private boolean recoverCatalogDenial(String owner,String source,Failure failure){
+        if(!AccessRecoveryPolicy.shouldResolve(failure.code,repository.hasSession(),owner,repository.currentAccountId(),source,repository.currentScope()))return false;
+        invalidateScopedCatalogs();if(page.section!=Section.ACCOUNT||packagesVisible)showCatalogUnavailable();recoveringCatalog=true;resolveVerifiedAccess(false,false);return true;
+    }
+    private void showCatalogUnavailable(){accessError="İçerik hizmetine şu anda ulaşılamıyor. Erişimini tekrar kontrol et.";showAccessStatus();}
+    private void showAccessStatus(){
+        packagesVisible=false;shell("İzleme erişimi","");LinearLayout inner=scrollContent();
+        String message=!accessError.isEmpty()?accessError:verifiedAccount==null?"Hesabın doğrulanamadı.":verifiedAccount.message;
+        inner.addView(TvUi.text(this,message,20,TvUi.MUTED),TvUi.space(this,-1,-2));
+        linkContent(recoveryButton(inner,"Tekrar dene","access:retry",()->refreshVerifiedAccess(true)));
+        recoveryButton(inner,"Paketleri gör","access:packages",this::showPackages);
+        recoveryButton(inner,"Hesabım","access:account",this::showAccount);restoreResizeFocus(true);startup.ready();
+    }
+    private void showPackages(){
+        packagesVisible=true;String focus=focusIdentity(getCurrentFocus());shell("Paketler","");LinearLayout inner=scrollContent();
+        if(verifiedAccount!=null&&!verifiedAccount.canPlay)inner.addView(TvUi.text(this,verifiedAccount.message,18,TvUi.MUTED),TvUi.space(this,-1,-2));
+        for(int users:new int[]{1,2}){Button select=recoveryButton(inner,(users==1?"1 Kullanıcı":"2 Kullanıcı")+(packageUsers==users?" • Seçili":""),"packages:users:"+users,()->{packageUsers=users;showPackages();});if(users==1)linkContent(select);}
+        boolean wide=sizing.contentWidth()>=600;
+        LinearLayout terms=wide?TvUi.row(this):inner;if(wide)inner.addView(terms,TvUi.space(this,-1,-2));
+        for(int months:new int[]{1,6,12}){
+            LinearLayout card=TvUi.column(this);card.setPadding(TvUi.dp(this,8),TvUi.dp(this,10),TvUi.dp(this,8),TvUi.dp(this,10));
+            if(wide)terms.addView(card,new LinearLayout.LayoutParams(0,-2,1));else inner.addView(card,TvUi.space(this,-1,-2));
+            PackagePlan chosen=null;if(packagePlans!=null)for(PackagePlan plan:packagePlans)if(plan.users==packageUsers&&plan.months==months)chosen=plan;
+            card.addView(TvUi.text(this,months+" Aylık",22,TvUi.WHITE),TvUi.space(this,-1,-2));final PackagePlan plan=chosen;
+            card.addView(TvUi.text(this,plan==null?packagesBusy?"Yükleniyor…":"Şu anda kullanılamıyor":plan.priceLabel,18,TvUi.MUTED),TvUi.space(this,-1,-2));
+            Button buy=TvUi.button(this,"Web sitesinde devam et",()->openRegularPackage(plan));markFocus(buy,"packages:buy:"+months);buy.setEnabled(plan!=null);card.addView(buy,TvUi.space(this,-1,64));
+        }
+        if(!packagesError.isEmpty())inner.addView(TvUi.text(this,packagesError,18,TvUi.MUTED),TvUi.space(this,-1,-2));
+        recoveryButton(inner,"Paketleri yenile","packages:reload",()->{packagePlans=null;loadPackages();});
+        recoveryButton(inner,"Erişimi kontrol et","packages:access",()->refreshVerifiedAccess(true));
+        recoveryButton(inner,"Hesabım","packages:account",this::showAccount);
+        if(resizeFocus==null)resizeFocus=focus;restoreResizeFocus(true);startup.ready();
+        if(packagePlans==null&&!packagesBusy)loadPackages();
+    }
+    private void loadPackages(){
+        packagesBusy=true;packagesError="";final long serial=++packagesSerial;final String owner=repository.currentAccountId();showPackages();
+        repository.packages(new TvRepository.Callback<java.util.List<PackagePlan>>(){
+            private boolean current(){return !destroyed&&!stopped&&serial==packagesSerial&&repository.hasSession()&&owner.equals(repository.currentAccountId());}
+            public void onResult(java.util.List<PackagePlan> plans){if(!current())return;packagesBusy=false;packagePlans=plans;if(packagesVisible)showPackages();}
+            public void onError(Failure failure){if(!current())return;packagesBusy=false;packagePlans=java.util.Collections.emptyList();packagesError="Paketler yüklenemedi. Paketleri yenileyerek tekrar dene.";if(packagesVisible)showPackages();}
+        });
+    }
+    private void openRegularPackage(PackagePlan plan){
+        if(plan==null)return;String url=plan.url();
+        try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE));analytics.event("package_open",TvAnalytics.values("package_users",plan.users));}
+        catch(ActivityNotFoundException|SecurityException unavailable){notice("TV’de tarayıcı bulunamadı. Telefonunda "+url+" adresini aç ve aynı hesap kodunla giriş yap. Ardından Erişimi kontrol et seçeneğini kullan.");}
     }
     private void openPackages(int users){
         String url=Uri.parse(WelcomeOffer.notEligible().paymentUrl(users)).buildUpon().appendQueryParameter("from","android_tv").build().toString();
@@ -330,13 +412,13 @@ public final class MainActivity extends Activity {
         return true;
     }
     private void receiveCatalog(Catalog catalog) {
-        if(stopped || destroyed || isFinishing() || !repository.hasSession() || welcomeBlocked() || !catalogMatchesCurrentSource(catalog))return;
+        if(stopped || destroyed || isFinishing() || !repository.hasSession() || welcomeBlocked() || verifiedAccount==null || !verifiedAccount.canPlay || packagesVisible || !catalogMatchesCurrentSource(catalog))return;
         pendingCatalogUpdates.put(catalog.kind,catalog);
         pendingCatalogScopes.put(catalog.kind,repository.currentScope());
         if(!searchHandoffPending() && !searchPlayerReturn && !playerLaunching && (dialog==null || !dialog.isShowing()))applyPendingCatalogs(true);
     }
     private void applyPendingCatalogs(boolean redraw) {
-        if(stopped || destroyed || !repository.hasSession() || welcomeBlocked() || (dialog!=null && dialog.isShowing()))return;
+        if(stopped || destroyed || !repository.hasSession() || welcomeBlocked() || verifiedAccount==null || !verifiedAccount.canPlay || packagesVisible || (dialog!=null && dialog.isShowing()))return;
         if(discardPreviousSource()) {
             if(redraw && page.section!=Section.ACCOUNT)showPage(false,false);
             return;
@@ -385,18 +467,22 @@ public final class MainActivity extends Activity {
         });
     }
     private <T> TvRepository.Callback<T> callback(long ticket,String scope,Result<T> result,Runnable retry) {
+        final String owner=repository.currentAccountId();
         return new TvRepository.Callback<T>() {
             public void onResult(T value) { if(valid(ticket,scope))result.accept(value); }
             public void onError(Failure failure) {
-                if(!screenAlive(ticket) || failure.code==Failure.Code.STALE)return;
+                if(!screenAlive(ticket))return;
+                if(recoverCatalogDenial(owner,scope,failure))return;
+                if(failure.code==Failure.Code.STALE)return;
                 if(failure.code==Failure.Code.AUTH && (scope.equals(repository.currentScope()) || !repository.hasSession()))sessionEnded(failure.message);
-                else if(failure.code!=Failure.Code.AUTH && valid(ticket,scope))showFailure(failure.message,retry);
+                else if(failure.code!=Failure.Code.AUTH && valid(ticket,scope)){showFailure(failure.message,retry);}
             }
         };
     }
     private interface Result<T> { void accept(T value); }
-    private void sessionEnded(String message) {welcomeSerial++;welcomeResolved=false;welcomeBusy=false;welcomeOffer=null;welcomeAccount="";repository.logout();artwork.clear();updatePanel.cancel();invalidateScopedCatalogs();showLogin(message);}
+    private void sessionEnded(String message) {verifiedAccount=null;verifiedOwner="";accessSerial++;accessBusy=false;packagesSerial++;packagesBusy=false;packagePlans=null;packagesVisible=false;welcomeSerial++;welcomeResolved=false;welcomeBusy=false;welcomeOffer=null;welcomeAccount="";repository.logout();artwork.clear();updatePanel.cancel();invalidateScopedCatalogs();showLogin(message);}
     private void resizeScreen() {
+        if(packagesVisible){resizeFocus=focusIdentity(getCurrentFocus());showPackages();return;}
         if(repository.hasSession() && welcomeBlocked()){renderWelcome();return;}
         // A native IME may resize the Activity behind its dialog. Keep the owning
         // catalogue and the same editor alive until the draft is closed/submitted.
@@ -515,6 +601,7 @@ public final class MainActivity extends Activity {
     private String pageTitle() { return page.section==Section.HOME?"Sizin için":NAV[page.section.ordinal()]; }
     private void showPage(boolean reload,boolean contentFocus) {
         if(welcomeBlocked()){loadWelcome();return;}
+        if(accessGate())return;packagesVisible=false;
         visibleAnalyticsScreen=page.section.name().toLowerCase(Locale.ROOT);analytics.screen(visibleAnalyticsScreen);offerAnalytics();
         discardPreviousSource();
         applyPendingCatalogs(false);
@@ -533,7 +620,7 @@ public final class MainActivity extends Activity {
         else {final long analyticsTicket=analytics.epoch();repository.catalog(pageKind(),reload,callback(ticket,scope,catalog->{page.catalog=catalog;page.catalogScope=repository.currentScope();analytics.event(analyticsTicket,"catalog_page_loaded",TvAnalytics.values("result_count",catalog.items.size()));replaceCatalog(contentFocus);},()->showPage(true,true)));}
     }
     private void loadHomeCatalogs(boolean force,boolean contentFocus){
-        final Page owner=pages.get(Section.HOME);final long serial=++homeLoadSerial;final String account=repository.currentAccountId();
+        final Page owner=pages.get(Section.HOME);final long serial=++homeLoadSerial;final String account=repository.currentAccountId(),source=repository.currentScope();
         if(force){homeSources.clear();owner.catalog=null;owner.catalogScope="";}
         List<Kind> missing=new ArrayList<>();for(Kind kind:new Kind[]{Kind.MOVIE,Kind.SERIES,Kind.LIVE})if(!homeSources.containsKey(kind))missing.add(kind);
         final int[] remaining={missing.size()};final boolean[] ready={owner.catalog!=null};
@@ -549,9 +636,9 @@ public final class MainActivity extends Activity {
                 }
             }
             public void onError(Failure failure){
-                if(!current() || failure.code==Failure.Code.STALE)return;remaining[0]--;
+                if(!current())return;if(recoverCatalogDenial(account,source,failure))return;if(failure.code==Failure.Code.STALE)return;remaining[0]--;
                 if(failure.code==Failure.Code.AUTH){sessionEnded(failure.message);return;}
-                if(remaining[0]==0 && !ready[0] && homeSources.isEmpty() && page==owner)showFailure(failure.message,()->showPage(true,true));
+                if(remaining[0]==0 && !ready[0] && homeSources.isEmpty() && page==owner){showFailure(failure.message,()->showPage(true,true));}
             }
         });
     }
@@ -795,6 +882,7 @@ public final class MainActivity extends Activity {
         else {image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setPadding(0,0,0,0);image.setImageAlpha(255);}
     }
     private void play(Item item) {
+        if(accessGate())return;
         if(playerLaunching || stopped || destroyed || isFinishing() || !hasWindowFocus())return;
         if(!item.scope.equals(repository.currentScope())) { notice("Kaynak değişti. Listeyi yenileyin.");return; }
         playerLaunching=true;
@@ -809,11 +897,14 @@ public final class MainActivity extends Activity {
         LinearLayout inner=TvUi.column(this);inner.setPadding(0,TvUi.dp(this,8),0,TvUi.dp(this,16));scroll.addView(inner,new ScrollView.LayoutParams(-1,-2));body.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));return inner;
     }
     private void showAccount() {
+        packagesVisible=false;
         if(welcomeBlocked()){loadWelcome();return;}
         visibleAnalyticsScreen="account";analytics.screen(visibleAnalyticsScreen);
         page=pages.get(Section.ACCOUNT);shell("Hesabım","");
         LinearLayout loading=scrollContent();loading.addView(TvUi.text(this,"Hesap yükleniyor…",20,TvUi.MUTED),TvUi.space(this,-1,64));addAccountActions(loading);
-        final long ticket=generation;String scope=repository.currentScope();repository.account(true,callback(ticket,scope,account->{
+        recoveringCatalog=false;resolveVerifiedAccess(false,true);
+    }
+    private void renderAccount(Account account){
             String accountFocus=focusIdentity(getCurrentFocus());
             shell("Hesabım","");LinearLayout inner=scrollContent();
             TextView packageTitle=TvUi.text(this,account.packageTitle,26,TvUi.WHITE);TvUi.heading(packageTitle);inner.addView(packageTitle,TvUi.space(this,-1,-2));
@@ -822,12 +913,12 @@ public final class MainActivity extends Activity {
             inner.addView(TvUi.text(this,"Bitiş: "+expiry,18,TvUi.MUTED),TvUi.space(this,-1,-2));
             TextView message=TvUi.text(this,account.message.isEmpty()?(account.canPlay?"Hesabınız aktif":"İzleme erişimi bulunmuyor."):account.message,18,account.canPlay?TvUi.MUTED:TvUi.ACCENT);inner.addView(message,TvUi.space(this,-1,-2));
             addAccountActions(inner);if(resizeFocus==null)resizeFocus=accountFocus;restoreResizeFocus(true);startup.ready();
-        },this::showAccount));
     }
+
     private void addAccountActions(LinearLayout parent) {
         Button update=updatePanel.addTo(parent,sizing.contentWidth()-8);markFocus(update,"account:update");
         Button logout=addLocalLogout(parent);update.setNextFocusDownId(logout.getId());logout.setNextFocusUpId(update.getId());linkContent(logout);
-        Button packages=TvUi.button(this,"Paketleri gör",()->openPackages(1));markFocus(packages,"account:packages");parent.addView(packages,TvUi.space(this,Math.min(230,sizing.contentWidth()-8),48));logout.setNextFocusDownId(packages.getId());packages.setNextFocusUpId(logout.getId());
+        Button packages=TvUi.button(this,"Paketleri gör",this::showPackages);markFocus(packages,"account:packages");parent.addView(packages,TvUi.space(this,Math.min(230,sizing.contentWidth()-8),48));logout.setNextFocusDownId(packages.getId());packages.setNextFocusUpId(logout.getId());
         parent.addView(TvUi.text(this,analytics.status(),16,TvUi.MUTED),TvUi.space(this,-1,-2));
         Button privacy=TvUi.button(this,"Kullanım analizi tercihi",()->{AlertDialog consent=analytics.dialog(this,()->{if(!stopped&&!destroyed)showAccount();});dialog=consent;consent.show();consent.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus();});markFocus(privacy,"account:analytics");privacy.setEnabled(analytics.configured());parent.addView(privacy,TvUi.space(this,Math.min(330,sizing.contentWidth()-8),48));packages.setNextFocusDownId(privacy.getId());privacy.setNextFocusUpId(packages.getId());
     }

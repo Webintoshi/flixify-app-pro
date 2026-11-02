@@ -76,7 +76,7 @@ public class WelcomeOfferUiTest {
         Instrumentation.ActivityMonitor browser=new Instrumentation.ActivityMonitor(){@Override public Instrumentation.ActivityResult onStartActivity(Intent intent){if(Intent.ACTION_VIEW.equals(intent.getAction())){sent.set(intent);return new Instrumentation.ActivityResult(0,null);}return null;}};
         instrumentation.addMonitor(browser);
         try{launch();click("welcome-users-2");click("welcome-paid");gated();assertNull(sent.get());
-            instrumentation.runOnMainSync(repository::releaseWelcomeChoice);settle();assertNotNull(sent.get());assertEquals("https://flixify.vip/paketler?welcome=1&users=2",sent.get().getDataString());assertEquals("monthly",repository.lastWelcomeChoice);assertTrue(repository.catalogRequests>0);
+            instrumentation.runOnMainSync(repository::releaseWelcomeChoice);settle();assertNotNull(sent.get());assertEquals("https://flixify.vip/paketler?welcome=1&users=2&from=android_tv",sent.get().getDataString());assertEquals("monthly",repository.lastWelcomeChoice);assertTrue(repository.catalogRequests>0);
         }finally{instrumentation.removeMonitor(browser);}
     }
     @Test public void backLeavesPendingChoiceUnacknowledged(){launch();instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);settle();assertTrue(activity.isFinishing());assertEquals(0,repository.welcomeChoices);assertEquals(0,repository.catalogRequests);}
@@ -87,7 +87,7 @@ public class WelcomeOfferUiTest {
         try{launch();instrumentation.runOnMainSync(()->{View account=label(activity.findViewById(android.R.id.content),"Hesabım");assertNotNull(account);account.performClick();});settle();
             instrumentation.runOnMainSync(()->{View logout=label(activity.findViewById(android.R.id.content),"Oturumu kapat");assertNotNull(logout);logout.requestFocus();});instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN);settle();
             instrumentation.runOnMainSync(()->assertEquals("Paketleri gör",((TextView)activity.getCurrentFocus()).getText().toString()));instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER);settle();
-            assertNotNull(sent.get());assertEquals("https://flixify.vip/paketler?welcome=1&users=1",sent.get().getDataString());assertNull(sent.get().getExtras());assertEquals(0,repository.welcomeChoices);
+            assertNull("Native regular packages require a separate explicit handoff",sent.get());instrumentation.runOnMainSync(()->assertNotNull(label(activity.findViewById(android.R.id.content),"6 Aylık")));assertEquals(0,repository.welcomeChoices);
         }finally{instrumentation.removeMonitor(browser);}
     }
     @Test public void televisionViewportShowsEqualCardsAndBothCtasWithoutClipping(){

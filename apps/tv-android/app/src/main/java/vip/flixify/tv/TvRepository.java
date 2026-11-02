@@ -15,6 +15,7 @@ public interface TvRepository {
     default String currentAccountId(){return currentScope();}
     default void welcomeOffer(Callback<WelcomeOffer> callback){callback.onResult(WelcomeOffer.notEligible());}
     default void chooseWelcomeOffer(String choice,Callback<WelcomeOffer> callback){callback.onError(new Failure(Failure.Code.INVALID,"Seçimin kaydedilemedi. Tekrar dene."));}
+    default void packages(Callback<List<PackagePlan>> callback){callback.onError(new Failure(Failure.Code.NETWORK,"Paketler yüklenemedi."));}
     boolean hasSession();
     String currentScope();
     void login(String code,Callback<Account> callback);

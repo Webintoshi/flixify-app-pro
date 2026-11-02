@@ -6,7 +6,7 @@ import type { PackageRecord } from '@flixify/contracts';
 import { apiRequest } from '../../lib/api';
 import { AccountFrame, Loading, LoadError, useAccountResource } from '../account/components';
 import { checkoutErrorLabel } from './stripe-package-copy';
-import { checkoutAvailable, packageCards, type BillingPackagesStatus, type PackageUsers } from './packages-model';
+import { checkoutAvailable, packageCards, packageLandingPlan, type BillingPackagesStatus, type PackageUsers } from './packages-model';
 import { Pricing } from '../../components/ui/pricing';
 import { PackageCheckout } from '../../components/ui/package-checkout';
 import { embeddedCheckout, type EmbeddedCheckoutSession } from './embedded-payment';
@@ -24,6 +24,7 @@ export default function PackagesPage() {
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const landingHandled = useRef(false);
   const [checkout, setCheckout] = useState<{ session: EmbeddedCheckoutSession; plan: PackageCard } | null>(null);
   const plans = packageCards(data?.items ?? [], users, welcome);
   const measuredPlans = useRef('');
@@ -34,14 +35,21 @@ export default function PackagesPage() {
     trackAnalytics('view_item_list', { item_list_id: 'packages', package_users: users, items: plans.map(plan => ({ item_id: plan.slug, price: plan.price })) });
   }, [loading, error, plansKey, users]);
   const welcomeLanding = search?.get('welcome') === '1';
+  const landingPlan = packageLandingPlan(search?.toString() ?? '', plans)?.slug;
   useEffect(() => {
-    if (!welcomeLanding || loading || error || checkout) return;
-    const card = document.querySelector<HTMLElement>('[data-welcome-package]');
+    if (landingHandled.current || loading || billing.loading || error || checkout) return;
+    const card = landingPlan
+      ? document.querySelector<HTMLElement>(`[data-package-slug="${landingPlan}"]`)
+      : welcomeLanding ? document.querySelector<HTMLElement>('[data-welcome-package]') : null;
+    const purchase = card?.querySelector<HTMLElement>('button:not([disabled]), a[href]');
+    if (!purchase) return;
+    landingHandled.current = true;
     card?.scrollIntoView?.({ block: 'center', behavior: 'instant' });
-    card?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
-  }, [welcomeLanding, loading, error, users, checkout]);
+    purchase.focus({ preventScroll: true });
+  }, [welcomeLanding, landingPlan, loading, billing.loading, error, checkout]);
 
   async function startCheckout(slug: string) {
+    landingHandled.current = true;
     const selected = plans.find(plan => plan.slug === slug);
     if (inFlight.current || !selected || !checkoutAvailable(selected, billing.data)) return;
     trackAnalytics('select_item', { item_list_id: 'packages', package_id: selected.slug, package_months: selected.months, package_users: selected.users });
@@ -62,5 +70,5 @@ export default function PackagesPage() {
     }
   }
 
-  return <AccountFrame>{checkout ? <PackageCheckout checkout={checkout.session} plan={checkout.plan} onActivated={() => { window.dispatchEvent(new Event('flixify-welcome-offer')); billing.reload(); }} onBack={() => { setCheckout(null); inFlight.current = false; setCheckoutError(null); billing.reload(); }} /> : loading ? <Loading /> : error ? <LoadError onRetry={reload} /> : <Pricing plans={plans} users={users} onUsersChange={next => { if (!inFlight.current) { setUsers(next); setCheckoutError(null); } }} billing={billing.data} submitting={submitting} checkoutError={checkoutError} onCheckout={startCheckout} />}</AccountFrame>;
+  return <AccountFrame>{checkout ? <PackageCheckout checkout={checkout.session} plan={checkout.plan} onActivated={() => { window.dispatchEvent(new Event('flixify-welcome-offer')); billing.reload(); }} onBack={() => { setCheckout(null); inFlight.current = false; setCheckoutError(null); billing.reload(); }} /> : loading ? <Loading /> : error ? <LoadError onRetry={reload} /> : <Pricing plans={plans} users={users} onUsersChange={next => { landingHandled.current = true; if (!inFlight.current) { setUsers(next); setCheckoutError(null); } }} onInteract={() => { landingHandled.current = true; }} billing={billing.data} submitting={submitting} checkoutError={checkoutError} onCheckout={startCheckout} />}</AccountFrame>;
 }

@@ -1,10 +1,10 @@
 {
   "packageName": "vip.flixify.tv",
-  "versionName": "1.4.8",
-  "versionCode": 16,
+  "versionName": "1.4.9",
+  "versionCode": 17,
   "minSdk": 23,
-  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.8.apk",
-  "sha256": "261849966386c62ebbeb4cafa096b1a451331520f429c4c7cf4af74a6a0fec5c",
-  "sizeBytes": 2141040,
-  "notes": "İsteğe bağlı kullanım analizi ve oynatma performansı ölçümleri. Hesap kodları, yayın bağlantıları ve arama metni paylaşılmaz. Mevcut oynatıcı ve içerik önbelleği korunur."
+  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.9.apk",
+  "sha256": "a5eec0e4de7015ff0c0c75cf225b0e4b8525e21e68d62195adffcb4da3414bb8",
+  "sizeBytes": 2144463,
+  "notes": "Süresi biten hesaplar için paket seçenekleri, tek/çift kullanıcı seçimi ve ödeme sonrası erişim kontrolü. Kumanda odağı ve hesap durumu yenileme düzeltmeleri."
 }

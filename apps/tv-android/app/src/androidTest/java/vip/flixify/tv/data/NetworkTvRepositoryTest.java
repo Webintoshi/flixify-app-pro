@@ -57,7 +57,7 @@ public class NetworkTvRepositoryTest {
         volatile boolean includeLiveFavorite;
         final List<String> watchedEpisodes=new ArrayList<>();
         volatile String source="source-a";
-        volatile int bootstrapStatus=200;
+        volatile int bootstrapStatus=200,catalogStatus=200;
         volatile long leaseExpiry=NOW+600000;
         final AtomicInteger bootstrapReads=new AtomicInteger(),liveCategoryReads=new AtomicInteger(),liveStreamReads=new AtomicInteger(),epgReads=new AtomicInteger();
         final AtomicInteger seriesCategoryReads=new AtomicInteger(),seriesListReads=new AtomicInteger(),seriesDetailReads=new AtomicInteger();
@@ -87,7 +87,8 @@ public class NetworkTvRepositoryTest {
                     if(path.equals("/auth/login-by-code") || path.equals("/auth/refresh")) {
                         if(denyLibrary && path.equals("/auth/refresh")){status=401;raw=new JSONObject();}
                         else raw=new JSONObject().put("accessToken","fixture-access").put("refreshToken","fixture-refresh-token-with-32-chars").put("user",user);
-                    } else if(path.equals("/me"))raw=new JSONObject().put("user",user);
+                    } else if(path.equals("/admin/packages/public")){assertNull(getRequestProperty("Authorization"));raw=new JSONObject().put("items",new JSONArray().put(new JSONObject().put("slug","6-ay").put("durationMonths",6).put("isActive",true).put("priceLabel","699 ₺")));}
+                    else if(path.equals("/me"))raw=new JSONObject().put("user",user);
                     else if(path.equals("/me/provider-session")) {
                         bootstrapReads.incrementAndGet();status=bootstrapStatus;
                         raw=new JSONObject().put("accountId","fixture-account").put("sourceVersion",source).put("providerOrigin","https://provider.test").put("username","fixture-user").put("password","fixture-password").put("expiresAt",date(leaseExpiry)).put("moviePolicy","general-audience-only").put("livePolicy",livePolicy);
@@ -105,7 +106,7 @@ public class NetworkTvRepositoryTest {
                         JSONObject ref=new JSONObject(body.toString("UTF-8")).getJSONObject("ref");
                         if(!"12".equals(ref.getString("id")) || !source.equals(ref.getString("sourceVersion")))throw new AssertionError("Wrong personal reference");
                         synchronized(favoriteMethods){favoriteMethods.add(getRequestMethod());}raw=new JSONObject().put("ok",true);
-                    } else if(path.equals("/player_api.php")) {
+                    } else if(path.equals("/player_api.php")) {status=catalogStatus;
                         String query=url.getQuery();
                         if(query.contains("action=get_vod_categories")){movieCategoryReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("category_id","9").put("category_name","Filmler"));}
                         else if(query.contains("action=get_vod_streams")){movieStreamReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("stream_id","12").put("name","Fixture Film").put("category_id","9").put("container_extension","mp4"));}
@@ -164,6 +165,21 @@ public class NetworkTvRepositoryTest {
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);while(deliveries.size()<count && System.nanoTime()<deadline)Thread.sleep(5);
             assertTrue("Expected queued completions",deliveries.size()>=count);
         }
+    }
+    @Test public void realCatalogRevocationResolvesThroughUiRecoveryPolicy() throws Exception {
+        Harness h=new Harness(true);try{
+            Result<Account> active=new Result<>();h.repository.account(true,active);h.deliver();assertTrue(active.value.canPlay);String source=h.repository.currentScope();
+            h.fixture.catalogStatus=403;Result<Catalog> denied=new Result<>();h.repository.catalog(Kind.MOVIE,true,denied);h.deliver();assertEquals(Failure.Code.STALE,denied.error.code);assertEquals("",h.repository.currentScope());
+            assertTrue(vip.flixify.tv.AccessRecoveryPolicy.shouldResolve(denied.error.code,h.repository.hasSession(),"fixture-account",h.repository.currentAccountId(),source,h.repository.currentScope()));
+            assertFalse(vip.flixify.tv.AccessRecoveryPolicy.shouldResolve(denied.error.code,true,"old-account",h.repository.currentAccountId(),source,h.repository.currentScope()));
+            h.fixture.bootstrapStatus=403;Result<Account> resolved=new Result<>();h.repository.refreshAccess(resolved);h.deliver();assertNull(resolved.error);assertEquals(Account.Access.SERVICE_UNAVAILABLE,resolved.value.access);
+        }finally{h.repository.logout();}
+    }
+    @Test public void activeProviderForbiddenRetainsServiceReasonAndPublicPackagesNeedNoLease() throws Exception {
+        Harness h=new Harness(true);try{
+            h.fixture.bootstrapStatus=403;Result<Account> result=new Result<>();h.repository.account(true,result);h.deliver();assertNull(result.error);assertFalse(result.value.canPlay);assertEquals(Account.Access.SERVICE_UNAVAILABLE,result.value.access);assertEquals(NOW+600000,result.value.expiresAtMs);
+            int reads=h.fixture.bootstrapReads.get();Result<java.util.List<vip.flixify.tv.PackagePlan>> plans=new Result<>();h.repository.packages(plans);h.deliver();assertNull(plans.error);assertEquals(1,plans.value.size());assertEquals(reads,h.fixture.bootstrapReads.get());
+        }finally{h.repository.logout();}
     }
     @Test public void initialAndRestoredBootstrapCanPublishPlayableAccount() throws Exception {
         for(boolean restored:new boolean[]{false,true}) {

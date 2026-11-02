@@ -60,11 +60,16 @@ public final class TvModels {
         public SeriesDetail(Item series,List<Season> seasons) {this.series=series;this.seasons=Collections.unmodifiableList(new ArrayList<>(seasons));}
     }
     public static final class Account {
+        public enum Access { ACTIVE, EXPIRED, BLOCKED, PROVISIONING, TRIAL_PENDING, SERVICE_UNAVAILABLE }
+        public final Access access;
         public final String id, codeSuffix, packageTitle, message;
         public final long expiresAtMs;
         public final boolean canPlay, trial;
         public Account(String id,String codeSuffix,String packageTitle,long expiresAtMs,boolean canPlay,boolean trial,String message) {
-            this.id=text(id);this.codeSuffix=text(codeSuffix);this.packageTitle=text(packageTitle);this.expiresAtMs=expiresAtMs;
+            this(id,codeSuffix,packageTitle,expiresAtMs,canPlay,trial,message,canPlay?Access.ACTIVE:Access.EXPIRED);
+        }
+        public Account(String id,String codeSuffix,String packageTitle,long expiresAtMs,boolean canPlay,boolean trial,String message,Access access) {
+            this.access=access;this.id=text(id);this.codeSuffix=text(codeSuffix);this.packageTitle=text(packageTitle);this.expiresAtMs=expiresAtMs;
             this.canPlay=canPlay;this.trial=trial;this.message=text(message);
         }
     }

@@ -1,11 +1,46 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkoutAvailable, formatPackagePrice, packageCards, PACKAGE_PLANS } from './packages-model.ts';
+import { checkoutAvailable, formatPackagePrice, packageCards, packageLandingPlan, PACKAGE_PLANS } from './packages-model.ts';
 
 const catalog = PACKAGE_PLANS.map((plan, index) => ({
   id: `plan-${index}`, slug: plan.slug, title: `${plan.months} Aylık`,
   durationMonths: plan.months, isActive: true, priceLabel: `${plan.price} ₺`
 }));
+
+test('a package landing selects the exact available canonical plan for its requested users', () => {
+  for (const [query, users, expected] of [
+    ['users=1&plan=1-ay&from=android_tv', 1, '1-ay'],
+    ['users=1&plan=6-ay&from=android_tv', 1, '6-ay'],
+    ['users=1&plan=12-ay&from=android_tv', 1, '12-ay'],
+    ['users=2&plan=1-ay-2-kullanici&from=android_tv', 2, '1-ay-2-kullanici'],
+    ['users=2&plan=6-ay-2-kullanici&from=android_tv', 2, '6-ay-2-kullanici'],
+    ['users=2&plan=12-ay-2-kullanici&from=android_tv', 2, '12-ay-2-kullanici']
+  ] as const) {
+    assert.equal(packageLandingPlan(query, packageCards(catalog, users))?.slug, expected);
+  }
+  assert.equal(packageLandingPlan('users=2&plan=6-ay-2-kullanici', packageCards(catalog, 2))?.slug, '6-ay-2-kullanici');
+});
+
+test('a package landing ignores unknown, duplicate or mismatched plan and user input', () => {
+  const plans = packageCards(catalog, 1);
+  for (const query of [
+    '', 'users=1', 'plan=6-ay', 'users=0&plan=6-ay', 'users=01&plan=6-ay',
+    'users=1&plan=3-ay', 'users=1&plan=6-ay-2-kullanici', 'users=2&plan=6-ay',
+    'users=1&users=1&plan=6-ay', 'users=1&users=2&plan=6-ay',
+    'users=1&plan=6-ay&plan=6-ay', 'users=1&plan=6-ay&plan=12-ay',
+    'users=1&plan=6-ay%22%5D', 'users=1&plan=https%3A%2F%2Fexample.test'
+  ]) assert.equal(packageLandingPlan(query, plans), null, query);
+});
+
+test('a package landing cannot select a missing, unavailable or differently rendered card', () => {
+  const query = 'users=1&plan=6-ay&from=android_tv';
+  assert.equal(packageLandingPlan(query, []), null);
+  assert.equal(packageLandingPlan(query, packageCards(catalog.filter(plan => plan.slug !== '6-ay'), 1)), null);
+  assert.equal(packageLandingPlan(query, packageCards(catalog, 2)), null);
+  assert.equal(packageLandingPlan(query, [{ slug: '6-ay', months: 1, users: 1, price: 699, available: true }]), null);
+  const inactive = catalog.map(plan => ({ ...plan, isActive: plan.slug !== '6-ay' }));
+  assert.equal(packageLandingPlan(query, packageCards(inactive, 1)), null);
+});
 
 test('single and dual user modes keep the three requested periods and distinct purchase slugs', () => {
   const single = packageCards(catalog, 1);

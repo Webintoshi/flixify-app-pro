@@ -4,7 +4,7 @@ import { parseHTML } from 'linkedom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PackagesPage from './page';
 
-const state = vi.hoisted(() => ({ packages: [] as any[], billing: {} as any, welcome: null as any, search: '', request: vi.fn(), assign: vi.fn(), mounted: vi.fn(), destroyed: vi.fn(), complete: (() => {}) as () => void, payment: {} as any }));
+const state = vi.hoisted(() => ({ packages: [] as any[], billing: {} as any, welcome: null as any, search: '', loading: false, billingLoading: false, request: vi.fn(), assign: vi.fn(), mounted: vi.fn(), destroyed: vi.fn(), complete: (() => {}) as () => void, payment: {} as any }));
 vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(state.search) }));
 vi.mock('../platform/welcome-offer', () => ({ useWelcomeOfferStatus: () => state.welcome }));
 vi.mock('next/link', () => ({ default: (props: any) => React.createElement('a', props) }));
@@ -13,7 +13,7 @@ vi.mock('../account/components', () => ({
   AccountFrame: ({ children }: any) => React.createElement('main', null, children),
   Loading: () => React.createElement('p', null, 'Bilgiler yükleniyor…'),
   LoadError: () => React.createElement('p', null, 'Bilgiler yüklenemedi'),
-  useAccountResource: (path: string) => ({ loading: false, error: false, reload: vi.fn(), refresh: vi.fn(), data: path.includes('payment-status') ? state.payment : path.includes('billing') ? state.billing : { items: state.packages } })
+  useAccountResource: (path: string) => ({ loading: path.includes('billing') ? state.billingLoading : state.loading, error: false, reload: vi.fn(), refresh: vi.fn(), data: path.includes('payment-status') ? state.payment : path.includes('billing') ? state.billing : { items: state.packages } })
 }));
 
 describe('package selection and payment handoff', () => {
@@ -29,7 +29,8 @@ describe('package selection and payment handoff', () => {
     vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('Event', dom.window.Event);
     vi.stubGlobal('React', React); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     Object.defineProperty(window, 'location', { value: { assign: state.assign }, configurable: true });
-    state.assign.mockReset(); state.request.mockReset(); state.mounted.mockReset(); state.destroyed.mockReset(); state.payment = { status: 'processing' }; state.welcome = null; state.search = '';
+    state.assign.mockReset(); state.request.mockReset(); state.mounted.mockReset(); state.destroyed.mockReset(); state.payment = { status: 'processing' }; state.welcome = null; state.search = ''; state.loading = false; state.billingLoading = false;
+    Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', { value: vi.fn(), configurable: true });
     Object.defineProperty(window.HTMLElement.prototype, 'focus', { value: vi.fn(), configurable: true });
     Object.defineProperty(window, 'Stripe', { value: () => ({ createEmbeddedCheckoutPage: async (options: any) => { await options.fetchClientSecret(); state.complete = options.onComplete; return { mount: state.mounted, destroy: state.destroyed }; } }), configurable: true });
     state.packages = slugs.map((slug, index) => ({ id: `plan-${index}`, slug, title: `${months[index]} Aylık`, durationMonths: months[index], isActive: true, priceLabel: `${prices[index]} ₺` }));
@@ -38,6 +39,69 @@ describe('package selection and payment handoff', () => {
     container = document.getElementById('root')!; root = createRoot(container);
   });
   afterEach(async () => { await settle(() => root.unmount()); vi.unstubAllGlobals(); });
+
+  it('focuses and scrolls the exact native plan once after loading without starting checkout', async () => {
+    state.search = '?users=2&plan=6-ay-2-kullanici&from=android_tv';
+    state.loading = true;
+    state.billingLoading = true;
+    state.billing = { checkoutEnabled: true, checkoutPackages: [{ packageSlug: '6-ay-2-kullanici', amountTry: 999, users: 2, durationMonths: 6 }] };
+    await settle(() => root.render(<PackagesPage />));
+    expect(window.HTMLElement.prototype.focus).not.toHaveBeenCalled();
+    state.loading = false;
+    await settle(() => root.render(<PackagesPage />));
+    expect(window.HTMLElement.prototype.focus).not.toHaveBeenCalled();
+    state.billingLoading = false;
+    await settle(() => root.render(<PackagesPage />));
+    const card = container.querySelector('[data-package-slug="6-ay-2-kullanici"]')!;
+    const purchase = card.querySelector('button')!;
+    const focus = vi.mocked(window.HTMLElement.prototype.focus);
+    const scroll = vi.mocked(window.HTMLElement.prototype.scrollIntoView);
+    expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+    expect(focus.mock.instances[0]).toBe(purchase);
+    expect(scroll).toHaveBeenCalledExactlyOnceWith({ block: 'center', behavior: 'instant' });
+    expect(scroll.mock.instances[0]).toBe(card);
+    expect(state.request).not.toHaveBeenCalled();
+    expect(state.mounted).not.toHaveBeenCalled();
+    await settle(() => root.render(<PackagesPage />));
+    await settle(() => toggle().click());
+    await settle(() => root.render(<PackagesPage />));
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
+    expect(focus).toHaveBeenCalledOnce();
+    expect(state.request).not.toHaveBeenCalled();
+  });
+
+  it('preserves a manual toggle before billing finishes loading', async () => {
+    state.search = '?users=2&plan=6-ay-2-kullanici&from=android_tv';
+    state.billingLoading = true;
+    await settle(() => root.render(<PackagesPage />));
+    await settle(() => toggle().click());
+    state.billingLoading = false;
+    await settle(() => root.render(<PackagesPage />));
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
+    expect(window.HTMLElement.prototype.focus).not.toHaveBeenCalled();
+    expect(window.HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+    expect(state.request).not.toHaveBeenCalled();
+  });
+
+  it('keeps a manual purchase from being refocused when billing finishes', async () => {
+    state.search = '?users=1&plan=6-ay&from=android_tv';
+    state.billingLoading = true;
+    await settle(() => root.render(<PackagesPage />));
+    await settle(() => container.querySelector('[data-package-slug="1-ay"] a')!.dispatchEvent(new Event('click', { bubbles: true })));
+    state.billingLoading = false;
+    await settle(() => root.render(<PackagesPage />));
+    expect(window.HTMLElement.prototype.focus).not.toHaveBeenCalled();
+    expect(window.HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+    expect(state.request).not.toHaveBeenCalled();
+  });
+
+  it('ignores an unavailable native card without focusing or checkout', async () => {
+    state.search = '?users=1&plan=6-ay&from=android_tv';
+    state.packages.find(plan => plan.slug === '6-ay')!.isActive = false;
+    await settle(() => root.render(<PackagesPage />));
+    expect(window.HTMLElement.prototype.focus).not.toHaveBeenCalled();
+    expect(state.request).not.toHaveBeenCalled();
+  });
 
   it('switches all three real purchase links and totals between single and dual user packages', async () => {
     await settle(() => root.render(<PackagesPage />));
@@ -112,7 +176,7 @@ describe('package selection and payment handoff', () => {
   });
 
   it('retains the monthly welcome quote after dismissal and sends only its server-approved offer id', async () => {
-    state.search = '?welcome=1&users=2';
+    state.search = '?welcome=1&users=2&plan=unknown&from=android_tv';
     state.welcome = { campaign: 'welcome-monthly-50-v1', state: 'dismissed', eligible: true, catalogue: { movies: 11955, live: 12677, series: 1675 }, offers: [
       { id: 'welcome-monthly-50-v1', packageSlug: '1-ay', users: 1, durationMonths: 1, amountMinor: 12500, regularAmountMinor: 25000, currency: 'try' },
       { id: 'welcome-monthly-50-v1', packageSlug: '1-ay-2-kullanici', users: 2, durationMonths: 1, amountMinor: 19950, regularAmountMinor: 39900, currency: 'try' }
@@ -123,6 +187,8 @@ describe('package selection and payment handoff', () => {
     const monthly = container.querySelectorAll('article')[0];
     expect(toggle().getAttribute('aria-checked')).toBe('true'); expect(monthly.textContent).toContain('199,50'); expect(monthly.querySelector('s')?.textContent).toBe('399 ₺');
     expect(monthly.querySelector('a')).toBeNull(); expect(state.request).not.toHaveBeenCalled();
+    expect(vi.mocked(window.HTMLElement.prototype.focus).mock.instances[0]).toBe(monthly.querySelector('button'));
+    expect(window.HTMLElement.prototype.focus).toHaveBeenCalledOnce();
     await settle(() => monthly.querySelector('button')!.click());
     expect(state.request.mock.calls[0][1].body).toEqual({ packageSlug: '1-ay-2-kullanici', offerId: 'welcome-monthly-50-v1' });
     expect(container.textContent).toContain('199,50 ₺');

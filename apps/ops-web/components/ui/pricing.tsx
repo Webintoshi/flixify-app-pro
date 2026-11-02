@@ -10,6 +10,7 @@ type PricingProps = {
   plans: PackageCard[];
   users: PackageUsers;
   onUsersChange: (users: PackageUsers) => void;
+  onInteract?: () => void;
   billing: BillingPackagesStatus | null;
   submitting: string | null;
   checkoutError: string | null;
@@ -26,10 +27,10 @@ function PurchaseLink({ slug, locked, className, label, children }: { slug: stri
     : <Link className={className} aria-label={label} href={packagePaymentHref(slug)}>{children}</Link>;
 }
 
-export function Pricing({ plans, users, onUsersChange, billing, submitting, checkoutError, onCheckout }: PricingProps) {
+export function Pricing({ plans, users, onUsersChange, onInteract, billing, submitting, checkoutError, onCheckout }: PricingProps) {
   const dual = users === 2;
   const hasCardCheckout = plans.some(plan => checkoutAvailable(plan, billing));
-  return <section className={s.pricing} aria-labelledby="packages-title">
+  return <section className={s.pricing} aria-labelledby="packages-title" onPointerDownCapture={onInteract} onKeyDownCapture={onInteract} onClickCapture={onInteract}>
     <header className={s.heading}>
       <h1 id="packages-title">Paketler</h1>
       <p>Film, dizi ve canlı TV. Sana uygun süreyi seç.</p>
@@ -50,7 +51,7 @@ export function Pricing({ plans, users, onUsersChange, billing, submitting, chec
           'Film, dizi ve canlı TV',
           'TV, telefon ve bilgisayarda kullanım'
         ];
-        return <article key={plan.months} className={`${s.card} ${plan.months === 6 ? s.recommended : ''}`} data-welcome-package={plan.offerId ? '' : undefined} aria-label={`${plan.months} aylık ${dual ? 'çift' : 'tek'} kullanıcılı paket`}>
+        return <article key={plan.months} className={`${s.card} ${plan.months === 6 ? s.recommended : ''}`} data-package-slug={plan.slug} data-welcome-package={plan.offerId ? '' : undefined} aria-label={`${plan.months} aylık ${dual ? 'çift' : 'tek'} kullanıcılı paket`}>
           {plan.months === 6 && <span className={s.badge}>Önerilen</span>}
           <h2>{plan.months} Aylık</h2>
           {plan.offerId && <p className={s.welcomeLabel}>Yeni üyelere özel · %50 indirim <s>{formatPackagePrice(plan.regularPrice!)} ₺</s></p>}

@@ -42,4 +42,9 @@ public class AnalyticsPolicyTest {
         AnalyticsPolicy unavailable=new AnalyticsPolicy(false,(name,event)->fail("Missing config must never collect"));
         unavailable.choice(true,1);unavailable.event(unavailable.epoch(),"login",Collections.emptyMap());
     }
+    @Test public void regularPackageEventRequiresConsentAndBoundsCapacity(){
+        List<Map<String,Object>> sent=new ArrayList<>();AnalyticsPolicy policy=new AnalyticsPolicy(true,(name,values)->{assertEquals("package_open",name);sent.add(values);});Map<String,Object> values=new HashMap<>();values.put("package_users",2);values.put("url","https://private.invalid");
+        policy.event(policy.epoch(),"package_open",values);assertTrue(sent.isEmpty());policy.choice(true,AnalyticsPolicy.VERSION);policy.event(policy.epoch(),"package_open",values);assertEquals(1,sent.size());assertEquals(Collections.singletonMap("package_users",2L),sent.get(0));policy.choice(false,AnalyticsPolicy.VERSION);policy.event(policy.epoch(),"package_open",values);assertEquals(1,sent.size());
+    }
+
 }
