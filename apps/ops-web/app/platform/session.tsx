@@ -7,6 +7,7 @@ import { loadLegacyLiveCatalog } from "./legacy-live-catalog";
 import { hydrateLegacyLiveFavorites, legacyFavoriteMutationIds } from "./live-favorites";
 import { createDirectPlaybackDeadline } from "./direct-playback-deadline";
 import { itemKey, sessionKey, type MediaItem, type Session } from "./types";
+import { analyticsContent, trackAnalytics } from "./analytics";
 
 type Value = { livePolicyRevision: string; providerExpiresAt: string | null | undefined; providerRevision: number; personalProvider: ReturnType<typeof createPersonalProviderClient> | null; providerMode: "loading" | "personal" | "legacy"; providerError: string; providerScope: string; session: Session | null; ready: boolean; favorites: MediaItem[]; favoritesReady: boolean; favoritesLoading: boolean; favoritesError: string; error: string; pending: Set<string>; toggle: (item: MediaItem) => Promise<void>; reload: () => void; refreshProvider: () => void; invalidateFavorites: () => void; dismissError: () => void; saveSession: (s: Session) => void; logout: () => void };
 type BootstrapRequest = { identity: string; controller?: AbortController; retryRequested: boolean };
@@ -50,7 +51,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     setProviderRetry(value => value + 1);
   }, []);
   const saveSession = useCallback((s: Session) => { localStorage.setItem(sessionKey, JSON.stringify(s)); window.dispatchEvent(new Event("flixify-session")); }, []);
-  const logout = useCallback(() => { providerRef.current?.clear(); providerRef.current = null; localStorage.removeItem(sessionKey); sessionStorage.removeItem("flixify-search-intent"); window.dispatchEvent(new Event("flixify-session")); }, []);
+  const logout = useCallback(() => { trackAnalytics("logout"); providerRef.current?.clear(); providerRef.current = null; localStorage.removeItem(sessionKey); sessionStorage.removeItem("flixify-search-intent"); window.dispatchEvent(new Event("flixify-session")); }, []);
   useEffect(() => {
     let lastStored: string | null | undefined;
     const sync = () => {
@@ -215,6 +216,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
         }
       }
       else throw new Error("Unavailable session");
+      if (g === generation.current) trackAnalytics(existing ? "remove_from_wishlist" : "add_to_wishlist", analyticsContent(item));
     }
     catch { if (g === generation.current) { setFavorites(list => existing ? [existing, ...list.filter(f => itemKey(f) !== key)] : list.filter(f => itemKey(f) !== key)); setError("Favori değişikliği kaydedilemedi. Lütfen tekrar dene."); } }
     finally { if(g === generation.current) {pendingRef.current.delete(key); setPending(new Set(pendingRef.current));if(favoritesPolicyDirty.current)reloadFavoritesRef.current();} }

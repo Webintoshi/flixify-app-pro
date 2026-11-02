@@ -59,7 +59,7 @@ After a future cutover, repeat public Windows 1.0.1 and retained 1.0.0/Mac/TV HE
 
 ## Published verification, 2026-11-02
 
-Publication source `eba4d62b3893e0e173392be0421101279bfe3bac` built candidate `flixify-ops-web:windows-repair-eba4d62b3893-20261102`, image `sha256:3f882fa9bc2029bc4cad6cd4635fb6d304900085e890e97ddba900ad040bfd3`. Read-only preflight, isolated compilation, candidate verification, release preflight, apply and web-only recreation each returned zero. The release guard confirmed the environment, registration fence and other services remained unchanged.
+Publication source `eba4d62b3893e0e173392be0421101279bfe3bac` built candidate `flixify-ops-web:windows-repair-eba4d62b3893-20261102`, image `sha256:3f882fa9bc2029bc4cad6cd4635fb6d304900085e89e0e97ddba900ad040bfd3`. Read-only preflight, isolated compilation, candidate verification, release preflight, apply and web-only recreation each returned zero. The release guard confirmed the environment, registration fence and other services remained unchanged.
 
 The hydrated live `/indir#windows` page displays 1.0.1, 70,3 MB, the correct EXE URL and the full unsigned notice. An actual click on **Windows EXE indir** downloaded the exact accepted 70,316,933-byte payload and SHA256 above. Public checks passed for HEAD/MIME/ranges, the complete retained Windows 1.0.0/Mac/Android payloads and manifest, home/download/packages HTTP status and API health. The hydrated home retained its 2026 film/series and live TV sections. Browser viewport emulation did not change the observed 1280-pixel viewport, so a separate mobile rendering pass is not claimed; this release changes only the existing Windows descriptor and adds its installer.
 

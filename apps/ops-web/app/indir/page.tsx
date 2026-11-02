@@ -8,6 +8,7 @@ import styles from "./page.module.css";
 import { tvDownload } from "../platform/tv-download";
 import { macDownload } from "../platform/mac-download";
 import { windowsDownload } from "../platform/windows-download";
+import { trackAnalytics, trackAnalyticsDownload } from "../platform/analytics";
 
 export default function DownloadsPage() {
   const [userCode, setUserCode] = useState<string | null>(null);
@@ -34,6 +35,7 @@ export default function DownloadsPage() {
   }, []);
 
   function handleLogout() {
+    trackAnalytics("logout");
     try {
       window.localStorage.removeItem("flixify-public-session");
     } catch {}
@@ -53,7 +55,7 @@ export default function DownloadsPage() {
           <section className={styles.platform} id="android-tv" aria-labelledby="android-tv-heading">
             <h2 id="android-tv-heading">Android TV</h2>
             <p>Canlı TV, filmler ve diziler için TV’ye özel arayüz. Yön tuşları, OK ve Geri ile gez.</p>
-            <a className={styles.download} href={tvDownload.href} download={tvDownload.filename}>Android TV APK indir <span aria-hidden="true">↓</span></a>
+            <a className={styles.download} href={tvDownload.href} download={tvDownload.filename} onClick={() => trackAnalyticsDownload("android_tv", tvDownload)}>Android TV APK indir <span aria-hidden="true">↓</span></a>
             <p className={styles.release}>{tvDownload.version} · {tvDownload.minimumAndroid} · 32/64 bit için tek APK</p>
             <h3>TV veya box’a nasıl kurulur?</h3>
             <ol className={styles.steps}>
@@ -65,7 +67,7 @@ export default function DownloadsPage() {
           <section className={styles.platform} id="macos" aria-labelledby="macos-heading">
             <div className={styles.platformTitle}><h2 id="macos-heading">macOS</h2><span className={styles.testBadge}>{macDownload.status}</span></div>
             <p>Film, dizi ve canlı TV’yi Mac’inde izle. Favorilerin ve kullanıcı kodun aynı hesapta.</p>
-            <a className={styles.download} href={macDownload.href} download={macDownload.filename} aria-describedby="macos-release macos-notice">macOS DMG indir <span aria-hidden="true">↓</span></a>
+            <a className={styles.download} href={macDownload.href} download={macDownload.filename} aria-describedby="macos-release macos-notice" onClick={() => trackAnalyticsDownload("macos", macDownload)}>macOS DMG indir <span aria-hidden="true">↓</span></a>
             <p className={styles.release} id="macos-release">{macDownload.version} · {macDownload.minimumMacOS}<br/>{macDownload.architecture} · {macDownload.size}</p>
             <p className={styles.notice} id="macos-notice">{macDownload.notice}</p>
             <h3>Mac’e nasıl kurulur?</h3>
@@ -79,7 +81,7 @@ export default function DownloadsPage() {
             <div className={styles.platformTitle}><h2 id="windows-heading">Windows</h2><span className={styles.testBadge}>{windowsDownload.status}</span></div>
             <p>Film, dizi ve canlı TV’yi Windows bilgisayarında izle. Mevcut kullanıcı kodunla giriş yap.</p>
             <p className={styles.notice} id="windows-notice">{windowsDownload.notice}</p>
-            <a className={styles.download} href={windowsDownload.href} download={windowsDownload.filename} aria-describedby="windows-release windows-notice">Windows EXE indir <span aria-hidden="true">↓</span></a>
+            <a className={styles.download} href={windowsDownload.href} download={windowsDownload.filename} aria-describedby="windows-release windows-notice" onClick={() => trackAnalyticsDownload("windows", windowsDownload)}>Windows EXE indir <span aria-hidden="true">↓</span></a>
             <p className={styles.release} id="windows-release">{windowsDownload.version} · {windowsDownload.minimumWindows}<br/>{windowsDownload.architecture} · {windowsDownload.size}</p>
             <h3>Windows’a nasıl kurulur?</h3>
             <ol className={styles.steps}>

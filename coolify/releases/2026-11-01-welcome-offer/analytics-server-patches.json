@@ -1,0 +1,8 @@
+{
+  "path":"apps/api/src/server.ts",
+  "sourceSha256":"1344ed5920af8953fb975a3877daecb0244cec15b42521d9fa1bdabcbc54f42e",
+  "replacements":[
+    {"old":"import { registerWelcomeOfferRoutes } from \"./welcome-offer-routes.js\";","new":"import { registerWelcomeOfferRoutes } from \"./welcome-offer-routes.js\";\nimport { registerAnalyticsRuntime } from \"./analytics-runtime.js\";"},
+    {"old":"  if (!isDemoMode) registerWelcomeOfferRoutes(app, { authenticate: authenticateUser, store: new WelcomeOfferStore(pool) });","new":"  if (!isDemoMode) registerWelcomeOfferRoutes(app, { authenticate: authenticateUser, store: new WelcomeOfferStore(pool) });\n  if (!isDemoMode) registerAnalyticsRuntime(app, { authenticate: authenticateUser, pool });"}
+  ]
+}

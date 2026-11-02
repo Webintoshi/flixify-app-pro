@@ -5,6 +5,7 @@ import { clickedDialogBackdrop, useCatalogDialog } from "./catalog-dialog";
 import { Icon } from "./icons";
 import { itemKey, type Catalog, type MediaItem } from "./types";
 import s from "./catalog-panels.module.css";
+import { trackAnalytics } from "./analytics";
 type Props = {
   title: string;
   initialQuery: string;
@@ -37,7 +38,7 @@ export function CatalogSearchDialog({ title, initialQuery, scope, preview, onSel
   }, [draft]);
   const visibleResult = result?.query === draft.trim() ? result.data : null;
   return <dialog ref={dialog} id="catalog-search-dialog" className={s.searchDialog} aria-labelledby="catalog-search-title" onCancel={event => { event.preventDefault(); onClose(); }} onClick={event => { if (clickedDialogBackdrop(event)) onClose(); }}>
-    <form onSubmit={event => { event.preventDefault(); onSubmit(draft.trim()); }}>
+    <form onSubmit={event => { event.preventDefault(); trackAnalytics("search", { query_length: draft.trim().length, result_count: visibleResult?.total }); onSubmit(draft.trim()); }}>
       <div className={s.dialogHeader}><div><span className={s.section}>{title}</span><h2 id="catalog-search-title">Ne izlemek istersin?</h2></div><button type="button" className={s.iconButton} aria-label="Aramayı kapat" onClick={onClose}><Icon name="close"/></button></div>
       <p className={s.scope}>{scope}</p>
       <div className={s.inputSurface}><Icon name="search"/><input ref={input} id="catalog-search" type="search" aria-label={`${title} içinde ara`} placeholder="İçerik adıyla ara" autoComplete="off" value={draft} onInput={event => setDraft(event.currentTarget.value)}/><button type="button" className={s.iconButton} disabled={!draft} aria-label="Aramayı temizle" onClick={() => { setDraft(""); input.current?.focus(); }}><Icon name="close"/></button></div>

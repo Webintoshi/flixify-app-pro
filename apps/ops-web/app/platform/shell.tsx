@@ -10,6 +10,7 @@ import s from "./platform.module.css";
 import { tvDownload } from "./tv-download";
 import { macDownload } from "./mac-download";
 import { windowsDownload } from "./windows-download";
+import { trackAnalyticsDownload } from "./analytics";
 
 const links = [{ href: "/", label: "Ana Sayfa", icon: "home" }, { href: "/canli-tv", label: "Canlı TV", icon: "live" }, { href: "/filmler", label: "Filmler", icon: "movie" }, { href: "/diziler", label: "Diziler", icon: "series" }, { href: "/favoriler", label: "Favoriler", icon: "heart" }];
 export function AppShell({ children, publicAccess = false }: { children: ReactNode; publicAccess?: boolean }) {
@@ -52,7 +53,7 @@ export function AppShell({ children, publicAccess = false }: { children: ReactNo
       <div className={s.catalogHeaderActions}>
         {catalogRoute && <button type="button" className={s.catalogHeaderSearch} aria-label="Katalogda ara" onClick={focusCatalogSearch}><Icon name="search" /></button>}
         {accountControl}
-        <a className={s.headerDownload} href={tvDownload.href} download={tvDownload.filename} aria-label="Android TV APK indir"><Icon name="device"/><span>Android TV APK indir</span></a>
+        <a className={s.headerDownload} href={tvDownload.href} download={tvDownload.filename} aria-label="Android TV APK indir" onClick={() => trackAnalyticsDownload("android_tv", tvDownload)}><Icon name="device"/><span>Android TV APK indir</span></a>
         <Link className={`${s.headerDownload} ${s.headerDesktopDownload}`} href={macDownload.pageHref} aria-label="macOS test sürümünü indir"><Icon name="desktop"/><span>macOS indir</span><small>Test</small></Link>
         <Link className={`${s.headerDownload} ${s.headerDesktopDownload}`} href={windowsDownload.pageHref} aria-label="Windows test sürümünü indir"><Icon name="windows"/><span>Windows indir</span><small>Test</small></Link>
       </div>

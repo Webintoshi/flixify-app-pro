@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useCallback } from "react";
 import { apiRequest } from "../../lib/api";
+import { trackAnalytics } from "../platform/analytics";
 import { readReferralCode } from "../../lib/referral-link";
 import styles from "./registration.module.css";
 
@@ -232,6 +233,7 @@ export default function RegisterPage() {
       }
 
       setIssuedCode(normalized);
+      trackAnalytics("sign_up", { method: "account_code" });
     } catch (nextError) {
       setError(getErrorMessage(nextError));
     } finally {

@@ -8,6 +8,7 @@ import { ReferralStore } from './referral-store.js';
 
 import { validateWelcomePayment } from './welcome-offer-store.js';
 import { WELCOME_CAMPAIGN } from './welcome-offer.js';
+import { analyticsStore, type VerifiedAnalyticsSale } from './analytics-store.js';
 
 const ready = new WeakMap<Pool, Promise<void>>();
 export async function ensureStripePaymentSchema(pool: Pool): Promise<void> {
@@ -49,6 +50,9 @@ $payment_privacy$;`);
 }
 
 export class StripePaymentStore {
+  async analyticsSale(name: 'purchase' | 'package_activated', sale: VerifiedAnalyticsSale): Promise<void> {
+    await analyticsStore(this.pool).recordVerifiedSale(name, sale);
+  }
   private readonly lockClient = new AsyncLocalStorage<PoolClient>();
   constructor(private readonly pool: Pool) {}
   private get db() { return this.lockClient.getStore() ?? this.pool; }

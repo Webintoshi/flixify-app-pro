@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiRequest } from "../../lib/api";
+import { trackAnalytics } from "./analytics";
 import { usePlatform } from "./session";
 import { Icon } from "./icons";
 import type { Session } from "./types";
@@ -22,7 +23,7 @@ export function LoginDialog({ onClose, onSuccess }: { onClose: () => void; onSuc
         let installationId = localStorage.getItem("flixify-installation-id");
         if (!installationId) { installationId = crypto.randomUUID(); localStorage.setItem("flixify-installation-id", installationId); }
         const response = await apiRequest<Session>("/auth/login-by-code", { method: "POST", body: { code, platform: "web", deviceName: "Flixify Web", installationId } });
-        saveSession(response); (onSuccess ?? onClose)();
+        saveSession(response); trackAnalytics("login", { method: "account_code" }); (onSuccess ?? onClose)();
       } catch (error) { setError(error instanceof Error ? error.message : "Giriş yapılamadı."); } finally { setBusy(false); } }}>
         <label htmlFor="player-code">Kullanıcı kodu</label><input id="player-code" autoFocus type="password" autoComplete="current-password" spellCheck={false} value={code} onChange={e => setCode(e.target.value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0,16))} maxLength={16} placeholder="16 haneli kodun" required minLength={16}/>
         {error && <p className={s.error} role="alert">{error}</p>}

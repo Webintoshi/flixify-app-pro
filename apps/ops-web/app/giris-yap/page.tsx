@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../../lib/api";
+import { trackAnalytics } from "../platform/analytics";
 import type { AccountUser } from "../../lib/account-model";
 
 type LoginResponse = {
@@ -238,6 +239,7 @@ export default function LoginPage() {
       });
 
       setSession(response);
+      trackAnalytics("login", { method: "account_code" });
 
       if (typeof window !== "undefined") {
         window.localStorage.setItem(storageKey, JSON.stringify(response));

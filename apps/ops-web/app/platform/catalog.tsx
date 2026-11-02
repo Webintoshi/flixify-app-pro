@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import { apiRequest } from "../../lib/api";
+import { analyticsCategoryId, analyticsContent, trackAnalytics } from "./analytics";
 import { accountState, type AccountUser } from "../../lib/account-model";
 import { Artwork, FavoriteButton } from "./artwork";
 import { Detail } from "./detail";
@@ -302,6 +303,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
       const added = page === 1 ? merged.length : merged.length - previous.length;
       committedCatalog.current = { owner: paginationOwner, items: merged };
       setCatalog({ ...data, items: merged });
+      trackAnalytics("catalog_page_loaded", { content_type: kind, page_number: page, result_count: data.items.length });
       setPageProgress({ owner: paginationOwner, page, count: merged.length, hasMore: data.items.length > 0 && added > 0 && merged.length < data.total });
       if (!group && data.groups?.length) setCategoryGroups({ account, kind, groups: data.groups });
       setCatalogAccount(catalogOwner);
@@ -330,7 +332,8 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     loadDetail.then(item => { if (!cancelled) { setDetail(item); setDetailAccount(account); } }).catch(() => { if (!cancelled) setError("İçerik detayı açılamadı. Tekrar deneyebilirsin."); }).finally(() => { if (!cancelled) setDetailLoading(false); });
     return () => { cancelled = true; };
   }, [selectedId, selectedKind, account, personalProvider, providerMode]);
-  const open = (item: MediaItem, autoPlay = true) => {
+  const open = (item: MediaItem, autoPlay = true, listId?: "search") => {
+    trackAnalytics("select_content", { ...analyticsContent(item), item_list_id: listId ?? (search ? "search" : favoritesOnly ? "favorites" : overview ? "home" : "catalog") });
     if (item.kind === "live") { router.push(`/canli-tv?channel=${encodeURIComponent(item.id)}`); return; }
     openedHere.current = true;
     const next = new URLSearchParams(params.toString()); next.set("item", item.id); next.set("kind", item.kind);
@@ -518,7 +521,7 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     {!favoritesOnly && !overview && hasMorePages && <div ref={infiniteSentinel} data-catalog-sentinel role="status" aria-live="polite" style={{ minHeight: 2 }}>{loading ? "İçerikler yükleniyor…" : ""}</div>}
     </div>
     {detailLoading && <div className={s.toast} role="status">İçerik hazırlanıyor…</div>}{detail && detailAccount === account && providerMode !== "loading" && <Detail key={itemKey(detail)} item={detail} autoPlay={params.get("play") === "1"} onClose={close}/>}
-    {activePanel === "search" && <CatalogSearchDialog title={title} initialQuery={query} scope={favoritesOnly ? `Tür: ${({ all: "Tümü", movie: "Filmler", series: "Diziler", live: "Canlı TV" })[filter]}` : `Kategori: ${group || "Tümü"}`} preview={previewSearch} onSelect={item => { if (panelOwnerRef.current !== panelOwner) return; closePanel(panelOwner); open(item); }} onSubmit={value => submitSearch(value, panelOwner)} onClose={() => closePanel(panelOwner)}/>}
-    {activePanel === "categories" && <CategorySidebar open title={title} groups={categoryPreview?.owner === panelOwner ? categoryPreview.groups : categories} total={categoryPreview?.owner === panelOwner ? categoryPreview.total : !group && !search ? shownCatalog.total : undefined} selected={group} onSelect={value => { if (panelOwnerRef.current === panelOwner) setGroup(value); }} onClose={() => closePanel(panelOwner)}/>}
+    {activePanel === "search" && <CatalogSearchDialog title={title} initialQuery={query} scope={favoritesOnly ? `Tür: ${({ all: "Tümü", movie: "Filmler", series: "Diziler", live: "Canlı TV" })[filter]}` : `Kategori: ${group || "Tümü"}`} preview={previewSearch} onSelect={item => { if (panelOwnerRef.current !== panelOwner) return; closePanel(panelOwner); open(item, true, "search"); }} onSubmit={value => submitSearch(value, panelOwner)} onClose={() => closePanel(panelOwner)}/>}
+    {activePanel === "categories" && <CategorySidebar open title={title} groups={categoryPreview?.owner === panelOwner ? categoryPreview.groups : categories} total={categoryPreview?.owner === panelOwner ? categoryPreview.total : !group && !search ? shownCatalog.total : undefined} selected={group} onSelect={value => { if (panelOwnerRef.current === panelOwner) { trackAnalytics("category_select", { content_type: kind, category_id: analyticsCategoryId(value), category_name: value || "Tümü" }); setGroup(value); } }} onClose={() => closePanel(panelOwner)}/>}
   </main>;
 }

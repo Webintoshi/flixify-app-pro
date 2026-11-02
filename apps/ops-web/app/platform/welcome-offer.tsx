@@ -11,6 +11,7 @@ import { usePlatform } from './session';
 import { sessionIdentity } from './personal-integration';
 import { parseWelcomeOffer, unavailableWelcomeOffer, welcomeEndpointMissing, welcomeMonthlyOffer, welcomeUsers, type WelcomeOfferStatus } from './welcome-offer-model';
 import s from './welcome-offer.module.css';
+import { analyticsCheckoutAttribution, trackAnalytics } from './analytics';
 
 const Context = createContext<WelcomeOfferStatus | null>(null);
 const exemptRoutes = new Set(['/kayit-ol', '/register', '/giris-yap', '/giris', '/iletisim', '/odeme-sonucu']);
@@ -90,13 +91,18 @@ function ScopedWelcomeOffer({ children }: { children: ReactNode }) {
       if (!mounted.current) return;
       if (choice === 'trial') {
         if (verified.state === 'pending') throw new Error('welcome_choice_unconfirmed');
+        trackAnalytics('trial_select');
         setStatus(verified);
       } else {
         const selected = welcomeMonthlyOffer(verified, users);
         if (!selected || selected.packageSlug !== quote!.packageSlug) throw new Error('welcome_offer_unavailable');
-        const result = await request<unknown>('/me/billing/checkout-session', { method: 'POST', body: { packageSlug: selected.packageSlug, offerId: selected.id } });
+        trackAnalytics('welcome_offer_select', { package_id: selected.packageSlug, package_months: 1, package_users: selected.users, offer_id: selected.id });
+        const analytics = analyticsCheckoutAttribution();
+        const result = await request<unknown>('/me/billing/checkout-session', { method: 'POST', body: { packageSlug: selected.packageSlug, offerId: selected.id, ...(analytics ? { analytics } : {}) } });
         if (!mounted.current) return;
-        setCheckout({ session: embeddedCheckout(result), plan: { slug: selected.packageSlug, months: 1, users: selected.users, price: selected.amountMinor / 100, regularPrice: selected.regularAmountMinor / 100, offerId: selected.id, available: true } });
+        const session = embeddedCheckout(result);
+        setCheckout({ session, plan: { slug: selected.packageSlug, months: 1, users: selected.users, price: selected.amountMinor / 100, regularPrice: selected.regularAmountMinor / 100, offerId: selected.id, available: true } });
+        trackAnalytics('begin_checkout', { package_id: selected.packageSlug, package_months: 1, package_users: selected.users, offer_id: selected.id, currency: 'TRY', value: selected.amountMinor / 100, items: [{ item_id: selected.packageSlug, price: selected.amountMinor / 100 }] });
       }
     } catch { if (mounted.current) setError('Seçimin tamamlanamadı. Tekrar deneyebilir veya ücretsiz devam edebilirsin.'); }
     finally { if (mounted.current) { locked.current = false; setBusy(null); } }

@@ -1,0 +1,12 @@
+{
+  "coolify/releases/2026-10-26-edge-recovery/build-worker.py": "3a53d9abb131fd1b82461b118dd762dec27b9b1affd9268f4969362a6e6a79b9",
+  "coolify/releases/2026-10-26-edge-recovery/build-web.py": "6192ff080c79aff768896037c190f5df8d34ffcf112131d8989b08a05421f922",
+  "coolify/releases/2026-10-26-edge-recovery/build-web-tv-style.py": "51e2f8937b5fb330448e6704ebfc9ccd9073f763973705e13de9da7112ba294e",
+  "coolify/releases/2026-10-26-edge-recovery/build-tv-direct-web.py": "e9a976ccf35241a9c99a4f2a3960a987e66e6c4e142e10e2e7471b131c576d10",
+  "coolify/releases/2026-10-26-edge-recovery/build-tv-startup-web.py": "54b9525fb917fbe0c94f2a3dfb0c62270a0d89a4c8cd54a877e73a75757e699d",
+  "coolify/releases/2026-10-26-edge-recovery/release-worker.py": "bac3eb4c36081b60c1f0a6181507377c01920a91e10e5edfe44f4213effe6d06",
+  "coolify/releases/2026-10-31-live-registration/build-api.py": "0b820211e5894a67a137a76ffdac8da22172e97bee99ce835951434f37159834",
+  "coolify/releases/2026-10-31-search-activation/build-web.py": "f981dc97a8d35d3d879a07755de42f31e0192ec56f47323ee958c0d8ae451d9c",
+  "coolify/releases/2026-11-01-packages/build-backend.py": "be508b7638a6d750fde64be0499d34ba36acdc95ead9c8d95e41e06d79859507",
+  "coolify/releases/2026-11-01-packages/release-backend.py": "d65bf53d5a0ae8702546097bc90150ed056c974b4286625ab014a81b6155793c"
+}

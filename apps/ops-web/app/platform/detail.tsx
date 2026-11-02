@@ -1,6 +1,9 @@
 "use client";
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { apiRequest } from "../../lib/api";
+import { analyticsContent, analyticsMeasurementGuard, trackAnalytics } from "./analytics";
+import { observeMediaAnalytics } from "./analytics-playback";
+
 import { usePlatform, useProviderExpiry } from "./session";
 import { hydratePersonalWatched, requestPersonalPlayback, createWatchedState, updateWatchedState, watchedIds } from "./personal-integration";
 import type { PersonalRef } from "./personal-provider";
@@ -17,6 +20,7 @@ import { createDirectPlaybackDeadline } from "./direct-playback-deadline";
 import type { Episode, MediaItem } from "./types";
 import s from "./platform.module.css";
 import player from "./vod-player.module.css";
+const playbackAnalyticsTiming = new WeakMap<object, { startedAt: number; isCurrent: () => boolean }>();
 type Playback = { url: string | null; canPlay: boolean; errorMessage?: string | null; transport: string; deliveryMode?: string; expiresAt?: string | null };
 type EndPrompt = { title: string; seconds?: number; onPlay?: () => void; onCancel: () => void };
 function playbackErrorMessage(cause: unknown, kind: MediaItem["kind"]): string {
@@ -238,11 +242,14 @@ export function VodPlayer({ onRetry, playback, title, resumeAt = 0, onProgress, 
     let hlsHandlesErrors = false;
     const video = ref.current;
     if (!video || !playback.url) return;
+    const analyticsTiming = retry ? undefined : playbackAnalyticsTiming.get(playback);
+    const measurement = observeMediaAnalytics(video, { emit: trackAnalytics, now: () => performance.now(), content: analyticsContent({ id: currentEpisode?.id ?? favoriteItem?.id, title: currentEpisode?.title ?? favoriteItem?.title, personalRef: currentEpisode?.personalRef ?? favoriteItem?.personalRef, kind: currentEpisode ? "episode" : "movie" }), startAt: analyticsTiming?.startedAt, isCurrent: analyticsTiming?.isCurrent ?? analyticsMeasurementGuard(), requestAlreadyEmitted: Boolean(analyticsTiming) });
     setError("");
     let watchdog: ReturnType<typeof createDirectPlaybackWatchdog> | null = null;
     const fail = () => {
       if (cancelled || failed) return;
       failed = true;
+      measurement.failed("media");
       watchdog?.dispose();
       cleanup();
       video.pause(); video.removeAttribute("src"); video.load();
@@ -250,13 +257,14 @@ export function VodPlayer({ onRetry, playback, title, resumeAt = 0, onProgress, 
     };
     if (playback.deliveryMode === "direct_provider") watchdog = createDirectPlaybackWatchdog(fail);
     const deadline = playback.deliveryMode === "direct_provider" ? createDirectPlaybackDeadline(effectiveExpiry, () => {
+      measurement.failed("expired");
       cancelled = true;
       watchdog?.dispose(); cleanup();
       video.pause(); video.removeAttribute("src"); video.load();
       setError("İzleme süren doldu.");
     }) : null;
     deadlineRef.current = deadline;
-    if (deadline?.expired) return () => deadline.dispose();
+    if (deadline?.expired) return () => { deadline.dispose(); measurement.dispose(); };
     gestureAttemptHandler.current = () => watchdog?.gestureAttempt();
     const loadStarted = () => watchdog?.loading();
     const waitForStream = () => watchdog?.waiting();
@@ -328,7 +336,7 @@ export function VodPlayer({ onRetry, playback, title, resumeAt = 0, onProgress, 
         cleanup = () => { if (recoveryTimer) clearTimeout(recoveryTimer); hls.destroy(); };
       }).catch(fail);
     } else { video.src = playback.url; startPlayback(); }
-    return () => { cancelled = true; deadline?.dispose(); gestureAttemptHandler.current = () => {}; manualPlayFailureHandler.current = () => {}; watchdog?.dispose(); cleanup(); video.removeEventListener("error", handleVideoError); video.removeEventListener("loadstart", loadStarted); video.removeEventListener("waiting", waitForStream); video.removeEventListener("stalled", waitForStream); video.removeEventListener("progress", noteMediaProgress); video.removeEventListener("loadedmetadata", noteMediaProgress); video.removeEventListener("canplay", markPlayable); video.removeEventListener("playing", markPlaying); video.removeEventListener("loadedmetadata", restorePosition); video.removeEventListener("timeupdate", reportProgress); video.removeEventListener("ended", reportEnded); video.pause(); video.removeAttribute("src"); video.load(); };
+    return () => { measurement.dispose(); cancelled = true; deadline?.dispose(); gestureAttemptHandler.current = () => {}; manualPlayFailureHandler.current = () => {}; watchdog?.dispose(); cleanup(); video.removeEventListener("error", handleVideoError); video.removeEventListener("loadstart", loadStarted); video.removeEventListener("waiting", waitForStream); video.removeEventListener("stalled", waitForStream); video.removeEventListener("progress", noteMediaProgress); video.removeEventListener("loadedmetadata", noteMediaProgress); video.removeEventListener("canplay", markPlayable); video.removeEventListener("playing", markPlaying); video.removeEventListener("loadedmetadata", restorePosition); video.removeEventListener("timeupdate", reportProgress); video.removeEventListener("ended", reportEnded); video.pause(); video.removeAttribute("src"); video.load(); };
   }, [playback.url, playback.transport, playback.deliveryMode, retry]);
   return <div className={`${s.vodPlayer} ${player.cinema}`}><video ref={ref} autoPlay playsInline preload="metadata" aria-label={title}/><VodControls videoRef={ref} title={title} seriesTitle={seriesTitle} currentEpisode={currentEpisode} seasons={seasons} posterUrl={posterUrl} watchedIds={watchedIds} nextEpisode={nextEpisode} onBack={onBack} onSelectEpisode={onSelectEpisode} onNextEpisode={onNextEpisode} favoriteItem={favoriteItem}/>{needsPlayGesture && !error && !endPrompt && <div style={{ position: "absolute", inset: 0, zIndex: 3, display: "grid", placeItems: "center", pointerEvents: "none" }}><button className={s.primary} style={{ width: 72, height: 72, padding: 0, borderRadius: "50%", pointerEvents: "auto" }} aria-label="Oynat" onClick={() => { const video = ref.current; if (!video) return; gestureAttemptHandler.current(); void video.play().catch(cause => manualPlayFailureHandler.current(cause)); }}><Icon name="play" filled/></button></div>}{error && <div className={s.playerError} role="alert"><p>{error}</p><button className={s.primary} onClick={() => onRetry ? onRetry() : setRetry(v => v+1)}>Tekrar Dene</button></div>}{endPrompt && <div className={s.nextEpisodePrompt} role="status"><span>{endPrompt.onPlay ? "Sıradaki bölüm" : "Tamamlandı"}</span><h3>{endPrompt.title}</h3>{endPrompt.onPlay && <p>{endPrompt.seconds} saniye içinde otomatik başlayacak.</p>}<div>{endPrompt.onPlay && <button className={s.primary} onClick={endPrompt.onPlay}>Şimdi Oynat</button>}<button className={s.secondary} onClick={endPrompt.onCancel}>{endPrompt.onPlay ? "İptal" : "Kapat"}</button></div></div>}</div>;
 }
@@ -361,6 +369,10 @@ export function Detail({ item, onClose, autoPlay = false }: { item: MediaItem; o
   const play = async (episode?: Episode, preserveResume = false) => {
     autoplayStarted.current = true;
     const selection = { kind: episode ? "episode" as const : "movie" as const, id: episode?.id ?? item.id };
+    const analyticsStartedAt = performance.now();
+    const analyticsIsCurrent = analyticsMeasurementGuard();
+    const analyticsSelection = { ...selection, title: episode?.title ?? item.title, personalRef: episode?.personalRef ?? item.personalRef };
+    trackAnalytics("playback_request", analyticsContent(analyticsSelection));
 
     activeEpisode.current = episode ?? null;
     setAutoAdvance(null);
@@ -374,8 +386,8 @@ export function Detail({ item, onClose, autoPlay = false }: { item: MediaItem; o
         if(!personalProvider || !personalRef || personalRef.sourceVersion !== providerScope) throw new Error("İçerik şu anda kullanılamıyor.");
         data = await requestPersonalPlayback(personalProvider, personalRef);
       } else if(providerMode === "legacy" && !item.personalRef) data = await apiRequest<Playback>(`/me/vod/${selection.kind}/${encodeURIComponent(selection.id)}/playback?clientRuntime=browser&direct=1`);
-      else throw new Error("İçerik şu anda kullanılamıyor."); if (version !== request.current) return; if (!data.canPlay || !data.url) throw new Error(data.errorMessage ?? "İçerik şu anda kullanılamıyor."); if (new URL(data.url, location.origin).protocol !== "https:" && location.protocol === "https:") throw new Error("Güvenli oynatma adresi hazırlanamadı."); setTitle(episode?.title ?? item.title); setPlayback(data); }
-    catch (error) { if (version === request.current) setError(providerMode === "personal" ? error instanceof Error && error.message === "Bu içerik tarayıcıda oynatılamıyor. Başka bir içerik seçebilirsin." ? error.message : "Bu içerik şu anda tarayıcıda açılamıyor. Yeniden dene veya başka bir içerik seç." : playbackErrorMessage(error, item.kind)); }
+      else throw new Error("İçerik şu anda kullanılamıyor."); if (version !== request.current) return; if (!data.canPlay || !data.url) throw new Error(data.errorMessage ?? "İçerik şu anda kullanılamıyor."); if (new URL(data.url, location.origin).protocol !== "https:" && location.protocol === "https:") throw new Error("Güvenli oynatma adresi hazırlanamadı."); playbackAnalyticsTiming.set(data, { startedAt: analyticsStartedAt, isCurrent: analyticsIsCurrent }); setTitle(episode?.title ?? item.title); setPlayback(data); }
+    catch (error) { if (version === request.current) { if (analyticsIsCurrent()) { trackAnalytics("playback_error", { ...analyticsContent(analyticsSelection), reason: "unavailable" }); trackAnalytics("playback_end", { ...analyticsContent(analyticsSelection), watch_ms: 0, reason: "unavailable" }); } setError(providerMode === "personal" ? error instanceof Error && error.message === "Bu içerik tarayıcıda oynatılamıyor. Başka bir içerik seçebilirsin." ? error.message : "Bu içerik şu anda tarayıcıda açılamıyor. Yeniden dene veya başka bir içerik seç." : playbackErrorMessage(error, item.kind)); } }
     finally { if (version === request.current) setBusy(false); }
   };
   useEffect(() => {

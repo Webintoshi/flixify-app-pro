@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import styles from "../../home.module.css";
+import { AnalyticsPreferencesButton } from "../../platform/analytics-provider";
 
 export default function HomeFooter() {
   const currentYear = 2026;
@@ -39,6 +40,7 @@ export default function HomeFooter() {
         </div>
 
         <div className={styles.footerBottom}>
+          <AnalyticsPreferencesButton />
           <span>© {currentYear} Flixify Pro. Tüm hakları saklıdır.</span>
           <span style={{ color: "rgba(255, 255, 255, 0.4)", fontSize: "0.8rem" }}>
             Film, dizi ve canlı yayın deneyimi.

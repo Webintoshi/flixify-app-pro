@@ -3,6 +3,8 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import s from "./install.module.css";
+import { useAnalyticsPromptVisible } from "../../platform/analytics-provider";
+import { trackAnalytics } from "../../platform/analytics";
 
 type MobilePlatform = "android" | "ios";
 type Platform = MobilePlatform | "other";
@@ -25,6 +27,7 @@ declare global {
 }
 
 export function InstallProvider({ children }: { children: ReactNode }) {
+  const analyticsPromptVisible = useAnalyticsPromptVisible();
   const pathname = usePathname();
   const [platform, setPlatform] = useState<Platform>("other");
   const [installed, setInstalled] = useState(false);
@@ -60,7 +63,8 @@ export function InstallProvider({ children }: { children: ReactNode }) {
       deferred.current = window.__flixifyInstallPrompt;
       setCanInstall(true);
     }
-    const onInstalled = () => { deferred.current = null; window.__flixifyInstallPrompt = null; window.__flixifyAppInstalled = true; setCanInstall(false); setInstalled(true); setHelp(null); };
+    let reportedInstalled = false;
+    const onInstalled = () => { if (!reportedInstalled) { reportedInstalled = true; trackAnalytics("pwa_installed"); } deferred.current = null; window.__flixifyInstallPrompt = null; window.__flixifyAppInstalled = true; setCanInstall(false); setInstalled(true); setHelp(null); };
     window.addEventListener("beforeinstallprompt", beforeInstall);
     window.addEventListener("appinstalled", onInstalled);
     standalone.addEventListener("change", checkInstalled);
@@ -93,7 +97,9 @@ export function InstallProvider({ children }: { children: ReactNode }) {
     prompting.current = true; deferred.current = null; window.__flixifyInstallPrompt = null; setCanInstall(false); setHelp(null); setBusy(true);
     try {
       await event.prompt();
-      await event.userChoice;
+      trackAnalytics("pwa_install_prompt");
+      const choice = await event.userChoice;
+      trackAnalytics("pwa_install_choice", { install_outcome: choice.outcome });
       dismiss();
     } catch { setHelp("android"); }
     finally { prompting.current = false; setBusy(false); }
@@ -101,7 +107,7 @@ export function InstallProvider({ children }: { children: ReactNode }) {
   const mediaOrAdmin = /^\/(canli-tv|filmler|diziler|favoriler|admin)(\/|$)/.test(pathname ?? "");
   return <InstallContext.Provider value={{ platform, installed, busy, canInstall, install }}>
     {children}
-    {platform !== "other" && !installed && !dismissed && !mediaOrAdmin && <aside className={s.banner} aria-label="Uygulama kurulumu" role="region">
+    {platform !== "other" && !installed && !dismissed && !mediaOrAdmin && !analyticsPromptVisible && <aside className={s.banner} aria-label="Uygulama kurulumu" role="region">
       <div className={s.bannerHeader}>
         <img src="/logo/icon-192.png" alt="" width="42" height="42"/>
         <div className={s.bannerCopy}><strong>Ana ekranına ekle</strong><span>Flixify’ı tek dokunuşla aç.</span></div>

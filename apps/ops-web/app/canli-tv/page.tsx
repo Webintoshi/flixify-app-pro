@@ -9,6 +9,8 @@ import { curateLiveChannels } from "../platform/live-channel-presentation";
 import type { PersonalRef, PersonalEpgResult } from "../platform/personal-provider";
 import { selectLivePlaybackEngine } from "../platform/playback-transport";
 import { createDirectPlaybackDeadline } from "../platform/direct-playback-deadline";
+import { analyticsCategoryId, analyticsContent, analyticsMeasurementGuard, trackAnalytics } from "../platform/analytics";
+import { createPlaybackMeasurement } from "../platform/analytics-playback";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { apiRequest } from "../../lib/api";
@@ -161,7 +163,7 @@ function ChannelLogo({ channel, active = false }: { channel: LiveChannel; active
 }
 
 type FirstPicture = {ms:number;method:"requestVideoFrameCallback" | "loadeddata-fallback" | "playing-fallback"};
-type SelectionTiming = {startedAt:number;isCurrent:()=>boolean;picture?:FirstPicture};
+type SelectionTiming = {startedAt:number;isCurrent:()=>boolean;picture?:FirstPicture;analytics?:ReturnType<typeof createPlaybackMeasurement>;restartAnalytics?:()=>void};
 
 function LiveVideo({
   playback,
@@ -192,6 +194,7 @@ function LiveVideo({
   const expiryRef = useRef(effectiveExpiry); expiryRef.current = effectiveExpiry;
   useEffect(() => { deadlineRef.current?.update(effectiveExpiry); }, [effectiveExpiry]);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [revision, setRevision] = useState(0);
   const [firstPicture,setFirstPicture]=useState<FirstPicture | undefined>(selectionTiming?.picture);
   useEffect(()=>{
     const media=videoRef.current;if(!media || !selectionTiming)return;
@@ -202,6 +205,8 @@ function LiveVideo({
       if(cancelled || !timing.isCurrent() || timing.picture || (Number.isFinite(expiry) && expiry<=Date.now()))return;
       const picture={ms:Math.max(0,Math.round((performance.now()-timing.startedAt)*10)/10),method};
       timing.picture=picture;setFirstPicture(picture);
+      timing.analytics?.firstFrame(method);
+      if (media.paused) timing.analytics?.paused();
     };
     if(timing.picture)return;
     const loaded=()=>record("loadeddata-fallback"),playing=()=>record("playing-fallback");
@@ -211,14 +216,14 @@ function LiveVideo({
     }
     if(!frameCallback){media.addEventListener("loadeddata",loaded);media.addEventListener("playing",playing);}
     return()=>{cancelled=true;if(frame!==null)media.cancelVideoFrameCallback?.(frame);media.removeEventListener("loadeddata",loaded);media.removeEventListener("playing",playing);};
-  },[selectionTiming]);
+  },[selectionTiming,revision]);
   const lowerQualityRef = useRef(onNeedLowerQuality);
   lowerQualityRef.current = onNeedLowerQuality;
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "reconnecting">("connecting");
   const [activePlaybackMode, setActivePlaybackMode] = useState<PlaybackMode>("direct");
   const [activeReconnectAttempt, setActiveReconnectAttempt] = useState(0);
-  const [revision, setRevision] = useState(0);
+  useEffect(() => { if (playerError) selectionTiming?.analytics?.failed("media"); }, [playerError, selectionTiming]);
 
   useEffect(() => {
     if (!playback.url || playback.personalRef) return;
@@ -556,6 +561,7 @@ function LiveVideo({
     }
 
     const handlePlaying = () => {
+      selectionTiming?.analytics?.playing();
       hasProgressed = true;
       lastProgressAt = performance.now();
       markHealthy();
@@ -577,11 +583,13 @@ function LiveVideo({
     };
     const handleWaiting = () => {
       if (cancelled || Date.now() < suppressMediaEventsUntil) return;
+      selectionTiming?.analytics?.waiting();
       setConnectionState("reconnecting");
       if (progressTimedOut() && shouldReconnectNow()) recoverTransport(activeAttempt, activeMode);
     };
     const handleStalled = () => {
       if (cancelled || Date.now() < suppressMediaEventsUntil) return;
+      selectionTiming?.analytics?.waiting();
       setConnectionState("reconnecting");
       if (progressTimedOut() && shouldReconnectNow()) recoverTransport(activeAttempt, activeMode);
     };
@@ -594,7 +602,10 @@ function LiveVideo({
     mediaElement.addEventListener("waiting", handleWaiting);
     mediaElement.addEventListener("stalled", handleStalled);
     mediaElement.addEventListener("error", handleMediaError);
+    const handlePause = () => selectionTiming?.analytics?.paused();
+    mediaElement.addEventListener("pause", handlePause);
     const expirePlayback = () => {
+      selectionTiming?.analytics?.failed("expired");
       cancelled = true;
       if (stallWatchdog) clearInterval(stallWatchdog);
       clearReconnect(); cleanupCurrent(); resetMedia();
@@ -635,6 +646,7 @@ function LiveVideo({
       mediaElement.removeEventListener("waiting", handleWaiting);
       mediaElement.removeEventListener("stalled", handleStalled);
       mediaElement.removeEventListener("error", handleMediaError);
+      mediaElement.removeEventListener("pause", handlePause);
       cleanupCurrent();
       resetMedia();
     };
@@ -653,7 +665,7 @@ function LiveVideo({
         <div className={styles.playerMessage}>
           <strong>Yayın kesildi</strong>
           <span>{playerError}</span>
-          <button type="button" onClick={() => setRevision((value) => value + 1)}>Tekrar Dene</button>
+          <button type="button" onClick={() => { selectionTiming?.restartAnalytics?.(); setRevision((value) => value + 1); }}>Tekrar Dene</button>
         </div>
       ) : null}
     </div>
@@ -661,6 +673,9 @@ function LiveVideo({
 }
 
 export default function LiveTvPage() {
+  const liveMeasurement = useRef<ReturnType<typeof createPlaybackMeasurement> | null>(null);
+  const measuredSearch = useRef("");
+  useEffect(() => () => { liveMeasurement.current?.close(); liveMeasurement.current = null; }, []);
   const searchParams = useSearchParams();
   const { favorites, session: platformSession, personalProvider, providerMode, providerScope, providerExpiresAt, livePolicyRevision } = usePlatform();
   const openedChannel = useRef<string | null>(null);
@@ -847,7 +862,18 @@ export default function LiveTvPage() {
     if (selectedChannel?.id === channel.id && playback) return;
     const previousReleaseUrl = !playback?.personalRef && playback?.url ? buildLiveReleaseUrl(playback.url) : null;
     const requestVersion = ++requestVersionRef.current;
-    setSelectionTiming({startedAt:inheritedTiming?.startedAt ?? performance.now(),isCurrent:()=>requestVersion===requestVersionRef.current,picture:inheritedTiming?.picture});
+    if (!inheritedTiming) {
+      liveMeasurement.current?.close("replaced");
+      liveMeasurement.current = createPlaybackMeasurement({ emit: trackAnalytics, now: () => performance.now(), isCurrent: analyticsMeasurementGuard(), content: analyticsContent({ id: channel.id, title: channel.title, personalRef: channel.personalRef, kind: "live" }) });
+      trackAnalytics("select_content", analyticsContent({ id: channel.id, title: channel.title, personalRef: channel.personalRef, kind: "live" }));
+    }
+    const timing: SelectionTiming = {startedAt:inheritedTiming?.startedAt ?? performance.now(),isCurrent:()=>requestVersion===requestVersionRef.current,picture:inheritedTiming?.picture,analytics:liveMeasurement.current ?? undefined};
+    timing.restartAnalytics = () => {
+      liveMeasurement.current?.close("replaced");
+      timing.startedAt = performance.now(); timing.picture = undefined;
+      timing.analytics = liveMeasurement.current = createPlaybackMeasurement({ emit: trackAnalytics, now: () => performance.now(), startAt: timing.startedAt, isCurrent: analyticsMeasurementGuard(), content: analyticsContent({ id: channel.id, title: channel.title, personalRef: channel.personalRef, kind: "live" }) });
+    };
+    setSelectionTiming(timing);
     setSelectedChannel(channel);
     setPlayback(null);
     setPlaying(true);
@@ -888,13 +914,14 @@ export default function LiveTvPage() {
         return next;
       });
     } catch (nextError) {
-      if (requestVersion === requestVersionRef.current) setError(channel.personalRef ? "Canlı yayın başlatılamadı. Tekrar deneyin." : friendlyPlaybackError(nextError));
+      if (requestVersion === requestVersionRef.current) { liveMeasurement.current?.failed("unavailable"); liveMeasurement.current?.close("unavailable"); setError(channel.personalRef ? "Canlı yayın başlatılamadı. Tekrar deneyin." : friendlyPlaybackError(nextError)); }
     } finally {
       if (requestVersion === requestVersionRef.current) setPlaying(false);
     }
   }
 
   function closePlayer() {
+    liveMeasurement.current?.close(); liveMeasurement.current = null;
     requestVersionRef.current += 1;
     setSelectionTiming(null);
     setSelectedChannel(null);
@@ -1000,7 +1027,7 @@ export default function LiveTvPage() {
             <label><span className={styles.srOnly}>Ülke seç</span><select value={selectedCountry} onChange={(event) => { setSelectedCountry(event.target.value); setSelectedCategory("all"); }}>
               {availableCountries.map((country) => <option key={country.id} value={country.id}>{country.flag} {country.label}</option>)}
             </select></label>
-            <label><span className={styles.srOnly}>Kategori seç</span><select value={categorySelectValue(selectedCategory)} onChange={(event) => setSelectedCategory(event.target.value)}>
+            <label><span className={styles.srOnly}>Kategori seç</span><select value={categorySelectValue(selectedCategory)} onChange={(event) => { trackAnalytics("category_select", { content_type: "live", category_id: analyticsCategoryId(event.target.value), category_name: CATEGORIES.find(category => category.id === event.target.value)?.label ?? "Tümü" }); setSelectedCategory(event.target.value); }}>
               {categorySelectOptions(CATEGORIES, categoryCounts, countryCounts.get(selectedCountry) ?? 0).map((category) => (
                 <option key={category.id} value={category.id} disabled={category.disabled}>{category.label}</option>
               ))}
@@ -1010,7 +1037,7 @@ export default function LiveTvPage() {
           <div className={styles.directoryHeader}>
             <label className={styles.searchLine}>
               <AppIcon name="search" />
-              <input id="live-channel-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Kanal ara…" aria-label="Kanal ara" />
+              <input id="live-channel-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} onBlur={() => { if (search.trim() && measuredSearch.current !== search) { measuredSearch.current = search; trackAnalytics("search", { content_type: "live", query_length: search.trim().length, result_count: visibleChannels.length }); } }} placeholder="Kanal ara…" aria-label="Kanal ara" />
             </label>
             <span className={styles.channelCount}>{visibleChannels.length.toLocaleString("tr-TR")} kanal</span>
           </div>

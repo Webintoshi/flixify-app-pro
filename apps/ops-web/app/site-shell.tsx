@@ -10,6 +10,8 @@ import { AppShell } from "./platform/shell";
 import { usePlatform } from "./platform/session";
 import registrationStyles from "./kayit-ol/registration.module.css";
 import { WelcomeOfferBoundary } from "./platform/welcome-offer";
+import { trackAnalytics } from "./platform/analytics";
+import { AnalyticsPreferencesFooter } from "./platform/analytics-provider";
 
 const publicNavigation = [
   { href: "/", label: "Ana Sayfa" },
@@ -85,6 +87,7 @@ function PublicHeader({ pathname }: { pathname: string }) {
               className="button button-hero"
               style={{ padding: "8px 14px", fontSize: "13px", cursor: "pointer" }}
               onClick={() => {
+                trackAnalytics("logout");
                 try {
                   window.localStorage.removeItem("flixify-public-session");
                 } catch {}
@@ -194,7 +197,10 @@ function AdminShell({ pathname, children }: { pathname: string; children: ReactN
 }
 
 export default function SiteShell({ children }: { children: ReactNode }) {
-  return <WelcomeOfferBoundary><SiteShellContent>{children}</SiteShellContent></WelcomeOfferBoundary>;
+  const pathname = usePathname() ?? "/";
+  const { session } = usePlatform();
+  const hasPreferencesFooter = pathname === "/indir" || (pathname === "/" && !session);
+  return <WelcomeOfferBoundary><SiteShellContent>{children}</SiteShellContent>{!pathname.startsWith("/admin") && !hasPreferencesFooter && <AnalyticsPreferencesFooter />}</WelcomeOfferBoundary>;
 }
 
 function SiteShellContent({ children }: { children: ReactNode }) {

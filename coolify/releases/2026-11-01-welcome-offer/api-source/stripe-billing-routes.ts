@@ -3,6 +3,7 @@ import type { LegacyPackageSlug, PackageSlug } from './stripe-billing-policy.js'
 import { resolveSalePackage, SALE_PACKAGE_SLUGS, STRIPE_PUBLISHABLE_KEY, type SalePriceIds, type SalePackage } from './stripe-sales-catalog.js';
 import { WELCOME_CAMPAIGN, WELCOME_COUPON_ID, monthlyWelcomeOffer, type WelcomeCheckoutPin } from './welcome-offer.js';
 import { BlockedUserRouteError } from './user-route-error.js';
+import { validateAnalyticsAttribution, type AnalyticsAttribution } from './analytics-policy.js';
 
 type CheckoutMetadata = { package_slug: PackageSlug; user_id: string; package_users: string; catalog_version: string; sale_price_id: string; welcome_offer_id?: string; welcome_amount_minor?: string; welcome_coupon_id?: string };
 type CheckoutParams = {
@@ -19,6 +20,7 @@ type CheckoutParams = {
 };
 
 export type StripeBillingRouteStore = {
+  saveAnalyticsAttribution?(operationId: string, userId: string, attribution: AnalyticsAttribution): Promise<void>;
   accountState(userId: string, liveMode: boolean): Promise<{ customerId: string | null; activeSubscription: boolean; openCheckout: boolean }>;
   pendingCheckout(userId: string, liveMode: boolean): Promise<{ operationId: string; packageSlug: PackageSlug; status: 'creating' | 'open' | 'completed'; sessionId: string | null; priceId: string | null; catalogVersion: string | null; offerId?: string | null; couponId?: string | null; expectedAmountMinor?: number | null } | null>;
   expireCheckout(operationId: string, sessionId: string): Promise<void>;
@@ -69,6 +71,12 @@ function isExpectedStripeUrl(value: string | null, hostname: string): value is s
 }
 
 export function registerStripeBillingRoutes(app: FastifyInstance, deps: Dependencies): void {
+  async function saveAttribution(operationId: string, userId: string, value: unknown): Promise<void> {
+    const attribution = validateAnalyticsAttribution(value);
+    if (!attribution) return;
+    try { await deps.store.saveAnalyticsAttribution?.(operationId, userId, attribution); }
+    catch { console.warn('[analytics] Checkout measurement unavailable'); }
+  }
   function checkoutAvailableTo(userId: string): boolean {
     if (!deps.enabled) return false;
     if (deps.liveMode) return deps.livePublicCheckoutEnabled !== false || Boolean(deps.allowedLiveUserIds?.has(userId));
@@ -98,7 +106,7 @@ export function registerStripeBillingRoutes(app: FastifyInstance, deps: Dependen
     const userId = auth.userId;
     if (!deps.enabled) return reply.code(503).send({ error: 'checkout_unavailable' });
     if (!checkoutAvailableTo(userId)) return reply.code(403).send({ error: deps.liveMode ? 'live_checkout_restricted' : 'test_checkout_restricted' });
-    const body = request.body as { packageSlug?: unknown; offerId?: unknown } | null;
+    const body = request.body as { packageSlug?: unknown; offerId?: unknown; analytics?: unknown } | null;
     const slug = typeof body?.packageSlug === 'string' ? body.packageSlug : '';
     let selected;
     try {
@@ -144,7 +152,10 @@ export function registerStripeBillingRoutes(app: FastifyInstance, deps: Dependen
             if (!previous.priceId || previous.quantity !== 1) return reply.code(503).send({ error: 'checkout_state_unavailable' });
             if (pending.packageSlug === selected.slug && pending.priceId === selected.priceId &&
                 pending.catalogVersion === selected.catalogVersion && previous.priceId === selected.priceId && previous.mode === 'payment' &&
-                previous.uiMode === 'embedded_page' && previous.clientSecret && matchesOffer(pending) && (!offer || previous.offerId===offer.offerId&&previous.couponId===offer.couponId&&previous.expectedAmountMinor===offer.amountMinor&&previous.amountTotal===offer.amountMinor&&previous.amountSubtotal===selected.amountMinor&&previous.amountDiscount===selected.amountMinor-offer.amountMinor&&previous.couponIds?.length===1&&previous.couponIds[0]===offer.couponId)) return { clientSecret: previous.clientSecret, sessionId: previous.id, publishableKey: STRIPE_PUBLISHABLE_KEY };
+                previous.uiMode === 'embedded_page' && previous.clientSecret && matchesOffer(pending) && (!offer || previous.offerId===offer.offerId&&previous.couponId===offer.couponId&&previous.expectedAmountMinor===offer.amountMinor&&previous.amountTotal===offer.amountMinor&&previous.amountSubtotal===selected.amountMinor&&previous.amountDiscount===selected.amountMinor-offer.amountMinor&&previous.couponIds?.length===1&&previous.couponIds[0]===offer.couponId)) {
+              await saveAttribution(pending.operationId, userId, body?.analytics);
+              return { clientSecret: previous.clientSecret, sessionId: previous.id, publishableKey: STRIPE_PUBLISHABLE_KEY };
+            }
             if (!deps.stripe.expireCheckoutSession) return reply.code(503).send({ error: 'checkout_state_unavailable' });
             await deps.stripe.expireCheckoutSession(pending.sessionId);
             await deps.store.expireCheckout(pending.operationId, pending.sessionId);
@@ -184,6 +195,7 @@ export function registerStripeBillingRoutes(app: FastifyInstance, deps: Dependen
       }, operationId);
       if (!session.clientSecret || !session.id.startsWith('cs_')) throw new Error('invalid_checkout_session');
       await deps.store.completeCheckout(operationId, session.id);
+      await saveAttribution(operationId, userId, body?.analytics);
       return { clientSecret: session.clientSecret, sessionId: session.id, publishableKey: STRIPE_PUBLISHABLE_KEY };
     } catch {
       // A network timeout can occur after Stripe created a usable Checkout.

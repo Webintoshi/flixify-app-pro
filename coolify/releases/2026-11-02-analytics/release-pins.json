@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "revision": "ROOT_FILL_ACCEPTED_FINAL_PUBLICATION_REVISION",
+  "apiServerSha256": "1344ed5920af8953fb975a3877daecb0244cec15b42521d9fa1bdabcbc54f42e",
+  "migrationSha256": "f128291579b2475978bb33b370768541a41d711b40b8dccec0a9178e007bba01",
+  "postgresFixtureSha256": "a2e4279c684388f8e9598e36fe117c2db41cd4e6e778f1187d337d2176ab8b58",
+  "native": {
+    "android": {
+      "revision": "440d15bf3781a4f0a3e3def34dbf91a7e6ca7808",
+      "tree": "280e0781ae30a1ad72fabb0f7ffba38478408a0d",
+      "sha256": "261849966386c62ebbeb4cafa096b1a451331520f429c4c7cf4af74a6a0fec5c",
+      "bytes": 2141040,
+      "evidenceSha256": "ROOT_FILL_ACCEPTED_PLATFORM_PROOF_SHA256",
+      "acceptance": "configured-release-same-signer"
+    },
+    "macos": {
+      "revision": "440d15bf3781a4f0a3e3def34dbf91a7e6ca7808",
+      "tree": "18eef4f0ec558158336ad543173adb04f6876f5c",
+      "sha256": "41d5ff671cdd7602052e3b15c6e0b63001a299421a5171eb315d98694f340785",
+      "bytes": 46149316,
+      "evidenceSha256": "ROOT_FILL_ACCEPTED_PLATFORM_PROOF_SHA256",
+      "acceptance": "configured-universal-local-test"
+    },
+    "windows": {
+      "revision": "bdd44d8910e90adfe9d93f0849bf78bc3686ae69",
+      "tree": "df1ca757af1fbe96ba26d3ac263c78b31e2f70cc",
+      "sha256": "ROOT_FILL_ACCEPTED_ARTIFACT_SHA256",
+      "bytes": 0,
+      "evidenceSha256": "ROOT_FILL_ACCEPTED_PLATFORM_PROOF_SHA256",
+      "acceptance": "ROOT_FILL_ACTUAL_PLATFORM_PROOF_KIND"
+    }
+  }
+}

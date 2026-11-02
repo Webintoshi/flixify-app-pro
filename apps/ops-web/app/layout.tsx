@@ -6,6 +6,7 @@ import { Suspense } from "react";
 import { PlatformProvider } from "./platform/session";
 import { InstallProvider } from "./components/install/InstallProvider";
 import { installBootstrap } from "./components/install/install-bootstrap";
+import { AnalyticsBoundary } from "./platform/analytics-provider";
 
 export const viewport: Viewport = {
   themeColor: "#07090c",
@@ -40,7 +41,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="tr" style={{ colorScheme: "dark" }}>
       <head><script dangerouslySetInnerHTML={{ __html: installBootstrap }} /></head>
       <body>
-        <Suspense fallback={<div style={{ minHeight: "100vh", background: "#07090c" }} />}><PlatformProvider><InstallProvider><SiteShell>{children}</SiteShell></InstallProvider></PlatformProvider></Suspense>
+        <Suspense fallback={<div style={{ minHeight: "100vh", background: "#07090c" }} />}><AnalyticsBoundary><PlatformProvider><InstallProvider><SiteShell>{children}</SiteShell></InstallProvider></PlatformProvider></AnalyticsBoundary></Suspense>
       </body>
     </html>
   );

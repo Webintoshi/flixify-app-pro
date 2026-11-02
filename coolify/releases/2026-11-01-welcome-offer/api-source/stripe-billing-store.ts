@@ -9,8 +9,13 @@ import { ReferralStore } from './referral-store.js';
 import { welcomeOfferEligible, reserveWelcomeOffer } from './welcome-offer-store.js';
 import type { WelcomeCheckoutPin } from './welcome-offer.js';
 import { catalogPriceMatches } from './stripe-sales-catalog.js';
+import { analyticsStore } from './analytics-store.js';
+import type { AnalyticsAttribution } from './analytics-policy.js';
 
 export class StripeBillingStore implements StripeBillingRouteStore {
+  async saveAnalyticsAttribution(operationId: string, userId: string, attribution: AnalyticsAttribution): Promise<void> {
+    await analyticsStore(this.pool).saveCheckoutAttribution(operationId, userId, attribution);
+  }
   private readonly referrals: ReferralStore;
 
   constructor(private readonly pool: Pool) {
