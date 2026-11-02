@@ -152,10 +152,24 @@ Window {
         function dismissPanels() {
             audioMenu.close(); subtitleMenu.close(); episodeMenu.close(); settingsPanel.close(); guidePanel.close()
         }
+        function panelTriggerPosition(button) {
+            let x = 0, y = 0, item = button
+            while (item && item !== contentItem) {
+                x += item.x
+                y += item.y
+                item = item.parent
+            }
+            return Qt.point(x, y)
+        }
         function openPanel(panel, button) {
-            const point = button.mapToItem(contentItem, 0, 0)
-            panel.x = Math.max(12, Math.min(width - panel.width - 12, point.x))
-            panel.y = Math.max(12, point.y - panel.height - 10)
+            panel.x = Qt.binding(function() {
+                const point = controlsWindow.panelTriggerPosition(button)
+                return Math.max(12, Math.min(controlsWindow.width - panel.width - 12, point.x))
+            })
+            panel.y = Qt.binding(function() {
+                const point = controlsWindow.panelTriggerPosition(button)
+                return Math.max(12, Math.min(controlsWindow.height - panel.height - 12, point.y - panel.height - 10))
+            })
             panel.open()
             player.interact()
         }

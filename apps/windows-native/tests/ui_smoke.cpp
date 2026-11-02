@@ -1,5 +1,6 @@
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlNetworkAccessManagerFactory>
 #include <QQuickWindow>
 #include <QQuickItem>
@@ -329,6 +330,23 @@ bool visibleText(QQuickItem *parent,const QString &text) {
     for(auto child:parent->childItems())if(visibleText(child,text))return true;
     return false;
 }
+bool settledPanelGeometry(QObject *panel,QQuickItem *action,QQuickWindow *overlay,QJsonObject &evidence) {
+    double lastHeight=-1;QElapsedTimer stable;stable.start();
+    const bool settled=until([&] {
+        const auto height=panel->property("height").toDouble();
+        if(qAbs(height-lastHeight)>0.1) { lastHeight=height;stable.restart(); }
+        return stable.elapsed()>=120;
+    },1000);
+    const auto content=panel->property("contentItem").value<QQuickItem *>();
+    if(!content)return false;
+    const auto origin=content->mapToScene(QPointF(-panel->property("leftPadding").toDouble(),-panel->property("topPadding").toDouble()));
+    const QRectF bounds(origin,QSizeF(panel->property("width").toDouble(),panel->property("height").toDouble()));
+    const auto trigger=action->mapToScene(QPointF());
+    const bool above=bounds.bottom()<=trigger.y()-8;
+    const bool inside=bounds.left()>=11&&bounds.right()<=overlay->width()-11&&bounds.top()>=11&&bounds.bottom()<=overlay->height()-11;
+    evidence={{"settled",settled},{"x",bounds.x()},{"y",bounds.y()},{"width",bounds.width()},{"height",bounds.height()},{"bottom",bounds.bottom()},{"triggerTop",trigger.y()},{"aboveTrigger",above},{"insideViewport",inside}};
+    return settled&&above&&inside;
+}
 bool playerPanels(QQuickWindow *overlay,DesktopPlayer &player,const QString &output,QJsonObject &evidence,const QString &expectedGuideTitle={}) {
     bool passed=true;QJsonArray panels;
     QList<QPair<QString,QString>> names{{"playerAudioAction","playerAudioMenu"},{"playerSubtitleAction","playerSubtitleMenu"},{"playerSettingsAction","playerSettingsMenu"}};
@@ -342,6 +360,21 @@ bool playerPanels(QQuickWindow *overlay,DesktopPlayer &player,const QString &out
         player.interact();const bool clicked=click(overlay,entry.first);auto panel=overlay->findChild<QObject *>(entry.second);
         const bool opened=clicked&&panel&&until([&]{return panel->property("visible").toBool();},1000);
         const bool held=opened&&overlay->property("held").toBool();
+        QJsonObject geometry;const bool anchored=opened&&settledPanelGeometry(panel,action,overlay,geometry);
+        bool dynamicAnchored=true;QJsonObject dynamicGeometry;
+        if(opened&&entry.second=="playerAudioMenu") {
+            const auto initialHeight=panel->property("height").toDouble();
+            QQmlComponent extraComponent(qmlEngine(overlay),QUrl("qrc:/qml/PlayerMenuItem.qml"));
+            auto extra=qobject_cast<QQuickItem *>(extraComponent.create());
+            if(extra)extra->setProperty("text","Dynamic track sizing check");
+            const bool added=extra&&QMetaObject::invokeMethod(panel,"addItem",Q_ARG(QQuickItem*,extra));
+            const bool expanded=added&&until([&]{return panel->property("height").toDouble()>initialHeight+20;},1000);
+            dynamicAnchored=expanded&&settledPanelGeometry(panel,action,overlay,dynamicGeometry);
+            dynamicGeometry["expanded"]=expanded;
+            if(extra) { QMetaObject::invokeMethod(panel,"removeItem",Q_ARG(QQuickItem*,extra));delete extra; }
+            QJsonObject restored;const bool restoredAnchor=settledPanelGeometry(panel,action,overlay,restored);dynamicGeometry["restored"]=restored;
+            dynamicAnchored=dynamicAnchored&&restoredAnchor;
+        }
         bool settingsChanged=true;
         if(opened&&entry.second=="playerSettingsMenu") {
             const auto previousRate=player.rate();const auto previousAspect=player.aspect();
@@ -360,7 +393,7 @@ bool playerPanels(QQuickWindow *overlay,DesktopPlayer &player,const QString &out
         const bool screenshot=opened&&capture(overlay,QDir(output).filePath((player.live()?"live-":"")+entry.second+".png"));
         QTest::keyClick(QGuiApplication::focusWindow()?QGuiApplication::focusWindow():overlay,Qt::Key_Escape);
         const bool dismissed=panel&&until([&]{return !panel->property("visible").toBool();},1000)&&player.active()&&!overlay->property("held").toBool();
-        panels.append(QJsonObject{{"name",entry.second},{"opened",opened},{"holdsWhileOpen",held},{"settingsChoicesWork",settingsChanged},{"guideContentVisible",guideContent},{"screenshot",screenshot},{"escapePreservesPlayback",dismissed}});passed=passed&&opened&&held&&settingsChanged&&guideContent&&screenshot&&dismissed;
+        panels.append(QJsonObject{{"name",entry.second},{"opened",opened},{"holdsWhileOpen",held},{"settingsChoicesWork",settingsChanged},{"guideContentVisible",guideContent},{"geometry",geometry},{"dynamicGeometry",dynamicGeometry},{"screenshot",screenshot},{"escapePreservesPlayback",dismissed}});passed=passed&&opened&&held&&anchored&&dynamicAnchored&&settingsChanged&&guideContent&&screenshot&&dismissed;
     }
     evidence["expectedPanelCount"]=names.size();evidence["panels"]=panels;return passed&&panels.size()==names.size();
 }
