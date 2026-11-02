@@ -1,6 +1,6 @@
 # Windows Repair Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Correct desktop installation, remove VLC-induced interface stalls and match the accepted Mac player in a verified Windows 1.0.1 installer.
 
@@ -29,9 +29,9 @@
 
 **Files:** `apps/windows-native/installer/Flixify.nsi`, `scripts/verify_install.ps1`, `scripts/package_policy.py`, `scripts/package_windows.py`, packaging tests.
 
-- [ ] Pin missing/wrong desktop shortcut and forced-cleanup failures with offline contract tests.
-- [ ] Add default current-user desktop link with correct executable, working directory and icon; preserve foreign links.
-- [ ] Verify actual shortcut launch, upgrade repair and owned-only uninstall in Windows CI.
+- [x] Pin missing/wrong desktop shortcut and forced-cleanup failures with offline contract tests.
+- [x] Add default current-user desktop link with correct executable, working directory and icon; preserve foreign links.
+- [x] Verify actual shortcut launch, upgrade repair and owned-only uninstall in Windows CI.
 
 ### Task 2: Responsive playback
 
@@ -39,21 +39,21 @@
 
 **Interfaces:** `rate`/`setRate(double)` and `aspect`/`setAspect(QString)` expose the exact settings from the spec to QML.
 
-- [ ] Reproduce a stalled GUI heartbeat with deliberately blocked VLC calls.
-- [ ] Move VLC operations to a serialized worker; coalesce polling, guard snapshots and cancel stale sessions.
-- [ ] Verify open, poll, controls, late events, replacement, rate/aspect and surface teardown with focused tests.
+- [x] Reproduce a stalled GUI heartbeat with deliberately blocked VLC calls.
+- [x] Move VLC operations to a serialized worker; coalesce polling, guard snapshots and cancel stale sessions.
+- [x] Verify open, poll, controls, late events, replacement, rate/aspect and surface teardown with focused tests.
 
 ### Task 3: Mac player parity
 
 **Files:** `apps/windows-native/qml/PlayerWindow.qml`, dedicated player icon/button/slider components and `tests/ui_smoke.cpp`.
 
-- [ ] Match the Mac reference layout, icon controls, white sliders and tool order, including settings and live guide.
-- [ ] Add meaningful fixture-driven geometry, control-presence, focus, settings and idle checks.
-- [ ] Inspect the finished rendered player after implementation; retain physical pointer, seek and close tests.
+- [x] Match the Mac reference layout, icon controls, white sliders and tool order, including settings and live guide.
+- [x] Add meaningful fixture-driven geometry, control-presence, focus, settings and idle checks.
+- [x] Inspect the finished rendered player after implementation; retain physical pointer, seek and close tests.
 
 ### Task 4: Integration and publication
 
-- [ ] Independently review the combined source and run the local suites.
-- [ ] Set version 1.0.1, compile and verify on actual Windows; inspect installer/privacy/native UI proof.
-- [ ] Publish only the accepted EXE through a new guarded website profile; retain Mac/Android/old Windows hashes.
-- [ ] Verify the live button's exact download and record receipts, screenshot and trust limitations.
+- [x] Independently review the combined source and run the local suites.
+- [x] Set version 1.0.1, compile and verify on actual Windows; inspect installer/privacy/native UI proof.
+- [x] Publish only the accepted EXE through a new guarded website profile; retain Mac/Android/old Windows hashes.
+- [x] Verify the live button's exact download and record receipts, screenshot and trust limitations.
