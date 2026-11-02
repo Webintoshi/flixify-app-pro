@@ -207,7 +207,7 @@ public class MainRemoteTest {
         assertTrue("Remote reaches "+item.title+" ["+item.key()+"] after its RecyclerView layout frame; actual "+actual[0],ready[0]);
     }
     @Test public void repeatedCardClickInSameEventLoopLaunchesOnlyOnePlayer() {
-        launch(true);down(2);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);focused("Uzay Yolculuğu");
+        launch(true);down(2);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);awaitPosterFocus(repository.movie);focused("Uzay Yolculuğu");
         Instrumentation.ActivityMonitor monitor=instrumentation.addMonitor(PlayerActivity.class.getName(),null,true);
         try {
             instrumentation.runOnMainSync(()->{

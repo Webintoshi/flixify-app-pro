@@ -31,9 +31,11 @@ public final class CatalogShowcase {
     }
     public static String dayKey(){return dayKey(System.currentTimeMillis());}
     public static String dayKey(long now){SimpleDateFormat format=new SimpleDateFormat("yyyy-MM-dd",Locale.ROOT);format.setTimeZone(TimeZone.getTimeZone("Europe/Istanbul"));return format.format(new Date(now));}
-    private static String trim(String value){return value.replaceAll("^[\\s\\p{Z}\\uFEFF]+|[\\s\\p{Z}\\uFEFF]+$","");}
-    private static String whitespace(String value){return value.replaceAll("[\\s\\p{Z}\\uFEFF]+"," ").trim();}
-    private static String identity(Item item){return item.kind.name().toLowerCase(Locale.ROOT)+":"+item.id;}
+    private static final Pattern EDGE_SPACE=Pattern.compile("^[\\s\\p{Z}\\uFEFF]+|[\\s\\p{Z}\\uFEFF]+$"),SPACE=Pattern.compile("[\\s\\p{Z}\\uFEFF]+"),MARKS=Pattern.compile("[\\u0300-\\u036f]"),MOVIE_WORDS=Pattern.compile("[^a-z0-9]+");
+    private static void active(){if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();}
+    private static String trim(String value){active();return EDGE_SPACE.matcher(value).replaceAll("");}
+    private static String whitespace(String value){active();return SPACE.matcher(value).replaceAll(" ").trim();}
+    private static String identity(Item item){active();return item.kind.name().toLowerCase(Locale.ROOT)+":"+item.id;}
     private static String title(Item item){return whitespace(Normalizer.normalize(item.title,Normalizer.Form.NFKC)).toLowerCase(Locale.ROOT);}
     private static String titleIdentity(Item item){return item.kind.name().toLowerCase(Locale.ROOT)+":"+title(item);}
     private static String group(Item item){String value=trim(item.categoryName);return value.isEmpty()?"Diğer":value;}
@@ -104,12 +106,10 @@ public final class CatalogShowcase {
         List<Item> live=new ArrayList<>();Set<String> liveIds=new HashSet<>();for(Item item:items)if(item!=null && item.kind==Kind.LIVE && liveIds.add(item.key()) && live.size()<12)live.add(item);
         return new Result(hero,Arrays.asList(new Rail("home-movies","2026 Filmleri",coveredFirst(rows(pool,Kind.MOVIE,excluded).flattened(),18)),new Rail("home-series","2026 Dizileri",coveredFirst(rows(pool,Kind.SERIES,excluded).flattened(),18)),new Rail("home-live","Canlı TV",live)));
     }
-    private static String movieText(String value){return Normalizer.normalize(value,Normalizer.Form.NFKD).replaceAll("[\\u0300-\\u036f]","").replace('ı','i').toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+"," ").trim();}
+    private static String movieText(String value){active();return MOVIE_WORDS.matcher(MARKS.matcher(Normalizer.normalize(value,Normalizer.Form.NFKD)).replaceAll("").replace('ı','i').toLowerCase(Locale.ROOT)).replaceAll(" ").trim();}
     private static final Pattern MARVEL=Pattern.compile("\\b(?:marvel|avengers|yenilmezler|iron man|ironman|thor|captain america|kaptan amerika|spider man|spiderman|orumcek adam|hulk|doctor strange|doktor strange|black panther|kara panter|ant man|karinca adam|guardians of the galaxy|galaksinin koruyuculari|black widow|kara dul|shang chi|eternals|deadpool|wolverine|x men|venom)\\b");
     private static final Pattern FANTASY=Pattern.compile("\\b(?:harry potter|fantastic beasts|fantastik canavarlar|lord of the rings|yuzuklerin efendisi|hobbit|narnia)\\b");
     private static final Pattern ACTION_GROUP=Pattern.compile("\\b(?:aksiyon|action)\\b"),FANTASY_GROUP=Pattern.compile("\\b(?:fantastik|fantasy)\\b"),SCIENCE_FICTION_GROUP=Pattern.compile("\\b(?:bilim kurgu|science fiction|sci fi|scifi)\\b");
-    private static boolean action(Item item){return artwork(item) && ACTION_GROUP.matcher(movieText(item.categoryName)).find();}
-    private static boolean fantasy(Item item){String text=movieText(item.categoryName);return FANTASY.matcher(movieText(item.title)).find() || FANTASY_GROUP.matcher(text).find() && !SCIENCE_FICTION_GROUP.matcher(text).find();}
     private static List<Item> take(List<Item> items,Set<String> used){
         List<Item> ordered=coveredFirst(items,items.size()),unique=new ArrayList<>();for(Item item:ordered)if(!used.contains(identity(item)))unique.add(item);
         List<Item> chosen=unique.isEmpty()?ordered:unique;List<Item> result=new ArrayList<>(chosen.subList(0,Math.min(18,chosen.size())));for(Item item:result)used.add(identity(item));return result;
@@ -120,13 +120,14 @@ public final class CatalogShowcase {
         List<Item> candidates=new ArrayList<>();for(Item item:items)if(item!=null && item.kind==Kind.MOVIE)candidates.add(item);
         Map<String,Integer> ids=new HashMap<>(),titles=new HashMap<>();List<Item> pool=new ArrayList<>();
         for(Item item:order(candidates,dayKey)){
-            if(blockedIds.contains(identity(item)) || blockedTitles.contains(title(item)))continue;
-            Integer existing=ids.get(identity(item));if(existing==null)existing=titles.get(title(item));
-            if(existing!=null){if(!artwork(pool.get(existing)) && artwork(item))pool.set(existing,item);ids.put(identity(item),existing);titles.put(title(item),existing);continue;}
-            ids.put(identity(item),pool.size());titles.put(title(item),pool.size());pool.add(item);
+            String id=identity(item),name=title(item);
+            if(blockedIds.contains(id) || blockedTitles.contains(name))continue;
+            Integer existing=ids.get(id);if(existing==null)existing=titles.get(name);
+            if(existing!=null){if(!artwork(pool.get(existing)) && artwork(item))pool.set(existing,item);ids.put(id,existing);titles.put(name,existing);continue;}
+            ids.put(id,pool.size());titles.put(name,pool.size());pool.add(item);
         }
         List<Item> current=new ArrayList<>(),marvel=new ArrayList<>(),action=new ArrayList<>(),fantasy=new ArrayList<>();
-        for(Item item:pool){if(item.releaseYear==2026)current.add(item);if(MARVEL.matcher(movieText(item.title)).find())marvel.add(item);if(action(item))action.add(item);if(fantasy(item))fantasy.add(item);}
+        for(Item item:pool){String name=movieText(item.title),category=movieText(item.categoryName);if(item.releaseYear==2026)current.add(item);if(MARVEL.matcher(name).find())marvel.add(item);if(artwork(item) && ACTION_GROUP.matcher(category).find())action.add(item);if(FANTASY.matcher(name).find() || FANTASY_GROUP.matcher(category).find() && !SCIENCE_FICTION_GROUP.matcher(category).find())fantasy.add(item);}
         List<Item> hero=new ArrayList<>();int limit=Math.min(5,Math.max(1,current.size()/3));for(Item item:current)if(artwork(item) && hero.size()<limit)hero.add(item);
         Set<String> used=new HashSet<>();for(Item item:hero)used.add(identity(item));
         return new Result(hero,Arrays.asList(new Rail("movies-2026","2026 Filmleri",take(current,used)),new Rail("movies-marvel","Çok İzlenenler · Marvel",take(marvel,used)),new Rail("movies-action","Aksiyon Filmleri",take(action,used)),new Rail("movies-fantasy","Fantastik Filmler",take(fantasy,used))));

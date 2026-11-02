@@ -55,6 +55,7 @@ public final class MainActivity extends Activity {
     private boolean analyticsPrompted;
     private String visibleAnalyticsScreen="login";
     private ArtworkLoader artwork;
+    private CatalogPresentationPreparer presentations;
     private PosterFocusSound posterSound;
     private TvUpdatePanel updatePanel;
     private StartupScreen startup;
@@ -114,6 +115,7 @@ public final class MainActivity extends Activity {
         startup=new StartupScreen(this,StartupScreen.restoredComplete(state));
         FrameLayout initial=new FrameLayout(this);initial.setBackgroundColor(TvUi.BACKGROUND);startup.show(initial);
         repository=TvApplication.repository(this); analytics=TvAnalytics.get(this);artwork=new ArtworkLoader(this);posterSound=PosterFocusSound.create(this);updatePanel=new TvUpdatePanel(this);
+        android.os.Handler presentationMain=new android.os.Handler(android.os.Looper.getMainLooper());presentations=new CatalogPresentationPreparer(presentationMain::post);
         for(Section section:Section.values())pages.put(section,new Page(section));
         page=pages.get(Section.HOME);
         if(state!=null) {
@@ -152,6 +154,7 @@ public final class MainActivity extends Activity {
     @Override protected void onPause() {posterSound.pause();super.onPause();}
     @Override protected void onStop() {
         startup.cancelPendingFrame();
+        presentations.cancel();
         artwork.retireScreen();
         preparedScope="";
         favoritesRefreshSerial++;favoritesRefreshPending=false;favoritesRefreshAgain=false;
@@ -161,11 +164,12 @@ public final class MainActivity extends Activity {
         if(catalogObservation!=null){try{catalogObservation.close();}catch(Exception ignored){}catalogObservation=null;}
         updatePanel.cancel();if(dialog!=null)dialog.dismiss();super.onStop();
     }
-    @Override protected void onDestroy() { destroyed=true; generation++;if(startup!=null)startup.close();if(posterSound!=null)posterSound.close();if(artwork!=null)artwork.close();if(updatePanel!=null)updatePanel.close();super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed=true; generation++;if(presentations!=null)presentations.close();if(startup!=null)startup.close();if(posterSound!=null)posterSound.close();if(artwork!=null)artwork.close();if(updatePanel!=null)updatePanel.close();super.onDestroy(); }
     @Override public void onTrimMemory(int level){super.onTrimMemory(level);if(artwork!=null)artwork.trimMemory(level);trimMetadataMemory(level);}
     @Override public void onLowMemory(){super.onLowMemory();if(artwork!=null)artwork.trimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE);trimMetadataMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE);}
     private void trimMetadataMemory(int level){
         if(repository==null || page==null || level<android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)return;
+        presentations.clear();
         Kind keep=!stopped && page.section!=Section.FAVORITES && page.section!=Section.ACCOUNT?pageKind():null;
         clearPendingCatalogs();preparedScope="";
         for(Page target:pages.values())if(stopped || target!=page){target.catalog=null;target.catalogScope="";}
@@ -173,6 +177,10 @@ public final class MainActivity extends Activity {
         if(stopped || page.section!=Section.HOME){homeLoadSerial++;homeSources.clear();homeRefreshPending=false;}
         if(stopped)discovery=null;
         repository.trimMemory(keep);
+        if(!stopped && grid==null && page.catalog!=null && body!=null && page.section!=Section.ACCOUNT){
+            final Page owner=page;final long ticket=generation;
+            body.post(()->{if(screenAlive(ticket) && !stopped && page==owner && grid==null)showPage(false,false);});
+        }
     }
     @Override protected void onSaveInstanceState(Bundle out) {
         if(!searchPlayerReturn)captureGrid(); out.putString("section",page.section.name()); out.putString("query",page.query); out.putString("category",page.category);
@@ -391,6 +399,7 @@ public final class MainActivity extends Activity {
         return screenAlive(ticket) && (scope.equals(repository.currentScope()) || (scope.isEmpty() && repository.hasSession()));
     }
     private void invalidateScopedCatalogs() {
+        presentations.clear();
         preparedScope="";favoritesRefreshSerial++;favoritesRefreshPending=false;favoritesRefreshAgain=false;
         favoriteMutations.clear();
         homeLoadSerial++;homeSources.clear();homeRefreshPending=false;
@@ -524,6 +533,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void showLogin(String message) {
+        presentations.clear();
         visibleAnalyticsScreen="login";analytics.screen(visibleAnalyticsScreen);
         artwork.retireScreen();
         if(catalogDialog!=null && catalogDialog.isShowing())catalogDialog.dismiss();
@@ -569,6 +579,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void shell(String title,String subtitle) {
+        presentations.cancel();
         artwork.retireScreen();
         if(catalogDialog!=null && catalogDialog.isShowing())catalogDialog.dismiss();
         generation++;grid=null;discovery=null;sizing=TvLayout.measure(this);measuredWidth=sizing.width;measuredHeight=sizing.height;
@@ -659,9 +670,23 @@ public final class MainActivity extends Activity {
     }
     private void linkContent(View first) { for(Button b:rail)b.setNextFocusRightId(first.getId()); first.setNextFocusLeftId(rail[page.section.ordinal()].getId()); }
     private void renderCatalog(boolean contentFocus) {
-        String effectiveCategory=page.section==Section.FAVORITES?CatalogFilterData.effectiveFavoriteCategory(page.catalog,page.category):CatalogFilterData.effectiveCategory(page.catalog,page.category);
+        final Page owner=page;final Catalog snapshot=page.catalog;final long ticket=generation;
+        final CatalogPresentation.Key key=new CatalogPresentation.Key(snapshot,page.section.name(),repository.currentAccountId(),repository.currentScope(),CatalogShowcase.dayKey(),page.category,page.query);
+        CatalogPresentation ready=presentations.cached(key);
+        // The measured 12k movie pass took 5 seconds; cap inline work at 64 rows (about 27 ms at that slope).
+        if(ready==null && snapshot.items.size()<=64){ready=CatalogPresentation.prepare(key);presentations.remember(key,ready);}
+        if(ready!=null){renderCatalog(contentFocus,ready);return;}
+        TextView loading=TvUi.text(this,"Yükleniyor…",20,TvUi.MUTED);body.addView(loading,TvUi.space(this,-1,64));
+        presentations.request(key,result->{
+            if(!screenAlive(ticket) || stopped || page!=owner || owner.catalog!=snapshot || !repository.hasSession() || !key.account.equals(repository.currentAccountId()) || !key.scope.equals(repository.currentScope()) || !key.category.equals(owner.category) || !key.query.equals(owner.query))return;
+            if(!key.day.equals(CatalogShowcase.dayKey())){replaceCatalog(contentFocus);return;}
+            body.removeView(loading);renderCatalog(contentFocus,result);
+        });
+    }
+    private void renderCatalog(boolean contentFocus,CatalogPresentation prepared) {
+        String effectiveCategory=prepared.category;
         if(!effectiveCategory.equals(page.category)){page.category=effectiveCategory;page.categoryTitle="Tümü";page.scroll=0;page.focusKey="";}
-        List<Item> filtered=CatalogFilterData.filtered(page.catalog,page.category,page.query);
+        List<Item> filtered=prepared.items;
         LinearLayout controls=TvUi.row(this);body.addView(controls,TvUi.space(this,-1,50));
         Button search=TvUi.button(this,"Ara",this::search);search.setBackground(TvUi.catalogActionBackground(this,!page.query.isEmpty()));search.setPadding(TvUi.dp(this,10),0,TvUi.dp(this,10),0);search.setCompoundDrawablesWithIntrinsicBounds(TvUi.catalogIcon(this,0,16),null,null,null);search.setCompoundDrawablePadding(TvUi.dp(this,6));markFocus(search,"catalog:search");controls.addView(search,TvUi.space(this,sizing.compact?86:96,42));
         Button category=TvUi.button(this,"Kategori: "+page.categoryTitle,this::categories);category.setBackground(TvUi.catalogActionBackground(this,!page.category.isEmpty()));category.setPadding(TvUi.dp(this,10),0,TvUi.dp(this,10),0);category.setCompoundDrawablesWithIntrinsicBounds(TvUi.catalogIcon(this,1,16),null,null,null);category.setCompoundDrawablePadding(TvUi.dp(this,6));markFocus(category,"catalog:category");category.setSingleLine(true);category.setEllipsize(TextUtils.TruncateAt.END);
@@ -674,7 +699,7 @@ public final class MainActivity extends Activity {
             if(contentFocus)search.requestFocus();restoreResizeFocus(true);startup.ready();prepareOfflineData();return;
         }
         if(page.query.isEmpty() && page.category.isEmpty() && (page.section==Section.HOME || page.section==Section.MOVIES || page.section==Section.SERIES || page.section==Section.FAVORITES)){
-            renderDiscovery(filtered,search,contentFocus);restoreResizeFocus(true);startup.ready();prepareOfflineData();return;
+            renderDiscovery(prepared,search,contentFocus);restoreResizeFocus(true);startup.ready();prepareOfflineData();return;
         }
         grid=new RecyclerView(this); grid.setId(View.generateViewId()); grid.setClipToPadding(false); grid.setPadding(0,TvUi.dp(this,8),0,TvUi.dp(this,12)); grid.setItemAnimator(null);
         grid.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS); grid.setFocusable(false);
@@ -702,23 +727,10 @@ public final class MainActivity extends Activity {
         String scope=repository.currentScope();
         if(!scope.isEmpty() && !scope.equals(preparedScope)){preparedScope=scope;repository.prepareOfflineData();}
     }
-    private void renderDiscovery(List<Item> items,Button search,boolean contentFocus){
-        String day=CatalogShowcase.dayKey();CatalogShowcase.Result selected;List<Item> archive=null;String archiveTitle="";boolean emptyHero=false;
-        if(page.section==Section.HOME){
-            selected=CatalogShowcase.home(items,day);boolean current=false;for(Item item:items)if(item.kind!=Kind.LIVE && item.releaseYear==2026){current=true;break;}
-            selected=retainFocusedHomeHero(selected,items);
-            emptyHero=selected.hero.isEmpty();
-            if(!current){
-                List<CatalogShowcase.Rail> fallback=new ArrayList<>();
-                for(Kind kind:new Kind[]{Kind.MOVIE,Kind.SERIES}){List<Item> rows=new ArrayList<>();for(Item item:items)if(item.kind==kind && rows.size()<18)rows.add(item);if(!rows.isEmpty())fallback.add(new CatalogShowcase.Rail(kind==Kind.MOVIE?"home-archive-movies":"home-archive-series",kind==Kind.MOVIE?"Filmler":"Diziler",rows));}
-                for(CatalogShowcase.Rail row:selected.rails)if("home-live".equals(row.id) && !row.items.isEmpty())fallback.add(row);
-                selected=new CatalogShowcase.Result(selected.hero,fallback);
-            }
-        }else if(page.section==Section.MOVIES){selected=CatalogShowcase.movies(items,day);archive=items;archiveTitle="Tüm Filmler";emptyHero=selected.hero.isEmpty();}
-        else if(page.section==Section.SERIES){selected=CatalogShowcase.series(items,day);archive=items;archiveTitle="Tüm Diziler";}
-        else{
-            List<CatalogShowcase.Rail> rows=new ArrayList<>();for(Kind kind:new Kind[]{Kind.LIVE,Kind.MOVIE,Kind.SERIES}){List<Item> entries=new ArrayList<>();for(Item item:items)if(item.kind==kind)entries.add(item);if(!entries.isEmpty())rows.add(new CatalogShowcase.Rail("favorites-"+kind.name().toLowerCase(Locale.ROOT),kind==Kind.LIVE?"Canlı TV":kind==Kind.MOVIE?"Filmler":"Diziler",entries));}selected=new CatalogShowcase.Result(Collections.emptyList(),rows);
-        }
+    private void renderDiscovery(CatalogPresentation prepared,Button search,boolean contentFocus){
+        List<Item> items=prepared.items,archive=prepared.archive;String archiveTitle=prepared.archiveTitle;boolean emptyHero=prepared.emptyHero;
+        CatalogShowcase.Result selected=prepared.showcase;
+        if(page.section==Section.HOME)selected=retainFocusedHomeHero(selected,items);
         final Page owner=page;final String scope=repository.currentScope();final long ticket=generation;
         int viewportHeight=Math.max(80,sizing.height-(sizing.shortScreen?20:34)-(page.section==Section.HOME?0:sizing.heading+8)-58);
         discovery=new DiscoveryScreen(this,sizing,viewportHeight,selected,archive,archiveTitle,emptyHero,page.heroKey,new DiscoveryScreen.Actions(){

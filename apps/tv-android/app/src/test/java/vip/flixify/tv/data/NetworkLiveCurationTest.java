@@ -70,7 +70,7 @@ public class NetworkLiveCurationTest {
         <T> T deliver(Result<T> result)throws Exception{await(result);assertNull(result.failure);return result.value;}
         void awaitQueued(int count)throws Exception{long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);while(deliveries.size()<count && System.nanoTime()<end)Thread.sleep(1);assertTrue("Expected queued callbacks",deliveries.size()>=count);}
         Catalog catalog()throws Exception{Result<Catalog> r=new Result<>();repository.catalog(Kind.LIVE,false,r);return deliver(r);}
-        void stopWorkers()throws Exception{for(String name:Arrays.asList("worker","epgWorker","metadataWorker","timeout")){Field f=NetworkTvRepository.class.getDeclaredField(name);f.setAccessible(true);((ExecutorService)f.get(repository)).shutdownNow();}}
+        void stopWorkers()throws Exception{for(String name:Arrays.asList("worker","epgWorker","primaryCatalogWorker","metadataWorker","timeout")){Field f=NetworkTvRepository.class.getDeclaredField(name);f.setAccessible(true);((ExecutorService)f.get(repository)).shutdownNow();}}
         public void close()throws Exception{repository.logout();stopWorkers();}
     }
     private Item station(Catalog catalog,String title){for(Item item:catalog.items)if(item.title.equals(title))return item;throw new AssertionError("Missing canonical station: "+title);}
@@ -93,6 +93,17 @@ public class NetworkLiveCurationTest {
             Result<List<Programme>> epg=new Result<>();h.repository.epg(legacy(),epg);assertEquals(1,h.deliver(epg).size());assertEquals(Collections.singletonList("35"),h.fixture.epgIds);assertTrue(h.fixture.writes.isEmpty());
             Result<Boolean> remove=new Result<>();h.repository.toggleFavorite(atv,remove);assertFalse(h.deliver(remove));assertEquals(Arrays.asList("DELETE:34","DELETE:36"),h.fixture.writes);assertTrue(h.fixture.favorites.isEmpty());assertFalse(h.repository.isFavorite(atv));
             Result<Boolean> add=new Result<>();h.repository.toggleFavorite(atv,add);assertTrue(h.deliver(add));assertEquals(Collections.singleton("35"),h.fixture.favorites);assertEquals("PUT:35",h.fixture.writes.get(2));
+        }
+    }
+    @Test public void catalogCompletionReusesCanonicalProjectionAndPolicyCanRestoreExcludedRows()throws Exception{
+        try(Harness h=new Harness()){
+            h.fixture.exclusions.add("35");Catalog first=h.catalog();assertEquals("36",station(first,"ATV").id);
+            Field field=NetworkTvRepository.class.getDeclaredField("curatedLive");field.setAccessible(true);
+            assertSame("Completion must deliver the cached raw catalog projection",((LiveChannelCuration.Projection)field.get(h.repository)).catalog,first);
+            assertSame(first,h.catalog());
+            h.fixture.exclusions.clear();Result<Account> refresh=new Result<>();h.repository.refreshAccess(refresh);h.deliver(refresh);
+            Catalog restored=h.catalog();assertEquals("35",station(restored,"ATV").id);assertSame(((LiveChannelCuration.Projection)field.get(h.repository)).catalog,restored);
+            assertEquals(1,h.fixture.streams);
         }
     }
     @Test public void diskRestorationAndPolicyRefreshRecomputeAliasesWithoutProviderRefetch()throws Exception{

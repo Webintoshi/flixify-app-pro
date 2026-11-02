@@ -37,8 +37,13 @@ final class CatalogFilterData {
         return category.equals(item.categoryId);
     }
     private static boolean match(Item item,String category,String query){
+        return match(item,category,query,query.isEmpty()?"":LiveChannelLineup.search(query));
+    }
+    private static boolean match(Item item,String category,String query,String liveQuery){
+        if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();
         if(!categoryMatches(item,category))return false;
-        return item.kind==Kind.LIVE?LiveChannelLineup.search(item.title+" "+item.categoryName).contains(LiveChannelLineup.search(query)):item.title.toLowerCase(TURKISH).contains(query);
+        if(query.isEmpty())return true;
+        return item.kind==Kind.LIVE?LiveChannelLineup.search(item.title+" "+item.categoryName).contains(liveQuery):item.title.toLowerCase(TURKISH).contains(query);
     }
     static boolean matches(Item item,String category,String query){return match(item,category,normalized(query));}
     static String effectiveFavoriteCategory(Catalog catalog,String category){
@@ -50,13 +55,13 @@ final class CatalogFilterData {
         return catalog.kind==Kind.LIVE || category!=null && category.startsWith("@")?effectiveFavoriteCategory(catalog,category):category==null?"":category;
     }
     static List<Item> filtered(Catalog catalog,String category,String query){
-        category=effectiveCategory(catalog,category);String text=normalized(query);List<Item> result=new ArrayList<>();
-        for(Item item:catalog.items)if(match(item,category,text))result.add(item);
+        category=effectiveCategory(catalog,category);String text=normalized(query),liveQuery=text.isEmpty()?"":LiveChannelLineup.search(text);List<Item> result=new ArrayList<>();
+        for(Item item:catalog.items)if(match(item,category,text,liveQuery))result.add(item);
         return result;
     }
     static SearchPreview preview(Catalog catalog,String category,String query){
-        category=effectiveCategory(catalog,category);String text=normalized(query);int count=0;List<Item> samples=new ArrayList<>(3);
-        for(Item item:catalog.items)if(match(item,category,text)){count++;if(samples.size()<3)samples.add(item);}
+        category=effectiveCategory(catalog,category);String text=normalized(query),liveQuery=text.isEmpty()?"":LiveChannelLineup.search(text);int count=0;List<Item> samples=new ArrayList<>(3);
+        for(Item item:catalog.items)if(match(item,category,text,liveQuery)){count++;if(samples.size()<3)samples.add(item);}
         return new SearchPreview(count,samples);
     }
     static List<CategoryOption> categories(Catalog catalog,String query){

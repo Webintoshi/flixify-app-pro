@@ -48,7 +48,24 @@ public class DiscoveryScreenTest {
     private void key(int value){instrumentation.sendKeyDownUpSync(value);instrumentation.waitForIdleSync();}
     private View tagged(String tag){return activity.getWindow().getDecorView().findViewWithTag(tag);}
     private View text(View root,String label){if(root instanceof TextView && label.equals(((TextView)root).getText().toString()))return root;if(root instanceof ViewGroup)for(int n=0;n<((ViewGroup)root).getChildCount();n++){View found=text(((ViewGroup)root).getChildAt(n),label);if(found!=null)return found;}return null;}
-    private void navigate(String label){instrumentation.runOnMainSync(()->{View target=text(activity.getWindow().getDecorView(),label);assertNotNull(target);target.performClick();});instrumentation.waitForIdleSync();}
+    private void navigate(String label){
+        instrumentation.runOnMainSync(()->{View target=text(activity.getWindow().getDecorView(),label);assertNotNull(target);target.performClick();});instrumentation.waitForIdleSync();
+        if(!Arrays.asList("Ana Sayfa","Canlı TV","Filmler","Diziler","Favoriler").contains(label))return;
+        String wanted=label.equals("Ana Sayfa")?"HOME":label.equals("Canlı TV")?"LIVE":label.equals("Filmler")?"MOVIES":label.equals("Diziler")?"SERIES":"FAVORITES";
+        long deadline=SystemClock.uptimeMillis()+10000;boolean[] ready={false};
+        do{
+            instrumentation.runOnMainSync(()->{
+                try{
+                    java.lang.reflect.Field pageField=MainActivity.class.getDeclaredField("page");pageField.setAccessible(true);Object page=pageField.get(activity);
+                    java.lang.reflect.Field section=page.getClass().getDeclaredField("section");section.setAccessible(true);
+                    java.lang.reflect.Field gridField=MainActivity.class.getDeclaredField("grid");gridField.setAccessible(true);RecyclerView grid=(RecyclerView)gridField.get(activity);
+                    ready[0]=wanted.equals(String.valueOf(section.get(page))) && grid!=null && grid.getAdapter()!=null && grid.getChildCount()>0;
+                }catch(ReflectiveOperationException error){throw new AssertionError(error);}
+            });
+            if(!ready[0])SystemClock.sleep(25);
+        }while(!ready[0] && SystemClock.uptimeMillis()<deadline);
+        assertTrue(label+" prepared catalog surface becomes visible",ready[0]);
+    }
     private void capture(String name)throws Exception{File directory=instrumentation.getTargetContext().getExternalFilesDir(null);assertNotNull(directory);Bitmap bitmap=instrumentation.getUiAutomation().takeScreenshot();assertNotNull(bitmap);try(FileOutputStream out=new FileOutputStream(new File(directory,name+".png"))){assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG,100,out));}}
     private void shelf(int position,String title){instrumentation.runOnMainSync(()->((DiscoveryScreen)tagged("tv-discovery")).scrollToPosition(position));instrumentation.waitForIdleSync();instrumentation.runOnMainSync(()->assertNotNull("Visible shelf: "+title,text(tagged("tv-discovery"),title)));}
     @Test public void homeUsesMovieAndSeriesCatalogsAndKeepsOlderTitlesSearchable()throws Exception{
