@@ -143,6 +143,27 @@ def verify_smoke(root):
     return proof
 
 
+def verify_install(root):
+    root = Path(root)
+    proof = json.loads((root / 'install-report.json').read_text(encoding='utf-8-sig'))
+    for key in ('passed', 'installedExeMatchesStage', 'installedWindowStarted',
+                'userDataPreservedAcrossUpgradeAndUninstall', 'uninstallerRemovedApp',
+                'desktopShortcutCreated', 'startMenuShortcutCreated', 'shortcutPropertiesVerified',
+                'desktopShortcutRestoredOnUpgrade', 'ownedShortcutRepairedOnUpgrade',
+                'ownedShortcutsRemovedOnUninstall', 'unrelatedDesktopShortcutPreserved'):
+        if proof.get(key) is not True:
+            raise ValueError('Install test did not verify ' + key)
+    for name in ('installed-window-report.json', 'installed-window-upgrade-report.json'):
+        window = json.loads((root / name).read_text(encoding='utf-8-sig'))
+        if (any(window.get(key) is not True for key in ('passed', 'closePosted', 'exitedWithinTimeout'))
+                or window.get('cleanupTerminatedProcess') is not False
+                or type(window.get('exitCode')) is not int or window['exitCode'] != 0
+                or window.get('launchMethod') != 'desktop shortcut'
+                or window.get('closeMethod') != 'WM_CLOSE to exact visible unowned Flixify Pro root window'):
+            raise ValueError('Desktop shortcut launch did not exit normally: ' + name)
+    return proof
+
+
 def verify_codec_fixtures(root):
     root = Path(root)
     provenance = json.loads((root / 'provenance.json').read_text(encoding='utf-8'))

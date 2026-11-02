@@ -120,6 +120,64 @@ class PackagePolicyTests(unittest.TestCase):
             self.smoke_proof(root, {'tsMp2': True, 'mkvTracks': True})
             self.assertTrue(policy.verify_smoke(root)['passed'])
 
+    def install_proof(self, root):
+        report = {
+            'passed': True, 'installedExeMatchesStage': True, 'installedWindowStarted': True,
+            'userDataPreservedAcrossUpgradeAndUninstall': True, 'uninstallerRemovedApp': True,
+            'desktopShortcutCreated': True, 'startMenuShortcutCreated': True,
+            'shortcutPropertiesVerified': True, 'desktopShortcutRestoredOnUpgrade': True,
+            'ownedShortcutRepairedOnUpgrade': True, 'ownedShortcutsRemovedOnUninstall': True,
+            'unrelatedDesktopShortcutPreserved': True,
+        }
+        (root / 'install-report.json').write_text(json.dumps(report))
+        window = {'passed': True, 'closePosted': True, 'exitedWithinTimeout': True,
+                  'exitCode': 0, 'cleanupTerminatedProcess': False,
+                  'launchMethod': 'desktop shortcut',
+                  'closeMethod': 'WM_CLOSE to exact visible unowned Flixify Pro root window'}
+        for name in ('installed-window-report.json', 'installed-window-upgrade-report.json'):
+            (root / name).write_text(json.dumps(window))
+        return report
+
+    def test_install_proof_rejects_missing_desktop_shortcut_even_if_old_checks_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = self.install_proof(root)
+            del report['desktopShortcutCreated']
+            (root / 'install-report.json').write_text(json.dumps(report))
+            with self.assertRaisesRegex(ValueError, 'desktopShortcutCreated'):
+                policy.verify_install(root)
+
+    def test_install_proof_rejects_skipped_shortcut_properties_upgrade_or_preservation(self):
+        for key in ('shortcutPropertiesVerified', 'desktopShortcutRestoredOnUpgrade',
+                    'ownedShortcutRepairedOnUpgrade', 'ownedShortcutsRemovedOnUninstall',
+                    'unrelatedDesktopShortcutPreserved'):
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                report = self.install_proof(root)
+                report[key] = False
+                (root / 'install-report.json').write_text(json.dumps(report))
+                with self.assertRaisesRegex(ValueError, key):
+                    policy.verify_install(root)
+
+    def test_install_proof_rejects_force_cleanup_or_abnormal_shortcut_launch_exit(self):
+        for name in ('installed-window-report.json', 'installed-window-upgrade-report.json'):
+            for key, value in (('cleanupTerminatedProcess', True), ('exitCode', 1),
+                               ('closePosted', False), ('launchMethod', 'executable')):
+                with self.subTest(report=name, key=key), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    self.install_proof(root)
+                    window = json.loads((root / name).read_text())
+                    window[key] = value
+                    (root / name).write_text(json.dumps(window))
+                    with self.assertRaises(ValueError):
+                        policy.verify_install(root)
+
+    def test_complete_install_shortcut_and_normal_close_proof_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.install_proof(root)
+            self.assertTrue(policy.verify_install(root)['passed'])
+
     def test_codec_fixture_hash_mismatch_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

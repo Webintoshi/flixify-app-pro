@@ -293,6 +293,77 @@ bool focusedPlayerControls(QQuickWindow *root,QQuickWindow *video,QQuickWindow *
     evidence={{"subtitleFocused",subtitleFocused},{"subtitleOwnsKeys",QJsonValue::fromVariant(subtitleOwned)},{"subtitleSpaceOpened",opened},{"volumeFocused",volumeFocused},{"volumeBefore",30},{"volumeAfterRight",rightVolume},{"timelineArrowSeeks",player.hasVideoFrame()?QJsonValue(timelineKeys):QJsonValue()},{"timelinePositionBefore",timelineBefore},{"timelinePositionAfter",timelineAfter},{"timelineSliderValue",timelineValue},{"mainWindowActive",mainActive},{"ownsWindowDuringBackground",QJsonValue::fromVariant(ownedBackground)},{"backgroundKeysIgnored",backgroundKeysIgnored},{"surfaceSpaceTogglesPlayback",player.hasVideoFrame()?QJsonValue(surfaceSpace):QJsonValue()},{"nativeSurfaceKeysChecked",player.hasVideoFrame()}};
     return subtitleFocused&&opened&&volumeFocused&&rightVolume>30&&timelineKeys&&mainActive&&backgroundKeysIgnored&&surfaceSpace&&player.active();
 }
+bool playerChromeParity(QQuickWindow *overlay,DesktopPlayer &player,QJsonObject &evidence) {
+    player.interact();QTest::qWait(80);
+    const auto close=visual(overlay->contentItem(),"playerCloseAction"),title=visual(overlay->contentItem(),"playerTitle"),tools=visual(overlay->contentItem(),"playerTools");
+    if(!close||!title||!tools) { evidence["missingChrome"]=true;return false; }
+    const auto closePosition=close->mapToScene(QPointF()),titlePosition=title->mapToScene(QPointF()),toolsPosition=tools->mapToScene(QPointF());
+    const bool hierarchy=qAbs(closePosition.x()-24)<2&&qAbs(closePosition.y()-24)<2&&qAbs(titlePosition.x()-28)<2&&titlePosition.y()>overlay->height()-120&&toolsPosition.y()>overlay->height()-90&&qAbs(toolsPosition.x()+tools->width()-(overlay->width()-28))<2&&titlePosition.x()+title->width()+18<=toolsPosition.x();
+    bool iconTargets=true;QJsonArray buttons;
+    for(const auto &name:QStringList{"playerCloseAction","playerFavoriteAction","playerAudioAction","playerSubtitleAction","playerSettingsAction","playerFullscreenAction"}) {
+        const auto action=visual(overlay->contentItem(),name);
+        const bool valid=action&&action->isVisible()&&qAbs(action->width()-36)<1&&qAbs(action->height()-36)<1&&action->property("text").toString().isEmpty()&&!action->property("accessibleLabel").toString().isEmpty();
+        iconTargets=iconTargets&&valid;buttons.append(QJsonObject{{"name",name},{"valid",valid}});
+    }
+    const auto timeline=visual(overlay->contentItem(),"playerTimeline"),volume=visual(overlay->contentItem(),"playerVolume");
+    const bool sliderOrder=player.live()||timeline&&timeline->mapToScene(QPointF()).y()<titlePosition.y();
+    const bool compactVolume=volume&&qAbs(volume->width()-65)<1;
+    evidence={{"bottomTitleAndTools",hierarchy},{"iconTargets",buttons},{"timelineAboveTitle",sliderOrder},{"compactVolume",compactVolume},{"titleY",titlePosition.y()},{"toolsY",toolsPosition.y()},{"windowHeight",overlay->height()}};
+    return hierarchy&&iconTargets&&sliderOrder&&compactVolume;
+}
+bool minimumPlayerChrome(QQuickWindow *video,QQuickWindow *overlay,DesktopPlayer &player,const QString &output,QJsonObject &evidence) {
+    const bool fullscreen=player.fullScreen();const auto previousSize=video->size();
+    player.setFullScreen(false);
+    if(!until([&]{return video->visibility()==QWindow::Windowed;},3000))return false;
+    video->resize(900,620);
+    const bool settled=until([&]{return overlay->size()==QSize(900,620);},1000);
+    const bool layout=settled&&playerChromeParity(overlay,player,evidence);
+    const bool screenshot=layout&&capture(overlay,QDir(output).filePath(player.live()?"player-live-minimum-size.png":"player-minimum-size.png"));
+    video->resize(previousSize);player.setFullScreen(fullscreen);
+    const bool restored=until([&]{return video->visibility()==(fullscreen?QWindow::FullScreen:QWindow::Windowed)&&overlay->geometry()==video->geometry();},3000);
+    evidence["screenshot"]=screenshot;evidence["geometryRestored"]=restored;
+    return layout&&screenshot&&restored;
+}
+bool visibleText(QQuickItem *parent,const QString &text) {
+    if(parent->isVisible()&&parent->property("text").toString()==text)return true;
+    for(auto child:parent->childItems())if(visibleText(child,text))return true;
+    return false;
+}
+bool playerPanels(QQuickWindow *overlay,DesktopPlayer &player,const QString &output,QJsonObject &evidence,const QString &expectedGuideTitle={}) {
+    bool passed=true;QJsonArray panels;
+    QList<QPair<QString,QString>> names{{"playerAudioAction","playerAudioMenu"},{"playerSubtitleAction","playerSubtitleMenu"},{"playerSettingsAction","playerSettingsMenu"}};
+    if(player.item().value("kind")=="episode")names.insert(2,{"playerEpisodesAction","playerEpisodeMenu"});
+    if(player.live())names.insert(2,{"playerGuideAction","playerGuideMenu"});
+    for(const auto &entry:names) {
+        auto action=visual(overlay->contentItem(),entry.first);
+        if(!action||!action->isVisible()||!action->isEnabled()) {
+            panels.append(QJsonObject{{"name",entry.second},{"opened",false},{"error","Required player action is missing, hidden or disabled"}});passed=false;continue;
+        }
+        player.interact();const bool clicked=click(overlay,entry.first);auto panel=overlay->findChild<QObject *>(entry.second);
+        const bool opened=clicked&&panel&&until([&]{return panel->property("visible").toBool();},1000);
+        const bool held=opened&&overlay->property("held").toBool();
+        bool settingsChanged=true;
+        if(opened&&entry.second=="playerSettingsMenu") {
+            const auto previousRate=player.rate();const auto previousAspect=player.aspect();
+            if(!player.live())for(const auto rate:{0.5,0.75,1.0,1.25,1.5,2.0}) {
+                const bool changed=click(overlay,"playerRate-"+QString::number(rate))&&until([&]{return qAbs(player.rate()-rate)<0.001;},1000);
+                settingsChanged=settingsChanged&&changed;
+            }
+            for(const auto &aspect:QStringList{"Otomatik","16:9","4:3"}) {
+                const bool changed=click(overlay,"playerAspect-"+aspect)&&until([&]{return player.aspect()==aspect;},1000);
+                settingsChanged=settingsChanged&&changed;
+            }
+            player.setRate(previousRate);player.setAspect(previousAspect);
+        }
+        const auto panelContent=panel?panel->property("contentItem").value<QQuickItem *>():nullptr;
+        const bool guideContent=entry.second!="playerGuideMenu"||!expectedGuideTitle.isEmpty()&&panelContent&&visibleText(panelContent,expectedGuideTitle);
+        const bool screenshot=opened&&capture(overlay,QDir(output).filePath((player.live()?"live-":"")+entry.second+".png"));
+        QTest::keyClick(QGuiApplication::focusWindow()?QGuiApplication::focusWindow():overlay,Qt::Key_Escape);
+        const bool dismissed=panel&&until([&]{return !panel->property("visible").toBool();},1000)&&player.active()&&!overlay->property("held").toBool();
+        panels.append(QJsonObject{{"name",entry.second},{"opened",opened},{"holdsWhileOpen",held},{"settingsChoicesWork",settingsChanged},{"guideContentVisible",guideContent},{"screenshot",screenshot},{"escapePreservesPlayback",dismissed}});passed=passed&&opened&&held&&settingsChanged&&guideContent&&screenshot&&dismissed;
+    }
+    evidence["expectedPanelCount"]=names.size();evidence["panels"]=panels;return passed&&panels.size()==names.size();
+}
 #ifdef Q_OS_WIN
 bool physicalPointerDoubleClick(QQuickWindow *video,QQuickWindow *overlay,DesktopPlayer &player,QJsonObject &evidence) {
     const bool fullscreen=player.fullScreen(),playing=player.playing();
@@ -421,6 +492,12 @@ int main(int argc,char **argv) {
             QTest::keyClick(QGuiApplication::focusWindow()?QGuiApplication::focusWindow():overlay,Qt::Key_Escape);
             if(!until([&]{return !menu->property("visible").toBool();})||!player.active())return finish(QString("Subtitle menu Escape failed: active=%1 visible=%2").arg(player.active()).arg(menu->property("visible").toBool()),42);
             QQuickWindow *video=nullptr;for(auto window:QGuiApplication::topLevelWindows())if(window->objectName()=="playerWindow")video=qobject_cast<QQuickWindow *>(window);
+            QJsonObject chrome;const bool chromePassed=playerChromeParity(overlay,player,chrome);report["playerChrome"]=chrome;
+            if(!chromePassed)return finish("Player controls diverge from macOS hierarchy: "+QString::fromUtf8(QJsonDocument(chrome).toJson(QJsonDocument::Compact)),57);
+            QJsonObject panels;const bool panelsPassed=playerPanels(overlay,player,output,panels);report["playerPanels"]=panels;
+            if(!panelsPassed)return finish("Player panels failed: "+QString::fromUtf8(QJsonDocument(panels).toJson(QJsonDocument::Compact)),58);
+            QJsonObject minimum;const bool minimumPassed=minimumPlayerChrome(video,overlay,player,output,minimum);report["minimumPlayerChrome"]=minimum;
+            if(!minimumPassed)return finish("Minimum player layout failed: "+QString::fromUtf8(QJsonDocument(minimum).toJson(QJsonDocument::Compact)),59);
             QJsonArray pointerChecks;
             for(int direction=0;direction<2;++direction) { QJsonObject evidence;const bool passed=doubleClickOnlyChangesFullscreen(video,overlay,player,evidence);pointerChecks.append(evidence);report["pointerDispatch"]=pointerChecks;if(!passed)return finish("Pointer fullscreen probe failed: "+QString::fromUtf8(QJsonDocument(evidence).toJson(QJsonDocument::Compact)),51); }
             if(!duplicatePointerCoordinatesIgnored(video))return finish("Duplicate pointer coordinates counted as new movement",56);
@@ -441,6 +518,12 @@ int main(int argc,char **argv) {
     if(!video || !capture(video,QDir(output).filePath("player.png")))return finish("Native player screenshot failed",25);
     QQuickWindow *overlay=nullptr;for(auto window:QGuiApplication::topLevelWindows())if(window->objectName()=="playerOverlay")overlay=qobject_cast<QQuickWindow *>(window);
     if(!overlay)return finish("Player controls window missing",50);
+    QJsonObject chrome;const bool chromePassed=playerChromeParity(overlay,player,chrome);report["playerChrome"]=chrome;
+    if(!chromePassed)return finish("Player controls diverge from macOS hierarchy: "+QString::fromUtf8(QJsonDocument(chrome).toJson(QJsonDocument::Compact)),57);
+    QJsonObject panels;const bool panelsPassed=playerPanels(overlay,player,output,panels);report["playerPanels"]=panels;
+    if(!panelsPassed)return finish("Player panels failed: "+QString::fromUtf8(QJsonDocument(panels).toJson(QJsonDocument::Compact)),58);
+    QJsonObject minimum;const bool minimumPassed=minimumPlayerChrome(video,overlay,player,output,minimum);report["minimumPlayerChrome"]=minimum;
+    if(!minimumPassed)return finish("Minimum player layout failed: "+QString::fromUtf8(QJsonDocument(minimum).toJson(QJsonDocument::Compact)),59);
     QJsonArray pointerChecks;
     for(int direction=0;direction<2;++direction) { QJsonObject evidence;const bool passed=doubleClickOnlyChangesFullscreen(video,overlay,player,evidence);pointerChecks.append(evidence);report["pointerDispatch"]=pointerChecks;if(!passed)return finish("Video double-click failed: "+QString::fromUtf8(QJsonDocument(evidence).toJson(QJsonDocument::Compact)),51); }
     report["doubleClickPreservedPlayback"]=true;
@@ -483,6 +566,11 @@ int main(int argc,char **argv) {
     if(!until([&]{return player.playing()&&player.hasVideoFrame()&&player.positionMs()>250&&playable(player.audioTracks()).size()>=1;},30000))return finish("TS/MP2 fixture did not decode video and audio: "+player.error(),35);
     if(!player.live()||!falseEnd.isEmpty()||player.nextCountdown()!=0)return finish("Live TS fixture incorrectly advanced an episode",36);
     player.interact();if(!capture(video,QDir(output).filePath("ts-player.png")))return finish("TS player screenshot failed",37);
+    if(!until([&]{return !repository.programmes().isEmpty();},3000))return finish("Live guide fixture did not load",60);
+    QJsonObject livePanels;const bool livePanelsPassed=playerPanels(overlay,player,output,livePanels,repository.programmes().first().toMap().value("title").toString());report["livePlayerPanels"]=livePanels;
+    if(!livePanelsPassed)return finish("Live player panels failed: "+QString::fromUtf8(QJsonDocument(livePanels).toJson(QJsonDocument::Compact)),61);
+    QJsonObject liveMinimum;const bool liveMinimumPassed=minimumPlayerChrome(video,overlay,player,output,liveMinimum);report["liveMinimumPlayerChrome"]=liveMinimum;
+    if(!liveMinimumPassed)return finish("Live minimum player layout failed: "+QString::fromUtf8(QJsonDocument(liveMinimum).toJson(QJsonDocument::Compact)),62);
     player.close();
     openLocal(item,QDir(codecs).filePath("two-audio-subtitles.mkv"));
     if(!until([&]{return player.playing()&&player.hasVideoFrame()&&playable(player.audioTracks()).size()>=2&&playable(player.subtitleTracks()).size()>=1;},30000))return finish("MKV fixture did not expose both audio tracks and subtitles: "+player.error(),38);

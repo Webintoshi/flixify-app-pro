@@ -21,7 +21,7 @@ cmake --build C:/flixify/build --parallel 2
 ctest --test-dir C:/flixify/build --output-on-failure --no-tests=error
 ```
 
-Production target: `FlixifyWindows` (output `Flixify Pro.exe`). Test targets: `catalog_test`, `repository_test`, `player_policy_test`, `ui_smoke`. The first three plus packaging policy tests run through CTest. `ui_smoke` needs the deployed Qt/VLC runtime and runs separately during packaging.
+Production target: `FlixifyWindows` (output `Flixify Pro.exe`). Test targets: `catalog_test`, `repository_test`, `player_policy_test`, `player_test`, `ui_smoke`. The first four plus packaging policy tests run through CTest. `player_test` runs the production player against a controlled VLC function table, including blocked startup, polling, controls and cancellation. `ui_smoke` needs the deployed Qt/VLC runtime and runs separately during packaging.
 
 For macOS development-only UI review, point `QT_ROOT` at a Qt 6.10+ desktop SDK and use `cmake --preset local-qa`, `cmake --build --preset local-qa`, and `ctest --preset local-qa`. This does not produce or validate a Windows package. Qt Multimedia is optional for local compilation, but is included and required by the Windows package input set.
 
@@ -33,14 +33,18 @@ Packaging deploys Qt/QML/compiler libraries, the full VLC plugin tree and upstre
 
 The package gate requires:
 
-- Passing catalog, repository, player-policy and packaging checks.
+- Passing catalog, repository, player-policy, GUI responsiveness and packaging checks.
 - A rendered fixture session with home/live/search/series/account/player PNGs, TS/MP2 and MKV playback screenshots, successful local-media playback, and verified multiple audio/subtitle track switching.
 - AMD64 PE import closure against bundled libraries and Windows system DLLs.
 - An owned-content privacy scan, no debug symbols, and preserved upstream license/provenance files.
-- A real NSIS installer, successful silent install, matching installed executable, a visible application window, normal shutdown, and upgrade/uninstall checks preserving an extra user-created file.
+- A real NSIS installer, current-user desktop and Start Menu shortcuts, matching installed executable, launch through the actual desktop shortcut, normal shutdown, and upgrade/uninstall checks preserving user files and unrelated shortcuts.
 - Versioned TEST EXE/portable ZIP, SHA256SUMS and machine-readable proof reports.
 
 Uninstall removes only the generated list of shipped files and empty app directories; additional user-created files remain.
+
+VLC initialization, decoding controls, snapshots and disposal are serialized on one private worker. Pending snapshots and control intents are bounded; canceled sessions and stale results cannot update the current item. The native surface remains alive until teardown drains. Resume intent is kept separate from decoder-confirmed progress so an interrupted seek cannot overwrite saved progress or falsely complete an episode.
+
+The player follows the native Mac control hierarchy: compact icon tools, bottom title, white timeline, two-second idle hide, audio/subtitle/episode/EPG panels, rate/aspect settings and fullscreen. Windows uses its own vector rendering and Segoe UI rather than Apple-specific system assets.
 
 The portable ZIP includes the same runtime and diagnostic screenshots/reports. Fixture media, test executables, temporary profiles and build caches are excluded. `verify_install.ps1` checks that the installer is unsigned and records that status honestly. Windows may show SmartScreen or unknown-publisher warnings; this project makes no warning-free claim.
 

@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import zipfile
 
-from package_policy import dependency_report, privacy_diagnostics, prune_test_runtime, sha256, stage_findings, uninstall_manifest, verify_codec_fixtures, verify_smoke
+from package_policy import dependency_report, privacy_diagnostics, prune_test_runtime, sha256, stage_findings, uninstall_manifest, verify_codec_fixtures, verify_install, verify_smoke
 
 
 def run(arguments, **kwargs):
@@ -129,7 +129,8 @@ def main():
     if not installer.is_file() or installer.stat().st_size < 10 * 1024 * 1024:
         raise ValueError('Missing or implausibly small NSIS installer')
     run(['pwsh', '-NoProfile', '-File', source / 'scripts' / 'verify_install.ps1',
-         '-Installer', installer, '-Stage', stage, '-Proof', proof], timeout=120)
+         '-Installer', installer, '-Stage', stage, '-Proof', proof], timeout=180)
+    verify_install(proof)
     portable = output / ('Flixify-Pro-Windows-' + version + '-x64-TEST-portable.zip')
     with zipfile.ZipFile(portable, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for path in sorted(stage.rglob('*')):

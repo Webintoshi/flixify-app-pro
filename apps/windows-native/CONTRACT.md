@@ -14,11 +14,13 @@ Constructor supports injected options for test-only loopback API/provider transp
 
 ## DesktopPlayer
 
-Properties (NOTIFY): bool `active`, `playing`, `loading`, `live`, `controlsVisible`, `muted`, `fullScreen`; QString `error`, `title`; qint64 `positionMs`, `durationMs`; int `volume`, `nextCountdown`; QVariantMap `item`, `nextItem`; QVariantList `audioTracks`, `subtitleTracks`; int `audioTrack`, `subtitleTrack`.
+Properties (NOTIFY): bool `active`, `playing`, `loading`, `live`, `controlsVisible`, `muted`, `fullScreen`; QString `error`, `title`, `aspect`; double `rate`; qint64 `positionMs`, `durationMs`; int `volume`, `nextCountdown`; QVariantMap `item`, `nextItem`; QVariantList `audioTracks`, `subtitleTracks`; int `audioTrack`, `subtitleTrack`.
 
-Invokables: `open(QVariantMap media)`, `close()`, `togglePause()`, `seekBy(int seconds)`, `seek(qint64 positionMs)`, `setVolume(int)`, `setMuted(bool)`, `selectAudio(int)`, `selectSubtitle(int)`, `interact()`, `holdControls(bool)`, `setFullScreen(bool)`, `cancelNext()`, `playNext()`, `setSurface(qulonglong handle)`, `switchChannel(int direction)`.
+Invokables: `open(QVariantMap media)`, `close()`, `togglePause()`, `seekBy(int seconds)`, `seek(qint64 positionMs)`, `setVolume(int)`, `setMuted(bool)`, `setRate(double)`, `setAspect(QString)`, `selectAudio(int)`, `selectSubtitle(int)`, `interact()`, `holdControls(bool)`, `setFullScreen(bool)`, `cancelNext()`, `playNext()`, `setSurface(qulonglong handle)`, `switchChannel(int direction)`. Rates are 0.5, 0.75, 1, 1.25, 1.5 or 2; live playback stays at 1. Aspect values are Otomatik, 16:9 or 4:3.
 
 Signals: `progress(QVariantMap item,qint64 positionMs,qint64 durationMs,bool ended)`, `refreshRequested(QVariantMap item)`, `playRequested(QVariantMap item)`, `channelRequested(int direction)`.
+
+An optimistic resume or seek position may be displayed immediately, but progress signals use duration zero until the decoder confirms it; the repository ignores those unconfirmed writes. Completion and next-episode claims require decoder-confirmed progress. All VLC calls run on the serialized worker; QML reads cached GUI-thread properties.
 
 App connects repository playbackReady -> player.open; sourceChanged/accessRevoked -> player.close; player progress -> repository.saveProgress; refreshRequested/playRequested -> repository.refreshPlayback/playItem; channelRequested selects adjacent repository live item. Repository regular access refresh may extend same-source media without restarting eligible video: app updates player expiry through `extendAccess(qint64,QString scope)`.
 

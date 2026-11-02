@@ -2,11 +2,14 @@
 #include "vlc_runtime.h"
 #include <QDateTime>
 #include <QFileInfo>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QPointer>
 #include <QRegularExpression>
 #include <QUrl>
 #include <QtConcurrent/QtConcurrentRun>
 #include <array>
+#include <atomic>
 
 namespace {
 constexpr std::array<int, 5> vlcEvents{0x102, 0x104, 0x105, 0x109, 0x10a};
@@ -19,6 +22,11 @@ struct DesktopPlayer::Session {
   libvlc_media_player_t *player = nullptr;
   QPointer<DesktopPlayer> owner;
   quint64 generation = 0;
+  size_t attachedEvents = 0;
+  std::atomic_bool cancelled = false;
+  QMutex commandMutex;
+  std::array<std::function<void(Session &)>, size_t(Command::Count)> commands;
+  bool controlsQueued = false;
   static void event(const libvlc_event_t *event, void *opaque) {
     auto *self = static_cast<Session *>(opaque);
     const auto owner = self->owner;
@@ -31,25 +39,43 @@ struct DesktopPlayer::Session {
   void dispose() {
     if (player) {
       auto *manager = runtime->events(player);
-      for (int event : vlcEvents) runtime->detach(manager, event, &Session::event, this);
+      for (size_t i = 0; i < attachedEvents; ++i) runtime->detach(manager, vlcEvents[i], &Session::event, this);
+      attachedEvents = 0;
       runtime->stop(player);
       runtime->releasePlayer(player); player = nullptr;
     }
     if (engine) { runtime->release(engine); engine = nullptr; }
   }
-  ~Session() { dispose(); }
+  ~Session() { Q_ASSERT(!player && !engine); }
 };
 
 DesktopPlayer::DesktopPlayer(QObject *parent, bool allowTestMedia) : QObject(parent), allowTestMedia_(allowTestMedia) {
+  worker_.setMaxThreadCount(1);
   timer_.setInterval(250);
   connect(&timer_, &QTimer::timeout, this, &DesktopPlayer::tick);
-  connect(&stopping_, &QFutureWatcher<void>::finished, this, &DesktopPlayer::startPending);
+  connect(&opening_, &QFutureWatcher<StartResult>::finished, this, [this] {
+    openingPending_ = false;
+    const auto result = opening_.result();
+    if (active_ && session_ && result.generation == generation_) {
+      startedAt_ = progressedAt_ = now();
+      if (!result.error.isEmpty()) fail(result.error);
+      else if (result.playFailed) recover(Playback::Trigger::DecoderError);
+      else requestSample();
+    }
+    startPending();
+  });
+  connect(&polling_, &QFutureWatcher<Snapshot>::finished, this, [this] {
+    samplePending_ = false;
+    const auto sample = polling_.result();
+    applySample(sample);
+    if (pendingEnd_) requestSample(true);
+  });
   timer_.start();
 }
 DesktopPlayer::~DesktopPlayer() {
   timer_.stop(); pending_.clear(); active_ = false; ++generation_;
-  if (session_) { session_->dispose(); session_.reset(); }
-  stopping_.waitForFinished();
+  releaseCurrent();
+  worker_.waitForDone();
 }
 QString DesktopPlayer::key(const QVariantMap &item) {
   return item.value("kind").toString() + ":" + item.value("seriesID").toString() + ":" + item.value("id").toString();
@@ -79,14 +105,16 @@ void DesktopPlayer::open(const QVariantMap &media) {
       fail(QStringLiteral("İzleme erişimin sona erdi.")); return;
     }
   } else {
-    if (active_) emit progress(item_, position_, duration_, false);
+    if (active_) emit progress(item_, position_, positionConfirmed_ ? duration_ : 0, false);
     recovery_ = std::make_unique<Playback::Recovery>(scope.toStdString(), key(item).toStdString(), expiry);
     hasFrame_ = false; position_ = 0; duration_ = 0; held_ = 0;
   }
   ++generation_; releaseCurrent();
   media_ = media; pending_ = media; item_ = item; next_ = media.value("next").toMap(); scope_ = scope; expiry_ = expiry;
   resume_ = refresh && !live() ? position_ : std::max<qint64>(0, media.value("resumeMs").toLongLong());
-  awaitingRefresh_ = false; error_.clear(); ended_ = false; wantsPlay_ = true;
+  if (!live()) position_ = resume_;
+  confirmedPosition_ = 0; positionConfirmed_ = false;
+  awaitingRefresh_ = false; error_.clear(); ended_ = false; pendingEnd_ = false; wantsPlay_ = true;
   active_ = true; playing_ = false; loading_ = !hasFrame_; controls_ = true;
   countdown_ = Playback::NextEpisode(); nextCountdown_ = 0; audioTracks_.clear(); subtitleTracks_.clear();
   interactionAt_ = startedAt_ = progressedAt_ = now(); savedAt_ = 0; tracksAt_ = 0;
@@ -95,53 +123,74 @@ void DesktopPlayer::open(const QVariantMap &media) {
 void DesktopPlayer::releaseCurrent() {
   if (!session_) return;
   auto old = std::move(session_);
-  stopping_.setFuture(QtConcurrent::run([old] { old->dispose(); }));
+  old->cancelled = true;
+  (void)QtConcurrent::run(&worker_, [old] { old->dispose(); });
 }
 void DesktopPlayer::startPending() {
-  if (!active_ || pending_.isEmpty() || !surface_ || stopping_.isRunning()) return;
+  if (!active_ || pending_.isEmpty() || !surface_ || openingPending_ || session_) return;
   if (!eligible()) { fail(QStringLiteral("İzleme erişimin sona erdi.")); return; }
-  auto &runtime = VlcRuntime::instance();
-  if (!runtime.ready()) { fail(runtime.error()); return; }
-  qputenv("VLC_PLUGIN_PATH", runtime.plugins().toUtf8());
-  const char *args[] = {"--no-video-title-show", "--no-osd", "--no-media-library", "--quiet", "--no-lua"};
-  auto session = std::make_shared<Session>(); session->runtime = &runtime;
-  session->engine = runtime.create(int(std::size(args)), args);
-  if (!session->engine) { fail(QStringLiteral("Video motoru başlatılamadı.")); return; }
-  session->player = runtime.player(session->engine);
-  if (!session->player) { fail(QStringLiteral("Oynatıcı başlatılamadı.")); return; }
-  const QUrl url(pending_.value("url").toString());
-  const auto encoded = url.toEncoded();
-  auto *media = runtime.media(session->engine, encoded.constData());
-  if (!media) { fail(QStringLiteral("İçerik açılamadı.")); return; }
-  runtime.addOption(media, live() ? ":network-caching=1000" : ":network-caching=1500");
-  runtime.addOption(media, ":avcodec-hw=any");
-  runtime.addOption(media, ":http-reconnect");
-  runtime.setMedia(session->player, media); runtime.releaseMedia(media);
-#if defined(Q_OS_WIN)
-  runtime.setHwnd(session->player, reinterpret_cast<void *>(quintptr(surface_)));
-#elif defined(Q_OS_MACOS)
-  runtime.setNSObject(session->player, reinterpret_cast<void *>(quintptr(surface_)));
-#else
-  runtime.setXWindow(session->player, quint32(surface_));
-#endif
+  auto session = std::make_shared<Session>();
   session->owner = this; session->generation = generation_;
-  auto *manager = runtime.events(session->player);
-  for (int event : vlcEvents) runtime.attach(manager, event, &Session::event, session.get());
-  runtime.setVolume(session->player, volume_); runtime.setMute(session->player, muted_ ? 1 : 0);
-  session_ = std::move(session); pending_.clear(); startedAt_ = progressedAt_ = now();
-  if (runtime.play(session_->player) != 0) recover(Playback::Trigger::DecoderError);
+  const auto encoded = QUrl(pending_.value("url").toString()).toEncoded();
+  const bool isLive = live();
+  const auto surface = surface_;
+  const auto volume = volume_;
+  const auto muted = muted_;
+  const auto rate = isLive ? 1.0 : rate_;
+  const auto aspect = aspect_ == QStringLiteral("Otomatik") ? QByteArray() : aspect_.toLatin1();
+  session_ = session; pending_.clear(); openingPending_ = true;
+  opening_.setFuture(QtConcurrent::run(&worker_, [session, encoded, isLive, surface, volume, muted, rate, aspect] {
+    StartResult result; result.generation = session->generation;
+    if (session->cancelled) return result;
+    auto &runtime = VlcRuntime::instance(); session->runtime = &runtime;
+    if (!runtime.ready()) { result.error = runtime.error(); return result; }
+    qputenv("VLC_PLUGIN_PATH", runtime.plugins().toUtf8());
+    const char *args[] = {"--no-video-title-show", "--no-osd", "--no-media-library", "--quiet", "--no-lua"};
+    session->engine = runtime.create(int(std::size(args)), args);
+    if (session->cancelled) return result;
+    if (!session->engine) { result.error = QStringLiteral("Video motoru başlatılamadı."); return result; }
+    session->player = runtime.player(session->engine);
+    if (!session->player) { result.error = QStringLiteral("Oynatıcı başlatılamadı."); return result; }
+    auto *media = runtime.media(session->engine, encoded.constData());
+    if (!media) { result.error = QStringLiteral("İçerik açılamadı."); return result; }
+    runtime.addOption(media, isLive ? ":network-caching=1000" : ":network-caching=1500");
+    runtime.addOption(media, ":avcodec-hw=any");
+    runtime.addOption(media, ":http-reconnect");
+    runtime.setMedia(session->player, media); runtime.releaseMedia(media);
+    if (session->cancelled) return result;
+#if defined(Q_OS_WIN)
+    runtime.setHwnd(session->player, reinterpret_cast<void *>(quintptr(surface)));
+#elif defined(Q_OS_MACOS)
+    runtime.setNSObject(session->player, reinterpret_cast<void *>(quintptr(surface)));
+#else
+    runtime.setXWindow(session->player, quint32(surface));
+#endif
+    auto *manager = runtime.events(session->player);
+    if (!manager) { result.error = QStringLiteral("Video olayları başlatılamadı."); return result; }
+    for (int event : vlcEvents) {
+      if (session->cancelled) return result;
+      if (runtime.attach(manager, event, &Session::event, session.get()) != 0) {
+        result.error = QStringLiteral("Video olayları başlatılamadı."); return result;
+      }
+      ++session->attachedEvents;
+    }
+    runtime.setVolume(session->player, volume); runtime.setMute(session->player, muted ? 1 : 0);
+    runtime.setRate(session->player, float(rate)); runtime.setAspect(session->player, aspect.constData());
+    if (!session->cancelled) result.playFailed = runtime.play(session->player) != 0;
+    return result;
+  }));
 }
 void DesktopPlayer::close() {
-  if (active_ && !item_.isEmpty()) emit progress(item_, position_, duration_, false);
+  if (active_ && !item_.isEmpty()) emit progress(item_, position_, positionConfirmed_ ? duration_ : 0, false);
   active_ = false; wantsPlay_ = false; playing_ = false; loading_ = false; controls_ = true;
-  awaitingRefresh_ = false; ++generation_; pending_.clear(); countdown_.cancel(); nextCountdown_ = 0;
+  awaitingRefresh_ = false; pendingEnd_ = false; ++generation_; pending_.clear(); countdown_.cancel(); nextCountdown_ = 0;
   if (recovery_) recovery_->stop();
   releaseCurrent(); media_.clear(); item_.clear(); next_.clear(); scope_.clear(); error_.clear();
   audioTracks_.clear(); subtitleTracks_.clear(); hasFrame_ = false; held_ = 0;
   emit stateChanged();
 }
 void DesktopPlayer::fail(const QString &message) {
-  ++generation_; pending_.clear(); awaitingRefresh_ = false; wantsPlay_ = false;
+  ++generation_; pending_.clear(); awaitingRefresh_ = false; pendingEnd_ = false; wantsPlay_ = false;
   playing_ = false; loading_ = false; error_ = message; controls_ = true;
   countdown_.cancel(); nextCountdown_ = 0;
   if (recovery_) recovery_->stop();
@@ -164,17 +213,8 @@ void DesktopPlayer::onVlcEvent(quint64 generation, int event) {
   else if (event == 0x10a) { recover(Playback::Trigger::DecoderError); return; }
   else if (event == 0x109) {
     if (live()) { recover(Playback::Trigger::Ended); return; }
-    const qint64 finalTime = session_->runtime->time(session_->player);
-    const qint64 finalLength = session_->runtime->length(session_->player);
-    if (finalTime > position_) position_ = finalTime;
-    if (finalLength > duration_) duration_ = finalLength;
     playing_ = false; loading_ = false; wantsPlay_ = false; controls_ = true; ended_ = true;
-    if (Playback::trueEnd(position_, duration_)) {
-      emit progress(item_, position_, duration_, true);
-      if (item_.value("kind").toString() == "episode" && next_.value("kind").toString() == "episode")
-        countdown_.begin(episode(item_), episode(next_), duration_, now());
-      nextCountdown_ = countdown_.remaining(now());
-    } else error_ = QStringLiteral("İçerik tamamlanmadan bağlantı kesildi. Yeniden açabilirsin.");
+    pendingEnd_ = true; requestSample(true);
   }
   emit stateChanged();
 }
@@ -184,22 +224,14 @@ void DesktopPlayer::tick() {
   if (!eligible()) { fail(QStringLiteral("İzleme erişimin sona erdi.")); return; }
   if (awaitingRefresh_ && instant - startedAt_ >= 30000) { fail(QStringLiteral("Bağlantı kurulamadı. Daha sonra tekrar dene.")); return; }
   if (session_) {
-    auto &r = *session_->runtime; auto *p = session_->player;
-    const qint64 position = std::max<qint64>(0, r.time(p)), duration = std::max<qint64>(0, r.length(p));
-    if (duration > 0) duration_ = duration;
-    if (position > position_ + 100 || position + 100 < position_) progressedAt_ = instant;
-    position_ = position;
-    unsigned w = 0, h = 0;
-    if (r.videoSize(p, 0, &w, &h) == 0 && w > 0 && h > 0 && position > 0) hasFrame_ = true;
-    if (resume_ > 0 && !live() && duration_ > 0 && r.isPlaying(p)) {
-      r.setTime(p, std::min(resume_, std::max<qint64>(0, duration_ - 1000))); resume_ = 0; progressedAt_ = instant;
-    }
+    requestSample(pendingEnd_);
     if (!ended_ && wantsPlay_ && !held_ && !awaitingRefresh_) {
       if (!hasFrame_ && instant - startedAt_ >= 30000) { recover(Playback::Trigger::StartupTimeout); return; }
       if (hasFrame_ && instant - progressedAt_ >= 12000) { recover(Playback::Trigger::Stall); return; }
     } else if (!wantsPlay_ || held_) progressedAt_ = instant;
-    if (instant - tracksAt_ > 2000) { updateTracks(); tracksAt_ = instant; }
-    if (instant - savedAt_ > 5000 && !ended_) { emit progress(item_, position_, duration_, false); savedAt_ = instant; }
+    if (instant - savedAt_ > 5000 && !ended_) {
+      emit progress(item_, position_, positionConfirmed_ ? duration_ : 0, false); savedAt_ = instant;
+    }
   }
   if (countdown_.pending()) {
     nextCountdown_ = countdown_.remaining(instant);
@@ -212,53 +244,155 @@ void DesktopPlayer::togglePause() {
   interact();
   if (!session_ || !eligible()) return;
   if (ended_) { auto restart = media_; restart["resumeMs"] = 0; open(restart); return; }
-  wantsPlay_ = !wantsPlay_; session_->runtime->pause(session_->player, wantsPlay_ ? 0 : 1);
+  wantsPlay_ = !wantsPlay_;
+  queueCommand(Command::Pause, [pause = !wantsPlay_](Session &session) { session.runtime->pause(session.player, pause ? 1 : 0); });
   playing_ = wantsPlay_; progressedAt_ = now(); emit stateChanged();
 }
 void DesktopPlayer::seekBy(int seconds) { seek(position_ + qint64(seconds) * 1000); }
 void DesktopPlayer::seek(qint64 position) {
   interact(); if (!session_ || live() || !eligible() || duration_ <= 0) return;
-  position_ = std::clamp<qint64>(position, 0, duration_); session_->runtime->setTime(session_->player, position_);
+  position_ = std::clamp<qint64>(position, 0, duration_);
+  confirmedPosition_ = 0; positionConfirmed_ = false;
+  ++seekRevision_;
+  queueCommand(Command::Seek, [position = position_](Session &session) { session.runtime->setTime(session.player, position); });
   progressedAt_ = now(); emit stateChanged();
 }
 void DesktopPlayer::setVolume(int volume) {
   volume_ = std::clamp(volume, 0, 100);
-  if (session_) session_->runtime->setVolume(session_->player, volume_);
+  queueCommand(Command::Volume, [volume = volume_](Session &session) { session.runtime->setVolume(session.player, volume); });
   interact();
 }
 void DesktopPlayer::setMuted(bool value) {
-  muted_ = value; if (session_) session_->runtime->setMute(session_->player, value ? 1 : 0); interact();
+  muted_ = value;
+  queueCommand(Command::Mute, [value](Session &session) { session.runtime->setMute(session.player, value ? 1 : 0); });
+  interact();
+}
+void DesktopPlayer::setRate(double rate) {
+  constexpr std::array<double, 6> allowed{0.5, 0.75, 1.0, 1.25, 1.5, 2.0};
+  if (live() || std::find(allowed.begin(), allowed.end(), rate) == allowed.end()) return;
+  rate_ = rate;
+  queueCommand(Command::Rate, [rate](Session &session) { session.runtime->setRate(session.player, float(rate)); });
+  interact();
+}
+void DesktopPlayer::setAspect(const QString &aspect) {
+  if (aspect != QStringLiteral("Otomatik") && aspect != QStringLiteral("16:9") && aspect != QStringLiteral("4:3")) return;
+  aspect_ = aspect;
+  const auto value = aspect == QStringLiteral("Otomatik") ? QByteArray() : aspect.toLatin1();
+  queueCommand(Command::Aspect, [value](Session &session) { session.runtime->setAspect(session.player, value.constData()); });
+  interact();
 }
 void DesktopPlayer::selectAudio(int id) {
   if (!session_) return;
   for (const auto &track : audioTracks_) if (track.toMap().value("id").toInt() == id) {
-    session_->runtime->setAudioTrack(session_->player, id); audioTrack_ = id; break;
+    ++audioRevision_;
+    queueCommand(Command::Audio, [id](Session &session) { session.runtime->setAudioTrack(session.player, id); }); audioTrack_ = id; break;
   }
   interact();
 }
 void DesktopPlayer::selectSubtitle(int id) {
   if (!session_) return;
   for (const auto &track : subtitleTracks_) if (track.toMap().value("id").toInt() == id) {
-    session_->runtime->setSubtitleTrack(session_->player, id); subtitleTrack_ = id; break;
+    ++subtitleRevision_;
+    queueCommand(Command::Subtitle, [id](Session &session) { session.runtime->setSubtitleTrack(session.player, id); }); subtitleTrack_ = id; break;
   }
   interact();
 }
-void DesktopPlayer::updateTracks() {
+void DesktopPlayer::queueCommand(Command kind, std::function<void(Session &)> command) {
   if (!session_) return;
-  auto &r = *session_->runtime;
-  auto read = [&r](libvlc_track_description_t *head) {
-    QVariantList list; int count = 0;
-    for (auto *t = head; t && count < 64; t = t->p_next, ++count) {
-      QString title = QString::fromUtf8(t->psz_name ? t->psz_name : "").left(128);
-      title.remove(QRegularExpression(QStringLiteral("[\\x00-\\x1f\\x7f]")));
-      if (t->i_id == -1) title = QStringLiteral("Kapalı");
-      list.append(QVariantMap{{"id", t->i_id}, {"title", title}});
+  const auto session = session_;
+  {
+    QMutexLocker lock(&session->commandMutex);
+    session->commands[size_t(kind)] = std::move(command);
+    if (session->controlsQueued) return;
+    session->controlsQueued = true;
+  }
+  (void)QtConcurrent::run(&worker_, [session] {
+    for (;;) {
+      decltype(session->commands) commands;
+      {
+        QMutexLocker lock(&session->commandMutex);
+        commands.swap(session->commands);
+        if (session->cancelled || std::none_of(commands.begin(), commands.end(), [](const auto &command) { return bool(command); })) {
+          session->controlsQueued = false; return;
+        }
+      }
+      for (const auto &command : commands)
+        if (command && !session->cancelled && session->player) command(*session);
     }
-    if (head) r.releaseTracks(head);
-    return list;
-  };
-  audioTracks_ = read(r.audioTracks(session_->player)); subtitleTracks_ = read(r.subtitleTracks(session_->player));
-  audioTrack_ = r.audioTrack(session_->player); subtitleTrack_ = r.subtitleTrack(session_->player);
+  });
+}
+void DesktopPlayer::requestSample(bool final) {
+  if (!session_ || openingPending_ || samplePending_) return;
+  const auto session = session_;
+  const bool tracks = now() - tracksAt_ > 2000;
+  const auto seekRevision = seekRevision_, audioRevision = audioRevision_, subtitleRevision = subtitleRevision_;
+  if (tracks) tracksAt_ = now();
+  samplePending_ = true;
+  polling_.setFuture(QtConcurrent::run(&worker_, [session, tracks, final, seekRevision, audioRevision, subtitleRevision] {
+    Snapshot sample; sample.generation = session->generation; sample.final = final;
+    sample.seekRevision = seekRevision; sample.audioRevision = audioRevision; sample.subtitleRevision = subtitleRevision;
+    if (session->cancelled || !session->player) return sample;
+    auto &r = *session->runtime; auto *p = session->player;
+    sample.position = std::max<qint64>(0, r.time(p)); sample.duration = std::max<qint64>(0, r.length(p));
+    unsigned width = 0, height = 0;
+    sample.hasFrame = r.videoSize(p, 0, &width, &height) == 0 && width > 0 && height > 0 && sample.position > 0;
+    sample.playing = r.isPlaying(p) != 0;
+    if (tracks && !session->cancelled) {
+      auto read = [&r](libvlc_track_description_t *head) {
+        QVariantList list; int count = 0;
+        for (auto *t = head; t && count < 64; t = t->p_next, ++count) {
+          QString title = QString::fromUtf8(t->psz_name ? t->psz_name : "").left(128);
+          title.remove(QRegularExpression(QStringLiteral("[\\x00-\\x1f\\x7f]")));
+          if (t->i_id == -1) title = QStringLiteral("Kapalı");
+          list.append(QVariantMap{{"id", t->i_id}, {"title", title}});
+        }
+        if (head) r.releaseTracks(head);
+        return list;
+      };
+      sample.audioTracks = read(r.audioTracks(p)); sample.subtitleTracks = read(r.subtitleTracks(p));
+      sample.audioTrack = r.audioTrack(p); sample.subtitleTrack = r.subtitleTrack(p); sample.tracks = true;
+    }
+    sample.valid = !session->cancelled;
+    return sample;
+  }));
+}
+void DesktopPlayer::applySample(const Snapshot &sample) {
+  if (!active_ || !session_ || !sample.valid || sample.generation != generation_) return;
+  if (!eligible()) { fail(QStringLiteral("İzleme erişimin sona erdi.")); return; }
+  const auto instant = now();
+  if (sample.duration > 0) duration_ = sample.duration;
+  if (sample.final) confirmedPosition_ = std::max(confirmedPosition_, sample.position);
+  else if (sample.seekRevision == seekRevision_) confirmedPosition_ = sample.position;
+  if ((sample.final || sample.seekRevision == seekRevision_) && (resume_ <= 0 || live())) {
+    if (sample.position > position_ + 100 || sample.position + 100 < position_) progressedAt_ = instant;
+    position_ = sample.final ? std::max(position_, sample.position) : sample.position;
+    positionConfirmed_ = position_ == confirmedPosition_;
+  }
+  hasFrame_ = hasFrame_ || sample.hasFrame;
+  if (sample.tracks) {
+    audioTracks_ = sample.audioTracks; subtitleTracks_ = sample.subtitleTracks;
+    if (sample.audioRevision == audioRevision_) audioTrack_ = sample.audioTrack;
+    if (sample.subtitleRevision == subtitleRevision_) subtitleTrack_ = sample.subtitleTrack;
+  }
+  if (resume_ > 0 && !live() && duration_ > 0 && sample.playing && !ended_ && !pendingEnd_) {
+    const auto position = std::min(resume_, std::max<qint64>(0, duration_ - 1000));
+    position_ = position;
+    confirmedPosition_ = 0; positionConfirmed_ = false;
+    ++seekRevision_;
+    queueCommand(Command::Seek, [position](Session &session) { session.runtime->setTime(session.player, position); });
+    resume_ = 0; progressedAt_ = instant;
+  }
+  if (sample.final && pendingEnd_) {
+    pendingEnd_ = false;
+    if (Playback::trueEnd(confirmedPosition_, duration_)) {
+      position_ = confirmedPosition_; positionConfirmed_ = true;
+      emit progress(item_, confirmedPosition_, duration_, true);
+      if (item_.value("kind").toString() == "episode" && next_.value("kind").toString() == "episode")
+        countdown_.begin(episode(item_), episode(next_), duration_, instant);
+      nextCountdown_ = countdown_.remaining(instant);
+    } else error_ = QStringLiteral("İçerik tamamlanmadan bağlantı kesildi. Yeniden açabilirsin.");
+  }
+  emit stateChanged();
 }
 void DesktopPlayer::interact() { controls_ = true; interactionAt_ = now(); emit stateChanged(); }
 void DesktopPlayer::holdControls(bool hold) { held_ = std::max(0, held_ + (hold ? 1 : -1)); interact(); }
@@ -279,7 +413,7 @@ void DesktopPlayer::setSurface(qulonglong handle) {
 void DesktopPlayer::releaseSurface(qulonglong handle) {
   if (!handle || surface_ != handle) return;
   close();
-  stopping_.waitForFinished();
+  worker_.waitForDone();
   surface_ = 0;
 }
 void DesktopPlayer::switchChannel(int direction) { if (live() && eligible()) emit channelRequested(direction < 0 ? -1 : 1); }

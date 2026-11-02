@@ -30,6 +30,8 @@ class VlcRuntime {
   void (*stop)(libvlc_media_player_t *) = nullptr;
   void (*pause)(libvlc_media_player_t *, int) = nullptr;
   void (*setTime)(libvlc_media_player_t *, qint64) = nullptr;
+  int (*setRate)(libvlc_media_player_t *, float) = nullptr;
+  void (*setAspect)(libvlc_media_player_t *, const char *) = nullptr;
   qint64 (*time)(libvlc_media_player_t *) = nullptr;
   qint64 (*length)(libvlc_media_player_t *) = nullptr;
   int (*isPlaying)(libvlc_media_player_t *) = nullptr;

@@ -2,8 +2,10 @@
 #include "playback_policy.h"
 #include <QFutureWatcher>
 #include <QObject>
+#include <QThreadPool>
 #include <QTimer>
 #include <QVariantMap>
+#include <functional>
 #include <memory>
 
 class DesktopPlayer : public QObject {
@@ -21,6 +23,8 @@ class DesktopPlayer : public QObject {
   Q_PROPERTY(qint64 positionMs READ positionMs NOTIFY stateChanged)
   Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY stateChanged)
   Q_PROPERTY(int volume READ volume NOTIFY stateChanged)
+  Q_PROPERTY(double rate READ rate NOTIFY stateChanged)
+  Q_PROPERTY(QString aspect READ aspect NOTIFY stateChanged)
   Q_PROPERTY(int nextCountdown READ nextCountdown NOTIFY stateChanged)
   Q_PROPERTY(QVariantMap item READ item NOTIFY stateChanged)
   Q_PROPERTY(QVariantMap nextItem READ nextItem NOTIFY stateChanged)
@@ -45,6 +49,8 @@ class DesktopPlayer : public QObject {
   qint64 positionMs() const { return position_; }
   qint64 durationMs() const { return duration_; }
   int volume() const { return volume_; }
+  double rate() const { return rate_; }
+  QString aspect() const { return aspect_; }
   int nextCountdown() const { return nextCountdown_; }
   QVariantMap item() const { return item_; }
   QVariantMap nextItem() const { return next_; }
@@ -59,6 +65,8 @@ class DesktopPlayer : public QObject {
   Q_INVOKABLE void seek(qint64 positionMs);
   Q_INVOKABLE void setVolume(int volume);
   Q_INVOKABLE void setMuted(bool muted);
+  Q_INVOKABLE void setRate(double rate);
+  Q_INVOKABLE void setAspect(const QString &aspect);
   Q_INVOKABLE void selectAudio(int id);
   Q_INVOKABLE void selectSubtitle(int id);
   Q_INVOKABLE void interact();
@@ -78,30 +86,53 @@ class DesktopPlayer : public QObject {
   void channelRequested(int direction);
  private:
   struct Session;
+  enum class Command { Pause, Seek, Volume, Mute, Audio, Subtitle, Rate, Aspect, Count };
+  struct StartResult {
+    quint64 generation = 0;
+    QString error;
+    bool playFailed = false;
+  };
+  struct Snapshot {
+    quint64 generation = 0;
+    quint64 seekRevision = 0, audioRevision = 0, subtitleRevision = 0;
+    qint64 position = 0, duration = 0;
+    QVariantList audioTracks, subtitleTracks;
+    int audioTrack = -1, subtitleTrack = -1;
+    bool valid = false, hasFrame = false, playing = false, tracks = false, final = false;
+  };
   void startPending();
   void releaseCurrent();
+  void queueCommand(Command kind, std::function<void(Session &)> command);
+  void requestSample(bool final = false);
+  void applySample(const Snapshot &sample);
   void onVlcEvent(quint64 generation, int event);
   void tick();
   void recover(Playback::Trigger trigger);
   void fail(const QString &message);
-  void updateTracks();
   bool eligible() const;
   static QString key(const QVariantMap &item);
   static Playback::Episode episode(const QVariantMap &item);
   std::shared_ptr<Session> session_;
-  QFutureWatcher<void> stopping_;
+  QThreadPool worker_;
+  QFutureWatcher<StartResult> opening_;
+  QFutureWatcher<Snapshot> polling_;
   QTimer timer_;
   std::unique_ptr<Playback::Recovery> recovery_;
   Playback::NextEpisode countdown_;
   QVariantMap media_, pending_, item_, next_;
   QVariantList audioTracks_, subtitleTracks_;
   QString error_, scope_;
-  qint64 expiry_ = 0, position_ = 0, duration_ = 0, resume_ = 0;
+  QString aspect_ = QStringLiteral("Otomatik");
+  double rate_ = 1.0;
+  qint64 expiry_ = 0, position_ = 0, duration_ = 0, resume_ = 0, confirmedPosition_ = 0;
   qint64 interactionAt_ = 0, startedAt_ = 0, progressedAt_ = 0, savedAt_ = 0, tracksAt_ = 0;
   quint64 generation_ = 0;
+  quint64 seekRevision_ = 0, audioRevision_ = 0, subtitleRevision_ = 0;
   qulonglong surface_ = 0;
   int volume_ = 85, audioTrack_ = -1, subtitleTrack_ = -1, nextCountdown_ = 0, held_ = 0;
   bool active_ = false, playing_ = false, loading_ = false, controls_ = true, muted_ = false;
   bool fullScreen_ = true, wantsPlay_ = false, hasFrame_ = false, ended_ = false;
   bool awaitingRefresh_ = false, allowTestMedia_ = false;
+  bool openingPending_ = false, samplePending_ = false, pendingEnd_ = false;
+  bool positionConfirmed_ = false;
 };

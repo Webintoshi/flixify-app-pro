@@ -34,6 +34,7 @@ VlcRuntime::VlcRuntime() {
   VLC(play, "libvlc_media_player_play"); VLC(stop, "libvlc_media_player_stop");
   VLC(pause, "libvlc_media_player_set_pause"); VLC(setTime, "libvlc_media_player_set_time");
   VLC(time, "libvlc_media_player_get_time"); VLC(length, "libvlc_media_player_get_length");
+  VLC(setRate, "libvlc_media_player_set_rate"); VLC(setAspect, "libvlc_video_set_aspect_ratio");
   VLC(isPlaying, "libvlc_media_player_is_playing"); VLC(volume, "libvlc_audio_get_volume");
   VLC(setVolume, "libvlc_audio_set_volume"); VLC(mute, "libvlc_audio_get_mute");
   VLC(setMute, "libvlc_audio_set_mute"); VLC(audioTrack, "libvlc_audio_get_track");
