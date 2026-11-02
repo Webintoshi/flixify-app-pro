@@ -19,7 +19,7 @@ const userId=randomUUID(),otherUserId=randomUUID();
 let clientId=randomUUID();
 function batch(count=1){const value=validateWindowsAnalyticsBatch({schema:1,consentVersion:1,clientPlatform:'windows',clientId,sessionId:12345,events:Array.from({length:count},()=>({id:randomUUID(),name:'video_start',eventTimestampMs:Date.now(),params:{content_type:'live',startup_ms:1000,content_id:'a'.repeat(64)}}))});assert.ok(value);return value;}
 const count=async(where='true')=>Number((await pool.query(`select count(*) from public.analytics_outbox where ${where}`)).rows[0].count);
-async function reserve(user:string,slug='1-ay-2-kullanici',liveMode=true){const operationId=randomUUID(),sessionId=`cs_fixture_${randomUUID().replaceAll('-','')}`;await pool.query("insert into public.stripe_checkout_sessions(operation_id,stripe_session_id,user_id,package_slug,livemode,status,welcome_offer_id,expected_amount_minor) values($1,$2,$3,$4,$5,'open','welcome-monthly-50-v1',19950)",[operationId,sessionId,user,slug,liveMode]);return{operationId,sessionId};}
+async function reserve(user:string,slug='1-ay-2-kullanici',liveMode=true,operationId:string=randomUUID()){const sessionId=`cs_fixture_${randomUUID().replaceAll('-','')}`;await pool.query("insert into public.stripe_checkout_sessions(operation_id,stripe_session_id,user_id,package_slug,livemode,status,welcome_offer_id,expected_amount_minor) values($1,$2,$3,$4,$5,'open','welcome-monthly-50-v1',19950)",[operationId,sessionId,user,slug,liveMode]);return{operationId,sessionId};}
 async function paid(sessionId:string,user:string,status='fulfilling',liveMode=true){const pi=`pi_fixture_${randomUUID().replaceAll('-','')}`;await pool.query('insert into public.stripe_payment_jobs(stripe_session_id,payment_intent_id,user_id,livemode,status) values($1,$2,$3,$4,$5)',[sessionId,pi,user,liveMode,status]);return pi;}
 async function fixture(){
  const identity=(await pool.query('select current_database() as database,current_user as owner')).rows[0];
@@ -32,9 +32,16 @@ async function fixture(){
  await pool.query("insert into public.analytics_fixture_owner values('flixify-analytics-fixture-20261102') on conflict do nothing");
  await pool.query('drop table if exists public.analytics_outbox,public.analytics_checkout_attribution,public.analytics_consents,public.stripe_payment_jobs,public.stripe_checkout_sessions,public.users cascade');
  await pool.query(`create table public.users(id uuid primary key);
- create table public.stripe_checkout_sessions(operation_id uuid primary key,stripe_session_id text unique,user_id uuid references public.users(id),package_slug text,livemode boolean,status text,fulfilled_at timestamptz,welcome_offer_id text,expected_amount_minor integer);
+ create table public.stripe_checkout_sessions(operation_id text primary key,stripe_session_id text unique,user_id uuid references public.users(id),package_slug text,livemode boolean,status text,fulfilled_at timestamptz,welcome_offer_id text,expected_amount_minor integer);
  create table public.stripe_payment_jobs(stripe_session_id text primary key,payment_intent_id text unique,user_id uuid references public.users(id),livemode boolean,status text,created_at timestamptz not null default now());`);
- await pool.query(await readFile(new URL('./migration.sql',import.meta.url),'utf8'));
+ const migrationSql=await readFile(new URL('./migration.sql',import.meta.url),'utf8');
+ const legacyUuidChild=migrationSql.replace('operation_id text primary key references public.stripe_checkout_sessions(operation_id)','operation_id uuid primary key references public.stripe_checkout_sessions(operation_id)');
+ assert.notEqual(legacyUuidChild,migrationSql,'Fixture requires the actual TEXT billing parent and corrected TEXT child');
+ const incompatible=await pool.connect();
+ try{await assert.rejects(incompatible.query(legacyUuidChild),{code:'42804'});await incompatible.query('rollback');}finally{incompatible.release();}
+ assert.equal((await pool.query("select count(*)::int as n from pg_tables where schemaname='public' and tablename in ('analytics_consents','analytics_checkout_attribution','analytics_outbox')")).rows[0].n,0);
+ checked('actual TEXT checkout parent rejects the legacy UUID child with 42804 and rolls back all analytics DDL');
+ await pool.query(migrationSql);
  await pool.query('insert into public.users(id) values($1),($2)',[userId,otherUserId]);
  assert.equal((await pool.query("select count(*)::int as n from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname in ('analytics_consents','analytics_checkout_attribution','analytics_outbox') and c.relrowsecurity")).rows[0].n,3);
  checked('additive migration and private RLS tables');
@@ -67,7 +74,7 @@ async function fixture(){
  assert.equal(await store.acceptWindowsBatch(userId,batch()),0);
  checked('withdrawal cancels leased and queued work and blocks a reordered stale grant');
 
- const reservation=await reserve(userId);const attribution={consentVersion:1 as const,clientId:'12345.67890',sessionId:54321,clientPlatform:'web' as const,sourcePlatform:'macos' as const};
+ const reservation=await reserve(userId,'1-ay-2-kullanici',true,'checkout_fixture_non_uuid_operation');const attribution={consentVersion:1 as const,clientId:'12345.67890',sessionId:54321,clientPlatform:'web' as const,sourcePlatform:'macos' as const};
  const checkoutBefore=JSON.stringify((await pool.query('select * from public.stripe_checkout_sessions where operation_id=$1',[reservation.operationId])).rows[0]);
  await store.saveCheckoutAttribution(reservation.operationId,otherUserId,attribution);
  assert.equal((await pool.query('select count(*)::int as n from public.analytics_checkout_attribution')).rows[0].n,0);

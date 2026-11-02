@@ -38,6 +38,7 @@ if(!['postgres:','postgresql:'].includes(db.protocol)||!['db','db-eupquokyj7qegu
 const client=new Client({connectionString:process.env.DATABASE_URL,connectionTimeoutMillis:5000,statement_timeout:30000,application_name:'flixify-analytics-additive-release'});
 const tables=['analytics_consents','analytics_checkout_attribution','analytics_outbox'];
 const hash=x=>crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex');
+let phase='connect';
 async function snapshot(){
  const result=await client.query(`select c.relname,c.relkind,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text,
  coalesce((select json_agg(json_build_array(a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod),a.attnotnull,pg_get_expr(d.adbin,d.adrelid)) order by a.attnum) from pg_attribute a left join pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum where a.attrelid=c.oid and a.attnum>0 and not a.attisdropped),'[]'::json) as columns,
@@ -48,27 +49,32 @@ async function snapshot(){
  if(result.rows.some(x=>x.relname.startsWith('analytics_')&&!tables.includes(x.relname)))throw Error('unknown_analytics_relation');
  return {own,analyticsSchemaSha256:hash(own),unrelatedSchemaSha256:hash(result.rows.filter(x=>!tables.includes(x.relname)))};
 }
-async function validate(s){
+async function validate(s,stage){
+ phase='validate_'+stage+'_shape';
  const columns={analytics_consents:['user_id','client_id','consent_version','accepted','updated_at'],analytics_checkout_attribution:['operation_id','user_id','client_id','session_id','client_platform','source_platform','consent_version','revoked_at','purchase_recorded_at','activation_recorded_at','updated_at'],analytics_outbox:['event_key','user_id','client_id','session_id','stream','event_name','event_timestamp_ms','params','state','attempts','next_attempt_at','lease_until','lease_token','created_at','delivered_at']};
  if(s.own.length!==3)throw Error('migration_tables_missing');
  for(const row of s.own){if(row.relkind!=='r'||row.relrowsecurity!==true||JSON.stringify(row.columns.map(x=>x[0]))!==JSON.stringify(columns[row.relname])||row.constraints.length<2)throw Error('analytics_schema_shape');}
+ phase='validate_'+stage+'_public_acl';
  const publicAcl=await client.query("select exists(select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace cross join lateral aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a where n.nspname='public' and c.relname=any($1::text[]) and a.grantee=0) as allowed",[tables]);if(publicAcl.rows[0].allowed)throw Error('analytics_public_privileges');
- for(const role of (await client.query("select rolname from pg_roles where rolname in ('anon','authenticated')")).rows){for(const table of tables){const q=await client.query("select has_table_privilege($1,$2,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') as allowed",[role.rolname,'public.'+table]);if(q.rows[0].allowed)throw Error('analytics_role_privileges');}}
+ phase='validate_'+stage+'_roles';
+ for(const role of (await client.query("select rolname from pg_roles where rolname in ('anon','authenticated')")).rows){for(const table of tables){phase='validate_'+stage+'_role_acl';const q=await client.query("select has_table_privilege($1,$2,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') as allowed",[role.rolname,'public.'+table]);if(q.rows[0].allowed)throw Error('analytics_role_privileges');}}
 }
 (async()=>{await client.connect();try{
- const before=await snapshot();
+ phase='snapshot_before';const before=await snapshot();
  if(input.apply){
   if(before.own.length!==0&&!input.existingReceipt)throw Error('unowned_existing_analytics_schema');
-  await client.query(input.sql);const first=await snapshot();await validate(first);
+  phase='migration_first_apply';await client.query(input.sql);phase='snapshot_first';const first=await snapshot();await validate(first,'first');
+  phase='compare_unrelated_schema';
   if(first.unrelatedSchemaSha256!==before.unrelatedSchemaSha256)throw Error('unrelated_schema_changed');
-  await client.query(input.sql);const second=await snapshot();await validate(second);
+  phase='migration_second_apply';await client.query(input.sql);phase='snapshot_second';const second=await snapshot();await validate(second,'second');
+  phase='compare_idempotent_schema';
   if(JSON.stringify(first)!==JSON.stringify(second))throw Error('migration_not_idempotent');
   console.log(JSON.stringify({analyticsSchemaSha256:second.analyticsSchemaSha256,unrelatedSchemaSha256:second.unrelatedSchemaSha256,repeatedIdempotent:true,tables:tables}));
  }else{
-  if(before.own.length)await validate(before);
+  if(before.own.length)await validate(before,'current');
   console.log(JSON.stringify({analyticsSchemaSha256:before.analyticsSchemaSha256,unrelatedSchemaSha256:before.unrelatedSchemaSha256,tables:before.own.map(x=>x.relname)}));
  }
-}finally{await client.end()}})().catch(()=>{console.error('analytics_migration_guard_failed');process.exitCode=1});
+}finally{await client.end()}})().catch(error=>{const known=new Set(['database_context','unknown_analytics_relation','migration_tables_missing','analytics_schema_shape','analytics_public_privileges','analytics_role_privileges','unowned_existing_analytics_schema','unrelated_schema_changed','migration_not_idempotent']);console.error(JSON.stringify({analyticsMigrationFailure:1,phase,sqlState:typeof error.code==='string'&&/^[A-Z0-9]{5}$/.test(error.code)?error.code:null,reason:known.has(error.message)?error.message:'database_error'}));process.exitCode=1});
 '''
 
 
@@ -85,7 +91,20 @@ def database_snapshot(accepted, *, sql=None, existing=False):
         if labels.get('org.opencontainers.image.revision') != accepted['revision'] or labels.get('vip.flixify.edge-recovery.base') != p.API_ID: raise p.GateError('migration_api_context_drift')
     payload = json.dumps({'sql': sql, 'apply': sql is not None, 'existingReceipt': existing}).encode()
     result = subprocess.run(['docker','exec','-i','api-' + p.UUID,'node','-e',NODE], input=payload, capture_output=True, timeout=100)
-    if result.returncode: raise p.GateError('additive_migration_database_inspection_or_apply_failed')
+    if result.returncode:
+        detail = 'metadata_unavailable'
+        if len(result.stderr) <= 65536:
+            for line in result.stderr.decode('utf8', errors='replace').splitlines():
+                if len(line) > 512: continue
+                try: value = json.loads(line)
+                except ValueError: continue
+                if (isinstance(value, dict) and value.get('analyticsMigrationFailure') == 1 and
+                        re.fullmatch(r'[a-z_]{1,80}', str(value.get('phase', ''))) and
+                        (value.get('sqlState') is None or re.fullmatch(r'[A-Z0-9]{5}', str(value['sqlState']))) and
+                        re.fullmatch(r'[a-z_]{1,80}', str(value.get('reason', '')))):
+                    detail = 'phase=' + value['phase'] + ';sqlstate=' + str(value['sqlState']) + ';reason=' + value['reason']
+                    break
+        raise p.GateError('additive_migration_failed;' + detail)
     try: return json.loads(result.stdout)
     except (ValueError, UnicodeError): raise p.GateError('migration_result_invalid') from None
 

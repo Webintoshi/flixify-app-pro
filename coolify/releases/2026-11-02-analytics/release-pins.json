@@ -2,8 +2,8 @@
   "schema": 1,
   "revision": "ROOT_FILL_ACCEPTED_FINAL_PUBLICATION_REVISION",
   "apiServerSha256": "1344ed5920af8953fb975a3877daecb0244cec15b42521d9fa1bdabcbc54f42e",
-  "migrationSha256": "f128291579b2475978bb33b370768541a41d711b40b8dccec0a9178e007bba01",
-  "postgresFixtureSha256": "a2e4279c684388f8e9598e36fe117c2db41cd4e6e778f1187d337d2176ab8b58",
+  "migrationSha256": "94c1a90bb51d8960e69ba6d1651977ec479f4b2bd0b1fef14cc8834ac7c1f55c",
+  "postgresFixtureSha256": "6091921386ae8baa413d6bea2f88d623560cb14514a1ca8fe6cfa5ea84aad577",
   "native": {
     "android": {
       "revision": "440d15bf3781a4f0a3e3def34dbf91a7e6ca7808",

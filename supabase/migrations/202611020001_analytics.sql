@@ -12,7 +12,7 @@ create table if not exists public.analytics_consents (
 );
 
 create table if not exists public.analytics_checkout_attribution (
-  operation_id uuid primary key references public.stripe_checkout_sessions(operation_id) on delete cascade,
+  operation_id text primary key references public.stripe_checkout_sessions(operation_id) on delete cascade,
   user_id uuid not null references public.users(id) on delete cascade,
   client_id text not null,
   session_id bigint not null check (session_id between 1 and 9007199254740991),

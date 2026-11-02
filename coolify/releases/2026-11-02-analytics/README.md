@@ -11,7 +11,7 @@ Copy `release-pins.json` outside Git and fill its remaining placeholders after a
 - `revision`: exact final publication commit.
 - `apiServerSha256`: fresh hash of `/app/apps/api/src/server.ts` from the current immutable `241bbd…` image, obtained from the API measurement below. The old welcome-offer `analytics-server-patches.json` is intentionally not accepted as evidence. This profile applies its two reviewed, unique anchors to those actual bytes and preserves every other byte.
 - `migrationSha256`: exact migration blob in the publication commit. The template contains the current local migration hash; recheck it after final acceptance.
-- `postgresFixtureSha256`: actual successful V3 `proof.json`, `a2e4279c684388f8e9598e36fe117c2db41cd4e6e778f1187d337d2176ab8b58`. The fixture payload was `069a5c8ab697c0427a08674048b5678ebaa2505a1a8a0d3e2351d1ec6a5eb781`. The full receipt must report success, no Google/provider/production-database access, unchanged protected and other containers, and successful cleanup. Supply the actual file, not a handwritten success receipt.
+- `postgresFixtureSha256`: actual successful V4 `proof.json`, `6091921386ae8baa413d6bea2f88d623560cb14514a1ca8fe6cfa5ea84aad577`. The fixture payload was `9817a073a87bff09f9708a730a00454c04fa3e7e41a9122c46016ce99fa3933e`. The full receipt must report success, no Google/provider/production-database access, unchanged protected and other containers, and successful cleanup. Supply the actual file, not a handwritten success receipt.
 - Native entries: accepted source commit and Git tree, exact artifact bytes/hash, verification kind, and the hash of its acceptance evidence. Windows requires the actual Windows CI installer; a macOS-host compile is insufficient. Android requires the existing published signer. macOS remains an explicitly unnotarized universal test DMG and must retain honest distribution notices.
 
 The native acceptance evidence directory contains `android.json`, `macos.json`, and `windows.json`. Each JSON must contain these matching fields; additional actual build/signature/CI evidence may be included:
@@ -69,7 +69,7 @@ python3 coolify/releases/2026-11-02-analytics/build.py "$ANALYTICS_REPO" --servi
 
 The API measurement includes the fresh server hash, all nine source-leaf hashes, distribution manifest and untouched-tree fingerprint. The web measurement excludes only the explicit overlay, new artifacts, update manifest and Next build output. Measurements use bounded, network-isolated inspection containers and print hashes only.
 
-2. Fill the external acceptance file; verify final native evidence, the actual V3 PostgreSQL proof, and the final Git revision. Preflight each candidate, then repeat with `--build`:
+2. Fill the external acceptance file; verify final native evidence, the actual V4 PostgreSQL proof, and the final Git revision. Preflight each candidate, then repeat with `--build`:
 
 ```bash
 python3 coolify/releases/2026-11-02-analytics/build.py "$ANALYTICS_REPO" --service api --pins "$ANALYTICS_PINS" --source-pin "$ANALYTICS_STAGE/api-source-pin.json" --native-proof-dir "$ANALYTICS_NATIVE_PROOFS"
@@ -77,6 +77,8 @@ python3 coolify/releases/2026-11-02-analytics/build.py "$ANALYTICS_REPO" --servi
 ```
 
 `--build` creates new immutable candidates without restarting services. A pre-existing candidate tag requires `--verify-existing`. API verification reproduces the old distribution before overlaying five new analytics modules, four Stripe module changes, and the two exact server insertions. It then checks unchanged dependencies/configuration and runs actual candidate-source analytics and payment regression tests with Google/Stripe/database access disabled. Web compilation inherits the reviewed cgroup checks and restores Next configuration exactly. Both candidates are isolated from the network and have bounded memory/process counts. An 8 GiB disk floor and the shared exclusive release lock apply. Nothing is pruned automatically.
+
+The V4 fixture uses the actual billing parent column type, `stripe_checkout_sessions.operation_id TEXT`. It verifies that the former UUID child fails with PostgreSQL `42804` and rolls back all analytics DDL, then verifies the corrected TEXT child and complete analytics persistence suite. The corrected migration SHA256 is `94c1a90bb51d8960e69ba6d1651977ec479f4b2bd0b1fef14cc8834ac7c1f55c`. Its successful isolated receipt is stored under `/tmp/flixify-analytics-fixture-20261102-v4/proof.json`.
 
 3. Inspect and then apply the pinned additive migration:
 
@@ -106,6 +108,6 @@ python3 -m unittest discover -s coolify/releases/2026-11-02-analytics -p 'test_*
 python3 -m py_compile coolify/releases/2026-11-02-analytics/*.py
 ```
 
-Local execution used a task-local PyYAML 6.0.3 directory (`../artifacts/analytics-release-python`) because macOS's system Python lacks PyYAML; no global Python package was changed. Twenty-four tests pass, including actual temporary Git publications, native freeze drift, unreviewed canonical server/runtime changes, private file permissions, exact public retention, environment rollback isolation, unsafe SQL rejection, and placeholder paths that fail before any Docker call. Historical helper hashes are checked before importing the inherited transaction/build helpers.
+Local execution used a task-local PyYAML 6.0.3 directory (`../artifacts/analytics-release-python`) because macOS's system Python lacks PyYAML; no global Python package was changed. Twenty-eight tests pass, including actual temporary Git publications, native freeze drift, unreviewed canonical server/runtime changes, private file permissions, exact public retention, environment rollback isolation, unsafe SQL rejection, and placeholder paths that fail before any Docker call. Historical helper hashes are checked before importing the inherited transaction/build helpers.
 
 The new profile compares baseline distribution fingerprints by validated `sha256` and `files` values, independently of JSON property order. The inherited cgroup memory/swap checks remain unchanged. Only this profile's owned API/web compiler containers receive an explicit one-CPU cap, in addition to the unchanged 1280 MiB memory, 1536 MiB combined memory/swap and 256-process limits. The actual host diagnostic confirmed those memory/swap/pids caps and the CPU quota; no cgroup path fallback or host-resource changes are introduced.
