@@ -140,6 +140,8 @@ jobs:
           path: |
             C:/flixify/build/*-test.xml
             C:/flixify/build/diagnostics/**
+            C:/flixify/build/Flixify Pro.exe
+            C:/flixify/build/.qt/rcc/qrc_desktop_resources.cpp
             C:/flixify/build/Testing/Temporary/LastTest.log
             C:/flixify/build/CMakeFiles/CMakeConfigureLog.yaml
             C:/flixify/output/proof/**
