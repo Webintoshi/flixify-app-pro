@@ -110,14 +110,15 @@ public struct PersonalLibrary: Codable, Equatable, Sendable {
 }
 
 public struct PlaybackRequest: Sendable {
+    public let analyticsContext: PlaybackAnalyticsContext?
     public let item: CatalogItem
     public let url: URL
     public let expiresAt: Date
     public let resumeSeconds: Double
     public let nextEpisode: CatalogItem?
     public let scope: String
-    public init(item: CatalogItem, url: URL, expiresAt: Date, resumeSeconds: Double = 0, nextEpisode: CatalogItem? = nil, scope: String) {
-        self.item = item; self.url = url; self.expiresAt = expiresAt; self.resumeSeconds = resumeSeconds; self.nextEpisode = nextEpisode; self.scope = scope
+    public init(item: CatalogItem, url: URL, expiresAt: Date, resumeSeconds: Double = 0, nextEpisode: CatalogItem? = nil, scope: String, analyticsContext: PlaybackAnalyticsContext? = nil) {
+        self.item = item; self.url = url; self.expiresAt = expiresAt; self.resumeSeconds = resumeSeconds; self.nextEpisode = nextEpisode; self.scope = scope; self.analyticsContext = analyticsContext
     }
 }
 

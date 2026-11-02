@@ -5,6 +5,7 @@ import android.content.Context;
 import vip.flixify.tv.data.NetworkTvRepository;
 
 public final class TvApplication extends Application {
+    @Override public void onCreate() {super.onCreate();TvAnalytics.get(this);}
     private static volatile TvRepository instance;
     public static TvRepository repository(Context context) {
         if(instance==null) synchronized(TvApplication.class) {

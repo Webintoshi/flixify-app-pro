@@ -51,6 +51,8 @@ public final class PlayerActivity extends Activity {
     private static final long REFRESH_MS=60000, HIDE_MS=2000;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private TvRepository repository;
+    private TvAnalytics analytics;
+    private PlaybackAnalytics measurement;
     private PlayerEngine engine;
     private PlayerPolicy policy;
     private Item item;
@@ -81,7 +83,7 @@ public final class PlayerActivity extends Activity {
     }
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        repository=TvApplication.repository(this);
+        repository=TvApplication.repository(this);analytics=TvAnalytics.get(this);
         buildUi();
         Serializable value=savedInstanceState==null?getIntent().getSerializableExtra(EXTRA_ITEM):savedInstanceState.getSerializable(EXTRA_ITEM);
         if(!(value instanceof Item) || !launchable((Item)value)) {fail(false);return;}
@@ -136,6 +138,7 @@ public final class PlayerActivity extends Activity {
         super.onPause();
     }
     @Override protected void onStop() {
+        if(measurement!=null){measurement.end(SystemClock.elapsedRealtime(),"closed",false);measurement=null;}
         if(continuation.pending())cancelContinuation();
         if(engine!=null)desiredPlay=engine.wantsToPlay();
         active=false;
@@ -188,6 +191,7 @@ public final class PlayerActivity extends Activity {
     }
     private void select(Item candidate) {
         if(!playable(candidate)) {fail(true);return;}
+        if(measurement!=null){measurement.end(SystemClock.elapsedRealtime(),"replaced",false);measurement=null;}
         savePosition();
         releaseEngine(); // The prior connection closes before requesting or creating another stream.
         handler.removeCallbacks(advance);
@@ -207,6 +211,7 @@ public final class PlayerActivity extends Activity {
     }
     private void requestPlayback(boolean recovery) {
         if(!active || fatal || !playable(item)) {if(active)fail(true);return;}
+        if(!recovery){if(measurement!=null)measurement.end(SystemClock.elapsedRealtime(),"replaced",false);final long analyticsTicket=analytics.epoch();measurement=new PlaybackAnalytics(TvAnalytics.item(item),SystemClock.elapsedRealtime(),(name,values)->analytics.event(analyticsTicket,name,values));analytics.screen("player");}
         if(admitted && !policy.allows(System.currentTimeMillis(),repository.currentScope())) {fail(true);return;}
         savePosition();
         if(trackDialog!=null)trackDialog.dismiss();
@@ -234,11 +239,11 @@ public final class PlayerActivity extends Activity {
                     @Override public void onStateChanged(int state) {
                         if(!current(request))return;
                         if(state==PlayerEngine.READY)status.setVisibility(View.GONE);
-                        if(state==PlayerEngine.ENDED) {savePosition();showControls(false);beginContinuation();}
+                        if(state==PlayerEngine.ENDED) {if(measurement!=null && item.kind!=Kind.LIVE)measurement.end(SystemClock.elapsedRealtime(),"completed",true);savePosition();showControls(false);beginContinuation();}
                         updateButtons();
                         scheduleHide();
                     }
-                    @Override public void onFirstFrame() {if(current(request)) {watchdog.firstFrame(SystemClock.elapsedRealtime());status.setVisibility(View.GONE);}}
+                    @Override public void onFirstFrame() {if(current(request)) {if(measurement!=null)measurement.firstFrame(SystemClock.elapsedRealtime());watchdog.firstFrame(SystemClock.elapsedRealtime());status.setVisibility(View.GONE);}}
                     @Override public void onTracksChanged() {if(current(request))updateButtons();}
                     @Override public void onError() {if(current(request))recover();}
                 };
@@ -307,6 +312,7 @@ public final class PlayerActivity extends Activity {
             if(admitted && now-lastRefresh>=REFRESH_MS)refreshAccess();
             if(engine!=null) {
                 long value=engine.position();
+                if(measurement!=null)measurement.sample(now,value,item.kind==Kind.LIVE?0:engine.duration(),engine.playing(),engine.state()==PlayerEngine.BUFFERING);
                 boolean stalled=watchdog.stalled(now,value,engine.wantsToPlay(),engine.state(),engine.playing());
                 lastPosition=value;
                 position.setText(item.kind==Kind.LIVE?"● CANLI":time(value));
@@ -320,6 +326,7 @@ public final class PlayerActivity extends Activity {
     };
     private void recover() {
         if(!active || fatal || loading)return;
+        analytics.event("playback_error",TvAnalytics.values("reason","recovery"));
         if(policy==null || !policy.claimRecovery(System.currentTimeMillis(),repository.currentScope())) {fail(false);return;}
         if(engine!=null) {
             desiredPlay=engine.wantsToPlay();
@@ -343,6 +350,8 @@ public final class PlayerActivity extends Activity {
     }
     private void fail(boolean access) {
         if(fatal)return;
+        if(analytics!=null)analytics.event("playback_error",TvAnalytics.values("reason",access?"access":"decoder"));
+        if(measurement!=null){measurement.end(SystemClock.elapsedRealtime(),access?"access":"decoder",false);measurement=null;}
         fatal=true;
         generation++;
         favoriteGeneration++;favoritePending=false;
@@ -470,7 +479,7 @@ public final class PlayerActivity extends Activity {
         if(target==null || !active || fatal || engine==null || favoritePending)return;
         if(!policy.allows(System.currentTimeMillis(),repository.currentScope())) {fail(true);return;}
         favoritePending=true;
-        final int request=++favoriteGeneration;
+        final int request=++favoriteGeneration;final long analyticsTicket=analytics.epoch();
         repository.toggleFavorite(target,new TvRepository.Callback<Boolean>() {
             private boolean owns() {
                 Item selected=favoriteTarget();
@@ -479,6 +488,7 @@ public final class PlayerActivity extends Activity {
             }
             @Override public void onResult(Boolean saved) {
                 if(!owns())return;
+                analytics.event(analyticsTicket,Boolean.TRUE.equals(saved)?"add_to_wishlist":"remove_from_wishlist",TvAnalytics.item(target));
                 favoritePending=false;updateFavorite();scheduleHide();
             }
             @Override public void onError(Failure failure) {

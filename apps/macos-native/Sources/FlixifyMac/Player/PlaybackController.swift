@@ -46,6 +46,7 @@ final class PlaybackController: ObservableObject {
     private var restoreSubtitle = false
     private var trackRestoreUntil = Date.distantPast
     private var observers: [NSObjectProtocol] = []
+    private var measurement: PlaybackAnalytics?
     weak var window: NSWindow?
     var onPosition: (Double, Double) -> Void = { _, _ in }
     var onWatched: () -> Void = {}
@@ -85,6 +86,9 @@ final class PlaybackController: ObservableObject {
 
     func load(_ playback: PlaybackRequest) {
         guard !closed else { return }
+        measurement?.end(now:ProcessInfo.processInfo.systemUptime*1000,reason:"replaced",complete:false)
+        measurement=FlixifyAnalytics.shared.playback(playback.item,context:playback.analyticsContext)
+        FlixifyAnalytics.shared.screen("player")
         recoveryTask?.cancel(); recoveryTask = nil
         recoveryPolicy = RecoveryPolicy(scope: playback.scope, itemKey: playback.item.key, expiresAt: playback.expiresAt)
         wantsPlay = true
@@ -126,7 +130,7 @@ final class PlaybackController: ObservableObject {
         guard !closed else { return }
         _ = recoveryPolicy.admit(scope: request.scope, itemKey: request.item.key, expiresAt: deadline)
         request = PlaybackRequest(item: request.item, url: request.url, expiresAt: deadline,
-                                  resumeSeconds: request.resumeSeconds, nextEpisode: request.nextEpisode, scope: request.scope)
+                                  resumeSeconds: request.resumeSeconds, nextEpisode: request.nextEpisode, scope: request.scope, analyticsContext: request.analyticsContext)
     }
 
     func togglePlayback() {
@@ -193,6 +197,7 @@ final class PlaybackController: ObservableObject {
 
     func close() {
         guard !closed else { return }
+        measurement?.end(now:ProcessInfo.processInfo.systemUptime*1000,reason:"closed",complete:false);measurement=nil
         closed = true
         generation = UUID()
         recoveryPolicy.stop()
@@ -245,6 +250,7 @@ final class PlaybackController: ObservableObject {
         seekable = !isLive && snapshot.seekable
         refreshTracks(snapshot)
         if snapshot.hasFrame, !engineFirstFrame {
+            measurement?.firstFrame(now:ProcessInfo.processInfo.systemUptime*1000)
             engineFirstFrame = true; hasPresentedVideo = true
             trackRestoreUntil = Date().addingTimeInterval(4)
             watchdog.firstFrame()
@@ -261,6 +267,7 @@ final class PlaybackController: ObservableObject {
             if isLive { recover(.ended); return }
             playing = false; opening = false; ended = true; controlsVisible = true
             if !reportedEnd {
+                measurement?.end(now:ProcessInfo.processInfo.systemUptime*1000,reason:"completed",complete:true)
                 reportedEnd = true
                 if !isLive { onWatched(); sendPosition() }
                 if !NSApp.isActive { continuation.cancel() }
@@ -274,6 +281,7 @@ final class PlaybackController: ObservableObject {
             opening = !hasPresentedVideo
         default: break
         }
+        measurement?.sample(now:ProcessInfo.processInfo.systemUptime*1000,position:position,duration:isLive ? 0:duration,playing:snapshot.state == .playing,buffering:snapshot.state == .buffering)
         let stalled = watchdog.stalled(position: snapshot.seconds.isFinite ? snapshot.seconds : position, wantsPlay: wantsPlay,
             ready: snapshot.state == .playing || snapshot.state == .paused,
             playing: playing, ended: ended, interacting: interactionCount > 0)
@@ -302,7 +310,7 @@ final class PlaybackController: ObservableObject {
                         self.failPlayback(); return
                     }
                     let playback = PlaybackRequest(item: fresh.item, url: fresh.url, expiresAt: fresh.expiresAt,
-                        resumeSeconds: self.isLive ? 0 : self.position, nextEpisode: fresh.nextEpisode, scope: fresh.scope)
+                        resumeSeconds: self.isLive ? 0 : self.position, nextEpisode: fresh.nextEpisode, scope: fresh.scope, analyticsContext: self.request.analyticsContext)
                     self.recoveryTask = nil
                     self.prepare(playback, recovery: true)
                     return
@@ -353,6 +361,8 @@ final class PlaybackController: ObservableObject {
     }
 
     private func failPlayback() {
+        FlixifyAnalytics.shared.event("playback_error",["reason":"decoder"])
+        measurement?.end(now:ProcessInfo.processInfo.systemUptime*1000,reason:"decoder",complete:false)
         recoveryTask?.cancel(); recoveryTask = nil
         recoveryPolicy.stop()
         playing = false; opening = false; controlsVisible = true
@@ -368,6 +378,8 @@ final class PlaybackController: ObservableObject {
 
     private func expire() {
         guard error != "İzleme süren sona erdi. Paketini hesabından kontrol edebilirsin." else { return }
+        FlixifyAnalytics.shared.event("playback_error",["reason":"access"])
+        measurement?.end(now:ProcessInfo.processInfo.systemUptime*1000,reason:"access",complete:false)
         generation = UUID()
         recoveryPolicy.stop()
         recoveryTask?.cancel(); recoveryTask = nil

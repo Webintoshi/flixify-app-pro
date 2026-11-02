@@ -44,23 +44,25 @@ final class TvUpdatePanel implements AutoCloseable {
         if(busy || closed)return;
         if(ready!=null){install();return;}
         if(available!=null){download();return;}
-        final long ticket=++generation;busy=true;status="Güncellemeler kontrol ediliyor…";paint();
+        final long ticket=++generation,analyticsTicket=TvAnalytics.get(activity).epoch();busy=true;status="Güncellemeler kontrol ediliyor…";paint();
         updater.check(new TvUpdater.Callback<UpdateInfo>() {
             public void onResult(UpdateInfo info) {
                 if(!current(ticket))return;
                 busy=false;available=info;
+                if(info!=null)TvAnalytics.get(activity).event(analyticsTicket,"update_offered",java.util.Collections.emptyMap());
                 status=info==null?"Uygulamanız güncel.":"Yeni sürüm: "+info.versionName+(info.notes.isEmpty()?"":"\n"+info.notes);paint();
             }
             public void onError(String message){error(ticket,message);}
         });
     }
     private void download() {
+        TvAnalytics.get(activity).event("update_selected");
         TvRepository repository=TvApplication.repository(activity);
         if(repository.hasSession())repository.prepareOfflineData();
-        final long ticket=++generation;busy=true;status="Güncelleme indiriliyor…";paint();
+        final long ticket=++generation,analyticsTicket=TvAnalytics.get(activity).epoch();busy=true;status="Güncelleme indiriliyor…";paint();
         updater.download(available,new TvUpdater.DownloadCallback() {
             public void onProgress(int percent){if(current(ticket)){status="Güncelleme indiriliyor · %"+percent;paint();}}
-            public void onReady(File file){if(current(ticket)){ready=file;busy=false;status="Güncelleme hazır. Kuruluma devam edebilirsiniz.";paint();}}
+            public void onReady(File file){if(current(ticket)){TvAnalytics.get(activity).event(analyticsTicket,"update_downloaded",java.util.Collections.emptyMap());ready=file;busy=false;status="Güncelleme hazır. Kuruluma devam edebilirsiniz.";paint();}}
             public void onError(String message){error(ticket,message);}
         });
     }

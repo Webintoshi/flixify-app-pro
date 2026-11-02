@@ -22,8 +22,8 @@ from macos_privacy import (audit_release_privacy, known_personal_identifiers,
 PRODUCT = "FlixifyMac"
 APP_NAME = "Flixify Pro"
 BUNDLE_ID = "vip.flixify.mac"
-VERSION = "1.0.0"
-BUILD = 2
+VERSION = "1.0.1"
+BUILD = 3
 MINIMUM_SYSTEM = "13.0"
 DMG_NAME = f"Flixify-Pro-{VERSION}-macos-universal.dmg"
 DOWNLOAD_URL = f"https://flixify.vip/downloads/{DMG_NAME}"
@@ -279,7 +279,7 @@ def build_app(configuration: str, host_only: bool) -> Path:
     outputs = []
     for architecture in architectures:
         arguments = ["/usr/bin/swift", "build", "--configuration", configuration,
-                     "--scratch-path", str(ROOT / ".build" / f"{configuration}-{architecture}"),
+                     "--scratch-path", str(ROOT / ".build"),
                      "--triple", f"{architecture}-apple-macosx{MINIMUM_SYSTEM}", "--sdk", sdk,
                      "--product", PRODUCT, "--jobs", "4", "-Xlinker", "-rpath",
                      "-Xlinker", "@executable_path/../Frameworks"]
@@ -316,6 +316,15 @@ def build_app(configuration: str, host_only: bool) -> Path:
         shutil.copyfile(icon, resources / "Flixify.icns")
         shutil.copyfile(ROOT / "Vendor/COPYING.txt", resources / "COPYING-VLCKit.txt")
         (resources / "VLCKit-origin.json").write_text((ROOT / "Vendor/runtime-proof.json").read_text())
+        analytics_config = ROOT / "Config/GoogleService-Info.plist"
+        if analytics_config.is_file():
+            if analytics_config.is_symlink() or analytics_config.stat().st_size > 16384:
+                raise ReleaseError("Invalid public Firebase configuration")
+            analytics = plistlib.loads(analytics_config.read_bytes())
+            patterns = {"GOOGLE_APP_ID": r"1:[0-9]+:ios:[0-9a-f]+", "API_KEY": r"AIza[0-9A-Za-z_-]{35}", "PROJECT_ID": r"[a-z][a-z0-9-]{4,28}[a-z0-9]", "GCM_SENDER_ID": r"[0-9]{6,20}"}
+            if analytics.get("BUNDLE_ID") != BUNDLE_ID or not all(isinstance(analytics.get(key), str) and re.fullmatch(pattern, analytics[key]) for key, pattern in patterns.items()):
+                raise ReleaseError("Firebase public configuration does not match the macOS app")
+            shutil.copyfile(analytics_config, resources / "GoogleService-Info.plist")
         info = {"CFBundleDevelopmentRegion": "tr", "CFBundleDisplayName": APP_NAME,
                 "CFBundleExecutable": PRODUCT, "CFBundleIdentifier": BUNDLE_ID,
                 "CFBundleInfoDictionaryVersion": "6.0", "CFBundleName": APP_NAME,
@@ -324,7 +333,14 @@ def build_app(configuration: str, host_only: bool) -> Path:
                 "LSApplicationCategoryType": "public.app-category.entertainment",
                 "LSMinimumSystemVersion": MINIMUM_SYSTEM, "NSPrincipalClass": "NSApplication",
                 "NSHighResolutionCapable": True, "NSSupportsAutomaticGraphicsSwitching": True,
-                "FlixifyBuildConfiguration": configuration, "FlixifyArchitectures": architectures}
+                "FlixifyBuildConfiguration": configuration, "FlixifyArchitectures": architectures,
+                "FIREBASE_ANALYTICS_COLLECTION_ENABLED": False,
+                "FirebaseAutomaticScreenReportingEnabled": False,
+                "GOOGLE_ANALYTICS_DEFAULT_ALLOW_ANALYTICS_STORAGE": False,
+                "GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_STORAGE": False,
+                "GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_USER_DATA": False,
+                "GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_PERSONALIZATION_SIGNALS": False,
+                "GOOGLE_ANALYTICS_IDFV_COLLECTION_ENABLED": False}
         (contents / "Info.plist").write_bytes(plistlib.dumps(info))
         stage_swift_runtime(staging)
         if configuration == "release":

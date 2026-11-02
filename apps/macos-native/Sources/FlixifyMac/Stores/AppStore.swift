@@ -28,7 +28,7 @@ enum AppRoute: String, CaseIterable, Identifiable {
     @Published var loadingKinds = Set<MediaKind>()
     @Published var error: String?
     @Published var searchText = ""
-    @Published var category = ""
+    @Published var category = "" { didSet { if category != oldValue, session != nil, !fixtureMode { var values:[String:Any]=["category_id":FlixifyAnalytics.opaque(category)];if let selected=catalogs.values.flatMap(\.categories).first(where:{$0.id==category}),let label=AnalyticsPolicy.catalogLabel(selected.title,maximum:80) {values["category_name"]=label};FlixifyAnalytics.shared.event("category_select",values) } } }
     @Published var country = ""
     @Published var showSearch = false
     @Published var showWelcome = false
@@ -51,6 +51,7 @@ enum AppRoute: String, CaseIterable, Identifiable {
     private var loadTask: Task<Void, Never>?
     private var seriesDetails: [String: SeriesDetail] = [:]
     private var loadedScope: String?
+    private var pendingAnalytics: (item:CatalogItem,context:PlaybackAnalyticsContext)?
 
     init(repository: any FlixifyRepositoryProtocol, fixtureMode: Bool = false) {
         self.repository = repository; self.fixtureMode = fixtureMode
@@ -72,6 +73,7 @@ enum AppRoute: String, CaseIterable, Identifiable {
     @discardableResult private func applySession(_ value: SessionState) -> Bool {
         let changed = loadedScope.map { $0 != value.sourceScope } ?? false
         if changed {
+            finishPreparingAnalytics(reason:"closed",failed:false)
             generation = UUID(); selection = UUID(); inspection = UUID(); loadTask?.cancel()
             playback = nil; preparingPlayback = false; details = nil; filmDetails = nil
             catalogs = [:]; library = PersonalLibrary(); programmes = [:]; activeEpisodes = []; seriesDetails = [:]
@@ -98,10 +100,11 @@ enum AppRoute: String, CaseIterable, Identifiable {
     func login(code: String) async {
         guard !signingIn else { return }
         signingIn = true; error = nil
-        let lease = generation
+        let lease = generation, analyticsTicket = FlixifyAnalytics.shared.epoch
         do {
             let result = try await repository.login(code: code)
             guard lease == generation else { return }
+            FlixifyAnalytics.shared.event("login",epoch:analyticsTicket)
             applySession(result); showWelcome = result.welcomeOffer?.showPrompt == true
             beginSessionWork()
         } catch { if lease == generation { self.error = userMessage(error) } }
@@ -109,6 +112,8 @@ enum AppRoute: String, CaseIterable, Identifiable {
     }
 
     func logout() async {
+        finishPreparingAnalytics(reason:"closed",failed:false)
+        FlixifyAnalytics.shared.event("logout")
         generation = UUID(); selection = UUID(); inspection = UUID(); loadTask?.cancel(); refreshTask?.cancel()
         playback = nil; preparingPlayback = false; details = nil; filmDetails = nil
         session = nil; loadedScope = nil; catalogs = [:]; library = PersonalLibrary(); programmes = [:]
@@ -118,6 +123,7 @@ enum AppRoute: String, CaseIterable, Identifiable {
     }
 
     func navigate(_ value: AppRoute) {
+        FlixifyAnalytics.shared.screen(value.rawValue)
         if playback != nil || preparingPlayback { closePlayback() }
         guard account?.canPlay == true || value == .account else { route = .account; return }
         route = value; inspection = UUID(); searchText = ""; category = ""; country = ""; error = nil
@@ -142,7 +148,7 @@ enum AppRoute: String, CaseIterable, Identifiable {
 
     func loadCatalogs(force: Bool) async {
         guard account?.canPlay == true else { return }
-        let lease = generation
+        let lease = generation, analyticsTicket = FlixifyAnalytics.shared.epoch
         loadingKinds.formUnion([.movie, .series, .live])
         await withTaskGroup(of: Void.self) { group in
             for kind in [MediaKind.movie, .series, .live] {
@@ -153,6 +159,7 @@ enum AppRoute: String, CaseIterable, Identifiable {
                         await MainActor.run {
                             guard self.generation == lease else { return }
                             self.catalogs[kind] = catalog; self.catalogRevision = UUID(); self.loadingKinds.remove(kind); self.initialLoading = false
+                            if !self.fixtureMode { FlixifyAnalytics.shared.event("catalog_page_loaded",["result_count":catalog.items.count,"content_type":kind.rawValue],epoch:analyticsTicket) }
                         }
                     } catch {
                         await MainActor.run {
@@ -195,7 +202,7 @@ enum AppRoute: String, CaseIterable, Identifiable {
                 guard lease == generation, playback?.item.key == active.item.key else { return }
                 guard renewed.scope == active.scope else { closePlayback(); return }
                 playback = PlaybackRequest(item: active.item, url: active.url, expiresAt: renewed.expiresAt,
-                    resumeSeconds: active.resumeSeconds, nextEpisode: active.nextEpisode, scope: active.scope)
+                    resumeSeconds: active.resumeSeconds, nextEpisode: active.nextEpisode, scope: active.scope, analyticsContext: active.analyticsContext)
             }
         } catch {
             guard lease == generation else { return }
@@ -206,6 +213,10 @@ enum AppRoute: String, CaseIterable, Identifiable {
 
     func open(_ item: CatalogItem) {
         guard session != nil && !showWelcome else { return }
+        finishPreparingAnalytics(reason:"replaced",failed:false)
+        let analyticsContext=FlixifyAnalytics.shared.beginPlayback(item)
+        if let analyticsContext { pendingAnalytics=(item,analyticsContext) }
+        FlixifyAnalytics.shared.event("select_content",FlixifyAnalytics.item(item))
         let token = UUID(); selection = token; inspection = UUID(); let lease = generation
         preparingPlayback = true; error = nil; playback = nil
         Task {
@@ -219,10 +230,13 @@ enum AppRoute: String, CaseIterable, Identifiable {
                 } else { activeEpisodes = [] }
                 let request = try await repository.playback(item)
                 guard generation == lease, selection == token else { return }
-                details = nil; filmDetails = nil; showSearch = false; playbackRevision = UUID(); playback = request
+                pendingAnalytics=nil
+                details = nil; filmDetails = nil; showSearch = false; playbackRevision = UUID()
+                playback=PlaybackRequest(item:request.item,url:request.url,expiresAt:request.expiresAt,resumeSeconds:request.resumeSeconds,nextEpisode:request.nextEpisode,scope:request.scope,analyticsContext:analyticsContext)
                 if request.item.kind == .live { Task { await self.fetchEPG(request.item) } }
             } catch {
                 guard generation == lease, selection == token else { return }
+                finishPreparingAnalytics(reason:error as? FlixifyError == .accessExpired || error as? FlixifyError == .authentication ? "access":"network",failed:true)
                 if error as? FlixifyError == .accessExpired { route = .account; notice = userMessage(error) }
                 else { self.error = userMessage(error) }
             }
@@ -230,7 +244,11 @@ enum AppRoute: String, CaseIterable, Identifiable {
         }
     }
 
-    func closePlayback() { selection = UUID(); playback = nil; preparingPlayback = false }
+    private func finishPreparingAnalytics(reason:String,failed:Bool) {
+        guard let pending=pendingAnalytics else { return };pendingAnalytics=nil
+        FlixifyAnalytics.shared.finishPreflight(pending.item,context:pending.context,reason:reason,failed:failed)
+    }
+    func closePlayback() { finishPreparingAnalytics(reason:"closed",failed:false);selection = UUID(); playback = nil; preparingPlayback = false }
 
     func recoverPlayback(current: PlaybackRequest, position: Double) async -> PlaybackRequest? {
         let lease = generation, token = selection
@@ -242,7 +260,7 @@ enum AppRoute: String, CaseIterable, Identifiable {
             guard fresh.scope == current.scope else { closePlayback(); return nil }
             let resumed = current.item.kind == .live ? 0 : max(0, position.isFinite ? position : 0)
             let recovered = PlaybackRequest(item: fresh.item, url: fresh.url, expiresAt: fresh.expiresAt,
-                resumeSeconds: resumed, nextEpisode: fresh.nextEpisode, scope: fresh.scope)
+                resumeSeconds: resumed, nextEpisode: fresh.nextEpisode, scope: fresh.scope, analyticsContext: current.analyticsContext)
             playback = recovered
             return recovered
         } catch {
@@ -278,12 +296,13 @@ enum AppRoute: String, CaseIterable, Identifiable {
         guard session != nil else { return }
         let writeKey = item.kind == .episode ? "series:" + item.seriesID : item.key
         guard favoriteWrites.insert(writeKey).inserted else { return }
-        let wanted = !isFavorite(item), lease = generation
+        let wanted = !isFavorite(item), lease = generation, analyticsTicket = FlixifyAnalytics.shared.epoch
         Task {
             defer { if lease == generation { favoriteWrites.remove(writeKey) } }
             do {
                 let value = try await repository.setFavorite(item, favorited: wanted)
                 guard lease == generation else { return }; library = value; catalogRevision = UUID()
+                FlixifyAnalytics.shared.event(wanted ? "add_to_wishlist":"remove_from_wishlist",FlixifyAnalytics.item(item),epoch:analyticsTicket)
             } catch { if lease == generation { self.error = userMessage(error) } }
         }
     }
@@ -294,11 +313,12 @@ enum AppRoute: String, CaseIterable, Identifiable {
     func markWatched(_ item: CatalogItem) { Task { await repository.markWatched(item) } }
 
     func acknowledgeWelcome(monthly: Bool = false) async -> Bool {
-        let lease = generation, accountID = account?.id, scope = loadedScope
+        let lease = generation, accountID = account?.id, scope = loadedScope, analyticsTicket = FlixifyAnalytics.shared.epoch
         do {
             let updated = try await repository.chooseWelcome(monthly: monthly)
             guard lease == generation, accountID == updated.account.id, scope == updated.sourceScope else { return false }
             applySession(updated); showWelcome = false
+            FlixifyAnalytics.shared.event(monthly ? "welcome_offer_select":"trial_select",monthly ? ["offer_id":"welcome-monthly-50-v1"]:[:],epoch:analyticsTicket)
             initialLoading = updated.account.canPlay && catalogs.isEmpty && !loadingKinds.isEmpty
             return true
         } catch { if lease == generation { self.error = userMessage(error) }; return false }
@@ -306,7 +326,9 @@ enum AppRoute: String, CaseIterable, Identifiable {
 
     func openWebsite(_ path: String) {
         guard let url = URL(string: path), url.scheme == "https", url.host == "flixify.vip" else { return }
-        NSWorkspace.shared.open(url)
+        var target=url
+        if url.path == "/paketler", var parts=URLComponents(url:url,resolvingAgainstBaseURL:false) { var query=parts.queryItems ?? []; query.removeAll { $0.name == "from" }; query.append(URLQueryItem(name:"from",value:"macos")); parts.queryItems=query; target=parts.url ?? url }
+        if NSWorkspace.shared.open(target),url.path == "/paketler" { FlixifyAnalytics.shared.event("package_open") }
     }
 
     func userMessage(_ error: Error) -> String {

@@ -6,6 +6,9 @@ struct SearchSheet: View {
     @State private var query = ""
     @State private var matches: [CatalogItem] = []
     @State private var selected: String?
+    @State private var analyticsSearch=SearchAnalyticsSession()
+    @State private var resolvedRevision=""
+    @State private var finishingRevision=""
     @FocusState private var inputFocused: Bool
     private var searchRevision: String { "\(query)|\(store.catalogRevision)|\(store.session?.sourceScope ?? "")|\(store.category)|\(store.country)" }
     var body: some View {
@@ -14,7 +17,7 @@ struct SearchSheet: View {
             HStack(spacing: 13) {
                 Image(systemName: "magnifyingglass").foregroundStyle(FlixTheme.muted)
                 TextField("Film, dizi veya kanal ara", text: $query).textFieldStyle(.plain).font(.system(size: 22)).focused($inputFocused)
-                    .accessibilityLabel("Film, dizi veya kanal ara").onSubmit { if let item = matches.first(where: { $0.key == selected }) ?? matches.first { play(item) } }
+                    .accessibilityLabel("Film, dizi veya kanal ara").onSubmit { finishSearch(); if let item = matches.first(where: { $0.key == selected }) ?? matches.first { play(item) } }
                 if !query.isEmpty { Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain).accessibilityLabel("Aramayı temizle") }
             }.padding(18).background(FlixTheme.background, in: Capsule())
             Text(query.isEmpty ? "Tüm içeriklerinde ara" : "\(matches.count.formatted()) sonuç").foregroundStyle(FlixTheme.muted)
@@ -40,14 +43,33 @@ struct SearchSheet: View {
         }.padding(30).frame(minWidth: 640, idealWidth: 720, minHeight: 520, idealHeight: 610)
             .background(FlixTheme.panel).foregroundStyle(FlixTheme.text)
             .onAppear { inputFocused = true }
+            .onChange(of: query) { value in _=analyticsSearch.begin(query:value,epoch:FlixifyAnalytics.shared.epoch,enabled:FlixifyAnalytics.shared.accepted) }
+            .onDisappear { finishSearch() }
             .task(id: searchRevision) {
-                let value = query, items = store.currentItems, category = store.category, country = store.country
+                let value = query, items = store.currentItems, category = store.category, country = store.country, revision=searchRevision
+                let ticket=analyticsSearch.begin(query:value,epoch:FlixifyAnalytics.shared.epoch,enabled:FlixifyAnalytics.shared.accepted)
                 try? await Task.sleep(nanoseconds: 120_000_000)
                 guard !Task.isCancelled else { return }
-                guard !value.trimmingCharacters(in: .whitespaces).isEmpty else { matches = []; return }
+                guard !value.trimmingCharacters(in: .whitespaces).isEmpty else { matches = [];resolvedRevision=revision;return }
                 let result = await Task.detached { DiscoveryView.filter(items, query: value, category: category, country: country) }.value
-                guard !Task.isCancelled else { return }; matches = result
+                guard !Task.isCancelled else { return }; matches = result;resolvedRevision=revision
+                if let ticket { completeSearch(ticket,count:result.count) }
             }
     }
-    private func play(_ item: CatalogItem) { store.showSearch = false; store.open(item) }
+    private func completeSearch(_ ticket:SearchAnalyticsSession.Ticket,count:Int) {
+        let analytics=FlixifyAnalytics.shared
+        if let values=analyticsSearch.complete(ticket,resultCount:count,epoch:analytics.epoch,enabled:analytics.accepted) { analytics.event("search",values.mapValues { $0 as Any }) }
+    }
+    private func finishSearch() {
+        let analytics=FlixifyAnalytics.shared
+        guard let ticket=analyticsSearch.begin(query:query,epoch:analytics.epoch,enabled:analytics.accepted) else { return }
+        if resolvedRevision == searchRevision { completeSearch(ticket,count:matches.count);return }
+        guard finishingRevision != searchRevision else { return };finishingRevision=searchRevision
+        let value=query,items=store.currentItems,category=store.category,country=store.country
+        Task {
+            let count=await Task.detached { DiscoveryView.filter(items,query:value,category:category,country:country).count }.value
+            completeSearch(ticket,count:count)
+        }
+    }
+    private func play(_ item: CatalogItem) { finishSearch();store.showSearch = false; store.open(item) }
 }

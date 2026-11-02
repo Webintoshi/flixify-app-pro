@@ -1,6 +1,6 @@
 # Flixify Pro for macOS
 
-Native SwiftUI/AppKit client for macOS 13 or newer, using the current Android TV 1.4.7 feature contract. Bundle identifier `vip.flixify.mac`; version 1.0.0, build 2. Public builds contain both Apple Silicon and Intel code.
+Native SwiftUI/AppKit client for macOS 13 or newer, using the current Android TV feature contract. Bundle identifier `vip.flixify.mac`; version 1.0.1, build 3. Public builds contain both Apple Silicon and Intel code.
 
 The client uses the existing account-code, provider-session, personal-library and welcome-offer services. Provider metadata and media requests originate from the viewer's Mac. The TV branding, discovery collections, live channel identities and access/payment policies remain the reference. Keyboard, pointer, menus and a resizable window adapt those features to the desktop.
 
@@ -20,6 +20,8 @@ python3 scripts/build-app.py --configuration release
 ```
 
 The default release build compiles `arm64-apple-macosx13.0` and `x86_64-apple-macosx13.0` separately, joins the executables with `lipo`, and audits every bundled Mach-O. It embeds the runtime, icon, SwiftPM resource bundles and third-party license. Apple's `swift-stdlib-tool` stages any required Swift compatibility libraries before compiler-only runtime search paths are removed from the copied binaries. `dist/local-build-proof.json` records its actual architectures and audit. This app still has **local development signing** and is not a public trusted release.
+
+Both architecture builds share the project-local `.build` dependency cache. SwiftPM's distinct triple/configuration output directories preserve the two executables until universal merging, without downloading another copy of the Firebase binary dependencies for each architecture.
 
 SwiftPM resource bundles are installed under `Contents/Resources`. Application resource lookup must use that installed location; SwiftPM's generated `Bundle.module` accessor can otherwise fall back to the developer's absolute build directory. Do not place unsealed resource files beside `Contents` to work around that behavior.
 
@@ -45,9 +47,17 @@ After building the universal release app:
 python3 scripts/package-local-test.py
 ```
 
-This creates `dist/local-test/Flixify-Pro-1.0.0-macos-universal-LOCAL-TEST-<hash>.dmg` and a matching local proof. Open the image and drag Flixify Pro to the Applications shortcut. The image includes these steps in Turkish. It copies the existing ad hoc app unchanged, verifies the image, mounts it read-only, and rechecks the contained app's signature, privacy report and file manifest before saving the result. It never replaces an existing package or deletes files outside its own temporary staging directory.
+This creates `dist/local-test/Flixify-Pro-1.0.1-macos-universal-LOCAL-TEST-<hash>.dmg` and a matching local proof. Open the image and drag Flixify Pro to the Applications shortcut. The image includes these steps in Turkish. It copies the existing ad hoc app unchanged, verifies the image, mounts it read-only, and rechecks the contained app's signature, privacy report and file manifest before saving the result. It never replaces an existing package or deletes files outside its own temporary staging directory.
 
 This is an **unnotarized local-test package**. The disk image itself is unsigned, and macOS may show a developer-verification warning after an Internet download. No security settings are changed, no signing identity is selected, and no Apple submission is made. Its proof explicitly records `publicDistributionReady: false`; it produces no update descriptor and is not published to the website. The public release requirements below remain separate.
+
+## Optional Google Analytics
+
+Firebase Apple SDK 13.1.1 is pinned through SwiftPM and uses `FirebaseAnalyticsCore`, the no-advertising-ID product. Public client configuration belongs at `Config/GoogleService-Info.plist`, for bundle `vip.flixify.mac`; the packager and runtime validate it. Missing or malformed configuration leaves analytics unavailable. Debug/fixture builds never send production analytics.
+
+The installed Info.plist disables collection, automatic screen extraction, advertising consent and IDFV collection before initialization. A versioned explicit choice controls SDK initialization and can be changed in application Settings. Declining preserves the complete app. Withdrawal stops collection, resets analytics data and rejects callbacks captured before that choice. Data is limited to allowlisted screens, opaque content/category references, privacy-checked public catalogue labels, result counts, bounded playback timings and fixed reasons; account codes, provider/auth/payment data, raw search/error strings and URLs are excluded. Unsafe labels are omitted without dropping their event. Content references use the first 24 lowercase hex SHA256 characters of `lowercaseKind:catalogID`.
+
+Decoded frames count video starts; decoder EOF counts completion. Progress has only three milestones, watch time excludes pause, and rebuffer transitions emit one bounded duration. SDK networking is asynchronous and analytics failure does not block playback. Native purchase links add only `from=macos`; confirmed revenue belongs to the website/backend. Configured release packaging, privacy checks and Google ingestion proof remain required. Apple signing and organization-identity restrictions below remain unchanged.
 
 ## Public distribution
 
@@ -75,7 +85,7 @@ The public pipeline:
 5. Creates the drag-to-Applications DMG, signs it, separately notarizes it, staples it and verifies both its ticket and Gatekeeper assessment.
 6. Mounts the image read-only, validates the contained app again, then writes the immutable DMG, proof and update descriptor under `dist/public/`.
 
-Expected public files are `Flixify-Pro-1.0.0-macos-universal.dmg`, `release-proof.json` and `flixify-macos-update.json`. The descriptor uses the fixed `https://flixify.vip/downloads/` origin and includes the final DMG's size and SHA256. Publication to the existing website is performed only after the real release checks pass.
+Expected public files are `Flixify-Pro-1.0.1-macos-universal.dmg`, `release-proof.json` and `flixify-macos-update.json`. The descriptor uses the fixed `https://flixify.vip/downloads/` origin and includes the final DMG's size and SHA256. Publication to the existing website is performed only after the real release checks pass.
 
 Missing signing credentials, rejected/incomplete notarization or failed Gatekeeper checks stop public packaging. Development output must not be published as an approved release. The workflow does not disable Gatekeeper, remove quarantine metadata, weaken certificate verification or request unnecessary entitlements. Intel slices are inspected during packaging; execution on a physical Intel Mac requires separate QA.
 

@@ -51,6 +51,9 @@ public final class MainActivity extends Activity {
     }
     private final EnumMap<Section,Page> pages=new EnumMap<>(Section.class);
     private TvRepository repository;
+    private TvAnalytics analytics;
+    private boolean analyticsPrompted;
+    private String visibleAnalyticsScreen="login";
     private ArtworkLoader artwork;
     private PosterFocusSound posterSound;
     private TvUpdatePanel updatePanel;
@@ -103,7 +106,7 @@ public final class MainActivity extends Activity {
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_FULLSCREEN);
         startup=new StartupScreen(this,StartupScreen.restoredComplete(state));
         FrameLayout initial=new FrameLayout(this);initial.setBackgroundColor(TvUi.BACKGROUND);startup.show(initial);
-        repository=TvApplication.repository(this); artwork=new ArtworkLoader(this);posterSound=PosterFocusSound.create(this);updatePanel=new TvUpdatePanel(this);
+        repository=TvApplication.repository(this); analytics=TvAnalytics.get(this);artwork=new ArtworkLoader(this);posterSound=PosterFocusSound.create(this);updatePanel=new TvUpdatePanel(this);
         for(Section section:Section.values())pages.put(section,new Page(section));
         page=pages.get(Section.HOME);
         if(state!=null) {
@@ -257,6 +260,7 @@ public final class MainActivity extends Activity {
     private void renderWelcome(){renderWelcome(null);}
     private void renderWelcome(String requestedFocus){
         if(destroyed || stopped || !repository.hasSession() || welcomeResolved)return;
+        visibleAnalyticsScreen="welcome";analytics.screen(visibleAnalyticsScreen);
         View current=getCurrentFocus();Object tag=current==null?null:current.getTag();String focus=requestedFocus!=null?requestedFocus:tag instanceof String && ((String)tag).startsWith("welcome-")?(String)tag:null;
         if(!welcomeError.isEmpty())focus="welcome-retry";
         WelcomeOfferScreen screen=new WelcomeOfferScreen(this,welcomeOffer,welcomeUsers,welcomeBusy,welcomeError,focus,new WelcomeOfferScreen.Actions(){
@@ -271,13 +275,14 @@ public final class MainActivity extends Activity {
     private void chooseWelcome(String choice){
         if(welcomeResolved || welcomeBusy || welcomeOffer==null || !welcomeOffer.showPrompt())return;
         if(!welcomeCurrent(welcomeSerial,welcomeAccount)){loadWelcome();return;}
-        final int users=welcomeUsers;final String owner=welcomeAccount;final long serial=++welcomeSerial;
+        final int users=welcomeUsers;final String owner=welcomeAccount;final long serial=++welcomeSerial,analyticsTicket=analytics.epoch();
         welcomeBusy=true;welcomeError="";renderWelcome();
         repository.chooseWelcomeOffer(choice,new TvRepository.Callback<WelcomeOffer>(){
             public void onResult(WelcomeOffer value){
                 if(!welcomeCurrent(serial,owner)){retryChangedWelcome(serial);return;}
                 welcomeBusy=false;
                 if(value==null || value.showPrompt()){welcomeError="Seçimin kaydedilemedi. Tekrar dene.";renderWelcome();return;}
+                analytics.event(analyticsTicket,"monthly".equals(choice)?"welcome_offer_select":"trial_select","monthly".equals(choice)?TvAnalytics.values("offer_id","welcome-monthly-50-v1"):Collections.emptyMap());
                 enterAfterWelcome();
                 if("monthly".equals(choice))openPackages(users);
             }
@@ -293,8 +298,8 @@ public final class MainActivity extends Activity {
         if(page.section==Section.ACCOUNT)showAccount();else showPage(false,false);
     }
     private void openPackages(int users){
-        String url=WelcomeOffer.notEligible().paymentUrl(users);
-        try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE));}
+        String url=Uri.parse(WelcomeOffer.notEligible().paymentUrl(users)).buildUpon().appendQueryParameter("from","android_tv").build().toString();
+        try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE));analytics.event("package_open",TvAnalytics.values("package_users",users));}
         catch(ActivityNotFoundException|SecurityException unavailable){notice("TV’de tarayıcı bulunamadı. Telefonunda "+url+" adresini aç ve aynı 16 karakterli hesap kodunla giriş yap. Ödeme tamamlandığında erişimin bu hesabına otomatik tanımlanır.");}
     }
     @Override public void onWindowFocusChanged(boolean focused) {super.onWindowFocusChanged(focused);if(focused){openSearchSelection();if(informationSelection!=null && (dialog==null || !dialog.isShowing())){Item item=informationSelection;informationSelection=null;play(item);}}}
@@ -433,6 +438,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void showLogin(String message) {
+        visibleAnalyticsScreen="login";analytics.screen(visibleAnalyticsScreen);
         artwork.retireScreen();
         if(catalogDialog!=null && catalogDialog.isShowing())catalogDialog.dismiss();
         generation++;homeLoadSerial++;body=null;grid=null;discovery=null;resizeFocus=null;sizing=TvLayout.measure(this);measuredWidth=sizing.width;measuredHeight=sizing.height;
@@ -454,7 +460,7 @@ public final class MainActivity extends Activity {
         loginCode.setOnEditorActionListener((v,action,event)->{if(action==EditorInfo.IME_ACTION_GO){login();return true;}return false;});
         loginMessage=TvUi.text(this,message,15,TvUi.ACCENT);loginMessage.setMinHeight(TvUi.dp(this,26));form.addView(loginMessage,TvUi.space(this,-1,-2));
         TextView remember=TvUi.text(this,"Oturumunuz bu cihazda güvenle hatırlanır.",14,TvUi.MUTED);form.addView(remember,TvUi.space(this,-1,-2));
-        startup.show(background);loginCode.requestFocus();startup.ready();
+        startup.show(background);loginCode.requestFocus();startup.ready();offerAnalytics();
     }
     private void login() {
         String code=loginCode.getText().toString().trim();
@@ -463,10 +469,11 @@ public final class MainActivity extends Activity {
             loginMessage.post(()->loginMessage.requestRectangleOnScreen(new android.graphics.Rect(0,0,loginMessage.getWidth(),loginMessage.getHeight()),true));return;
         }
         ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(loginCode.getWindowToken(),0);
-        final long ticket=++generation; loginMessage.setText("Giriş yapılıyor…"); loginCode.setEnabled(false);
+        final long ticket=++generation,analyticsTicket=analytics.epoch(); loginMessage.setText("Giriş yapılıyor…"); loginCode.setEnabled(false);
         repository.login(code,new TvRepository.Callback<Account>() {
             public void onResult(Account account) {
                 if(destroyed || stopped || ticket!=generation)return;
+                analytics.event(analyticsTicket,"login",Collections.emptyMap());
                 loginCode.setText(""); page=pages.get(Section.HOME);welcomeResolved=false;loadWelcome();
             }
             public void onError(Failure failure) {
@@ -508,6 +515,7 @@ public final class MainActivity extends Activity {
     private String pageTitle() { return page.section==Section.HOME?"Sizin için":NAV[page.section.ordinal()]; }
     private void showPage(boolean reload,boolean contentFocus) {
         if(welcomeBlocked()){loadWelcome();return;}
+        visibleAnalyticsScreen=page.section.name().toLowerCase(Locale.ROOT);analytics.screen(visibleAnalyticsScreen);offerAnalytics();
         discardPreviousSource();
         applyPendingCatalogs(false);
         shell(pageTitle(),page.section==Section.HOME?"Filmler, diziler ve canlı yayınlar tek yerde.":"");
@@ -522,7 +530,7 @@ public final class MainActivity extends Activity {
             page.catalog=new Catalog(Kind.MOVIE,items,new ArrayList<>());page.catalogScope=repository.currentScope();replaceCatalog(contentFocus);
         },()->showPage(true,true)));
         else if(page.section==Section.HOME)loadHomeCatalogs(reload,contentFocus);
-        else repository.catalog(pageKind(),reload,callback(ticket,scope,catalog->{page.catalog=catalog;page.catalogScope=repository.currentScope();replaceCatalog(contentFocus);},()->showPage(true,true)));
+        else {final long analyticsTicket=analytics.epoch();repository.catalog(pageKind(),reload,callback(ticket,scope,catalog->{page.catalog=catalog;page.catalogScope=repository.currentScope();analytics.event(analyticsTicket,"catalog_page_loaded",TvAnalytics.values("result_count",catalog.items.size()));replaceCatalog(contentFocus);},()->showPage(true,true)));}
     }
     private void loadHomeCatalogs(boolean force,boolean contentFocus){
         final Page owner=pages.get(Section.HOME);final long serial=++homeLoadSerial;final String account=repository.currentAccountId();
@@ -633,14 +641,14 @@ public final class MainActivity extends Activity {
             public boolean isFavorite(Item item){return repository.isFavorite(item);}
             public void favorite(Item item,Button button){
                 String key=scope+"\0"+item.key();if(!current(item) || favoriteMutations.containsKey(key))return;
-                Object operation=new Object();favoriteMutations.put(key,operation);button.setClickable(false);button.setContentDescription("Favori kaydediliyor");
+                final long analyticsTicket=analytics.epoch();Object operation=new Object();favoriteMutations.put(key,operation);button.setClickable(false);button.setContentDescription("Favori kaydediliyor");
                 repository.toggleFavorite(item,new TvRepository.Callback<Boolean>(){
                     private boolean release(){
                         if(favoriteMutations.get(key)!=operation)return false;favoriteMutations.remove(key);
                         if(discovery!=null && discovery.isDescendant(button) && discovery.selectedHero().equals(item.key()))button.setClickable(true);
                         return true;
                     }
-                    public void onResult(Boolean saved){if(!release() || !current(item))return;pages.get(Section.FAVORITES).catalog=null;if(discovery!=null && discovery.selectedHero().equals(item.key())){button.setText(Boolean.TRUE.equals(saved)?"♥":"♡");button.setContentDescription(Boolean.TRUE.equals(saved)?"Favorilerden çıkar":"Favorilere ekle");}}
+                    public void onResult(Boolean saved){if(!release() || !current(item))return;analytics.event(analyticsTicket,Boolean.TRUE.equals(saved)?"add_to_wishlist":"remove_from_wishlist",TvAnalytics.item(item));pages.get(Section.FAVORITES).catalog=null;if(discovery!=null && discovery.selectedHero().equals(item.key())){button.setText(Boolean.TRUE.equals(saved)?"♥":"♡");button.setContentDescription(Boolean.TRUE.equals(saved)?"Favorilerden çıkar":"Favorilere ekle");}}
                     public void onError(Failure failure){if(!release() || !current(item))return;if(discovery!=null && discovery.selectedHero().equals(item.key()))button.setContentDescription(repository.isFavorite(item)?"Favorilerden çıkar":"Favorilere ekle");if(failure.code==Failure.Code.STALE)return;if(failure.code==Failure.Code.AUTH)sessionEnded(failure.message);else notice("Favori kaydedilemedi. Tekrar deneyebilirsin.");}
                 });
             }
@@ -744,11 +752,11 @@ public final class MainActivity extends Activity {
                 text->CatalogFilterData.preview(snapshot,owner.category,text),text->{
                     committed[0]=true;
                     if(!catalogOwner(owner,snapshot,ticket,scope)){panel[0].dismiss();return;}
-                    owner.query=text.trim();owner.scroll=0;owner.focusKey="";
+                    owner.query=text.trim();recordSearch(snapshot,owner.category,text);owner.scroll=0;owner.focusKey="";
                     panel[0].dismiss();showPage(false,true);
                 },(item,text)->{
                     committed[0]=true;
-                    if(catalogOwner(owner,snapshot,ticket,scope))searchSelection=new SearchSelection(owner,snapshot,ticket,scope,text.trim(),item);
+                    if(catalogOwner(owner,snapshot,ticket,scope)){recordSearch(snapshot,owner.category,text);searchSelection=new SearchSelection(owner,snapshot,ticket,scope,text.trim(),item);}
                     panel[0].dismiss();
                 },()->catalogDismissed(panel[0],owner,snapshot,ticket,scope,"catalog:search",committed));
         dialog=catalogDialog=panel[0];panel[0].show();
@@ -776,7 +784,7 @@ public final class MainActivity extends Activity {
         panel[0]=CatalogDialogs.categories(this,pageTitle(),owner.section==Section.FAVORITES?CatalogFilterData.favoriteCategories(snapshot,owner.query):CatalogFilterData.categories(snapshot,owner.query),owner.category,option->{
             committed[0]=true;
             if(!catalogOwner(owner,snapshot,ticket,scope)){panel[0].dismiss();return;}
-            owner.category=option.id;owner.categoryTitle=option.title;owner.focusKey="";owner.scroll=0;
+            owner.category=option.id;Map<String,Object> categoryMeasurement=TvAnalytics.values("category_id",TvAnalytics.opaque(option.id));String categoryLabel=AnalyticsPolicy.catalogLabel(option.title,80);if(!categoryLabel.isEmpty())categoryMeasurement.put("category_name",categoryLabel);analytics.event("category_select",categoryMeasurement);owner.categoryTitle=option.title;owner.focusKey="";owner.scroll=0;
             panel[0].dismiss();showPage(false,true);
         },()->catalogDismissed(panel[0],owner,snapshot,ticket,scope,"catalog:category",committed));
         dialog=catalogDialog=panel[0];panel[0].show();
@@ -791,7 +799,7 @@ public final class MainActivity extends Activity {
         if(!item.scope.equals(repository.currentScope())) { notice("Kaynak değişti. Listeyi yenileyin.");return; }
         playerLaunching=true;
         Intent intent=new Intent(this,PlayerActivity.class);intent.putExtra(PlayerActivity.EXTRA_ITEM,item);
-        try {startActivity(intent);}
+        try {startActivity(intent);analytics.event("select_content",TvAnalytics.item(item));}
         catch(android.content.ActivityNotFoundException | SecurityException unavailable) {
             playerLaunching=false;notice("Oynatıcı açılamadı. Yeniden deneyin.");
         }
@@ -802,6 +810,7 @@ public final class MainActivity extends Activity {
     }
     private void showAccount() {
         if(welcomeBlocked()){loadWelcome();return;}
+        visibleAnalyticsScreen="account";analytics.screen(visibleAnalyticsScreen);
         page=pages.get(Section.ACCOUNT);shell("Hesabım","");
         LinearLayout loading=scrollContent();loading.addView(TvUi.text(this,"Hesap yükleniyor…",20,TvUi.MUTED),TvUi.space(this,-1,64));addAccountActions(loading);
         final long ticket=generation;String scope=repository.currentScope();repository.account(true,callback(ticket,scope,account->{
@@ -819,16 +828,23 @@ public final class MainActivity extends Activity {
         Button update=updatePanel.addTo(parent,sizing.contentWidth()-8);markFocus(update,"account:update");
         Button logout=addLocalLogout(parent);update.setNextFocusDownId(logout.getId());logout.setNextFocusUpId(update.getId());linkContent(logout);
         Button packages=TvUi.button(this,"Paketleri gör",()->openPackages(1));markFocus(packages,"account:packages");parent.addView(packages,TvUi.space(this,Math.min(230,sizing.contentWidth()-8),48));logout.setNextFocusDownId(packages.getId());packages.setNextFocusUpId(logout.getId());
+        parent.addView(TvUi.text(this,analytics.status(),16,TvUi.MUTED),TvUi.space(this,-1,-2));
+        Button privacy=TvUi.button(this,"Kullanım analizi tercihi",()->{AlertDialog consent=analytics.dialog(this,()->{if(!stopped&&!destroyed)showAccount();});dialog=consent;consent.show();consent.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus();});markFocus(privacy,"account:analytics");privacy.setEnabled(analytics.configured());parent.addView(privacy,TvUi.space(this,Math.min(330,sizing.contentWidth()-8),48));packages.setNextFocusDownId(privacy.getId());privacy.setNextFocusUpId(packages.getId());
     }
     private Button addLocalLogout(LinearLayout parent) {
         Button logout=TvUi.button(this,"Oturumu kapat",this::confirmLogout);markFocus(logout,"account:logout");parent.addView(logout,TvUi.space(this,Math.min(230,sizing.contentWidth()-8),48));return logout;
     }
     private void confirmLogout() {
         AlertDialog confirmation=new AlertDialog.Builder(this).setTitle("Oturum kapatılsın mı?").setMessage("Bu cihazda tekrar giriş yapmak için hesap kodunuz gerekir.")
-            .setNegativeButton("Vazgeç",null).setPositiveButton("Oturumu kapat",(d,w)->sessionEnded("")).create();
+            .setNegativeButton("Vazgeç",null).setPositiveButton("Oturumu kapat",(d,w)->{analytics.event("logout");sessionEnded("");}).create();
         dialog=confirmation;afterOrdinaryDialog(confirmation);confirmation.setOnShowListener(d->confirmation.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus());confirmation.show();
     }
     private String safeMessage(String message) { return message==null || message.trim().isEmpty()?"İşlem tamamlanamadı. Lütfen tekrar deneyin.":message; }
+    private void recordSearch(Catalog catalog,String category,String query){Map<String,Object> values=TvAnalytics.values("query_length",query.trim().length());values.put("result_count",CatalogFilterData.preview(catalog,category,query).count);analytics.event("search",values);}
+    private void offerAnalytics(){
+        if(analyticsPrompted||!analytics.configured()||!analytics.unknown())return;
+        findViewById(android.R.id.content).post(()->{if(destroyed||stopped||analyticsPrompted||dialog!=null&&dialog.isShowing())return;analyticsPrompted=true;AlertDialog consent=analytics.dialog(this,()->{dialog=null;if(!destroyed&&!stopped&&analytics.enabled())analytics.screen(AnalyticsPolicy.visibleScreen(repository.hasSession(),visibleAnalyticsScreen));});dialog=consent;consent.show();consent.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus();});
+    }
     private void showFailure(String message,Runnable retry) {
         int headingCount=page.section==Section.HOME?0:1;
         while(body.getChildCount()>headingCount)body.removeViewAt(headingCount);

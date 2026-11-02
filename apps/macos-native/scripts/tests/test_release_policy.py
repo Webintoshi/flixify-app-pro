@@ -26,6 +26,36 @@ def metadata(configuration="release", architectures=("arm64", "x86_64")):
             "FlixifyBuildConfiguration": configuration, "FlixifyArchitectures": list(architectures)}
 
 
+class SharedBuildCacheTests(unittest.TestCase):
+    def test_universal_build_reuses_cache_but_merges_distinct_architecture_outputs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);runtime_root=root/"runtime";framework=runtime_root/release.FRAMEWORK_RELATIVE
+            framework.mkdir(parents=True);(framework/"runtime").write_bytes(b"runtime")
+            resources=root/"Sources/FlixifyMac/Resources";resources.mkdir(parents=True);(resources/"Flixify.icns").write_bytes(b"icon")
+            (root/"Vendor").mkdir();(root/"Vendor/COPYING.txt").write_text("upstream license");(root/"Vendor/runtime-proof.json").write_text("{}")
+            scratch=[];merged=[]
+            def run(args,**kwargs):
+                if args[:2]==["/usr/bin/xcrun","--sdk"]:return "/sdk"
+                if args[:2]==["/usr/bin/swift","build"]:
+                    cache=Path(args[args.index("--scratch-path")+1]);triple=args[args.index("--triple")+1];architecture=triple.split("-")[0]
+                    output=cache/triple/"release";output.mkdir(parents=True,exist_ok=True);(output/release.PRODUCT).write_bytes(architecture.encode())
+                    if "--show-bin-path" in args:return str(output)
+                    scratch.append(cache);return ""
+                if args[:2]==["/usr/bin/lipo","-create"]:
+                    inputs=[Path(p) for p in args[2:args.index("-output")]];merged.extend(inputs)
+                    Path(args[-1]).write_bytes(b"+".join(p.read_bytes() for p in inputs))
+                return ""
+            with patch.object(release,"ROOT",root),patch.object(release,"prepare_runtime",return_value=runtime_root),patch.object(release,"run",side_effect=run),patch.object(release,"stage_swift_runtime"),patch.object(release,"audit_app",return_value=[]),patch.object(release,"codesign_app"),patch.object(release,"audit_release_privacy",return_value={"passed":True}):
+                app=release.build_app("release",False)
+            self.assertEqual(len(set(scratch)),1,"Both architectures should share downloaded SDK artifacts")
+            self.assertEqual(len(set(merged)),2,"Architecture products must remain distinct")
+            self.assertEqual((app/"Contents/MacOS"/release.PRODUCT).read_bytes(),b"arm64+x86_64")
+            info=plistlib.loads((app/"Contents/Info.plist").read_bytes())
+            self.assertEqual(info["FlixifyArchitectures"],["arm64","x86_64"])
+            self.assertFalse(info["FIREBASE_ANALYTICS_COLLECTION_ENABLED"])
+            self.assertFalse(info["GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_STORAGE"])
+
+
 class ReleasePolicyTests(unittest.TestCase):
     def test_rejects_development_identity_for_public_release(self):
         identities = '  1) ' + 'A' * 40 + ' "Apple Development: Developer (TEAM)"\n'

@@ -1,6 +1,6 @@
 # Flixify Pro for Android TV
 
-Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.4.7`, code 15, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
+Native TV/box client, one architecture-independent APK. Android6/API23 or newer. Package `vip.flixify.tv`; version `1.4.8`, code 16, launcher name `Flixify Pro`. Uses Android platform decoders through Media3; no ARM/x86 native extension is bundled. Real TV codec support still depends on its firmware/hardware.
 
 ## Website and TV frontend parity
 
@@ -43,6 +43,16 @@ The server-backed welcome campaign gates catalogue rendering only for newly gran
 - Each poster focus transition plays the user-supplied short opening cue (298ms), preloaded through SoundPool. Rapid moves retrigger a single stream; restored same-poster focus stays silent. Feedback stops on pause and releases on destroy, without requesting audio focus. Normal control/player sounds are unchanged.
 - An episode's actual end starts a cancellable5second next-episode countdown, including the next available season. Back, replay/seek and leaving the foreground cancel it for that selected episode. The final episode does not start another stream.
 - Stopping/leaving playback releases its decoder/connection; resume is local to the current account/source.
+
+## Optional Google Analytics
+
+Version 1.4.8 adds explicit, versioned analytics consent and an editable **Hesabım → Kullanım analizi tercihi** choice. Rejection leaves all content and controls available. Collection and all advertising consent start disabled in the manifest; the advertising-ID permission is removed. SDK configuration is loaded only after analytics is accepted. Withdrawal disables collection, resets SDK analytics data, and invalidates callbacks admitted under the earlier consent epoch.
+
+Use the Firebase-generated public `app/google-services.json` for package `vip.flixify.tv`; Gradle validates the matching client and required public project/app/API fields. Missing configuration yields `FLIXIFY_ANALYTICS_CONFIGURED=false` and the interface reports unavailable. Debug builds always disable production collection. Never put a service-account credential or Measurement Protocol secret in this file. The SDK is pinned to Firebase Analytics 23.2.0 because 24.0.0 raises the minimum Android API to 24; API 23 compatibility is retained.
+
+Only a fixed event/parameter vocabulary is sent. Content/category IDs are the first 24 lowercase hex characters of SHA256 of `lowercaseKind:catalogID`/category ID. Public catalogue titles/category labels are included only after a bounded privacy check that omits URLs, email addresses, controls, format characters, account-code patterns and credential assignments. Search sends length/count rather than text; codes, tokens, provider scopes, URLs and raw errors are excluded. Actual decoded first-frame callbacks count starts; actual ENDED counts completion, with three progress milestones and bounded watch/buffer totals. Playback polling never emits a continuous event stream. Native payment links add only `from=android_tv`; the browser/backend remains responsible for real purchase revenue.
+
+Unit tests exercise consent, stale callbacks, unavailable configuration, sensitive-field rejection and playback lifecycle counting. SDK integration still requires a configured release artifact and consented Google DebugView/Realtime proof before claiming production ingestion.
 
 ## Existing services
 

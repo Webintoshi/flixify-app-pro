@@ -1,4 +1,15 @@
 plugins { id 'com.android.application' }
+def analyticsFile = file('google-services.json')
+def analyticsClient = null
+def analyticsProject = [:]
+if (analyticsFile.exists()) {
+    def config = new groovy.json.JsonSlurper().parse(analyticsFile)
+    analyticsClient = config.client.find { it.client_info?.android_client_info?.package_name == 'vip.flixify.tv' }
+    analyticsProject = config.project_info
+    if (!analyticsClient?.client_info?.mobilesdk_app_id || !analyticsClient?.api_key?.getAt(0)?.current_key || !analyticsProject?.project_id || !analyticsProject?.project_number) {
+        throw new GradleException('Firebase public configuration is invalid for vip.flixify.tv')
+    }
+}
 android {
     namespace 'vip.flixify.tv'
     compileSdk 36
@@ -7,12 +18,17 @@ android {
         applicationId 'vip.flixify.tv'
         minSdk 23
         targetSdk 35
-        versionCode 15
-        versionName '1.4.7'
+        versionCode 16
+        versionName '1.4.8'
+        buildConfigField 'boolean', 'FLIXIFY_ANALYTICS_CONFIGURED', analyticsClient != null ? 'true' : 'false'
+        buildConfigField 'String', 'FIREBASE_APP_ID', groovy.json.JsonOutput.toJson(analyticsClient?.client_info?.mobilesdk_app_id ?: '')
+        buildConfigField 'String', 'FIREBASE_API_KEY', groovy.json.JsonOutput.toJson(analyticsClient?.api_key?.getAt(0)?.current_key ?: '')
+        buildConfigField 'String', 'FIREBASE_PROJECT_ID', groovy.json.JsonOutput.toJson(analyticsProject?.project_id ?: '')
+        buildConfigField 'String', 'FIREBASE_SENDER_ID', groovy.json.JsonOutput.toJson(analyticsProject?.project_number ?: '')
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
     buildTypes {
-        debug { applicationIdSuffix '.debug'; versionNameSuffix '-debug' }
+        debug { applicationIdSuffix '.debug'; versionNameSuffix '-debug'; buildConfigField 'boolean', 'FLIXIFY_ANALYTICS_CONFIGURED', 'false' }
         release {
             debuggable false
             signingConfig signingConfigs.debug
@@ -28,6 +44,7 @@ android {
     packaging { resources.excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE*', 'META-INF/NOTICE*'] }
 }
 dependencies {
+    implementation 'com.google.firebase:firebase-analytics:23.2.0'
     implementation 'androidx.recyclerview:recyclerview:1.4.0'
     implementation 'androidx.media3:media3-exoplayer:1.11.1'
     implementation 'androidx.media3:media3-exoplayer-hls:1.11.1'

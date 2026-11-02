@@ -3,6 +3,8 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject var store: AppStore
+    @ObservedObject private var analytics = FlixifyAnalytics.shared
+    private var analyticsScreen: String { store.initialLoading ? "" : store.playback != nil ? "player" : store.session == nil ? "login" : store.showWelcome ? "welcome" : store.route.rawValue }
     var body: some View {
         ZStack {
             FlixTheme.background.ignoresSafeArea()
@@ -39,9 +41,22 @@ struct RootView: View {
                 VStack(spacing: 13) { ProgressView(); Text("Açılıyor…").font(.system(size: 14)) }
                     .padding(28).background(FlixTheme.panel, in: RoundedRectangle(cornerRadius: 17)).zIndex(3)
             }
+            if !store.initialLoading, !store.fixtureMode, analytics.configured, !analytics.asked {
+                Color.black.opacity(0.65).ignoresSafeArea().zIndex(9)
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Kullanım analizi").font(.system(size: 25, weight: .semibold))
+                    Text("Google Analytics ile ekran kullanımı ve oynatma performansını ölçmemize izin verir misin? Hesap kodun, yayın bağlantıların ve arama metnin gönderilmez. Seçimin içerik erişimini etkilemez; Ayarlar’dan değiştirebilirsin.").font(.system(size: 15)).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 16) {
+                        Button("İzin verme") { analytics.choose(false) }.frame(maxWidth: .infinity)
+                        Button("İzin ver") { analytics.choose(true) }.frame(maxWidth: .infinity)
+                    }.buttonStyle(.bordered).controlSize(.large)
+                }.padding(30).frame(width: 500).background(FlixTheme.panel,in:RoundedRectangle(cornerRadius:18)).zIndex(10)
+            }
         }
         .foregroundStyle(FlixTheme.text).tint(FlixTheme.accent)
         .task { await store.start() }
+        .onChange(of: analyticsScreen) { screen in if !screen.isEmpty, !store.fixtureMode { analytics.screen(screen) } }
+        .onChange(of: analytics.accepted) { _ in if !analyticsScreen.isEmpty, !store.fixtureMode { analytics.screen(analyticsScreen) } }
         .sheet(isPresented: $store.showSearch) { SearchSheet() }
         .sheet(item: $store.filmDetails) { FilmDetailsView(item: $0) }
         .sheet(isPresented: Binding(get: { store.details != nil }, set: { if !$0 { store.details = nil } })) {
@@ -85,12 +100,15 @@ struct RootView: View {
 
 struct AppSettingsView: View {
     @AppStorage("posterSoundEnabled") private var sound = true
+    @ObservedObject private var analytics = FlixifyAnalytics.shared
     var body: some View {
         Form {
             Toggle("Afiş geçişlerinde ses çal", isOn: $sound)
+            Toggle("İsteğe bağlı kullanım analizi", isOn: Binding(get:{analytics.accepted},set:{analytics.choose($0)})).disabled(!analytics.configured)
+            Text(analytics.status).font(.system(size:12)).foregroundStyle(.secondary)
             Text("Oynatıcı: Boşluk ile duraklat/başlat, sağ/sol ile 10 saniye sar, Esc ile geri dön.").font(.system(size: 12)).foregroundStyle(.secondary)
             Divider()
-            Text("Flixify Pro 1.0.0 · macOS 13 ve üzeri").font(.system(size: 12))
+            Text("Flixify Pro 1.0.1 · macOS 13 ve üzeri").font(.system(size: 12))
             Text("VideoLAN VLCKit 3.7.3 kullanır (LGPL 2.1 veya üzeri).").font(.system(size: 12)).foregroundStyle(.secondary)
             Button("Üçüncü taraf lisansları") {
                 if let url = Bundle.main.url(forResource: "COPYING-VLCKit", withExtension: "txt") { NSWorkspace.shared.open(url) }

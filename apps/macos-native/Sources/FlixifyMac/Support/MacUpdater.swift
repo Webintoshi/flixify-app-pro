@@ -14,6 +14,7 @@ import Foundation
     func check() {
         guard !checking && !downloading else { return }
         checking = true; message = ""; descriptor = nil
+        let analyticsTicket=FlixifyAnalytics.shared.epoch
         task = Task {
             defer { checking = false }
             do {
@@ -24,6 +25,7 @@ import Foundation
                 for try await byte in bytes { guard data.count < 65_536, !Task.isCancelled else { throw CancellationError() }; data.append(byte) }
                 let value = try NativeUpdatePolicy.validate(data, currentVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0", currentBuild: Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1") ?? 1)
                 guard !Task.isCancelled else { return }; descriptor = value
+                FlixifyAnalytics.shared.event("update_offered",epoch:analyticsTicket)
             } catch is CancellationError { }
             catch FlixifyError.updateUnavailable { message = "Uyumlu yeni bir sürüm bulunamadı." }
             catch { message = "Güncelleme bilgisine ulaşılamadı. Daha sonra tekrar deneyebilirsin." }
@@ -33,6 +35,8 @@ import Foundation
     func download() {
         guard let descriptor, !downloading else { return }
         downloading = true; progress = 0; message = ""
+        let analyticsTicket=FlixifyAnalytics.shared.epoch
+        FlixifyAnalytics.shared.event("update_selected")
         task = Task {
             defer { downloading = false }
             var directory: URL?
@@ -54,6 +58,7 @@ import Foundation
                 try await Task.detached(priority: .userInitiated) { try NativeUpdateTrust.verify(file, descriptor: descriptor) }.value
                 guard !Task.isCancelled else { throw CancellationError() }
                 progress = 1
+                FlixifyAnalytics.shared.event("update_downloaded",epoch:analyticsTicket)
                 NSWorkspace.shared.open(file)
                 message = "Açılan pencerede Flixify Pro’yu Uygulamalar klasörüne sürükleyebilirsin."
                 directory = nil
