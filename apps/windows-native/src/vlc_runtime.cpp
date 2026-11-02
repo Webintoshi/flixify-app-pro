@@ -8,8 +8,8 @@ VlcRuntime &VlcRuntime::instance() { static VlcRuntime runtime; return runtime; 
 VlcRuntime::VlcRuntime() {
   const QDir root(QCoreApplication::applicationDirPath());
 #if defined(Q_OS_WIN)
-  const QString library = root.filePath("libvlc.dll");
-  const QString core = root.filePath("libvlccore.dll");
+  const QString library = root.filePath(QStringLiteral("libvlc.dll"));
+  const QString core = root.filePath(QStringLiteral("libvlccore.dll"));
 #elif defined(Q_OS_MACOS)
   const QString library = root.filePath("lib/libvlc.dylib");
   const QString core = root.filePath("lib/libvlccore.dylib");

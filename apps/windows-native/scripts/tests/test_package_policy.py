@@ -51,6 +51,13 @@ class PackagePolicyTests(unittest.TestCase):
             for encoding in ('utf-16le', 'utf-16be'):
                 self.assertTrue(policy.privacy_findings(value.encode(encoding)))
 
+    def test_scalar_adjacent_to_dynamic_library_name_keeps_strict_privacy_gate(self):
+        scalar = struct.pack('<d', 100.0)
+        self.assertEqual(policy.privacy_findings(scalar + b'libvlc.dll\0'), ['3'])
+        self.assertFalse(policy.privacy_findings(scalar + 'libvlc.dll'.encode('utf-16le') + b'\0\0'))
+        for encoding in ('utf-8', 'utf-16le', 'utf-16be'):
+            self.assertEqual(policy.privacy_findings('owner@example.invalid'.encode(encoding)), ['3'])
+
     def test_safe_privacy_diagnostics_never_include_matched_values(self):
         data = b'C:\\Users\\SecretOwner\\private.cpp'
         report = policy.privacy_diagnostics(data)
