@@ -20,7 +20,7 @@ it('sends a bounded MP payload to the fixed collector with ads consent denied an
   expect(requests).toHaveLength(1);
   expect(requests[0].url).toBe('https://region1.google-analytics.com/mp/collect?measurement_id=G-WIN1234567&api_secret=fixture-windows-secret');
   expect(requests[0].signal).toBeInstanceOf(AbortSignal);
-  expect(requests[0].body).toEqual({ client_id: event.clientId, timestamp_micros: event.eventTimestampMs * 1000, non_personalized_ads: true, consent: { ad_user_data: 'DENIED', ad_personalization: 'DENIED' }, events: [{ name: 'video_start', params: { ...event.params, session_id: 123456, engagement_time_msec: 1 } }] });
+  expect(requests[0].body).toEqual({ client_id: '381559555.3352548585', timestamp_micros: event.eventTimestampMs * 1000, non_personalized_ads: true, consent: { ad_user_data: 'DENIED', ad_personalization: 'DENIED' }, events: [{ name: 'video_start', params: { ...event.params, session_id: 123456, engagement_time_msec: 1 } }] });
   expect(JSON.stringify(requests[0].body)).not.toMatch(/user_id|authorization|password|stream_url|customer/);
 });
 
@@ -31,4 +31,34 @@ it('does not call Google when the stream is absent and classifies retryable tran
   expect(await deliverAnalyticsEvent(configured(), event, async () => { throw Error('network-private-value'); })).toEqual({ delivered: false, retryable: true });
   expect(await deliverAnalyticsEvent(configured(), event, async () => new Response(null, { status: 429 }))).toEqual({ delivered: false, retryable: true });
   expect(await deliverAnalyticsEvent(configured(), event, async () => new Response(null, { status: 400 }))).toEqual({ delivered: false, retryable: false });
+});
+
+it('converts anonymous UUIDs only on the Google wire to stable distinct numeric client ids', async () => {
+  const payloads: any[] = [];
+  const send = vi.fn(async (_url, init) => { payloads.push(JSON.parse(String(init!.body))); return new Response(null, { status: 204 }); });
+  const original = JSON.stringify(event);
+  await deliverAnalyticsEvent(configured(), event, send);
+  await deliverAnalyticsEvent(configured(), { ...event, stream: 'web', sessionId: event.sessionId + 1 }, send);
+  await deliverAnalyticsEvent(configured(), { ...event, clientId: '34b7745b-573e-4e68-9790-b23415c418a5' }, send);
+  expect(payloads[0].client_id).toBe('381559555.3352548585');
+  expect(payloads[1].client_id).toBe(payloads[0].client_id);
+  expect(payloads[2].client_id).toBe('1177905466.1761980398');
+  expect(payloads[2].client_id).not.toBe(payloads[0].client_id);
+  for (const payload of payloads) {
+    expect(payload.client_id).toMatch(/^\d{1,10}\.\d{1,10}$/);
+    expect(payload.non_personalized_ads).toBe(true);
+    expect(payload.consent).toEqual({ ad_user_data: 'DENIED', ad_personalization: 'DENIED' });
+    expect(JSON.stringify(payload)).not.toMatch(/34b7745b|fixture-web-secret|fixture-windows-secret|aaaaaaaa/);
+  }
+  expect(JSON.stringify(event)).toBe(original);
+});
+
+it('preserves an existing browser Google client id and rejects other internal client ids without sending', async () => {
+  const payloads: any[] = [];
+  const send = vi.fn(async (_url, init) => { payloads.push(JSON.parse(String(init!.body))); return new Response(null, { status: 204 }); });
+  expect(await deliverAnalyticsEvent(configured(), { ...event, stream: 'web', clientId: '1234567890.1793610000' }, send)).toEqual({ delivered: true, retryable: false });
+  expect(payloads[0].client_id).toBe('1234567890.1793610000');
+  send.mockClear();
+  expect(await deliverAnalyticsEvent(configured(), { ...event, clientId: 'invalid-private-identity' }, send)).toEqual({ delivered: false, retryable: false });
+  expect(send).not.toHaveBeenCalled();
 });

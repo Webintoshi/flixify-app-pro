@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 export type AnalyticsStream = 'web' | 'windows';
 export type AnalyticsStreamConfiguration = { measurementId: string; apiSecret: string };
 export type AnalyticsConfiguration = { webId: string | null; web: AnalyticsStreamConfiguration | null; windows: AnalyticsStreamConfiguration | null; hashSecret: string | null; debug: boolean };
@@ -20,16 +22,24 @@ export function analyticsPublicConfiguration(configuration: AnalyticsConfigurati
   return { schema: 1, consentVersion: 1, web: { enabled: Boolean(configuration.webId), measurementId: configuration.webId }, windows: { enabled: Boolean(configuration.windows), measurementId: configuration.windows?.measurementId ?? null } };
 }
 
+function googleWireClientId(clientId: string): string | null {
+  if (/^\d{1,20}\.\d{1,20}$/.test(clientId)) return clientId;
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(clientId)) return null;
+  const anonymous = createHash('sha256').update(clientId).digest();
+  return `${anonymous.readUInt32BE(0)}.${anonymous.readUInt32BE(4)}`;
+}
+
 export async function deliverAnalyticsEvent(configuration: AnalyticsConfiguration, event: AnalyticsOutboxEvent, fetcher: typeof fetch = fetch): Promise<{ delivered: boolean; retryable: boolean }> {
   const stream = configuration[event.stream];
-  if (!stream) return { delivered: false, retryable: false };
+  const clientId = googleWireClientId(event.clientId);
+  if (!stream || !clientId) return { delivered: false, retryable: false };
   const target = new URL('https://region1.google-analytics.com/mp/collect');
   target.searchParams.set('measurement_id', stream.measurementId);
   target.searchParams.set('api_secret', stream.apiSecret);
   try {
     const response = await fetcher(target.toString(), {
       method: 'POST', signal: AbortSignal.timeout(5000), headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ client_id: event.clientId, timestamp_micros: event.eventTimestampMs * 1000, non_personalized_ads: true,
+      body: JSON.stringify({ client_id: clientId, timestamp_micros: event.eventTimestampMs * 1000, non_personalized_ads: true,
         consent: { ad_user_data: 'DENIED', ad_personalization: 'DENIED' },
         events: [{ name: event.name, params: { ...event.params, session_id: event.sessionId, engagement_time_msec: event.params.engagement_time_msec ?? 1, ...(configuration.debug ? { debug_mode: 1 } : {}) } }] })
     });

@@ -48,7 +48,7 @@ export function webAnalytics() {
     },
     platform: () => window.matchMedia?.("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true ? "pwa" : "web",
     now: Date.now,
-    newClientId: () => crypto.randomUUID(),
+    newClientId: () => crypto.getRandomValues(new Uint32Array(2)).join("."),
     debug: () => ["localhost", "127.0.0.1"].includes(window.location.hostname) || new URLSearchParams(window.location.search).get("analytics_debug") === "1"
   });
   return runtime;
