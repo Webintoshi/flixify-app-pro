@@ -46,6 +46,42 @@ def configuration(service):
     return {'tag': p.API_TAG, 'id': p.API_ID, 'paths': p.API_PATHS, 'new': p.API_NEW, 'dist': 'apps/api/dist', 'entry': 'server.js'}
 
 
+def compile_script(service, expected_dist=None):
+    configuration(service)
+    script = backend.legacy.cgroup() + 'cp.execFileSync("npm",["run","build","-w","@flixify/api"],{stdio:"inherit"});'
+    if expected_dist is not None:
+        if (not isinstance(expected_dist, dict) or set(expected_dist) != {'sha256', 'files'} or
+                not re.fullmatch(r'[0-9a-f]{64}', str(expected_dist['sha256'])) or
+                type(expected_dist['files']) is not int or expected_dist['files'] < 1):
+            raise p.GateError('validated_baseline_dist_fingerprint_required')
+        script += (backend.legacy.snapshot_function() + "const actualBaseline=snapshot('/app/apps/api/dist');"
+            + 'if(actualBaseline.sha256!==' + json.dumps(expected_dist['sha256'])
+            + '||actualBaseline.files!==' + str(expected_dist['files'])
+            + ')throw Error("baseline_source_dist_mismatch");')
+    return script
+
+
+def compiler_command(original, *args, **kwargs):
+    arguments = list(args)
+    if arguments[:2] == ['docker', 'create'] and '--name' in arguments:
+        name = arguments[arguments.index('--name') + 1]
+        if re.fullmatch(r'flixify-(?:packages-api|search-web)-build-[0-9a-f]{12}', name):
+            for key, value in (('--network', 'none'), ('--memory', '1280m'), ('--memory-swap', '1536m'), ('--pids-limit', '256')):
+                if arguments.count(key) != 1 or arguments[arguments.index(key) + 1] != value:
+                    raise p.GateError('owned_compiler_resource_caps_differ')
+            image = p.API_ID if name.startswith('flixify-packages-api-') else p.WEB_ID
+            if image not in arguments: raise p.GateError('owned_compiler_source_image_differs')
+            if '--cpus' in arguments:
+                if arguments.count('--cpus') != 1 or arguments[arguments.index('--cpus') + 1] != '1':
+                    raise p.GateError('owned_compiler_cpu_cap_differs')
+            else: arguments[2:2] = ['--cpus', '1']
+    return original(*arguments, **kwargs)
+
+
+original_backend_command, original_web_command = backend.command, web.command
+backend.command = lambda *args, **kwargs: compiler_command(original_backend_command, *args, **kwargs)
+web.command = lambda *args, **kwargs: compiler_command(original_web_command, *args, **kwargs)
+backend.compile_script = compile_script
 backend.configuration = configuration
 backend.target = target
 for module in (web, web.builder):
