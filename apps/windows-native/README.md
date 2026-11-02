@@ -21,7 +21,7 @@ cmake --build C:/flixify/build --parallel 2
 ctest --test-dir C:/flixify/build --output-on-failure --no-tests=error
 ```
 
-Production target: `FlixifyWindows` (output `Flixify Pro.exe`). Test targets: `catalog_test`, `repository_test`, `player_policy_test`, `player_test`, `ui_smoke`. The first four plus packaging policy tests run through CTest. `player_test` runs the production player against a controlled VLC function table, including blocked startup, polling, controls and cancellation. `ui_smoke` needs the deployed Qt/VLC runtime and runs separately during packaging.
+Production target: `FlixifyWindows` (output `Flixify Pro.exe`). Test targets: `catalog_test`, `repository_test`, `player_policy_test`, `analytics_test`, `player_test`, `bridge_test`, `ui_smoke`. The first six plus packaging policy tests run through CTest. `player_test` runs the production player against a controlled VLC function table, including blocked startup, polling, controls and cancellation. `ui_smoke` needs the deployed Qt/VLC runtime and runs separately during packaging.
 
 For macOS development-only UI review, point `QT_ROOT` at a Qt 6.10+ desktop SDK and use `cmake --preset local-qa`, `cmake --build --preset local-qa`, and `ctest --preset local-qa`. This does not produce or validate a Windows package. Qt Multimedia is optional for local compilation, but is included and required by the Windows package input set.
 

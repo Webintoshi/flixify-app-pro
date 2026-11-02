@@ -13,4 +13,5 @@ void finishAt(qint64 position, qint64 duration);
 double appliedRate();
 QString appliedAspect();
 void failAttach(int event);
+void bufferAt(float percent);
 }

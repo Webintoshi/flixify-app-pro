@@ -1,5 +1,6 @@
 #include "fake_vlc_runtime.h"
 #include "player.h"
+#include "playback_analytics.h"
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QSemaphore>
@@ -7,6 +8,7 @@
 #include <atomic>
 #include <functional>
 #include <thread>
+#include <limits>
 
 namespace {
 QVariantMap media(const QString &id = "1") {
@@ -41,6 +43,56 @@ class PlayerTest : public QObject {
   Q_OBJECT
  private slots:
   void init() { FakeVlc::reset(); }
+  void actualBufferingEventsAreObservedWithoutChangingPlaybackOrLoading() {
+    DesktopPlayer player;player.setSurface(1);player.open(media());
+    QTRY_VERIFY(player.playing()&&player.hasVideoFrame());
+    FakeVlc::bufferAt(0);QTRY_VERIFY(player.buffering());
+    QVERIFY(player.playing());QVERIFY(!player.loading());QVERIFY(player.wantsPlayback());
+    FakeVlc::bufferAt(std::numeric_limits<float>::quiet_NaN());QTest::qWait(350);QVERIFY(player.buffering());
+    FakeVlc::bufferAt(std::numeric_limits<float>::infinity());QTest::qWait(350);QVERIFY(player.buffering());
+    FakeVlc::bufferAt(99);QTest::qWait(350);QVERIFY(player.buffering());
+    FakeVlc::bufferAt(100);QTRY_VERIFY(!player.buffering());
+    FakeVlc::bufferAt(-20);QTRY_VERIFY(player.buffering());
+    FakeVlc::bufferAt(200);QTRY_VERIFY(!player.buffering());
+    QVERIFY(player.playing());QVERIFY(!player.loading());player.releaseSurface(1);
+  }
+  void realPlayerSamplesExcludePauseFromBufferAndWatchDurations() {
+    DesktopPlayer player;qint64 now=0;QList<QPair<QString,QVariantMap>> events;
+    PlaybackAnalytics tracker([&](QString name,QVariantMap values){events.append({name,values});},[&]{return now;});
+    tracker.setEnabled(true);tracker.request({{"kind","movie"},{"id","1"}});
+    connect(&player,&DesktopPlayer::stateChanged,&player,[&]{tracker.observe({player.active(),player.hasVideoFrame(),player.playing(),player.loading(),!player.error().isEmpty(),player.positionMs(),player.durationMs(),player.wantsPlayback(),player.recovering(),player.buffering()});});
+    player.setSurface(1);player.open(media());QTRY_VERIFY(player.hasVideoFrame());
+    now=1000;FakeVlc::bufferAt(0);QTRY_VERIFY(player.buffering());
+    now=3000;player.togglePause();QVERIFY(!player.wantsPlayback());
+    now=23000;player.togglePause();QVERIFY(player.wantsPlayback());
+    now=25000;FakeVlc::bufferAt(100);QTRY_VERIFY(!player.buffering());
+    now=26000;player.close();player.releaseSurface(1);
+    qint64 bufferMs=0,watchMs=-1;int buffers=0;
+    for(const auto &event:events){if(event.first=="playback_buffer"){bufferMs+=event.second.value("buffer_ms").toLongLong();buffers++;}if(event.first=="playback_end")watchMs=event.second.value("watch_ms").toLongLong();}
+    QCOMPARE(buffers,2);QCOMPARE(bufferMs,4000);QCOMPARE(watchMs,2000);
+  }
+  void lateBufferingFromReplacedSessionIsIgnored() {
+    DesktopPlayer player;player.setSurface(1);player.open(media("old"));QTRY_VERIFY(player.hasVideoFrame());
+    bool staleBuffer=false;connect(&player,&DesktopPlayer::stateChanged,&player,[&]{if(player.item().value("id")=="new"&&player.buffering())staleBuffer=true;});
+    FakeVlc::bufferAt(0);
+    QVERIFY(guiRunsWhileVlcBlocked("time",[]{},[&]{player.open(media("new"));}));
+    QTRY_VERIFY(player.playing()&&player.item().value("id")=="new");QVERIFY(!player.buffering());QVERIFY(!staleBuffer);player.releaseSurface(1);
+  }
+  void failedBufferingAttachmentKeepsPrefixTeardownSafe() {
+    DesktopPlayer player;player.setSurface(1);FakeVlc::failAttach(0x103);player.open(media());QTRY_VERIFY(!player.error().isEmpty());player.releaseSurface(1);
+    const auto calls=FakeVlc::calls();QCOMPARE(calls.count("attach"),6);QCOMPARE(calls.count("detach"),5);QCOMPARE(calls.count("invalidDetachWouldAbortVlc"),0);QCOMPARE(calls.count("play"),0);
+  }
+  void recoveryWaitIsMeasuredWithoutChangingLiveLoadingBehavior() {
+    DesktopPlayer player;qint64 now=0;QList<QPair<QString,QVariantMap>> events;
+    PlaybackAnalytics tracker([&](QString name,QVariantMap values){events.append({name,values});},[&]{return now;});tracker.setEnabled(true);tracker.request({{"kind","live"},{"id","1"}});
+    connect(&player,&DesktopPlayer::stateChanged,&player,[&]{tracker.observe({player.active(),player.hasVideoFrame(),player.playing(),player.loading(),!player.error().isEmpty(),player.positionMs(),0,player.wantsPlayback(),player.recovering(),player.buffering()});});
+    auto input=media();auto item=input.value("item").toMap();item["kind"]="live";input["item"]=item;player.setSurface(1);player.open(input);QTRY_VERIFY(player.hasVideoFrame());
+    now=1000;FakeVlc::finishAt(10000,120000);QTRY_VERIFY(player.recovering());QVERIFY(!player.loading());QVERIFY(player.wantsPlayback());
+    now=6000;player.open(input);QTRY_VERIFY(player.playing());now=7000;player.close();player.releaseSurface(1);
+    int starts=0; qint64 buffer=-1,watch=-1;
+    for(const auto &event:events){starts+=event.first=="video_start";if(event.first=="playback_buffer")buffer=event.second.value("buffer_ms").toLongLong();if(event.first=="playback_end")watch=event.second.value("watch_ms").toLongLong();}
+    QCOMPARE(starts,1);QCOMPARE(buffer,5000);QCOMPARE(watch,2000);
+  }
   void engineStartupDoesNotBlockGui() {
     DesktopPlayer player; player.setSurface(1);
     const bool responsive = guiRunsWhileVlcBlocked("create", [&] { player.open(media()); });

@@ -8,7 +8,12 @@ struct libvlc_media_t;
 struct libvlc_media_player_t;
 struct libvlc_event_manager_t;
 struct libvlc_track_description_t { int i_id; char *psz_name; libvlc_track_description_t *p_next; };
-struct libvlc_event_t { int type; void *p_obj; };
+// Leading event layout from VideoLAN's libvlc_events.h, tag 3.0.24. Only the buffering member is read.
+struct libvlc_event_t {
+  int type;
+  void *p_obj;
+  union { struct { float new_cache; } media_player_buffering; } u;
+};
 using VlcCallback = void (*)(const libvlc_event_t *, void *);
 
 class VlcRuntime {

@@ -1,6 +1,8 @@
 #include "repository.h"
 #include "catalog.h"
 #include "session_store.h"
+#include "analytics.h"
+#include "playback_analytics.h"
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -49,21 +51,35 @@ StoredSession tokens(const QJsonObject &r){auto user=r["user"].toObject();Stored
 class DesktopRepository::Private {
 public:
     DesktopRepository *q;RepositoryOptions options;QNetworkAccessManager network;SessionStore vault;MetadataStore cache;QTimer expiryTimer,refreshTimer;
+    std::unique_ptr<DesktopAnalytics> analytics;
+    quint64 analyticsEpoch=1;
+    bool searchMeasurementPending=false;
+    quint64 searchAnalyticsEpoch=0;
+    QString analyticsScreen;
+    bool analyticsPlayerVisible=false;
+    quint64 analyticsPendingAttempt=0,analyticsPendingEpoch=0;
+    QHash<QString,quint64> catalogAnalyticsEpoch;
     StoredSession session;QString providerOrigin,username,password,version,policyRevision;QSet<QString> excluded;QString currentScope;quint64 authGeneration=0,sourceGeneration=0;QSet<QNetworkReply*> replies;QHash<QNetworkReply*,QString> replyScopes;
     bool boot=true,working=false,detailLoading=false,moreLoading=false,sound=true,rotating=false,refreshing=false;int visible=96,revision=0;QString failure,currentRoute="home",searchQuery,selectedCategory,selectedCountry;QVariantMap currentAccount,currentHero,detail,offer;QVariantList visibleItems,currentShelves,currentCategories,currentCountries,favoriteItems,epgRows,filtered;QHash<QString,QVariantList> catalogs;QHash<QString,QHash<QString,int>> catalogIndices;QHash<QString,qint64> catalogSaved;QHash<QString,QVariantMap> details;QHash<QString,qint64> detailSaved;QSet<QString> detailRefreshing;bool bypassDetailDisk=false;QHash<QString,QString> liveAliases;QHash<QString,QList<Done>> catalogFlights;QSet<QString> diskChecked;QHash<QString,QVariantMap> references;QSet<QString> watched,watchedWrites;QList<Done> rotationWaiters;QString libraryScope;qint64 deadline=0;int playbackSerial=0;quint64 viewGeneration=0,accountFlight=0,rotationTicket=0,detailSelection=0,epgSelection=0,detailEpoch=0;QTimer queryTimer;
     Private(DesktopRepository *owner,RepositoryOptions o):q(owner),options(std::move(o)),network(owner),vault(options.storageDirectory.isEmpty()?defaultStorage():options.storageDirectory,options.allowLoopbackForTests),cache(options.storageDirectory.isEmpty()?defaultStorage():options.storageDirectory){
         QSettings preferences((options.storageDirectory.isEmpty()?defaultStorage():options.storageDirectory)+"/preferences.ini",QSettings::IniFormat);sound=preferences.value("posterSoundEnabled",true).toBool();
         if(!options.now)options.now=[] {return QDateTime::currentMSecsSinceEpoch();};
+        if(!options.analyticsClock)options.analyticsClock=&PlaybackAnalytics::monotonicNow;
         if(!(options.apiBase.scheme()=="https"&&options.apiBase.host()=="api.flixify.vip"&&options.apiBase.userInfo().isEmpty()&&options.apiBase.path().isEmpty()&&!options.apiBase.hasQuery()&&!options.apiBase.hasFragment())&&!(options.allowLoopbackForTests&&loopback(options.apiBase)))options.apiBase=QUrl("https://api.flixify.vip");
+        analytics=std::make_unique<DesktopAnalytics>(AnalyticsOptions{options.apiBase,(options.storageDirectory.isEmpty()?defaultStorage():options.storageDirectory)+"/analytics.ini",options.allowLoopbackForTests},owner);
+        QObject::connect(analytics.get(),&DesktopAnalytics::stateChanged,q,[this]{const auto ticket=analyticsEpoch;QTimer::singleShot(0,q,[this,ticket]{if(ticket==analyticsEpoch)screen(analyticsPlayerVisible?"player":currentRoute);});emit q->stateChanged();});
+        QTimer::singleShot(0,q,[this]{analytics->reloadConfiguration();});
         queryTimer.setSingleShot(true);queryTimer.setInterval(90);QObject::connect(&queryTimer,&QTimer::timeout,q,[this]{rebuild();});
         QObject::connect(&expiryTimer,&QTimer::timeout,q,[this]{if(deadline&&deadline<=now())revoke();});expiryTimer.start(250);
         QObject::connect(&refreshTimer,&QTimer::timeout,q,[this]{if(session.valid()&&!refreshing&&!working)refreshAccount(false);});refreshTimer.start(60000);
     }
     qint64 now()const{return options.now();}
+    void analyticsSession(){analytics->setSession(session.accessToken,session.accountID);}
+    void screen(QString name){if(!session.valid()||!analytics->available()||analytics->choice()!="accepted"||name==analyticsScreen)return;analyticsScreen=name;analytics->record("app_screen_view",{{"screen_name",name}});}
     void changed(){emit q->stateChanged();}
     void fail(QString text=QString::fromUtf8("Bağlantı tamamlanamadı. Lütfen yeniden dene.")){failure=std::move(text);changed();}
     void abort(){auto old=replies;replies.clear();for(auto *reply:old)reply->abort();}
-    void clearSource(){auto staleScope=currentScope;sourceGeneration++;viewGeneration++;detailSelection++;epgSelection++;detailLoading=false;currentScope.clear();working=false;auto scoped=replyScopes;for(auto it=scoped.begin();it!=scoped.end();++it)if(it.value()==staleScope)it.key()->abort();providerOrigin.clear();username.clear();password.clear();version.clear();excluded.clear();policyRevision.clear();deadline=0;catalogs.clear();catalogIndices.clear();catalogSaved.clear();catalogFlights.clear();diskChecked.clear();details.clear();detailSaved.clear();detailRefreshing.clear();bypassDetailDisk=false;detailEpoch++;liveAliases.clear();references.clear();watched.clear();watchedWrites.clear();favoriteItems.clear();libraryScope.clear();detail.clear();epgRows.clear();currentHero.clear();currentShelves.clear();visibleItems.clear();filtered.clear();currentCategories.clear();currentCountries.clear();revision++;playbackSerial++;emit q->sourceChanged();}
+    void clearSource(){failPlaybackMeasurement(analyticsPendingAttempt,analyticsPendingEpoch,"source_unavailable");auto staleScope=currentScope;sourceGeneration++;viewGeneration++;detailSelection++;epgSelection++;detailLoading=false;currentScope.clear();working=false;auto scoped=replyScopes;for(auto it=scoped.begin();it!=scoped.end();++it)if(it.value()==staleScope)it.key()->abort();providerOrigin.clear();username.clear();password.clear();version.clear();excluded.clear();policyRevision.clear();deadline=0;catalogs.clear();catalogIndices.clear();catalogSaved.clear();catalogFlights.clear();diskChecked.clear();details.clear();detailSaved.clear();detailRefreshing.clear();bypassDetailDisk=false;detailEpoch++;liveAliases.clear();references.clear();watched.clear();watchedWrites.clear();favoriteItems.clear();libraryScope.clear();detail.clear();epgRows.clear();currentHero.clear();currentShelves.clear();visibleItems.clear();filtered.clear();currentCategories.clear();currentCountries.clear();revision++;playbackSerial++;emit q->sourceChanged();}
     void revoke(){if(currentScope.isEmpty()&&deadline==0)return;clearSource();currentAccount["canPlay"]=false;currentAccount["expiresAt"]=qint64(0);currentAccount["message"]=QString::fromUtf8("Aktif izleme erişimin bulunmuyor.");emit q->accessRevoked();changed();}
     bool sourceValid(const QString &scope,quint64 generation){if(deadline&&deadline<=now()){revoke();return false;}return session.valid()&&!scope.isEmpty()&&scope==currentScope&&generation==sourceGeneration&&deadline>now();}
     void request(QUrl url,QByteArray method,QJsonObject body,QString token,Reply callback,QString requestScope={}){
@@ -85,8 +101,8 @@ public:
         request(options.apiBase.resolved(QUrl("/auth/refresh")),"POST",{{"refreshToken",before.refreshToken}},{},[this,before,auth,ticket](int status,QJsonDocument doc){
             if(ticket!=rotationTicket||auth!=authGeneration||!session.valid()||session.accountID!=before.accountID||session.refreshToken!=before.refreshToken)return;
             auto replacement=tokens(doc.object());bool ok=status==200&&replacement.valid()&&replacement.accountID==before.accountID&&session.refreshToken==before.refreshToken&&vault.save(replacement);
-            if(ok)session=replacement;rotating=false;auto callbacks=std::move(rotationWaiters);rotationWaiters.clear();
-            if(status==401||status==403){q->logout();return;}for(const auto &callback:callbacks)callback(ok);
+            if(ok){session=replacement;analyticsSession();}rotating=false;auto callbacks=std::move(rotationWaiters);rotationWaiters.clear();
+            if(status==401||status==403){failPlaybackMeasurement(analyticsPendingAttempt,analyticsPendingEpoch,"access_denied");q->logout();return;}for(const auto &callback:callbacks)callback(ok);
         });
     }
     void api(QString path,QByteArray method,QJsonObject body,Reply callback,bool retried=false){
@@ -104,7 +120,7 @@ public:
                     if(ok)api(path,method,body,callback,true);else callback(0,{});
                 });return;
             }
-            if(status==401){q->logout();return;}if(status==403)revoke();callback(status,doc);
+            if(status==401){failPlaybackMeasurement(analyticsPendingAttempt,analyticsPendingEpoch,"access_denied");q->logout();return;}if(status==403)revoke();callback(status,doc);
         },scope);
     }
     bool installProvider(const QJsonObject &raw){auto incomingAccount=raw["accountId"].toString(),incomingVersion=raw["sourceVersion"].toString(),origin=raw["providerOrigin"].toString();QUrl url(origin,QUrl::StrictMode);auto expiry=date(raw["expiresAt"]);bool allowed=url.scheme()=="https"||(options.allowLoopbackForTests&&loopback(url));bool canonical=origin==url.scheme()+"://"+url.host().toLower()+(url.port()>0?":"+QString::number(url.port()):QString());
@@ -128,12 +144,13 @@ public:
     void rebuild(){
         QVariantList rows;if(currentRoute=="home"||currentRoute=="search")rows=all();else if(currentRoute=="favorites")rows=favoriteItems;else if(currentRoute=="movies")rows=catalogs.value("movie");else if(currentRoute=="series")rows=catalogs.value("series");else if(currentRoute=="live")rows=catalogs.value("live");
         auto ticket=++viewGeneration;auto route=currentRoute,query=searchQuery,category=selectedCategory,country=selectedCountry;auto timestamp=now();
-        auto *watcher=new QFutureWatcher<QVariantMap>(q);QObject::connect(watcher,&QFutureWatcher<QVariantMap>::finished,q,[this,watcher,ticket]{auto result=watcher->result();watcher->deleteLater();if(ticket!=viewGeneration)return;filtered=result["filtered"].toList();visibleItems=filtered.mid(0,visible);currentCategories=result["categories"].toList();currentCountries=result["countries"].toList();currentShelves=result["shelves"].toList();currentHero=result["hero"].toMap();changed();});
+        auto *watcher=new QFutureWatcher<QVariantMap>(q);QObject::connect(watcher,&QFutureWatcher<QVariantMap>::finished,q,[this,watcher,ticket]{auto result=watcher->result();watcher->deleteLater();if(ticket!=viewGeneration)return;filtered=result["filtered"].toList();visibleItems=filtered.mid(0,visible);currentCategories=result["categories"].toList();currentCountries=result["countries"].toList();currentShelves=result["shelves"].toList();currentHero=result["hero"].toMap();if(searchMeasurementPending&&!queryTimer.isActive()){searchMeasurementPending=false;q->recordAnalytics("search",{{"query_length",searchQuery.size()},{"result_count",filtered.size()}},searchAnalyticsEpoch);}changed();});
         watcher->setFuture(QtConcurrent::run([rows,route,query,category,country,timestamp]{return QVariantMap{{"filtered",Catalog::filter(rows,query,category,country)},{"categories",Catalog::categories(rows,route=="live")},{"countries",route=="live"?Catalog::countries(rows):QVariantList{}},{"shelves",query.isEmpty()&&category.isEmpty()&&country.isEmpty()?Catalog::shelves(route,rows,timestamp):QVariantList{}},{"hero",query.isEmpty()?Catalog::hero(route,rows,timestamp):QVariantMap{}}};}));
         changed();
     }
     QVariantList referenceValues() const {QVariantList result;for(const auto &ref:references)result.append(ref);return result;}
     void installCatalog(const QString &kind,QVariantList rows){
+        q->recordAnalytics("catalog_page_loaded",{{"content_type",kind},{"result_count",rows.size()}},catalogAnalyticsEpoch.value(kind,analyticsEpoch));
         QHash<QString,int> index;index.reserve(rows.size());
         for(qsizetype i=0;i<rows.size();++i){const auto item=rows.at(i).toMap();index.insert(item.value("id").toString(),int(i));}
         catalogs.insert(kind,std::move(rows));catalogIndices.insert(kind,std::move(index));
@@ -152,6 +169,7 @@ public:
         if(libraryScope==currentScope){favoriteItems=resolved;cache.write(currentScope,"library",QVariantMap{{"favorites",favoriteItems},{"references",referenceValues()},{"watched",QStringList(watched.values())}},deadline,now());}rebuild();
     }
     void ensureCatalog(QString kind,bool force,Done done={}){
+        if(!catalogFlights.contains(kind))catalogAnalyticsEpoch[kind]=analyticsEpoch;
         auto scope=currentScope;auto generation=sourceGeneration;if(!sourceValid(scope,generation)){if(done)done(false);return;}
         if(!force){if(catalogs.contains(kind)){if(done)done(true);if(now()-catalogSaved.value(kind)<6LL*3600000)return;ensureCatalog(kind,true);return;}if(!diskChecked.contains(kind)){
                 diskChecked.insert(kind);catalogFlights[kind]={};if(done)catalogFlights[kind].append(done);working=true;changed();
@@ -222,7 +240,32 @@ public:
             });
         });
     }
-    void playback(QVariantMap request,bool exact){int serial=++playbackSerial;auto before=currentScope;if(deadline&&deadline<=now()){revoke();return;}if(!Catalog::validItem(request,before))return;refreshAccount(false,[this,request,before,serial,exact](bool ok){if(!ok||serial!=playbackSerial||currentScope!=before||!currentAccount["canPlay"].toBool())return;auto emitMedia=[this,serial,before](QVariantMap item){if(item.isEmpty()||serial!=playbackSerial||!sourceValid(before,sourceGeneration))return;auto kind=item["kind"].toString();if(kind=="series"||!QSet<QString>{"ts","m3u8","mp4","mkv","avi"}.contains(item["extension"].toString())||(kind=="live"&&excluded.contains(item["id"].toString())))return;auto user=QString::fromLatin1(QUrl::toPercentEncoding(username)),pass=QString::fromLatin1(QUrl::toPercentEncoding(password));QUrl url(providerOrigin+'/'+(kind=="episode"?"series":kind)+'/'+user+'/'+pass+'/'+item["id"].toString()+'.'+item["extension"].toString(),QUrl::StrictMode);if(!url.isValid())return;QVariantMap media{{"item",item},{"url",url.toString(QUrl::FullyEncoded)},{"expiresAt",deadline},{"scope",currentScope},{"resumeMs",cache.position(item)},{"next",q->nextEpisode(item)}};failure.clear();changed();emit q->playbackReady(media);};if(request["kind"]=="series"&&!exact){getDetail(request,[this,emitMedia](QVariantMap d){auto rows=Catalog::episodes(d);auto selected=cache.latestEpisode(rows);if(selected.isEmpty())for(const auto&v:rows){auto i=v.toMap();if(!watched.contains(Catalog::key(i))){selected=i;break;}}if(selected.isEmpty()&&!rows.isEmpty())selected=rows.first().toMap();emitMedia(selected);});}else canonical(request,emitMedia);});}
+    void failPlaybackMeasurement(quint64 serial,quint64 epoch,QString reason){if(!serial||analyticsPendingAttempt!=serial)return;analyticsPendingAttempt=0;emit q->analyticsPlaybackFailed(serial,epoch,std::move(reason));}
+    void playback(QVariantMap request,bool exact){
+        failPlaybackMeasurement(analyticsPendingAttempt,analyticsPendingEpoch,"canceled");
+        int serial=++playbackSerial;auto before=currentScope;const auto analyticsTicket=analyticsEpoch;const auto startedAt=options.analyticsClock();
+        if(!Catalog::validItem(request,before))return;
+        const bool measured=!exact&&session.valid()&&analytics->available()&&analytics->choice()=="accepted";
+        if(measured){analyticsPendingAttempt=serial;analyticsPendingEpoch=analyticsTicket;emit q->analyticsPlaybackRequested(request,serial,analyticsTicket,startedAt);}
+        if(deadline&&deadline<=now()){failPlaybackMeasurement(serial,analyticsTicket,"access_denied");revoke();return;}
+        refreshAccount(false,[this,request,before,serial,exact,analyticsTicket,startedAt,measured](bool ok){
+            if(serial!=playbackSerial)return;
+            if(!ok||currentScope!=before||!currentAccount["canPlay"].toBool()){failPlaybackMeasurement(serial,analyticsTicket,!ok?"network":currentScope!=before?"source_unavailable":"access_denied");return;}
+            auto emitMedia=[this,serial,before,exact,analyticsTicket,startedAt,measured](QVariantMap item){
+                if(serial!=playbackSerial)return;
+                if(item.isEmpty()||!sourceValid(before,sourceGeneration)){failPlaybackMeasurement(serial,analyticsTicket,"source_unavailable");return;}
+                auto kind=item["kind"].toString();if(kind=="series"||!QSet<QString>{"ts","m3u8","mp4","mkv","avi"}.contains(item["extension"].toString())||(kind=="live"&&excluded.contains(item["id"].toString()))){failPlaybackMeasurement(serial,analyticsTicket,"unsupported");return;}
+                auto user=QString::fromLatin1(QUrl::toPercentEncoding(username)),pass=QString::fromLatin1(QUrl::toPercentEncoding(password));
+                QUrl url(providerOrigin+'/'+(kind=="episode"?"series":kind)+'/'+user+'/'+pass+'/'+item["id"].toString()+'.'+item["extension"].toString(),QUrl::StrictMode);if(!url.isValid()){failPlaybackMeasurement(serial,analyticsTicket,"source_unavailable");return;}
+                QVariantMap media{{"item",item},{"url",url.toString(QUrl::FullyEncoded)},{"expiresAt",deadline},{"scope",currentScope},{"resumeMs",cache.position(item)},{"next",q->nextEpisode(item)},{"analyticsContinuation",exact},{"analyticsAttempt",measured?qulonglong(serial):qulonglong(0)},{"analyticsEpoch",qulonglong(analyticsTicket)},{"analyticsStartedAt",startedAt}};
+                if(!exact&&measured){QVariantMap values{{"content_type",kind},{"content_id",DesktopAnalytics::contentReference(item)}};const auto label=DesktopAnalytics::catalogLabel(item["title"].toString());if(!label.isEmpty())values["content_name"]=label;q->recordAnalytics("select_content",values,analyticsTicket);}
+                if(analyticsPendingAttempt==quint64(serial))analyticsPendingAttempt=0;
+                failure.clear();changed();emit q->playbackReady(media);
+            };
+            if(request["kind"]=="series"&&!exact){getDetail(request,[this,emitMedia](QVariantMap d){auto rows=Catalog::episodes(d);auto selected=cache.latestEpisode(rows);if(selected.isEmpty())for(const auto&v:rows){auto i=v.toMap();if(!watched.contains(Catalog::key(i))){selected=i;break;}}if(selected.isEmpty()&&!rows.isEmpty())selected=rows.first().toMap();emitMedia(selected);});}
+            else canonical(request,emitMedia);
+        });
+    }
 };
 
 DesktopRepository::DesktopRepository(QObject *parent):DesktopRepository(RepositoryOptions{},parent){}
@@ -230,16 +273,17 @@ DesktopRepository::DesktopRepository(const RepositoryOptions &options,QObject *p
 DesktopRepository::~DesktopRepository(){d->authGeneration++;d->abort();}
 #define GET(type,name,value) type DesktopRepository::name() const{return value;}
 GET(bool,bootstrapping,d->boot) GET(bool,authenticated,d->session.valid()) GET(bool,busy,d->working||d->refreshing||d->detailLoading) GET(bool,loadingMore,d->moreLoading) GET(bool,hasMore,d->filtered.size()>d->visibleItems.size()) GET(bool,welcomeVisible,d->offer.value("showPrompt").toBool()) GET(bool,posterSoundEnabled,d->sound)
+GET(bool,analyticsAvailable,d->analytics->available()) GET(bool,analyticsPromptVisible,d->analytics->promptVisible()) GET(QString,analyticsChoice,d->analytics->choice())
 GET(QString,error,d->failure) GET(QString,route,d->currentRoute) GET(QString,query,d->searchQuery) GET(QString,category,d->selectedCategory) GET(QString,country,d->selectedCountry) GET(QString,codeSuffix,d->session.codeSuffix) GET(QString,scope,d->currentScope)
 GET(QVariantMap,account,d->currentAccount) GET(QVariantMap,hero,d->currentHero) GET(QVariantMap,seriesDetail,d->detail) GET(QVariantMap,welcome,d->offer) GET(QVariantList,shelves,d->currentShelves) GET(QVariantList,items,d->visibleItems) GET(QVariantList,categories,d->currentCategories) GET(QVariantList,countries,d->currentCountries) GET(QVariantList,favorites,d->favoriteItems) GET(QVariantList,programmes,d->epgRows) GET(int,libraryRevision,d->revision) GET(qint64,expiresAt,d->deadline)
 #undef GET
 QString DesktopRepository::sectionTitle()const {static const QHash<QString,QString> titles{{"home",QString::fromUtf8("Ana Sayfa")},{"movies",QString::fromUtf8("Filmler")},{"series",QString::fromUtf8("Diziler")},{"live",QString::fromUtf8("Canlı TV")},{"favorites",QString::fromUtf8("Listem")},{"account",QString::fromUtf8("Hesabım")},{"search",QString::fromUtf8("Ara")}};return titles.value(d->currentRoute);}
-void DesktopRepository::restore(){d->session=d->vault.load();d->boot=true;d->changed();if(!d->session.valid()){d->boot=false;d->changed();return;}d->refreshAccount(true);}
-void DesktopRepository::login(QString code){code=code.trimmed().toUpper();if(!QRegularExpression("^[A-Z0-9]{16}$").match(code).hasMatch()){d->fail(QString::fromUtf8("16 karakterli giriş kodunu kontrol et."));return;}logout();d->boot=false;d->working=true;d->failure.clear();d->changed();auto installation=d->vault.installationID();if(installation.isEmpty()){d->working=false;d->fail(QString::fromUtf8("Güvenli oturum kaydı oluşturulamadı."));return;}d->request(d->options.apiBase.resolved(QUrl("/auth/login-by-code")),"POST",{{"code",code},{"deviceName","Flixify Windows"},{"platform","windows"},{"installationId",installation}},{},[this](int status,QJsonDocument doc){auto session=tokens(doc.object());if(status!=200||!session.valid()){d->working=false;d->fail(status==401?QString::fromUtf8("Giriş kodun doğrulanamadı."):QString::fromUtf8("Giriş tamamlanamadı. Yeniden dene."));return;}if(!d->vault.save(session)){d->working=false;d->fail(QString::fromUtf8("Güvenli oturum kaydı oluşturulamadı."));return;}d->session=session;d->refreshAccount(true);});}
-void DesktopRepository::logout(){d->authGeneration++;d->accountFlight++;d->rotationTicket++;d->rotating=false;d->rotationWaiters.clear();d->abort();d->clearSource();d->vault.clear();d->session={};d->currentAccount.clear();d->offer.clear();d->working=false;d->refreshing=false;d->rotating=false;d->rotationWaiters.clear();d->boot=false;d->failure.clear();d->currentRoute="home";d->searchQuery.clear();d->selectedCategory.clear();d->selectedCountry.clear();emit accessRevoked();d->changed();}
-void DesktopRepository::navigate(QString route){if(!QStringList{"home","movies","series","live","favorites","account","search"}.contains(route))return;d->detailSelection++;d->epgSelection++;d->detailLoading=false;d->epgRows.clear();d->currentRoute=route;d->visible=96;d->searchQuery.clear();d->selectedCategory.clear();d->selectedCountry.clear();d->detail.clear();d->failure.clear();d->loadRoute(false);}
-void DesktopRepository::setQuery(QString query){if(query.size()>256)query=query.left(256);d->searchQuery=query;d->visible=96;d->queryTimer.start();d->changed();}
-void DesktopRepository::setCategory(QString c){d->selectedCategory=c=="all"?QString():c;d->visible=96;d->rebuild();}
+void DesktopRepository::restore(){d->session=d->vault.load();d->analyticsSession();d->boot=true;d->changed();if(!d->session.valid()){d->screen("login");d->boot=false;d->changed();return;}d->screen(d->currentRoute);d->refreshAccount(true);}
+void DesktopRepository::login(QString code){code=code.trimmed().toUpper();if(!QRegularExpression("^[A-Z0-9]{16}$").match(code).hasMatch()){d->fail(QString::fromUtf8("16 karakterli giriş kodunu kontrol et."));return;}logout();d->boot=false;d->working=true;d->failure.clear();d->changed();auto installation=d->vault.installationID();if(installation.isEmpty()){d->working=false;d->fail(QString::fromUtf8("Güvenli oturum kaydı oluşturulamadı."));return;}const auto analyticsTicket=d->analyticsEpoch;d->request(d->options.apiBase.resolved(QUrl("/auth/login-by-code")),"POST",{{"code",code},{"deviceName","Flixify Windows"},{"platform","windows"},{"installationId",installation}},{},[this,analyticsTicket](int status,QJsonDocument doc){auto session=tokens(doc.object());if(status!=200||!session.valid()){d->working=false;d->fail(status==401?QString::fromUtf8("Giriş kodun doğrulanamadı."):QString::fromUtf8("Giriş tamamlanamadı. Yeniden dene."));return;}if(!d->vault.save(session)){d->working=false;d->fail(QString::fromUtf8("Güvenli oturum kaydı oluşturulamadı."));return;}d->session=session;d->analyticsSession();recordAnalytics("login",{{"method","code"}},analyticsTicket);d->screen("home");d->refreshAccount(true);});}
+void DesktopRepository::logout(){d->failPlaybackMeasurement(d->analyticsPendingAttempt,d->analyticsPendingEpoch,"canceled");d->analyticsPlayerVisible=false;if(d->session.valid())d->analytics->recordLogoutAndDetach();d->analyticsEpoch++;d->authGeneration++;d->accountFlight++;d->rotationTicket++;d->rotating=false;d->rotationWaiters.clear();d->abort();d->clearSource();d->vault.clear();d->session={};d->analyticsSession();d->analyticsScreen.clear();d->searchMeasurementPending=false;d->currentAccount.clear();d->offer.clear();d->working=false;d->refreshing=false;d->rotating=false;d->rotationWaiters.clear();d->boot=false;d->failure.clear();d->currentRoute="home";d->searchQuery.clear();d->selectedCategory.clear();d->selectedCountry.clear();emit accessRevoked();d->changed();}
+void DesktopRepository::navigate(QString route){if(!QStringList{"home","movies","series","live","favorites","account","search"}.contains(route))return;d->screen(route);d->searchMeasurementPending=false;d->detailSelection++;d->epgSelection++;d->detailLoading=false;d->epgRows.clear();d->currentRoute=route;d->visible=96;d->searchQuery.clear();d->selectedCategory.clear();d->selectedCountry.clear();d->detail.clear();d->failure.clear();d->loadRoute(false);}
+void DesktopRepository::setQuery(QString query){if(query.size()>256)query=query.left(256);if(query==d->searchQuery)return;d->searchAnalyticsEpoch=d->analyticsEpoch;d->searchMeasurementPending=!query.trimmed().isEmpty();d->searchQuery=query;d->visible=96;d->queryTimer.start();d->changed();}
+void DesktopRepository::setCategory(QString c){d->selectedCategory=c=="all"?QString():c;auto ref=DesktopAnalytics::categoryReference(d->selectedCategory);if(!ref.isEmpty()){QVariantMap values{{"category_id",ref}};for(const auto &row:d->currentCategories){const auto category=row.toMap();if(category["id"].toString()==d->selectedCategory){const auto label=DesktopAnalytics::catalogLabel(category["title"].toString(),80);if(!label.isEmpty())values["category_name"]=label;break;}}d->analytics->record("category_select",values);}d->visible=96;d->rebuild();}
 void DesktopRepository::setCountry(QString c){d->selectedCountry=c=="all"?QString():c;d->visible=96;d->rebuild();}
 void DesktopRepository::loadMore(){if(!hasMore()||d->moreLoading)return;d->moreLoading=true;d->changed();QTimer::singleShot(0,this,[this]{d->visible+=96;d->moreLoading=false;d->visibleItems=d->filtered.mid(0,d->visible);d->changed();});}
 void DesktopRepository::refresh(){d->detailSelection++;d->detailLoading=false;d->detailEpoch++;d->details.clear();d->detailSaved.clear();d->detailRefreshing.clear();d->bypassDetailDisk=true;d->failure.clear();d->refreshAccount(true,[this](bool ok){if(ok){d->bypassDetailDisk=true;d->loadRoute(true);}});}
@@ -259,7 +303,26 @@ void DesktopRepository::showSeries(QVariantMap item){
     d->getDetail(item,[this,current](QVariantMap detail){if(!current())return;d->detailLoading=false;d->detail=detail;d->changed();},current);
 }
 bool DesktopRepository::isFavorite(QVariantMap item)const {if(item.value("scope").toString()!=d->currentScope)return false;auto kind=item.value("kind").toString(),id=item.value("id").toString();if(kind=="episode"){kind="series";id=item.value("seriesID").toString();}for(const auto&v:d->favoriteItems){auto i=v.toMap();if(i["kind"].toString()==kind&&i["id"].toString()==id)return true;}return false;}
-void DesktopRepository::toggleFavorite(QVariantMap item){if(item["kind"]=="episode"){item["kind"]="series";item["id"]=item["seriesID"];item["seriesID"]=QString();}bool remove=isFavorite(item);d->canonical(item,[this,remove](QVariantMap verified){if(verified.isEmpty())return;auto scope=d->currentScope;auto gen=d->sourceGeneration;QList<QVariantMap> refs;if(remove){for(const auto&ref:d->references){auto id=ref["id"].toString();if(ref["kind"]==verified["kind"]&&(verified["kind"]=="live"?d->liveAliases.value(id,id)==verified["id"].toString():id==verified["id"].toString()))refs.append(ref);}}else refs.append(d->reference(verified));auto index=std::make_shared<int>(0);auto sequence=std::make_shared<std::function<void()>>();*sequence=[this,scope,gen,remove,refs,index,sequence]{if(!d->sourceValid(scope,gen)){*sequence={};return;}if(*index>=refs.size()){d->revision++;d->resolveFavorites();*sequence={};return;}auto ref=refs[*index];d->api("/me/personal-library/favorites",remove?"DELETE":"PUT",{{"ref",QJsonObject::fromVariantMap(ref)}},[this,scope,gen,remove,ref,index,sequence](int status,QJsonDocument doc){if(!d->sourceValid(scope,gen)){*sequence={};return;}if(status<200||status>=300||!doc.object()["ok"].isBool()||!doc.object()["ok"].toBool()){d->fail(QString::fromUtf8("Listen güncellenemedi."));*sequence={};return;}auto k=ref["kind"].toString()+"::"+ref["id"].toString();if(remove)d->references.remove(k);else d->references[k]=ref;d->revision++;(*index)++;(*sequence)();});};(*sequence)();});}
+void DesktopRepository::toggleFavorite(QVariantMap item){
+    if(item["kind"]=="episode"){item["kind"]="series";item["id"]=item["seriesID"];item["seriesID"]=QString();}
+    const bool remove=isFavorite(item);const auto analyticsTicket=d->analyticsEpoch;
+    d->canonical(item,[this,remove,analyticsTicket](QVariantMap verified){
+        if(verified.isEmpty())return;auto scope=d->currentScope;auto gen=d->sourceGeneration;QList<QVariantMap> refs;
+        if(remove){for(const auto&ref:d->references){auto id=ref["id"].toString();if(ref["kind"]==verified["kind"]&&(verified["kind"]=="live"?d->liveAliases.value(id,id)==verified["id"].toString():id==verified["id"].toString()))refs.append(ref);}}
+        else refs.append(d->reference(verified));
+        QVariantMap measurement{{"content_type",verified["kind"]},{"content_id",DesktopAnalytics::contentReference(verified)}};const auto label=DesktopAnalytics::catalogLabel(verified["title"].toString());if(!label.isEmpty())measurement["content_name"]=label;
+        auto index=std::make_shared<int>(0);auto sequence=std::make_shared<std::function<void()>>();
+        *sequence=[this,scope,gen,remove,refs,index,sequence,measurement,analyticsTicket]{
+            if(!d->sourceValid(scope,gen)){*sequence={};return;}
+            if(*index>=refs.size()){if(!refs.isEmpty())recordAnalytics(remove?"remove_from_wishlist":"add_to_wishlist",measurement,analyticsTicket);d->revision++;d->resolveFavorites();*sequence={};return;}
+            auto ref=refs[*index];d->api("/me/personal-library/favorites",remove?"DELETE":"PUT",{{"ref",QJsonObject::fromVariantMap(ref)}},[this,scope,gen,remove,ref,index,sequence](int status,QJsonDocument doc){
+                if(!d->sourceValid(scope,gen)){*sequence={};return;}
+                if(status<200||status>=300||!doc.object()["ok"].isBool()||!doc.object()["ok"].toBool()){d->fail(QString::fromUtf8("Listen güncellenemedi."));*sequence={};return;}
+                auto k=ref["kind"].toString()+"::"+ref["id"].toString();if(remove)d->references.remove(k);else d->references[k]=ref;d->revision++;(*index)++;(*sequence)();
+            });
+        };(*sequence)();
+    });
+}
 QVariantMap DesktopRepository::nextEpisode(QVariantMap item)const {if(item.value("scope").toString()!=d->currentScope||item.value("kind")!="episode")return {};auto rows=Catalog::episodes(d->details.value(item.value("seriesID").toString()));for(qsizetype i=0;i+1<rows.size();i++)if(Catalog::key(rows[i].toMap())==Catalog::key(item))return rows[i+1].toMap();return {};}
 void DesktopRepository::saveProgress(QVariantMap item,qint64 position,qint64 duration,bool ended){Q_UNUSED(ended);if(!d->sourceValid(item.value("scope").toString(),d->sourceGeneration)||!Catalog::validItem(item,d->currentScope)||position<0||duration<=0)return;item=d->knownItem(item);if(item.isEmpty())return;d->cache.saveProgress(item,position,duration,d->now());if(item["kind"]!="episode"||position<duration-qMin(qint64(120000),duration/20))return;auto k=Catalog::key(item);if(d->watched.contains(k)||d->watchedWrites.contains(k))return;auto scope=d->currentScope;auto gen=d->sourceGeneration;d->watchedWrites.insert(k);d->watched.insert(k);d->revision++;d->api("/me/personal-library/watched","PUT",{{"ref",QJsonObject::fromVariantMap(d->reference(item))}},[this,k,scope,gen](int status,QJsonDocument doc){if(!d->sourceValid(scope,gen))return;d->watchedWrites.remove(k);if(status<200||status>=300||!doc.object()["ok"].toBool())d->watched.remove(k);d->revision++;d->resolveFavorites();});}
 void DesktopRepository::loadEpg(QVariantMap item){
@@ -273,6 +336,11 @@ void DesktopRepository::loadEpg(QVariantMap item){
         });
     });
 }
-void DesktopRepository::chooseWelcome(bool monthly,int users){if(!welcomeVisible()||d->working||!QList<int>{1,2}.contains(users))return;d->working=true;d->changed();d->api("/me/welcome-offer/choice","POST",{{"choice",monthly?"monthly":"trial"}},[this,monthly,users](int status,QJsonDocument doc){d->working=false;if(status!=200||!d->installWelcome(doc.object())||welcomeVisible()){d->fail(QString::fromUtf8("Seçimin kaydedilemedi. Yeniden dene."));return;}d->changed();if(monthly)QDesktopServices::openUrl(QUrl(QString("https://flixify.vip/paketler?welcome=1&users=%1").arg(users)));d->refreshAccount(false);});}
-void DesktopRepository::openWebsite(QString destination){static const QHash<QString,QString> paths{{"register","/kayit-ol"},{"packages","/paketler"},{"support","/iletisim"},{"downloads","/indir"}};if(paths.contains(destination))QDesktopServices::openUrl(QUrl("https://flixify.vip"+paths.value(destination)));}
+void DesktopRepository::chooseWelcome(bool monthly,int users){if(!welcomeVisible()||d->working||!QList<int>{1,2}.contains(users))return;d->working=true;d->changed();const auto analyticsTicket=d->analyticsEpoch;d->api("/me/welcome-offer/choice","POST",{{"choice",monthly?"monthly":"trial"}},[this,monthly,users,analyticsTicket](int status,QJsonDocument doc){d->working=false;if(status!=200||!d->installWelcome(doc.object())||welcomeVisible()){d->fail(QString::fromUtf8("Seçimin kaydedilemedi. Yeniden dene."));return;}recordAnalytics(monthly?"welcome_offer_select":"trial_select",monthly?QVariantMap{{"offer_id","welcome-monthly-50-v1"},{"package_users",users}}:QVariantMap{},analyticsTicket);d->changed();if(monthly&&QDesktopServices::openUrl(QUrl(QString("https://flixify.vip/paketler?welcome=1&users=%1&from=windows").arg(users))))recordAnalytics("package_open",{{"package_users",users}},analyticsTicket);d->refreshAccount(false);});}
+void DesktopRepository::openWebsite(QString destination){static const QHash<QString,QString> paths{{"register","/kayit-ol"},{"packages","/paketler?from=windows"},{"support","/iletisim"},{"downloads","/indir"}};if(paths.contains(destination)&&QDesktopServices::openUrl(QUrl("https://flixify.vip"+paths.value(destination)))&&destination=="packages")recordAnalytics("package_open");}
 void DesktopRepository::setPosterSoundEnabled(bool enabled){d->sound=enabled;QSettings preferences((d->options.storageDirectory.isEmpty()?defaultStorage():d->options.storageDirectory)+"/preferences.ini",QSettings::IniFormat);preferences.setValue("posterSoundEnabled",enabled);d->changed();}
+void DesktopRepository::setAnalyticsConsent(bool accepted){if(d->analytics->choice()==(accepted?"accepted":"rejected"))return;d->analyticsEpoch++;d->searchMeasurementPending=false;d->analyticsScreen.clear();d->analytics->setConsent(accepted);if(accepted)d->screen(d->analyticsPlayerVisible?"player":authenticated()?d->currentRoute:"login");}
+quint64 DesktopRepository::analyticsGeneration()const{return d->analyticsEpoch;}
+qint64 DesktopRepository::analyticsMonotonicNow()const{return d->options.analyticsClock();}
+void DesktopRepository::setAnalyticsPlayerVisible(bool visible){if(d->analyticsPlayerVisible==visible)return;d->analyticsPlayerVisible=visible;d->screen(visible?"player":d->currentRoute);}
+void DesktopRepository::recordAnalytics(QString event,QVariantMap values,quint64 expectedGeneration){if(expectedGeneration&&expectedGeneration!=d->analyticsEpoch)return;d->analytics->record(event,std::move(values));}

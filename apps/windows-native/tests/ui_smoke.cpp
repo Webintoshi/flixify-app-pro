@@ -35,6 +35,7 @@
 #include "repository.h"
 #include "player.h"
 #include "app_bridge.h"
+#include "analytics.h"
 
 namespace {
 QStringList qmlErrors;
@@ -105,7 +106,8 @@ class FixtureServer final : public QTcpServer {
         paths.insert(url.path());
         QJsonValue value;
         const auto expiryText = QDateTime::fromMSecsSinceEpoch(expiry, Qt::UTC).toString(Qt::ISODateWithMs);
-        if (url.path() == "/auth/login-by-code" || url.path() == "/auth/refresh") value = QJsonObject{{"accessToken","fixture-access"},{"refreshToken","fixture-refresh"},{"user",QJsonObject{{"id","fixture-account"},{"codeSuffix","TEST"}}}};
+        if (url.path() == "/analytics/config") value=QJsonObject{{"schema",1},{"consentVersion",1},{"windows",QJsonObject{{"enabled",true},{"measurementId","G-FIXTURE1"}}}};
+        else if (url.path() == "/auth/login-by-code" || url.path() == "/auth/refresh") value = QJsonObject{{"accessToken","fixture-access"},{"refreshToken","fixture-refresh"},{"user",QJsonObject{{"id","fixture-account"},{"codeSuffix","TEST"}}}};
         else if (url.path() == "/me") { ++accountRequests;value = QJsonObject{{"user",QJsonObject{{"id","fixture-account"},{"codeSuffix","TEST"},{"status","active"},{"hasAssignedLink",accessActive},{"hasActiveSubscription",accessActive},{"activePackage",QJsonObject{{"title","Yerel doğrulama paketi"},{"endsAt",expiryText}}}}}}; }
         else if (url.path() == "/me/provider-session") value = QJsonObject{{"accountId","fixture-account"},{"sourceVersion","fixture-v1"},{"providerOrigin",base().toString()},{"username","fixture-user"},{"password","fixture-secret"},{"expiresAt",expiryText},{"moviePolicy","general-audience-only"}};
         else if (url.path() == "/me/welcome-offer") value = welcome();
@@ -462,6 +464,15 @@ int main(int argc,char **argv) {
     if(!click(root,"welcome-trial"))return finish("Welcome trial control failed",8);
     if(!until([&]{return !repository.welcomeVisible()&&!repository.busy();}))return finish("Welcome choice failed",8);
     if(!until([&]{return repository.authenticated()&&!repository.busy()&&!repository.hero().isEmpty()&&repository.shelves().size()>0;}))return finish("Fixture login/home catalog failed: "+repository.error(),8);
+    auto collector=repository.findChild<DesktopAnalytics*>();if(!collector||!until([&]{return repository.analyticsAvailable()&&repository.analyticsPromptVisible();}))return finish("Analytics consent fixture did not become available",75);
+    if(collector->pendingCount()!=0||!capture(root,QDir(output).filePath("analytics-consent.png")))return finish("Analytics collected before consent or dialog capture failed",75);
+    if(!click(root,"analyticsDecline")||!until([&]{return repository.analyticsChoice()=="rejected"&&!repository.analyticsPromptVisible();})||!repository.account()["canPlay"].toBool()||collector->pendingCount()!=0)return finish("Analytics rejection changed access or collected",76);
+    if(!click(root,"nav-account")||!until([&]{return repository.route()=="account";}))return finish("Analytics settings navigation failed",77);
+    root->resize(1280,1100);QTest::qWait(150);
+    if(!click(root,"analyticsConsentSetting")||!until([&]{return repository.analyticsChoice()=="accepted";})||!repository.account()["canPlay"].toBool()||!capture(root,QDir(output).filePath("analytics-accepted.png")))return finish("Analytics settings opt-in failed",77);
+    if(!click(root,"analyticsConsentSetting")||!until([&]{return repository.analyticsChoice()=="rejected";})||collector->pendingCount()!=0||!repository.account()["canPlay"].toBool()||!capture(root,QDir(output).filePath("analytics-withdrawn.png")))return finish("Analytics settings withdrawal failed",78);
+    report["analyticsConsent"]=QJsonObject{{"configuredLoopbackOnly",true},{"noPreConsentEvents",true},{"declinePreservesAccess",true},{"editableOptIn",true},{"withdrawClearsEvents",true}};
+    root->resize(1280,800);if(!click(root,"nav-home"))return finish("Analytics settings return failed",78);
     if(!until([&]{return homeAtTop(root);}))return finish("Initial home title/hero did not settle at top",9);
     if(!capture(root,QDir(output).filePath("home.png")))return finish("Home screenshot failed",9);
     if(!homeAtTop(root))return finish("Initial home shifted after settling",9);

@@ -10,9 +10,10 @@
 #include <QtConcurrent/QtConcurrentRun>
 #include <array>
 #include <atomic>
+#include <cmath>
 
 namespace {
-constexpr std::array<int, 5> vlcEvents{0x102, 0x104, 0x105, 0x109, 0x10a};
+constexpr std::array<int, 6> vlcEvents{0x102, 0x104, 0x105, 0x109, 0x10a, 0x103};
 qint64 now() { return QDateTime::currentMSecsSinceEpoch(); }
 }
 
@@ -32,8 +33,10 @@ struct DesktopPlayer::Session {
     const auto owner = self->owner;
     const auto generation = self->generation;
     const int type = event->type;
-    if (owner) QMetaObject::invokeMethod(owner, [owner, generation, type] {
-      if (owner) owner->onVlcEvent(generation, type);
+    float percent=100;
+    if(type==0x103){percent=event->u.media_player_buffering.new_cache;if(!std::isfinite(percent))return;percent=std::clamp(percent,0.0f,100.0f);}
+    if (owner) QMetaObject::invokeMethod(owner, [owner, generation, type, percent] {
+      if (owner) owner->onVlcEvent(generation, type, percent);
     }, Qt::QueuedConnection);
   }
   void dispose() {
@@ -115,6 +118,7 @@ void DesktopPlayer::open(const QVariantMap &media) {
   if (!live()) position_ = resume_;
   confirmedPosition_ = 0; positionConfirmed_ = false;
   awaitingRefresh_ = false; error_.clear(); ended_ = false; pendingEnd_ = false; wantsPlay_ = true;
+  observedBuffering_=false;
   active_ = true; playing_ = false; loading_ = !hasFrame_; controls_ = true;
   countdown_ = Playback::NextEpisode(); nextCountdown_ = 0; audioTracks_.clear(); subtitleTracks_.clear();
   interactionAt_ = startedAt_ = progressedAt_ = now(); savedAt_ = 0; tracksAt_ = 0;
@@ -187,11 +191,13 @@ void DesktopPlayer::close() {
   if (recovery_) recovery_->stop();
   releaseCurrent(); media_.clear(); item_.clear(); next_.clear(); scope_.clear(); error_.clear();
   audioTracks_.clear(); subtitleTracks_.clear(); hasFrame_ = false; held_ = 0;
+  observedBuffering_=false;
   emit stateChanged();
 }
 void DesktopPlayer::fail(const QString &message) {
   ++generation_; pending_.clear(); awaitingRefresh_ = false; pendingEnd_ = false; wantsPlay_ = false;
   playing_ = false; loading_ = false; error_ = message; controls_ = true;
+  observedBuffering_=false;
   countdown_.cancel(); nextCountdown_ = 0;
   if (recovery_) recovery_->stop();
   releaseCurrent(); emit stateChanged();
@@ -205,10 +211,11 @@ void DesktopPlayer::recover(Playback::Trigger trigger) {
   releaseCurrent(); startedAt_ = now();
   emit stateChanged(); emit refreshRequested(item_);
 }
-void DesktopPlayer::onVlcEvent(quint64 generation, int event) {
+void DesktopPlayer::onVlcEvent(quint64 generation, int event, float bufferPercent) {
   if (!active_ || !session_ || generation != generation_) return;
   if (!eligible()) { fail(QStringLiteral("İzleme erişimin sona erdi.")); return; }
-  if (event == 0x104) { playing_ = true; loading_ = false; progressedAt_ = now(); }
+  if (event == 0x103) { observedBuffering_=bufferPercent<100;emit stateChanged();return; }
+  if (event == 0x104) { observedBuffering_=false;playing_ = true; loading_ = false; progressedAt_ = now(); }
   else if (event == 0x105) { playing_ = false; controls_ = true; }
   else if (event == 0x10a) { recover(Playback::Trigger::DecoderError); return; }
   else if (event == 0x109) {
@@ -368,7 +375,7 @@ void DesktopPlayer::applySample(const Snapshot &sample) {
     position_ = sample.final ? std::max(position_, sample.position) : sample.position;
     positionConfirmed_ = position_ == confirmedPosition_;
   }
-  hasFrame_ = hasFrame_ || sample.hasFrame;
+  hasFrame_ = hasFrame_ || sample.hasFrame;if(sample.hasFrame)frameGeneration_=sample.generation;
   if (sample.tracks) {
     audioTracks_ = sample.audioTracks; subtitleTracks_ = sample.subtitleTracks;
     if (sample.audioRevision == audioRevision_) audioTrack_ = sample.audioTrack;

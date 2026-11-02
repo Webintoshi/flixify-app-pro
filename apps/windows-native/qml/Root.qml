@@ -369,4 +369,34 @@ ApplicationWindow {
         owner: root
         onSeriesRequested: value => root.inspect(value)
     }
+    Dialog {
+        id: analyticsConsent
+        objectName: "analyticsConsentDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(560,root.width-60)
+        modal: true
+        focus: true
+        visible: repository.analyticsPromptVisible && repository.authenticated && !repository.bootstrapping && !repository.welcomeVisible && !player.active && !root.seriesPending && !root.shuttingDown
+        closePolicy: Popup.NoAutoClose
+        title: "Kullanım analizi"
+        palette.windowText: "#F5F6F8"
+        background: Rectangle { color: "#13171E"; radius: 16; border.color: "#343D4B" }
+        contentItem: ColumnLayout {
+            spacing: 24
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: "#F5F6F8"
+                font.pixelSize: 15
+                text: "Google Analytics ile ekran kullanımı ve oynatma performansını ölçmemize izin verir misin? Hesap kodun, yayın bağlantıların ve arama metnin gönderilmez. Seçimin içerik erişimini etkilemez; Hesabım’dan değiştirebilirsin."
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 16
+                ActionButton { objectName: "analyticsDecline"; Layout.fillWidth: true; text: "İzin verme"; onClicked: repository.setAnalyticsConsent(false) }
+                ActionButton { objectName: "analyticsAccept"; Layout.fillWidth: true; text: "İzin ver"; onClicked: repository.setAnalyticsConsent(true) }
+            }
+        }
+    }
 }

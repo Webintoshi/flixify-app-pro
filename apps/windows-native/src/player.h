@@ -44,6 +44,10 @@ class DesktopPlayer : public QObject {
   bool muted() const { return muted_; }
   bool fullScreen() const { return fullScreen_; }
   bool hasVideoFrame() const { return hasFrame_; }
+  bool hasCurrentVideoFrame() const { return hasFrame_ && frameGeneration_==generation_; }
+  bool wantsPlayback() const { return wantsPlay_; }
+  bool recovering() const { return awaitingRefresh_; }
+  bool buffering() const { return observedBuffering_; }
   QString error() const { return error_; }
   QString title() const { return item_.value("title").toString(); }
   qint64 positionMs() const { return position_; }
@@ -105,7 +109,7 @@ class DesktopPlayer : public QObject {
   void queueCommand(Command kind, std::function<void(Session &)> command);
   void requestSample(bool final = false);
   void applySample(const Snapshot &sample);
-  void onVlcEvent(quint64 generation, int event);
+  void onVlcEvent(quint64 generation, int event, float bufferPercent);
   void tick();
   void recover(Playback::Trigger trigger);
   void fail(const QString &message);
@@ -135,4 +139,6 @@ class DesktopPlayer : public QObject {
   bool awaitingRefresh_ = false, allowTestMedia_ = false;
   bool openingPending_ = false, samplePending_ = false, pendingEnd_ = false;
   bool positionConfirmed_ = false;
+  bool observedBuffering_ = false;
+  quint64 frameGeneration_ = 0;
 };

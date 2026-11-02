@@ -28,6 +28,8 @@ std::atomic_bool guiCall = false;
 std::atomic_int active = 0, peak = 0;
 std::atomic<qint64> endPosition = -1, endDuration = 0;
 std::atomic_int failedAttach = -1;
+std::atomic_bool bufferPending = false;
+std::atomic<float> bufferPercent = 100;
 double lastRate = 1;
 QString lastAspect;
 struct Call {
@@ -56,6 +58,7 @@ void reset() {
   QMutexLocker lock(&mutex);
   operations.clear(); blockedOperation.clear(); guiCall = false; peak = 0;
   endPosition = -1; failedAttach = -1; lastRate = 1; lastAspect.clear();
+  bufferPending = false; bufferPercent = 100;
   entered.tryAcquire(entered.available()); released.tryAcquire(released.available());
 }
 void block(const QString &operation) { QMutexLocker lock(&mutex); blockedOperation = operation; }
@@ -68,6 +71,7 @@ void finishAt(qint64 position, qint64 duration) { endDuration = duration; endPos
 double appliedRate() { QMutexLocker lock(&mutex); return lastRate; }
 QString appliedAspect() { QMutexLocker lock(&mutex); return lastAspect; }
 void failAttach(int event) { failedAttach = event; }
+void bufferAt(float percent) { bufferPercent = percent; bufferPending = true; }
 }
 
 VlcRuntime &VlcRuntime::instance() { static VlcRuntime runtime; return runtime; }
@@ -98,6 +102,10 @@ VlcRuntime::VlcRuntime() {
   };
   time = [](libvlc_media_player_t *p) -> qint64 {
     Call call("time");
+    if (bufferPending.exchange(false)) {
+      libvlc_event_t event{0x103,p}; event.u.media_player_buffering.new_cache=bufferPercent;
+      for (const auto &entry : p->callbacks) if (entry.type==event.type) entry.callback(&event,entry.opaque);
+    }
     const auto position = endPosition.exchange(-1);
     if (position >= 0) {
       p->position = position; p->duration = endDuration;

@@ -8,8 +8,10 @@
 #include <QUrlQuery>
 #include <QTimer>
 #include <QElapsedTimer>
+#include <QSettings>
 #include "catalog.h"
 #include "repository.h"
+#include "analytics.h"
 class FixtureServer : public QTcpServer {
 public:
     QList<QByteArray> requests;
@@ -68,6 +70,44 @@ public:
 class RepositoryTest : public QObject {
     Q_OBJECT
 private slots:
+    void persistedConsentCountsCurrentScreenAfterDelayedConfiguration() {
+        FixtureServer server;server.delayedPaths.insert("/analytics/config");server.overrides["/analytics/config"]=QJsonObject{{"schema",1},{"consentVersion",1},{"windows",QJsonObject{{"enabled",true},{"measurementId","G-FIXTURE1"}}}};
+        QTemporaryDir dir;QSettings preferences(dir.path()+"/analytics.ini",QSettings::IniFormat);preferences.setValue("analytics/v1/choice","accepted");preferences.sync();
+        RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;options.now=[] {return 1900000000000LL;};
+        DesktopRepository repo(options);repo.login("ABCDEFGHIJKLMNOP");QTRY_COMPARE(repo.scope(),QString("account:v1"));QTRY_VERIFY(!repo.busy());QTRY_VERIFY(!server.delayed.isEmpty());QVERIFY(!repo.analyticsAvailable());
+        auto *collector=repo.findChild<DesktopAnalytics*>();QVERIFY(collector);QCOMPARE(collector->pendingCount(),0);
+        auto *configuration=server.delayed.first();server.delayedPaths.remove("/analytics/config");server.respond(configuration,"/analytics/config");QTRY_VERIFY(repo.analyticsAvailable());collector->flush();
+        QTRY_VERIFY(std::any_of(server.requests.begin(),server.requests.end(),[](const auto &r){return r.startsWith("POST /me/analytics/events ");}));
+        int screens=0;for(const auto &request:server.requests)if(request.startsWith("POST /me/analytics/events ")){const auto body=QJsonDocument::fromJson(request.mid(request.indexOf("\r\n\r\n")+4)).object();for(const auto &v:body["events"].toArray()){auto event=v.toObject();if(event["name"]=="app_screen_view"&&event["params"].toObject()["screen_name"]=="home")screens++;}}
+        QCOMPARE(screens,1);QVERIFY(repo.account()["canPlay"].toBool());
+    }
+    void logoutUsesFinalOldAuthenticationWithoutDelayingNextLogin() {
+        FixtureServer server;server.overrides["/analytics/config"]=QJsonObject{{"schema",1},{"consentVersion",1},{"windows",QJsonObject{{"enabled",true},{"measurementId","G-FIXTURE1"}}}};
+        QTemporaryDir dir;RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;options.now=[] {return 1900000000000LL;};
+        DesktopRepository repo(options);repo.login("ABCDEFGHIJKLMNOP");QTRY_COMPARE(repo.scope(),QString("account:v1"));QTRY_VERIFY(repo.analyticsAvailable());repo.setAnalyticsConsent(true);
+        auto *collector=repo.findChild<DesktopAnalytics*>();QVERIFY(collector);const auto oldClient=collector->clientId();repo.recordAnalytics("search",{{"query_length",9},{"result_count",3}});
+        repo.logout();QVERIFY(!repo.authenticated());
+        server.overrides["/auth/login-by-code"]=QJsonObject{{"accessToken","fixture-next-access"},{"refreshToken","fixture-next-refresh"},{"user",QJsonObject{{"id","next-account"},{"codeSuffix","NEXT"}}}};
+        repo.login("PONMLKJIHGFEDCBA");QTRY_VERIFY(repo.authenticated());QVERIFY(collector->clientId()!=oldClient);
+        auto logouts=[&]{int count=0;for(const auto &request:server.requests)if(request.startsWith("POST /me/analytics/events ")){const auto body=QJsonDocument::fromJson(request.mid(request.indexOf("\r\n\r\n")+4)).object();for(const auto &event:body["events"].toArray())if(event.toObject()["name"]=="logout")count++;}return count;};QTRY_COMPARE(logouts(),1);
+        for(const auto &request:server.requests)if(request.startsWith("POST /me/analytics/events ")){const auto body=QJsonDocument::fromJson(request.mid(request.indexOf("\r\n\r\n")+4)).object();if(body["clientId"].toString()!=oldClient)continue;QVERIFY(request.contains("Authorization: Bearer fixture-access\r\n"));QVERIFY(body["events"].toArray().size()<=20);int logout=0;for(const auto &event:body["events"].toArray())logout+=event.toObject()["name"]=="logout";QCOMPARE(logout,1);QVERIFY(!request.mid(request.indexOf("\r\n\r\n")+4).contains("fixture-access"));}
+        const auto nextClient=collector->clientId();collector->flush();QTRY_VERIFY(std::any_of(server.requests.begin(),server.requests.end(),[&](const auto &request){return request.startsWith("POST /me/analytics/events ")&&QJsonDocument::fromJson(request.mid(request.indexOf("\r\n\r\n")+4)).object()["clientId"]==nextClient;}));
+        for(const auto &request:server.requests)if(request.startsWith("POST /me/analytics/events ")){const auto body=QJsonDocument::fromJson(request.mid(request.indexOf("\r\n\r\n")+4)).object();if(body["clientId"]!=nextClient)continue;QVERIFY(request.contains("Authorization: Bearer fixture-next-access\r\n"));for(const auto &event:body["events"].toArray())QVERIFY(event.toObject()["name"]!="search");}
+    }
+    void analyticsConsentAndAuthStaySeparateFromContentAccess() {
+        FixtureServer server;server.overrides["/analytics/config"]=QJsonObject{{"schema",1},{"consentVersion",1},{"windows",QJsonObject{{"enabled",true},{"measurementId","G-FIXTURE1"}}}};
+        QTemporaryDir dir;RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;options.now=[] {return 1900000000000LL;};
+        DesktopRepository repo(options);repo.login("ABCDEFGHIJKLMNOP");QTRY_COMPARE(repo.scope(),QString("account:v1"));QTRY_VERIFY(repo.analyticsAvailable());QTRY_VERIFY(!repo.busy());
+        auto *collector=repo.findChild<DesktopAnalytics*>();QVERIFY(collector);QCOMPARE(collector->pendingCount(),0);QVERIFY(repo.analyticsPromptVisible());
+        repo.setAnalyticsConsent(false);QCOMPARE(repo.analyticsChoice(),QString("rejected"));QVERIFY(!repo.analyticsPromptVisible());QVERIFY(repo.account()["canPlay"].toBool());QCOMPARE(collector->pendingCount(),0);
+        repo.setAnalyticsConsent(true);const auto old=repo.analyticsGeneration();QVERIFY(collector->pendingCount()>0);
+        repo.setAnalyticsConsent(false);repo.setAnalyticsConsent(true);const auto pending=collector->pendingCount();repo.recordAnalytics("login",{{"method","code"}},old);QCOMPARE(collector->pendingCount(),pending);
+        collector->flush();QTRY_VERIFY(std::any_of(server.requests.begin(),server.requests.end(),[](const auto &request){return request.startsWith("POST /me/analytics/events ");}));
+        QByteArray body;for(const auto &request:server.requests)if(request.startsWith("POST /me/analytics/events ")){QVERIFY(request.contains("Authorization: Bearer fixture-access"));body=request.mid(request.indexOf("\r\n\r\n")+4);}
+        QVERIFY(!body.contains("ABCDEFGHIJKLMNOP"));QVERIFY(!body.contains("fixture-secret"));QVERIFY(!body.contains("fixture-access"));QVERIFY(!body.contains("account:v1"));
+        QSignalSpy ready(&repo,&DesktopRepository::playbackReady);repo.navigate("movies");QTRY_VERIFY(!repo.items().isEmpty()&&repo.items().first().toMap()["kind"]=="movie");repo.playItem(repo.items().first().toMap());QTRY_COMPARE(ready.size(),1);QVERIFY(!ready.last().first().toMap()["analyticsContinuation"].toBool());
+        repo.refreshPlayback(ready.last().first().toMap()["item"].toMap());QTRY_COMPARE(ready.size(),2);QVERIFY(ready.last().first().toMap()["analyticsContinuation"].toBool());
+    }
     void fixtureTrafficUsesCurrentEndpointsAndViewerProvider() {
         FixtureServer server;QTemporaryDir dir; RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;options.now=[] {return 1900000000000LL;};
         DesktopRepository repo(options);QSignalSpy ready(&repo,&DesktopRepository::playbackReady);

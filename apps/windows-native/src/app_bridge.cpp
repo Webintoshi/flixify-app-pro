@@ -2,6 +2,7 @@
 #include "native_surface.h"
 #include "player.h"
 #include "repository.h"
+#include "playback_analytics.h"
 #include <QDir>
 #include <QImageReader>
 #include <QGuiApplication>
@@ -56,7 +57,23 @@ void installDesktop(QQmlApplicationEngine &engine, DesktopRepository &repository
   QObject::connect(qGuiApp, &QGuiApplication::focusWindowChanged, context, [context](QWindow *window) {
     context->setContextProperty("desktopFocusedWindow", window);
   });
-  QObject::connect(&repository, &DesktopRepository::playbackReady, &player, &DesktopPlayer::open);
+  auto measurementGeneration = std::make_shared<quint64>(repository.analyticsGeneration());
+  auto measurementAttempt=std::make_shared<quint64>(0);
+  auto measurement = std::make_shared<PlaybackAnalytics>([&repository,measurementGeneration](QString event,QVariantMap values){repository.recordAnalytics(event,std::move(values),*measurementGeneration);},[&repository]{return repository.analyticsMonotonicNow();});
+  auto consent = [&repository,measurement]{measurement->setEnabled(repository.authenticated()&&repository.analyticsAvailable()&&repository.analyticsChoice()=="accepted");};
+  consent();
+  QObject::connect(&repository,&DesktopRepository::stateChanged,context,consent);
+  QObject::connect(&repository,&DesktopRepository::analyticsPlaybackRequested,context,[&repository,measurement,measurementGeneration,measurementAttempt](QVariantMap item,quint64 attempt,quint64 epoch,qint64 startedAt){
+    if(epoch!=repository.analyticsGeneration()||!repository.authenticated()||!repository.analyticsAvailable()||repository.analyticsChoice()!="accepted")return;
+    *measurementGeneration=epoch;*measurementAttempt=attempt;measurement->request(item,startedAt,true);
+  });
+  QObject::connect(&repository,&DesktopRepository::analyticsPlaybackFailed,context,[&repository,measurement,measurementGeneration,measurementAttempt](quint64 attempt,quint64 epoch,QString reason){if(attempt==*measurementAttempt&&epoch==*measurementGeneration&&epoch==repository.analyticsGeneration()){measurement->preflightFailed(reason);*measurementAttempt=0;}});
+  QObject::connect(&repository, &DesktopRepository::playbackReady, &player, [&repository,&player,measurement,measurementGeneration,measurementAttempt](const QVariantMap &media){
+    if(!media.value("analyticsContinuation").toBool()&&media.value("analyticsAttempt").toULongLong()==*measurementAttempt&&*measurementAttempt&&media.value("analyticsEpoch").toULongLong()==repository.analyticsGeneration()&&*measurementGeneration==repository.analyticsGeneration())measurement->admit(media.value("item").toMap());
+    player.open(media);
+  });
+  QObject::connect(&player,&DesktopPlayer::stateChanged,context,[&repository,&player,measurement]{repository.setAnalyticsPlayerVisible(player.active());measurement->observe({player.active(),player.hasCurrentVideoFrame(),player.playing(),player.loading(),!player.error().isEmpty(),player.positionMs(),player.live()?0:player.durationMs(),player.wantsPlayback(),player.recovering(),player.buffering()});});
+  QObject::connect(&player,&DesktopPlayer::progress,context,[measurement](const QVariantMap &,qint64,qint64,bool ended){if(ended)measurement->complete();});
   QObject::connect(&repository, &DesktopRepository::sourceChanged, &player, &DesktopPlayer::close);
   QObject::connect(&repository, &DesktopRepository::accessRevoked, &player, &DesktopPlayer::close);
   QObject::connect(&repository, &DesktopRepository::accessExtended, &player, &DesktopPlayer::extendAccess);

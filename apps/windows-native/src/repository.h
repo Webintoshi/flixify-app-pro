@@ -11,6 +11,7 @@ struct RepositoryOptions {
     QString storageDirectory;
     bool allowLoopbackForTests = false;
     std::function<qint64()> now;
+    std::function<qint64()> analyticsClock;
 };
 
 class DesktopRepository final : public QObject {
@@ -23,6 +24,9 @@ class DesktopRepository final : public QObject {
     REPO_PROPERTY(bool, hasMore)
     REPO_PROPERTY(bool, welcomeVisible)
     REPO_PROPERTY(bool, posterSoundEnabled)
+    REPO_PROPERTY(bool, analyticsAvailable)
+    REPO_PROPERTY(bool, analyticsPromptVisible)
+    REPO_PROPERTY(QString, analyticsChoice)
     REPO_PROPERTY(QString, error)
     REPO_PROPERTY(QString, route)
     REPO_PROPERTY(QString, query)
@@ -51,6 +55,7 @@ public:
 #define REPO_GET(type, name) type name() const;
     REPO_GET(bool, bootstrapping) REPO_GET(bool, authenticated) REPO_GET(bool, busy)
     REPO_GET(bool, loadingMore) REPO_GET(bool, hasMore) REPO_GET(bool, welcomeVisible) REPO_GET(bool, posterSoundEnabled)
+    REPO_GET(bool, analyticsAvailable) REPO_GET(bool, analyticsPromptVisible) REPO_GET(QString, analyticsChoice)
     REPO_GET(QString, error) REPO_GET(QString, route) REPO_GET(QString, query) REPO_GET(QString, category)
     REPO_GET(QString, country) REPO_GET(QString, sectionTitle) REPO_GET(QString, codeSuffix) REPO_GET(QString, scope)
     REPO_GET(QVariantMap, account) REPO_GET(QVariantMap, hero) REPO_GET(QVariantMap, seriesDetail) REPO_GET(QVariantMap, welcome)
@@ -78,9 +83,16 @@ public:
     Q_INVOKABLE void chooseWelcome(bool monthly, int users = 1);
     Q_INVOKABLE void openWebsite(QString destination);
     Q_INVOKABLE void setPosterSoundEnabled(bool);
+    Q_INVOKABLE void setAnalyticsConsent(bool);
+    quint64 analyticsGeneration() const;
+    qint64 analyticsMonotonicNow() const;
+    void setAnalyticsPlayerVisible(bool visible);
+    void recordAnalytics(QString event, QVariantMap values = {}, quint64 expectedGeneration = 0);
 signals:
     void stateChanged();
     void playbackReady(QVariantMap media);
+    void analyticsPlaybackRequested(QVariantMap item, quint64 attempt, quint64 epoch, qint64 startedAt);
+    void analyticsPlaybackFailed(quint64 attempt, quint64 epoch, QString reason);
     void accessRevoked();
     void sourceChanged();
     void accessExtended(qint64 expiresAt, QString scope);
