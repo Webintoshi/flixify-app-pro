@@ -1,10 +1,10 @@
 {
   "packageName": "vip.flixify.tv",
-  "versionName": "1.4.12",
-  "versionCode": 20,
+  "versionName": "1.4.13",
+  "versionCode": 21,
   "minSdk": 23,
-  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.12.apk",
-  "sha256": "e4547bb775779e1f9c63842df5af12eccdfe863de6ccba732fca8a86e03beef0",
-  "sizeBytes": 2157091,
-  "notes": "Test süreci için kullanım analizi otomatik kabul edilir; izin popup'ı ve hesap tercih ekranı kaldırılmıştır."
+  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.13.apk",
+  "sha256": "e3e8534fed56488eba765aa254af74bd2d9dbecdd036c7fa546fa30ff182ff67",
+  "sizeBytes": 2164180,
+  "notes": "Telefonunla QR kodunu tarayarak giriş yapabilirsin. Kullanıcı koduyla giriş seçeneği korunur."
 }
