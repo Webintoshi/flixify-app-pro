@@ -180,7 +180,7 @@ BOUNDARY_SETUP = '''import { expect, vi } from "vitest";
 if (expect.getState().testPath === "/app/apps/api/src/device-login-server.test.ts") {
   vi.doMock("/app/apps/api/src/access-history.ts", async (importActual) => ({
     ...(await importActual()),
-    getAccessHistory: vi.fn(async () => null),
+    readAccessHistory: vi.fn(async () => null),
   }));
 }
 '''

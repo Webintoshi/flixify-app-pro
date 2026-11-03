@@ -111,7 +111,7 @@ class AdapterTests(unittest.TestCase):
             ('/app/another/device-login-server.test.ts',[]),
         ):
             script='const pending=[],calls=[];const expect={getState:()=>({testPath:'+json.dumps(path)+'})};'
-            script+='const vi={fn:fn=>fn,doMock(path,factory){const actual={TrialUnavailableError:class TrialUnavailableError{},getAccessHistory:async()=>"real",otherExport:"retained"};pending.push(factory(async()=>actual).then(async next=>calls.push({path,history:await next.getAccessHistory(),sameErrorClass:next.TrialUnavailableError===actual.TrialUnavailableError,otherExport:next.otherExport})))}};'
+            script+='const vi={fn:fn=>fn,doMock(path,factory){const actual={TrialUnavailableError:class TrialUnavailableError{},readAccessHistory:async()=>"real",otherExport:"retained"};pending.push(factory(async()=>actual).then(async next=>{const pool={};const getAccessHistory=userId=>next.readAccessHistory(pool,userId);calls.push({path,history:await getAccessHistory("fixture-user"),sameErrorClass:next.TrialUnavailableError===actual.TrialUnavailableError,otherExport:next.otherExport})}))}};'
             script+=source+'\nawait Promise.all(pending);console.log(JSON.stringify(calls));'
             result=subprocess.run(['node','--input-type=module','-e',script],text=True,capture_output=True)
             with self.subTest(path=path):
