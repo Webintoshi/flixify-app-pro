@@ -157,6 +157,33 @@ export default class ErrorCountsReporter {
   }
 }
 '''
+HARNESS_CONFIG = r'''import frozen from "/app/coolify/releases/2026-11-03-qr-device-login/candidate-tests.config.ts";
+const previousSetup = frozen.test?.setupFiles;
+const setupFiles = previousSetup ? (Array.isArray(previousSetup) ? previousSetup : [previousSetup]) : [];
+export default {
+  ...frozen,
+  resolve: {
+    ...frozen.resolve,
+    alias: [
+      { find: /^\.\.\/api-source\/referral-store\.js$/, replacement: "/app/apps/api/src/referral-store.ts" },
+      ...frozen.resolve.alias,
+    ],
+  },
+  test: {
+    ...frozen.test,
+    setupFiles: [...setupFiles, "/app/coolify/releases/2026-11-03-qr-device-login/candidate-boundary.setup.mjs"],
+  },
+};
+'''
+BOUNDARY_SETUP = '''import { expect, vi } from "vitest";
+// The operational /me response adds a database boundary absent from the frozen QR fixture.
+if (expect.getState().testPath === "/app/apps/api/src/device-login-server.test.ts") {
+  vi.doMock("/app/apps/api/src/access-history.ts", async (importActual) => ({
+    ...(await importActual()),
+    getAccessHistory: vi.fn(async () => null),
+  }));
+}
+'''
 
 def test_fixture_script(test_args):
     return backend.legacy.cgroup()+'''const crypto=require("node:crypto");
@@ -181,12 +208,16 @@ def run_test_fixture(image,revision,role,paths,mounts,env,directory):
     if role not in ('candidate','baseline') or not re.fullmatch('[a-f0-9]{40}',revision):raise GateError('test_fixture_identity_invalid')
     name='flixify-qr-tests-'+role+'-'+revision[:12]+'-'+uuid.uuid4().hex[:12]
     reporter=directory/'errors-reporter.mjs';reporter.write_text(ERROR_REPORTER)
+    wrapper=directory/'harness.config.mjs';wrapper.write_text(HARNESS_CONFIG)
+    setup=directory/'boundary.setup.mjs';setup.write_text(BOUNDARY_SETUP)
     # Logo tests mock fetch but resolve example.com through the real DNS lookup.
     args=['docker','run','--name',name,'--network','none','--add-host','example.com:93.184.216.34','--cpus','1','--memory','1280m','--memory-swap','1536m','--pids-limit','256']
     for key,value in env.items():args+=['-e',key+'='+value]
     for source,path in mounts:args+=['-v',str(source)+':/app/'+path+':ro']
+    config='coolify/releases/2026-11-03-qr-device-login/candidate-harness.config.mjs'
+    setup_path='coolify/releases/2026-11-03-qr-device-login/candidate-boundary.setup.mjs'
+    args+=['-v',str(wrapper)+':/app/'+config+':ro','-v',str(setup)+':/app/'+setup_path+':ro']
     args+=['-v',str(reporter)+':/tmp/qr-test-errors-reporter.mjs:ro']
-    config='coolify/releases/2026-11-03-qr-device-login/candidate-tests.config.ts'
     test_args=['--no-install','vitest','run','--root','/app','--config','/app/'+config,'--maxWorkers=1',
                '--reporter=json','--reporter=/tmp/qr-test-errors-reporter.mjs','--outputFile.json=/tmp/qr-test-raw.json']
     test_args+=['/app/'+path for path in paths]
@@ -216,7 +247,8 @@ def candidate_tests(repo,revision,candidate,base_image,test_report=None):
             data=merge.blob(repo,revision,path);file=directory/str(index);file.write_bytes(data)
             mounts.append((file,path));hashes[path]=merge.sha(data)
         bound={'revision':revision,'candidateImage':identity(candidate),'baselineImage':identity(base_image),
-               'frozenFileSha256':hashes,'errorReporterSha256':merge.sha(ERROR_REPORTER.encode()),'reports':{}}
+               'frozenFileSha256':hashes,'errorReporterSha256':merge.sha(ERROR_REPORTER.encode()),
+               'harnessConfigSha256':merge.sha(HARNESS_CONFIG.encode()),'boundarySetupSha256':merge.sha(BOUNDARY_SETUP.encode()),'reports':{}}
         try:
             report=run_test_fixture(candidate,revision,'candidate',test_paths,mounts,env,directory)
             bound['reports']['candidate']=report
@@ -227,7 +259,7 @@ def candidate_tests(repo,revision,candidate,base_image,test_report=None):
                 baseline=run_test_fixture(base_image,revision,'baseline',nonqr,[(file,path) for file,path in mounts if path not in (*QR_TESTS,QR_POSTGRES_TEST)],env,directory)
                 bound['reports']['baseline']=baseline
             result=test_parity(report,baseline,test_paths)
-            result.update({key:bound[key] for key in ('revision','candidateImage','baselineImage','frozenFileSha256','errorReporterSha256')})
+            result.update({key:bound[key] for key in ('revision','candidateImage','baselineImage','frozenFileSha256','errorReporterSha256','harnessConfigSha256','boundarySetupSha256')})
             bound['result']=result
             return result
         except GateError as error:

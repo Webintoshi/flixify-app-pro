@@ -102,6 +102,35 @@ class AdapterTests(unittest.TestCase):
         self.assertNotIn('private fixture value',result.stdout)
         self.assertNotIn('expected true',result.stdout)
 
+    def test_boundary_setup_mocks_only_exact_qr_server_file_and_preserves_exports(self):
+        api=load('qr_test_boundary_setup','build-api.py')
+        source=api.BOUNDARY_SETUP.replace('import { expect, vi } from "vitest";','')
+        for path,expected in (
+            ('/app/apps/api/src/device-login-server.test.ts',[{'path':'/app/apps/api/src/access-history.ts','history':None,'sameErrorClass':True,'otherExport':'retained'}]),
+            ('/app/apps/api/src/trial-direct-fallback.test.ts',[]),
+            ('/app/another/device-login-server.test.ts',[]),
+        ):
+            script='const pending=[],calls=[];const expect={getState:()=>({testPath:'+json.dumps(path)+'})};'
+            script+='const vi={fn:fn=>fn,doMock(path,factory){const actual={TrialUnavailableError:class TrialUnavailableError{},getAccessHistory:async()=>"real",otherExport:"retained"};pending.push(factory(async()=>actual).then(async next=>calls.push({path,history:await next.getAccessHistory(),sameErrorClass:next.TrialUnavailableError===actual.TrialUnavailableError,otherExport:next.otherExport})))}};'
+            script+=source+'\nawait Promise.all(pending);console.log(JSON.stringify(calls));'
+            result=subprocess.run(['node','--input-type=module','-e',script],text=True,capture_output=True)
+            with self.subTest(path=path):
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(json.loads(result.stdout),expected)
+
+    def test_harness_wrapper_adds_only_direct_referral_alias_and_keeps_frozen_setup(self):
+        api=load('qr_test_harness_config','build-api.py')
+        source=api.HARNESS_CONFIG.split('\n',1)[1].replace('export default','const result =')
+        prelude='const frozen={resolve:{alias:[{find:/^\\.\\/referral-store\\.js$/,replacement:"existing-fixture"}]},test:{setupFiles:["existing-setup"],include:["frozen-include"],exclude:["frozen-exclude"]}};'
+        script=prelude+source+'\nconsole.log(JSON.stringify({direct:result.resolve.alias.filter(a=>a.find.test("../api-source/referral-store.js")).map(a=>a.replacement),local:result.resolve.alias.filter(a=>a.find.test("./referral-store.js")).map(a=>a.replacement),other:result.resolve.alias.filter(a=>a.find.test("../api-source/other.js")).length,test:result.test}));'
+        result=subprocess.run(['node','-e',script],text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(json.loads(result.stdout),{
+            'direct':['/app/apps/api/src/referral-store.ts'],'local':['existing-fixture'],'other':0,
+            'test':{'setupFiles':['existing-setup','/app/coolify/releases/2026-11-03-qr-device-login/candidate-boundary.setup.mjs'],
+                    'include':['frozen-include'],'exclude':['frozen-exclude']},
+        })
+
     def test_parity_accepts_candidate_improvement_and_requires_baseline_for_failure(self):
         api=load('qr_test_parity_improvement','build-api.py')
         candidate=self.parity_report();paths=[suite['path'].removeprefix('/app/') for suite in candidate['suites']]
@@ -121,7 +150,7 @@ class AdapterTests(unittest.TestCase):
             'coolify/releases/2026-11-01-packages/billing-tests/referral-store.fixture.ts',
             'coolify/releases/2026-11-01-packages/billing-tests/fixtures.ts',
         ]
-        calls=[]
+        calls=[];generated={}
         report=self.parity_report()
         for path in paths[5:7]:
             report['suites'].append({'path':'/app/'+path,'status':'passed','hasError':False,
@@ -129,6 +158,12 @@ class AdapterTests(unittest.TestCase):
         report.update({'numTotalTests':19,'numPassedTests':6})
         def command(*args,**kwargs):
             calls.append(args)
+            if args[:2]==('docker','run'):
+                for index,value in enumerate(args):
+                    if value=='-v':
+                        source,destination=args[index+1].split(':',1)
+                        if destination.endswith('/candidate-harness.config.mjs:ro') or destination.endswith('/candidate-boundary.setup.mjs:ro'):
+                            generated[destination]=Path(source).read_bytes()
             if args[:2]==('docker','cp'):Path(args[-1]).write_text(json.dumps(report))
             return b''
         with patch.object(api.merge,'git',return_value=('\n'.join(paths)+'\n').encode()), \
@@ -150,8 +185,10 @@ class AdapterTests(unittest.TestCase):
         marker='cp.execFileSync("npx",'
         argv,_=json.JSONDecoder().raw_decode(script.split(marker,1)[1])
         config='coolify/releases/2026-11-03-qr-device-login/candidate-tests.config.ts'
+        harness='coolify/releases/2026-11-03-qr-device-login/candidate-harness.config.mjs'
+        setup='coolify/releases/2026-11-03-qr-device-login/candidate-boundary.setup.mjs'
         self.assertEqual(argv,[
-            '--no-install','vitest','run','--root','/app','--config','/app/'+config,'--maxWorkers=1',
+            '--no-install','vitest','run','--root','/app','--config','/app/'+harness,'--maxWorkers=1',
             '--reporter=json','--reporter=/tmp/qr-test-errors-reporter.mjs','--outputFile.json=/tmp/qr-test-raw.json',
             '/app/apps/api/src/device-login.test.ts',
             '/app/apps/api/src/device-login-routes.test.ts',
@@ -162,8 +199,10 @@ class AdapterTests(unittest.TestCase):
             '/app/coolify/releases/2026-11-01-packages/billing-tests/checkout.test.ts',
         ])
         mounts=[invocation[index+1] for index,value in enumerate(invocation) if value=='-v']
-        self.assertEqual([mount.split(':/app/',1)[1] for mount in mounts[:-1]],[path+':ro' for path in paths+[config]])
+        self.assertEqual([mount.split(':/app/',1)[1] for mount in mounts[:-1]],[path+':ro' for path in paths+[config,harness,setup]])
         self.assertTrue(mounts[-1].endswith(':/tmp/qr-test-errors-reporter.mjs:ro'))
+        self.assertEqual(result['harnessConfigSha256'],hashlib.sha256(generated['/app/'+harness+':ro']).hexdigest())
+        self.assertEqual(result['boundarySetupSha256'],hashlib.sha256(generated['/app/'+setup+':ro']).hexdigest())
 
     def test_candidate_fixture_removes_its_container_when_report_copy_fails(self):
         api=load('qr_test_candidate_cleanup','build-api.py');calls=[]

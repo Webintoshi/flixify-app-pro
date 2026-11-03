@@ -15,6 +15,7 @@ def load(name,path):
     spec=importlib.util.spec_from_file_location(name,path); module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 
 api=load('qr_api_build_support',HERE/'build-api.py')
+flat=load('qr_web_flatten_support',HERE/'flatten.py')
 m=api.merge
 web=load('qr_web_compile_support',HERE.parent/'2026-10-31-search-activation/build-web.py')
 builder=web.builder
@@ -50,6 +51,8 @@ def validate_public(repo,revision,artifacts):
 
 def compile_candidate(revision,base,updates,env,image_id):
     if not base['Config'].get('Cmd') or base['Config'].get('Volumes'): raise m.GateError('unsupported_base_config')
+    try: flat.expected_config(base,revision,env)
+    except flat.FlattenError as error: raise m.GateError(str(error)) from error
     name='flixify-qr-web-build-'+uuid.uuid4().hex[:12]
     args=['docker','create','--name',name,'--network','none','--cpus','1','--memory','1280m','--memory-swap','1536m','--pids-limit','256']
     for k,v in env.items(): args+=['-e',k+'='+v]
@@ -63,9 +66,23 @@ def compile_candidate(revision,base,updates,env,image_id):
                 file=Path(directory)/str(index);file.write_bytes(data);file.chmod(0o644)
                 command('docker','cp',str(file),name+':/app/'+path)
         command('docker','exec',name,'node','-e',builder.build_script(),timeout=1200)
-        command('docker','commit','--change','CMD '+json.dumps(base['Config']['Cmd']),'--change','LABEL org.opencontainers.image.revision='+revision,'--change','LABEL vip.flixify.edge-recovery.base='+image_id,name,target(revision),timeout=300)
+        try: flat.flatten_compiled(command,base,revision,env,name,target(revision))
+        except flat.FlattenError as error: raise m.GateError(str(error)) from error
     finally:
         if created: command('docker','rm','--force',name)
+
+def verify_candidate(base,revision,updates,env,config):
+    candidate=builder.core.image(target(revision))
+    if (candidate.get('Config',{}).get('Labels') or {}).get(flat.MARKER)!=flat.METHOD:
+        return builder.verify_candidate(base,revision,updates,env,config)
+    try: flat.verify_flat_candidate(candidate,base,revision,env)
+    except flat.FlattenError as error: raise m.GateError(str(error)) from error
+    for path,contents in updates.items():
+        if builder.image_file(candidate['Id'],path)!=contents: raise m.GateError('web_candidate_source_differs:'+path)
+    if builder.image_file(candidate['Id'],builder.CONFIG)!=config: raise m.GateError('web_next_config_not_restored_exactly')
+    command('docker','run','--rm','--network','none','--entrypoint','sh',candidate['Id'],
+            '-c','test -s /app/apps/ops-web/.next/BUILD_ID && test ! -d /app/apps/ops-web/.next/cache')
+    return candidate['Id']
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -113,7 +130,7 @@ def main():
     if args.build:
         if target(args.revision) in command('docker','image','ls','--format','{{.Repository}}:{{.Tag}}').decode().splitlines(): raise m.GateError('candidate_exists')
         compile_candidate(args.revision,base,updates,env,args.base_image_id)
-    candidate=builder.verify_candidate(base,args.revision,updates,env,config)
+    candidate=verify_candidate(base,args.revision,updates,env,config)
     if web.untouched(candidate)!=source or json.loads(web.canonical_public_manifest(web.public_manifest(candidate)))!=public_expected: raise m.GateError('untouched_or_public_assets_changed')
     if api.backend.host_snapshot()!=before_host: raise m.GateError('existing_host_changed')
     if not before_images<=set(command('docker','image','ls','--no-trunc','-q').decode().splitlines()): raise m.GateError('existing_image_removed')

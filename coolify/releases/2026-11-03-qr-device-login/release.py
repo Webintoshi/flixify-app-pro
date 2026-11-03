@@ -15,6 +15,7 @@ def load(name,path):
     spec=importlib.util.spec_from_file_location(name,path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 
 api=load('qr_release_api_builder',HERE/'build-api.py')
+flat=load('qr_release_web_flatten',HERE/'flatten.py')
 reviewed=load('qr_reviewed_release_transaction',HERE.parent/'2026-11-01-packages/release-backend.py')
 guard=reviewed.guard
 BASELINES={
@@ -42,7 +43,9 @@ def configure(revision,candidates):
     def candidate_images():
         for name,candidate_id in candidates.items():
             candidate=guard.image(guard.TARGET[name]);base=guard.image(guard.SOURCE_IDS[name]);labels=candidate['Config'].get('Labels') or {};layers=base['RootFS']['Layers']
-            if candidate['Id']!=candidate_id or candidate_id==base['Id'] or not layers or candidate['RootFS']['Layers'][:len(layers)]!=layers or labels.get('org.opencontainers.image.revision')!=revision or labels.get('vip.flixify.edge-recovery.base')!=base['Id']:
+            ancestry=bool(layers) and candidate['RootFS']['Layers'][:len(layers)]==layers
+            if name=='ops-web' and flat.flat_ancestry(candidate,base,revision): ancestry=True
+            if candidate['Id']!=candidate_id or candidate_id==base['Id'] or not ancestry or labels.get('org.opencontainers.image.revision')!=revision or labels.get('vip.flixify.edge-recovery.base')!=base['Id']:
                 raise api.GateError('candidate_identity_or_ancestry_drift:'+name)
         return candidates
     guard.candidate_images=candidate_images
