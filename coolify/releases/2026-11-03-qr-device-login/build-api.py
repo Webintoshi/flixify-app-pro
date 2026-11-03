@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+import uuid
 
 HERE=Path(__file__).resolve().parent
 
@@ -27,6 +28,75 @@ ACTUAL_SOURCE_HASHES={
     'apps/api/package.json':'9f7916801b4fbf5d142eddaf0210c8982bd40dc64ca6e3a7e8fc0ef0bcc8a583',
     'package-lock.json':'d18f934e35060abec02ae961e9af6315822599be0a9d70bbefa29faf64289984',
 }
+QR_TESTS=tuple('apps/api/src/'+name+'.test.ts' for name in ('device-login','device-login-routes','device-login-server'))
+QR_POSTGRES_TEST='apps/api/src/device-login-postgres.test.ts'
+# Preserve the existing offline config exclusion for operational PostgreSQL tests.
+EXCLUDED_POSTGRES_TEST='coolify/releases/2026-11-01-packages/billing-tests/payment-postgres.test.ts'
+
+def validate_test_report(report, paths):
+    if (not isinstance(report,dict) or any(type(report.get(field)) is not int or report[field] != 0
+            for field in ('unhandledErrors','suiteErrors','numPendingTestSuites','numTodoTests'))):
+        raise GateError('candidate_test_runtime_or_suite_error')
+    expected=set(paths)-{EXCLUDED_POSTGRES_TEST}
+    cases,seen={},set()
+    suites=report.get('suites')
+    if not isinstance(suites,list):raise GateError('candidate_test_report_invalid')
+    for suite in suites:
+        path=suite.get('path','') if isinstance(suite,dict) else ''
+        if not isinstance(path,str) or not path.startswith('/app/'):raise GateError('candidate_test_path_invalid')
+        path=path[5:]
+        if path not in expected or path in seen or suite.get('hasError') is not False:
+            raise GateError('candidate_test_suite_coverage_or_load_error')
+        seen.add(path)
+        rows=suite.get('cases')
+        if not isinstance(rows,list) or not rows:raise GateError('candidate_test_empty_suite')
+        failed=False
+        for row in rows:
+            name=row.get('fullName') if isinstance(row,dict) else None
+            status=row.get('status') if isinstance(row,dict) else None
+            if (not isinstance(name,str) or not name or len(name)>2000 or re.search(r'[\x00-\x1f\x7f]',name)
+                    or status not in ('passed','failed','skipped') or (path,name) in cases):
+                raise GateError('candidate_test_case_invalid_or_duplicate')
+            digest=row.get('errorFirstLineSha256')
+            if status=='failed':
+                if not isinstance(digest,str) or not re.fullmatch('[a-f0-9]{64}',digest):raise GateError('candidate_test_error_signature_missing')
+                failed=True
+            elif digest is not None:raise GateError('candidate_test_unexpected_error_signature')
+            cases[path,name]={'status':status,'errorFirstLineSha256':digest}
+        if suite.get('status') != ('failed' if failed else 'passed'):raise GateError('candidate_test_unattributed_suite_failure')
+    if seen != expected:raise GateError('candidate_test_missing_frozen_suite')
+    counts={'total':len(cases),**{status:sum(case['status']==status for case in cases.values()) for status in ('passed','failed','skipped')}}
+    for field,status in (('numTotalTests','total'),('numPassedTests','passed'),('numFailedTests','failed'),('numPendingTests','skipped')):
+        if type(report.get(field)) is not int or report[field]!=counts[status]:raise GateError('candidate_test_counts_differ')
+    if type(report.get('exitCode')) is not int or report['exitCode'] != int(counts['failed']>0):raise GateError('candidate_test_process_exit_differs')
+    return cases,{'files':len(seen),**counts}
+
+def require_qr_passes(cases):
+    for path in QR_TESTS:
+        rows=[case for (file,_),case in cases.items() if file==path]
+        if not rows or any(row['status']!='passed' for row in rows):raise GateError('qr_candidate_tests_must_all_pass')
+    postgres=[case for (file,_),case in cases.items() if file==QR_POSTGRES_TEST]
+    if len(postgres)!=13 or any(case['status']!='skipped' for case in postgres):raise GateError('qr_postgres_separate_receipt_scope_differs')
+
+def test_parity(candidate, baseline, paths):
+    candidate_cases,candidate_counts=validate_test_report(candidate,paths)
+    require_qr_passes(candidate_cases)
+    nonqr={key:value for key,value in candidate_cases.items() if key[0] not in (*QR_TESTS,QR_POSTGRES_TEST)}
+    known=[];baseline_counts=None
+    if baseline is None:
+        if any(case['status']!='passed' for case in nonqr.values()):raise GateError('candidate_test_baseline_required')
+    else:
+        baseline_cases,baseline_counts=validate_test_report(baseline,[path for path in paths if path not in (*QR_TESTS,QR_POSTGRES_TEST)])
+        if set(baseline_cases)!=set(nonqr):raise GateError('candidate_baseline_testcase_coverage_differs')
+        for key,case in nonqr.items():
+            prior=baseline_cases[key]
+            if case['status']=='failed' and (prior['status']!='failed' or case['errorFirstLineSha256']!=prior['errorFirstLineSha256']):
+                raise GateError('candidate_test_new_failure')
+            if case['status']=='skipped' and prior['status']!='skipped':raise GateError('candidate_test_new_skip')
+            if prior['status']=='failed':known.append({'path':key[0],'fullName':key[1],'errorFirstLineSha256':prior['errorFirstLineSha256']})
+    return {'status':'passed_no_new_failures' if any(case['status']!='passed' for case in nonqr.values()) else 'all_passed',
+            'candidateCounts':candidate_counts,'baselineCounts':baseline_counts,'baselineKnownFailures':sorted(known,key=lambda case:(case['path'],case['fullName'])),
+            'qrPostgresSkipped':13,'qrPostgresAuthority':'separate_migration_receipt_required'}
 
 
 def identity(value):
@@ -74,31 +144,116 @@ def image_sources(image, paths):
     rows=json.loads(command('docker','run','--rm','--network','none','--read-only','--cpus','0.5','--memory','256m','--pids-limit','64','--entrypoint','node',image,'-e',script,timeout=120))
     return {p:base64.b64decode(value,validate=True) if value is not None else None for p,value in rows.items()}
 
-def candidate_tests(repo,revision,candidate):
+ERROR_REPORTER = '''import fs from "node:fs";
+export default class ErrorCountsReporter {
+  onFinished(files = [], errors = []) {
+    let suiteErrors = 0;
+    const visit = task => {
+      if (task.type !== "test") suiteErrors += task.result?.errors?.length || 0;
+      for (const child of task.tasks || []) visit(child);
+    };
+    for (const file of files) visit(file);
+    fs.writeFileSync("/tmp/qr-test-errors.json", JSON.stringify({unhandledErrors: errors.length, suiteErrors}));
+  }
+}
+'''
+
+def test_fixture_script(test_args):
+    return backend.legacy.cgroup()+'''const crypto=require("node:crypto");
+let exitCode=0;
+try { cp.execFileSync("npx",'''+json.dumps(test_args)+''',{stdio:"ignore"}); }
+catch (error) { exitCode=Number.isInteger(error.status)?error.status:125; }
+const raw=JSON.parse(fs.readFileSync("/tmp/qr-test-raw.json","utf8"));
+const errors=JSON.parse(fs.readFileSync("/tmp/qr-test-errors.json","utf8"));
+const firstErrorHash = messages => {
+  if (!messages?.length) return null;
+  const line=String(messages[0]).replace(/\\u001b\\[[0-?]*[ -/]*[@-~]/g,"").split(/\\r?\\n/).find(line=>line.trim().length);
+  return line ? crypto.createHash("sha256").update(line).digest("hex") : null;
+};
+const report={exitCode,...errors};
+for (const key of ["numTotalTests","numPassedTests","numFailedTests","numPendingTests","numTodoTests","numPendingTestSuites"]) report[key]=raw[key];
+report.suites=raw.testResults.map(suite=>({path:suite.name,status:suite.status,hasError:!!suite.message,
+  cases:suite.assertionResults.map(test=>({fullName:test.fullName,status:test.status,errorFirstLineSha256:firstErrorHash(test.failureMessages)}))}));
+fs.writeFileSync("/tmp/qr-test-sanitized.json",JSON.stringify(report));'''
+
+def run_test_fixture(image,revision,role,paths,mounts,env,directory):
+    identity(image)
+    if role not in ('candidate','baseline') or not re.fullmatch('[a-f0-9]{40}',revision):raise GateError('test_fixture_identity_invalid')
+    name='flixify-qr-tests-'+role+'-'+revision[:12]+'-'+uuid.uuid4().hex[:12]
+    reporter=directory/'errors-reporter.mjs';reporter.write_text(ERROR_REPORTER)
+    # Logo tests mock fetch but resolve example.com through the real DNS lookup.
+    args=['docker','run','--name',name,'--network','none','--add-host','example.com:93.184.216.34','--cpus','1','--memory','1280m','--memory-swap','1536m','--pids-limit','256']
+    for key,value in env.items():args+=['-e',key+'='+value]
+    for source,path in mounts:args+=['-v',str(source)+':/app/'+path+':ro']
+    args+=['-v',str(reporter)+':/tmp/qr-test-errors-reporter.mjs:ro']
+    config='coolify/releases/2026-11-03-qr-device-login/candidate-tests.config.ts'
+    test_args=['--no-install','vitest','run','--root','/app','--config','/app/'+config,'--maxWorkers=1',
+               '--reporter=json','--reporter=/tmp/qr-test-errors-reporter.mjs','--outputFile.json=/tmp/qr-test-raw.json']
+    test_args+=['/app/'+path for path in paths]
+    report_file=directory/(role+'-sanitized.json')
+    try:
+        command(*args,'--entrypoint','node',image,'-e',test_fixture_script(test_args),timeout=900)
+        command('docker','cp',name+':/tmp/qr-test-sanitized.json',str(report_file),timeout=60)
+        if report_file.is_symlink() or not report_file.is_file() or report_file.stat().st_size>4*1024**2:raise GateError('test_fixture_report_invalid')
+        try:return json.loads(report_file.read_bytes())
+        except (ValueError,UnicodeDecodeError):raise GateError('test_fixture_report_invalid') from None
+    finally:
+        command('docker','rm','-f',name,timeout=120)
+
+def candidate_tests(repo,revision,candidate,base_image,test_report=None):
     roots=('apps/api/src/','coolify/releases/2026-11-01-welcome-offer/welcome-tests/','coolify/releases/2026-11-01-packages/billing-tests/')
     paths=merge.git(repo,'ls-tree','-r','--name-only',revision,'--',*roots).decode().splitlines()
     paths=[p for p in paths if (p.endswith('.test.ts') or p.endswith('.fixture.ts') or p.endswith('/fixtures.ts'))]
-    if len([p for p in paths if '/device-login' in p])<4: raise GateError('all_qr_candidate_tests_required')
+    test_paths=[path for path in paths if path.endswith('.test.ts')]
+    if not set((*QR_TESTS,QR_POSTGRES_TEST))<=set(test_paths):raise GateError('all_qr_candidate_tests_required')
     config='coolify/releases/2026-11-03-qr-device-login/candidate-tests.config.ts'
     env=dict(backend.legacy.TEST_ENV)
     env.update({k:'' for k in ('STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET','TEST_DATABASE_URL','PG_TEST_DATABASE_URL','DEVICE_LOGIN_TEST_DATABASE_URL','PACKAGE_CATALOG_TEST_DATABASE_URL','PACKAGE_PAYMENT_TEST_DATABASE_URL','WELCOME_OFFER_TEST_DATABASE_URL','GA4_WEB_API_SECRET','GA4_WINDOWS_API_SECRET')})
     env.update({'STRIPE_BILLING_ENABLED':'false','GA4_ENABLED':'false'})
     with tempfile.TemporaryDirectory(prefix='qr-candidate-tests-') as directory:
-        # Logo tests mock fetch but resolve example.com through the real DNS lookup.
-        args=['docker','run','--rm','--network','none','--add-host','example.com:93.184.216.34','--cpus','1','--memory','1280m','--memory-swap','1536m','--pids-limit','256']
-        for key,value in env.items(): args+=['-e',key+'='+value]
+        directory=Path(directory);mounts=[];hashes={}
         for index,path in enumerate(paths+[config]):
-            file=Path(directory)/str(index); file.write_bytes(merge.blob(repo,revision,path)); args+=['-v',str(file)+':/app/'+path+':ro']
-        test_args=['--no-install','vitest','run','--root','/app','--config','/app/'+config,'--maxWorkers=1']
-        test_args+=['/app/'+path for path in paths if path.endswith('.test.ts')]
-        script=backend.legacy.cgroup()+'cp.execFileSync("npx",'+json.dumps(test_args)+',{stdio:"inherit"});'
-        command(*args,'--entrypoint','node',candidate,'-e',script,timeout=900)
+            data=merge.blob(repo,revision,path);file=directory/str(index);file.write_bytes(data)
+            mounts.append((file,path));hashes[path]=merge.sha(data)
+        bound={'revision':revision,'candidateImage':identity(candidate),'baselineImage':identity(base_image),
+               'frozenFileSha256':hashes,'errorReporterSha256':merge.sha(ERROR_REPORTER.encode()),'reports':{}}
+        try:
+            report=run_test_fixture(candidate,revision,'candidate',test_paths,mounts,env,directory)
+            bound['reports']['candidate']=report
+            cases,_=validate_test_report(report,test_paths);require_qr_passes(cases)
+            baseline=None
+            if any(case['status']!='passed' for (path,_),case in cases.items() if path not in (*QR_TESTS,QR_POSTGRES_TEST)):
+                nonqr=[path for path in test_paths if path not in (*QR_TESTS,QR_POSTGRES_TEST)]
+                baseline=run_test_fixture(base_image,revision,'baseline',nonqr,[(file,path) for file,path in mounts if path not in (*QR_TESTS,QR_POSTGRES_TEST)],env,directory)
+                bound['reports']['baseline']=baseline
+            result=test_parity(report,baseline,test_paths)
+            result.update({key:bound[key] for key in ('revision','candidateImage','baselineImage','frozenFileSha256','errorReporterSha256')})
+            bound['result']=result
+            return result
+        except GateError as error:
+            bound['result']={'status':'blocked','reason':str(error)}
+            failures=[]
+            for role,report in bound['reports'].items():
+                if not isinstance(report,dict) or not isinstance(report.get('suites'),list):continue
+                for suite in report['suites']:
+                    if not isinstance(suite,dict) or not isinstance(suite.get('cases'),list):continue
+                    for case in suite['cases']:
+                        if isinstance(case,dict) and case.get('status')=='failed':
+                            failures.append({'reportRole':role,'path':suite.get('path'),'fullName':case.get('fullName'),
+                                             'errorFirstLineSha256':case.get('errorFirstLineSha256')})
+            print(json.dumps({'candidateTests':{**bound['result'],'failedCases':failures}},sort_keys=True))
+            raise
+        finally:
+            if test_report is not None:
+                if test_report.is_symlink():raise GateError('test_report_destination_symlink')
+                test_report.write_text(json.dumps(bound,sort_keys=True,indent=2)+'\n')
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('repo',type=Path); parser.add_argument('--revision',required=True)
     parser.add_argument('--base-image-id',required=True); parser.add_argument('--base-image-tag',required=True)
     parser.add_argument('--qrcode-tarball',required=True,type=Path); parser.add_argument('--source-pin',type=Path)
+    parser.add_argument('--test-report',type=Path)
     action=parser.add_mutually_exclusive_group(); action.add_argument('--measure',action='store_true'); action.add_argument('--build',action='store_true'); action.add_argument('--verify-existing',action='store_true')
     args=parser.parse_args(); identity(args.base_image_id)
     tar=args.qrcode_tarball.read_bytes(); package_files=merge.tar_files(tar)
@@ -125,9 +280,9 @@ def main():
     if args.build and exists: raise GateError('candidate_exists_use_verify_existing')
     expected=backend.compile_overlay('api',args.revision,base,updates,source,publish=args.build)
     candidate=backend.verify_candidate('api',args.revision,base,updates,source,expected)
-    candidate_tests(args.repo,args.revision,candidate)
+    candidate_test_result=candidate_tests(args.repo,args.revision,candidate,args.base_image_id,args.test_report)
     if backend.host_snapshot()!=before_host: raise GateError('existing_host_changed')
     if not before_images<=set(command('docker','image','ls','--no-trunc','-q').decode().splitlines()): raise GateError('existing_image_removed')
-    print(json.dumps({'candidate':candidate,'revision':args.revision,'merge':audit,'tests':'passed','migrationApplied':False},sort_keys=True))
+    print(json.dumps({'candidate':candidate,'revision':args.revision,'merge':audit,'tests':'passed','candidateTests':candidate_test_result,'migrationApplied':False},sort_keys=True))
 
 if __name__=='__main__': main()

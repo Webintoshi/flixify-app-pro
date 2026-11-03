@@ -6,6 +6,8 @@ import contextlib
 import io
 import json
 import tempfile
+import hashlib
+import subprocess
 from types import ModuleType
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -16,6 +18,96 @@ def load(name,file):
     spec=importlib.util.spec_from_file_location(name,HERE/file);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 
 class AdapterTests(unittest.TestCase):
+    def parity_report(self, status='passed', message='AssertionError: expected true to be false'):
+        qr=['device-login.test.ts','device-login-routes.test.ts','device-login-server.test.ts']
+        suites=[{'path':'/app/apps/api/src/'+name,'status':'passed','hasError':False,
+                 'cases':[{'fullName':name+' required case','status':'passed','errorFirstLineSha256':None}]} for name in qr]
+        suites.append({'path':'/app/apps/api/src/device-login-postgres.test.ts','status':'passed','hasError':False,
+                       'cases':[{'fullName':'PostgreSQL case '+str(index),'status':'skipped','errorFirstLineSha256':None} for index in range(13)]})
+        suites.append({'path':'/app/apps/api/src/trial-direct-fallback.test.ts','status':'failed' if status=='failed' else 'passed','hasError':False,
+                       'cases':[{'fullName':'trial fallback existing expectation','status':status,
+                                 'errorFirstLineSha256':hashlib.sha256(message.encode()).hexdigest() if status=='failed' else None}]})
+        return {'exitCode':1 if status=='failed' else 0,'unhandledErrors':0,'suiteErrors':0,
+                'numTotalTests':17,'numPassedTests':4 if status=='passed' else 3,'numFailedTests':int(status=='failed'),
+                'numPendingTests':13+int(status=='skipped'),'numTodoTests':0,'numPendingTestSuites':0,'suites':suites}
+
+    def baseline_report(self, candidate):
+        baseline=json.loads(json.dumps(candidate));baseline['suites']=baseline['suites'][-1:]
+        baseline.update({'numTotalTests':1,'numPassedTests':int(baseline['suites'][0]['cases'][0]['status']=='passed'),
+                         'numPendingTests':int(baseline['suites'][0]['cases'][0]['status']=='skipped')})
+        return baseline
+
+    def test_parity_accepts_only_identical_existing_failure_signature(self):
+        api=load('qr_test_parity_known_failure','build-api.py')
+        candidate=self.parity_report('failed');baseline=self.baseline_report(candidate)
+        paths=[suite['path'].removeprefix('/app/') for suite in candidate['suites']]
+        result=api.test_parity(candidate,baseline,paths)
+        self.assertEqual(result['status'],'passed_no_new_failures')
+        self.assertEqual(result['candidateCounts'],{'files':5,'total':17,'passed':3,'failed':1,'skipped':13})
+        self.assertEqual(result['baselineKnownFailures'],[{
+            'path':'apps/api/src/trial-direct-fallback.test.ts','fullName':'trial fallback existing expectation',
+            'errorFirstLineSha256':'e504e64467245c9a2ca504331e7f890ef5ebaeac545f2344f2abb492157712f7',
+        }])
+
+    def test_parity_rejects_new_failure_changed_signature_and_new_skip(self):
+        api=load('qr_test_parity_new_failure','build-api.py')
+        candidate=self.parity_report('failed')
+        paths=[suite['path'].removeprefix('/app/') for suite in candidate['suites']]
+        for baseline in (self.baseline_report(self.parity_report()),self.baseline_report(self.parity_report('failed','different first error'))):
+            with self.subTest(baseline=baseline),self.assertRaises(api.GateError):api.test_parity(candidate,baseline,paths)
+        with self.assertRaises(api.GateError):api.test_parity(self.parity_report('skipped'),self.baseline_report(self.parity_report()),paths)
+        skipped=self.parity_report('skipped')
+        self.assertEqual(api.test_parity(skipped,self.baseline_report(skipped),paths)['status'],'passed_no_new_failures')
+
+    def test_parity_rejects_qr_failures_load_errors_and_missing_cases(self):
+        api=load('qr_test_parity_fail_closed','build-api.py')
+        paths=[suite['path'].removeprefix('/app/') for suite in self.parity_report()['suites']]
+        for defect in ('qr-failed','qr-skipped','load','hook','unhandled','missing-file','duplicate-case','pending','exit'):
+            candidate=self.parity_report('failed')
+            if defect in ('qr-failed','qr-skipped','pending'):
+                row=candidate['suites'][0]['cases'][0]
+                row['status']={'qr-failed':'failed','qr-skipped':'skipped','pending':'pending'}[defect]
+                if defect=='qr-failed':
+                    row['errorFirstLineSha256']='a'*64;candidate['suites'][0]['status']='failed'
+                    candidate['numPassedTests']-=1;candidate['numFailedTests']+=1
+                elif defect=='qr-skipped':candidate['numPassedTests']-=1;candidate['numPendingTests']+=1
+            elif defect=='load':candidate['suites'][0]['hasError']=True
+            elif defect=='hook':candidate['suiteErrors']=1
+            elif defect=='unhandled':candidate['unhandledErrors']=1
+            elif defect=='missing-file':candidate['suites'].pop(0)
+            elif defect=='duplicate-case':candidate['suites'][-1]['cases']*=2
+            elif defect=='exit':candidate['exitCode']=137
+            with self.subTest(defect=defect),self.assertRaises(api.GateError):
+                api.test_parity(candidate,self.baseline_report(self.parity_report('failed')),paths)
+        baseline=self.baseline_report(self.parity_report('failed'));baseline['suites'][0]['cases'][0]['fullName']='different case'
+        with self.assertRaises(api.GateError):api.test_parity(self.parity_report('failed'),baseline,paths)
+
+    def test_full_generated_fixture_script_has_valid_node_syntax(self):
+        api=load('qr_test_fixture_syntax','build-api.py')
+        result=subprocess.run(['node','--check'],input=api.test_fixture_script(['--no-install','vitest','run']),text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_sanitizer_keeps_only_first_error_line_hash(self):
+        api=load('qr_test_fixture_sanitizer','build-api.py')
+        raw={'numTotalTests':1,'numPassedTests':0,'numFailedTests':1,'numPendingTests':0,'numTodoTests':0,'numPendingTestSuites':0,
+             'testResults':[{'name':'/app/apps/api/src/trial-direct-fallback.test.ts','status':'failed','message':'',
+                             'assertionResults':[{'fullName':'existing expectation','status':'failed',
+                                                  'failureMessages':['\x1b[31mAssertionError: expected true to be false\x1b[39m\nprivate fixture value']}]}]}
+        prelude='const cp={execFileSync(){throw {status:1}}};const fs={readFileSync(path){return JSON.stringify(path.includes("raw")?'+json.dumps(raw)+':{unhandledErrors:0,suiteErrors:0})},writeFileSync(path,data){console.log(data)}};'
+        with patch.object(api.backend.legacy,'cgroup',return_value=prelude):
+            result=subprocess.run(['node','-e',api.test_fixture_script([])],text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        sanitized=json.loads(result.stdout)
+        self.assertEqual(sanitized['suites'][0]['cases'][0]['errorFirstLineSha256'],'e504e64467245c9a2ca504331e7f890ef5ebaeac545f2344f2abb492157712f7')
+        self.assertNotIn('private fixture value',result.stdout)
+        self.assertNotIn('expected true',result.stdout)
+
+    def test_parity_accepts_candidate_improvement_and_requires_baseline_for_failure(self):
+        api=load('qr_test_parity_improvement','build-api.py')
+        candidate=self.parity_report();paths=[suite['path'].removeprefix('/app/') for suite in candidate['suites']]
+        self.assertEqual(api.test_parity(candidate,self.baseline_report(self.parity_report('failed')),paths)['status'],'all_passed')
+        with self.assertRaises(api.GateError):api.test_parity(self.parity_report('failed'),None,paths)
+
     def test_candidate_tests_run_only_frozen_mounted_test_paths(self):
         api=load('qr_test_candidate_scope','build-api.py')
         paths=[
@@ -23,19 +115,34 @@ class AdapterTests(unittest.TestCase):
             'apps/api/src/device-login-routes.test.ts',
             'apps/api/src/device-login-server.test.ts',
             'apps/api/src/device-login-postgres.test.ts',
-            'apps/api/src/live-playback.test.ts',
+            'apps/api/src/trial-direct-fallback.test.ts',
             'coolify/releases/2026-11-01-welcome-offer/welcome-tests/analytics-policy.test.ts',
             'coolify/releases/2026-11-01-packages/billing-tests/checkout.test.ts',
             'coolify/releases/2026-11-01-packages/billing-tests/referral-store.fixture.ts',
             'coolify/releases/2026-11-01-packages/billing-tests/fixtures.ts',
         ]
         calls=[]
+        report=self.parity_report()
+        for path in paths[5:7]:
+            report['suites'].append({'path':'/app/'+path,'status':'passed','hasError':False,
+                                    'cases':[{'fullName':path+' required case','status':'passed','errorFirstLineSha256':None}]})
+        report.update({'numTotalTests':19,'numPassedTests':6})
+        def command(*args,**kwargs):
+            calls.append(args)
+            if args[:2]==('docker','cp'):Path(args[-1]).write_text(json.dumps(report))
+            return b''
         with patch.object(api.merge,'git',return_value=('\n'.join(paths)+'\n').encode()), \
              patch.object(api.merge,'blob',return_value=b'export {};\n'), \
-             patch.object(api,'command',side_effect=lambda *args,**kwargs:calls.append(args)):
-            api.candidate_tests(Path('/frozen-repo'),'b'*40,'sha256:'+'c'*64)
-        self.assertEqual(len(calls),1)
+             patch.object(api,'command',side_effect=command):
+            result=api.candidate_tests(Path('/frozen-repo'),'b'*40,'sha256:'+'c'*64,'sha256:'+'d'*64)
+        self.assertEqual(result['status'],'all_passed')
+        self.assertEqual(len(calls),3)
         invocation=calls[0]
+        name=invocation[invocation.index('--name')+1]
+        self.assertRegex(name,r'^flixify-qr-tests-candidate-b{12}-[a-f0-9]{12}$')
+        self.assertNotIn('--rm',invocation)
+        self.assertEqual(calls[1][0:2],('docker','cp'))
+        self.assertEqual(calls[2],('docker','rm','-f',name))
         self.assertEqual(invocation[invocation.index('--network')+1],'none')
         self.assertEqual(invocation[invocation.index('--add-host')+1],'example.com:93.184.216.34')
         self.assertEqual(invocation.count('--add-host'),1)
@@ -45,16 +152,65 @@ class AdapterTests(unittest.TestCase):
         config='coolify/releases/2026-11-03-qr-device-login/candidate-tests.config.ts'
         self.assertEqual(argv,[
             '--no-install','vitest','run','--root','/app','--config','/app/'+config,'--maxWorkers=1',
+            '--reporter=json','--reporter=/tmp/qr-test-errors-reporter.mjs','--outputFile.json=/tmp/qr-test-raw.json',
             '/app/apps/api/src/device-login.test.ts',
             '/app/apps/api/src/device-login-routes.test.ts',
             '/app/apps/api/src/device-login-server.test.ts',
             '/app/apps/api/src/device-login-postgres.test.ts',
-            '/app/apps/api/src/live-playback.test.ts',
+            '/app/apps/api/src/trial-direct-fallback.test.ts',
             '/app/coolify/releases/2026-11-01-welcome-offer/welcome-tests/analytics-policy.test.ts',
             '/app/coolify/releases/2026-11-01-packages/billing-tests/checkout.test.ts',
         ])
-        mounts=[invocation[index+1].split(':/app/',1)[1] for index,value in enumerate(invocation) if value=='-v']
-        self.assertEqual(mounts,[path+':ro' for path in paths+[config]])
+        mounts=[invocation[index+1] for index,value in enumerate(invocation) if value=='-v']
+        self.assertEqual([mount.split(':/app/',1)[1] for mount in mounts[:-1]],[path+':ro' for path in paths+[config]])
+        self.assertTrue(mounts[-1].endswith(':/tmp/qr-test-errors-reporter.mjs:ro'))
+
+    def test_candidate_fixture_removes_its_container_when_report_copy_fails(self):
+        api=load('qr_test_candidate_cleanup','build-api.py');calls=[]
+        def command(*args,**kwargs):
+            calls.append(args)
+            if args[:2]==('docker','cp'):raise api.GateError('copy_failed')
+            return b''
+        with tempfile.TemporaryDirectory() as directory,patch.object(api,'command',side_effect=command):
+            with self.assertRaises(api.GateError):
+                api.run_test_fixture('sha256:'+'c'*64,'b'*40,'candidate',[],[],{},Path(directory))
+        name=calls[0][calls[0].index('--name')+1]
+        self.assertEqual(calls[-1],('docker','rm','-f',name))
+
+    def test_candidate_failure_replays_frozen_nonqr_tests_on_immutable_baseline(self):
+        api=load('qr_test_candidate_baseline_replay','build-api.py')
+        candidate=self.parity_report('failed');baseline=self.baseline_report(candidate)
+        paths=[suite['path'].removeprefix('/app/') for suite in candidate['suites']]
+        paths+=['coolify/releases/2026-11-01-packages/billing-tests/referral-store.fixture.ts']
+        calls=[]
+        def command(*args,**kwargs):
+            calls.append(args)
+            if args[:2]==('docker','cp'):
+                Path(args[-1]).write_text(json.dumps(baseline if '-baseline-' in args[-2] else candidate))
+            return b''
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(api.merge,'git',return_value=('\n'.join(paths)+'\n').encode()), \
+             patch.object(api.merge,'blob',return_value=b'export {};\n'),patch.object(api,'command',side_effect=command):
+            output=Path(directory)/'bound-report.json'
+            result=api.candidate_tests(Path('/frozen-repo'),'b'*40,'sha256:'+'c'*64,'sha256:'+'d'*64,output)
+            saved=json.loads(output.read_bytes())
+        self.assertEqual(result['status'],'passed_no_new_failures')
+        runs=[call for call in calls if call[:2]==('docker','run')]
+        self.assertEqual(len(runs),2)
+        self.assertEqual(runs[0][-3],'sha256:'+'c'*64)
+        self.assertEqual(runs[1][-3],'sha256:'+'d'*64)
+        marker='cp.execFileSync("npx",'
+        candidate_argv,_=json.JSONDecoder().raw_decode(runs[0][-1].split(marker,1)[1])
+        baseline_argv,_=json.JSONDecoder().raw_decode(runs[1][-1].split(marker,1)[1])
+        self.assertEqual(baseline_argv,[arg for arg in candidate_argv if '/device-login' not in arg])
+        candidate_mounts=[runs[0][index+1] for index,value in enumerate(runs[0]) if value=='-v']
+        baseline_mounts=[runs[1][index+1] for index,value in enumerate(runs[1]) if value=='-v']
+        self.assertEqual(baseline_mounts,[mount for mount in candidate_mounts if '/device-login' not in mount])
+        self.assertEqual(set(saved['reports']),{'candidate','baseline'})
+        self.assertEqual(saved['candidateImage'],'sha256:'+'c'*64)
+        self.assertEqual(saved['baselineImage'],'sha256:'+'d'*64)
+        self.assertEqual(saved['revision'],'b'*40)
+        self.assertEqual(set(saved['frozenFileSha256']),set(paths+['coolify/releases/2026-11-03-qr-device-login/candidate-tests.config.ts']))
 
     def test_low_disk_rollback_reaches_locked_retained_image_transaction(self):
         with patch.dict(sys.modules, {'yaml': ModuleType('yaml')}):
