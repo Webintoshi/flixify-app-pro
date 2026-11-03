@@ -104,7 +104,7 @@ class AdapterTests(unittest.TestCase):
 
     def test_boundary_setup_mocks_only_exact_qr_server_file_and_preserves_exports(self):
         api=load('qr_test_boundary_setup','build-api.py')
-        source=api.BOUNDARY_SETUP.replace('import { expect, vi } from "vitest";','')
+        source=api.BOUNDARY_SETUP.split('\n',1)[1]
         for path,expected in (
             ('/app/apps/api/src/device-login-server.test.ts',[{'path':'/app/apps/api/src/access-history.ts','history':None,'sameErrorClass':True,'otherExport':'retained'}]),
             ('/app/apps/api/src/trial-direct-fallback.test.ts',[]),
@@ -114,6 +114,18 @@ class AdapterTests(unittest.TestCase):
             script+='const vi={fn:fn=>fn,doMock(path,factory){const actual={TrialUnavailableError:class TrialUnavailableError{},readAccessHistory:async()=>"real",otherExport:"retained"};pending.push(factory(async()=>actual).then(async next=>{const pool={};const getAccessHistory=userId=>next.readAccessHistory(pool,userId);calls.push({path,history:await getAccessHistory("fixture-user"),sameErrorClass:next.TrialUnavailableError===actual.TrialUnavailableError,otherExport:next.otherExport})}))}};'
             script+=source+'\nawait Promise.all(pending);console.log(JSON.stringify(calls));'
             result=subprocess.run(['node','--input-type=module','-e',script],text=True,capture_output=True)
+            with self.subTest(path=path):
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(json.loads(result.stdout),expected)
+
+    def test_boundary_setup_pins_only_welcome_state_collection_date_and_restores_it(self):
+        api=load('qr_test_welcome_fixture_clock','build-api.py')
+        source=api.BOUNDARY_SETUP.split('\n',1)[1]
+        target='/app/coolify/releases/2026-11-01-welcome-offer/welcome-tests/welcome-state.test.ts'
+        for path,expected in ((target,[['pin','2026-11-03T00:00:00.000Z'],['restore']]),
+                              (target.replace('welcome-state.test.ts','payment-offer.test.ts'),[])):
+            prelude='const calls=[],cleanup=[];const expect={getState:()=>({testPath:'+json.dumps(path)+'})};const afterAll=fn=>cleanup.push(fn);const vi={setSystemTime:date=>calls.push(["pin",date.toISOString()]),useRealTimers:()=>calls.push(["restore"])};'
+            result=subprocess.run(['node','-e',prelude+source+'\nfor(const fn of cleanup)fn();console.log(JSON.stringify(calls));'],text=True,capture_output=True)
             with self.subTest(path=path):
                 self.assertEqual(result.returncode,0,result.stderr)
                 self.assertEqual(json.loads(result.stdout),expected)

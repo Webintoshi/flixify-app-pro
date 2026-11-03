@@ -175,13 +175,18 @@ export default {
   },
 };
 '''
-BOUNDARY_SETUP = '''import { expect, vi } from "vitest";
+BOUNDARY_SETUP = '''import { afterAll, expect, vi } from "vitest";
 // The operational /me response adds a database boundary absent from the frozen QR fixture.
 if (expect.getState().testPath === "/app/apps/api/src/device-login-server.test.ts") {
   vi.doMock("/app/apps/api/src/access-history.ts", async (importActual) => ({
     ...(await importActual()),
     readAccessHistory: vi.fn(async () => null),
   }));
+}
+// This frozen it.each row includes new Date() in its collected test name.
+if (expect.getState().testPath === "/app/coolify/releases/2026-11-01-welcome-offer/welcome-tests/welcome-state.test.ts") {
+  vi.setSystemTime(new Date("2026-11-03T00:00:00.000Z"));
+  afterAll(() => vi.useRealTimers());
 }
 '''
 
