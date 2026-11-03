@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "nativeRevision": "ROOT_FILL_ACCEPTED_NATIVE_REVISION",
+  "nativeTree": "ROOT_FILL_ACCEPTED_ANDROID_TREE",
+  "publicationRevision": "ROOT_FILL_LATER_PUBLICATION_REVISION",
+  "apkSha256": "ROOT_FILL_ACTUAL_APK_SHA256",
+  "apkBytes": 0,
+  "apkProofSha256": "ROOT_FILL_ACTUAL_SAME_SIGNER_PROOF_SHA256",
+  "runtimeProofSha256": "ROOT_FILL_REVIEWED_RUNTIME_PROOF_SHA256",
+  "unitTests": 0,
+  "instrumentationTests": 0,
+  "acceptance": "ROOT_ACCEPTANCE_PENDING"
+}
