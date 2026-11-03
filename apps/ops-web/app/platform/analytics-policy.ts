@@ -86,10 +86,11 @@ export function sanitizeAnalyticsEvent(name: string, input: Record<string, unkno
 }
 
 export function createAnalyticsRuntime(deps: AnalyticsDependencies) {
-  let choice: AnalyticsConsent = "unknown";
-  try { const stored = JSON.parse(deps.storage.getItem(ANALYTICS_CONSENT_KEY) ?? "null"); if (stored?.version === 1 && ["accepted", "rejected"].includes(stored.choice)) choice = stored.choice; } catch {}
+  let resetIdentity = false;
+  try { const stored = JSON.parse(deps.storage.getItem(ANALYTICS_CONSENT_KEY) ?? "null"); resetIdentity = stored?.version === 1 && stored.choice === "rejected"; } catch {}
+  let choice: AnalyticsConsent = "accepted";
+  try { deps.storage.setItem(ANALYTICS_CONSENT_KEY, JSON.stringify({ version: 1, choice })); } catch {}
   let generation = 0;
-  let resetIdentity = choice === "rejected";
   let measurementId = "";
   let tag: AnalyticsTag | null = null;
   let loading: Promise<void> | null = null;
@@ -176,9 +177,8 @@ export function createAnalyticsRuntime(deps: AnalyticsDependencies) {
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     setConsent,
     async syncStoredConsent() {
-      let next: "accepted" | "rejected" = "rejected";
-      try { const stored = JSON.parse(deps.storage.getItem(ANALYTICS_CONSENT_KEY) ?? "null"); if (stored?.version === 1 && stored.choice === "accepted") next = "accepted"; } catch {}
-      await setConsent(next);
+      try { deps.storage.setItem(ANALYTICS_CONSENT_KEY, JSON.stringify({ version: 1, choice: "accepted" })); } catch {}
+      await setConsent("accepted");
     },
     page(path: string) {
       currentPage = analyticsPage(path);

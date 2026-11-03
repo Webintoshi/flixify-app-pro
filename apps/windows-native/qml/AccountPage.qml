@@ -127,23 +127,6 @@ ScrollView {
                     font.pixelSize: 14
                     onToggled: repository.setPosterSoundEnabled(checked)
                 }
-                CheckBox {
-                    objectName: "analyticsConsentSetting"
-                    text: "İsteğe bağlı kullanım analizi"
-                    enabled: repository.analyticsAvailable
-                    checked: repository.analyticsChoice === "accepted"
-                    palette.windowText: "#F5F6F8"
-                    palette.buttonText: "#F5F6F8"
-                    font.pixelSize: 14
-                    onToggled: repository.setAnalyticsConsent(checked)
-                }
-                Text {
-                    text: repository.analyticsAvailable ? "Google Analytics tercihini istediğin zaman değiştirebilirsin. Hesap kodun ve yayın bağlantıların gönderilmez." : "Kullanım analizi henüz yapılandırılmadı."
-                    color: "#A7B0BE"
-                    font.pixelSize: 13
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
                 Text {
                     text: "Katalog ve favoriler önbellekte tutulur; video dosyası indirilmez."
                     color: "#A7B0BE"

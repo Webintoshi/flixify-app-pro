@@ -14,12 +14,26 @@ function fixture(stored: string | null = null) {
   return { calls, memory, deps, runtime: createAnalyticsRuntime(deps) };
 }
 
-describe("explicit analytics consent and safe delivery", () => {
-  it("does not load or queue Google measurement before consent or after rejection", async () => {
+describe("forced analytics acceptance and safe delivery", () => {
+  it("migrates missing and rejected storage to accepted without a prompt", async () => {
+    for (const stored of [null, JSON.stringify({ version: 1, choice: "rejected" })]) {
+      const f = fixture(stored);
+      expect(f.runtime.consent()).toBe("accepted");
+      expect(f.memory.get("flixify-analytics-consent-v1")).toBe('{"version":1,"choice":"accepted"}');
+      f.runtime.page("/filmler");
+      await f.runtime.start();
+      expect(f.deps.loadTag).toHaveBeenCalledTimes(1);
+      f.memory.set("flixify-analytics-consent-v1", JSON.stringify({ version: 1, choice: "rejected" }));
+      await f.runtime.syncStoredConsent();
+      expect(f.runtime.consent()).toBe("accepted");
+      expect(f.memory.get("flixify-analytics-consent-v1")).toBe('{"version":1,"choice":"accepted"}');
+    }
+  });
+  it("keeps the internal rejection safety gate even though no rejection control is exposed", async () => {
     const f = fixture();
+    await f.runtime.setConsent("rejected");
     f.runtime.page("/filmler?q=PRIVATE&ref=secret#HVZN");
     f.runtime.track("login", { method: "code" });
-    await f.runtime.setConsent("rejected");
     expect(f.deps.loadTag).not.toHaveBeenCalled();
     expect(f.deps.loadConfig).not.toHaveBeenCalled();
     expect(f.calls).toEqual([]);
@@ -128,13 +142,13 @@ describe("explicit analytics consent and safe delivery", () => {
     expect(f.deps.disableTag).toHaveBeenLastCalledWith("G-TEST123456", false);
     expect(f.calls.filter(call => call[0] === "event")).toHaveLength(2);
   });
-  it("applies a withdrawal saved by another tab before further collection", async () => {
+  it("overrides a rejected value saved by another tab", async () => {
     const f = fixture(); f.runtime.page("/"); await f.runtime.setConsent("accepted");
     f.memory.set("flixify-analytics-consent-v1", JSON.stringify({ version: 1, choice: "rejected" }));
     await f.runtime.syncStoredConsent(); f.runtime.track("login");
-    expect(f.runtime.consent()).toBe("rejected");
-    expect(f.deps.disableTag).toHaveBeenLastCalledWith("G-TEST123456", true);
-    expect(f.calls.filter(call => call[0] === "event").map(call => call[1])).toEqual(["page_view"]);
+    expect(f.runtime.consent()).toBe("accepted");
+    expect(f.memory.get("flixify-analytics-consent-v1")).toBe('{"version":1,"choice":"accepted"}');
+    expect(f.calls.filter(call => call[0] === "event").map(call => call[1])).toEqual(["page_view", "login"]);
   });
   it("keeps queued event route context while the script is still loading", async () => {
     const f = fixture();

@@ -4,6 +4,7 @@
 #include <QTcpSocket>
 #include <QJsonDocument>
 #include <QJsonArray>
+#include <QSettings>
 #if __has_include("analytics.h")
 #include "analytics.h"
 #define HAS_ANALYTICS 1
@@ -179,16 +180,32 @@ private slots:
         auto originalRevoked=[&]{for(const auto &request:server.requests)if(request.startsWith("POST /me/analytics/consent ")&&request.contains("Bearer fixture-A")&&request.contains(oldClient.toUtf8()))return true;return false;};
         QTRY_VERIFY(originalRevoked());QCOMPARE(analytics.pendingCount(),0);QVERIFY(analytics.clientId().isEmpty());server.releaseHeld();
     }
-    void noCollectionBeforeConsentAndRejectedChoicePersists() {
+    void defaultsAndMigratesAnalyticsConsentToAccepted() {
+        AnalyticsFixture server; QTemporaryDir dir;
+        const auto path = dir.filePath("prefs.ini");
+        DesktopAnalytics analytics({server.base(), path, true});
+        QCOMPARE(analytics.choice(), QString("accepted"));
+        QVERIFY(!analytics.promptVisible());
+        {
+            QSettings settings(path, QSettings::IniFormat);
+            QCOMPARE(settings.value("analytics/v1/choice").toString(), QString("accepted"));
+            settings.setValue("analytics/v1/choice", "rejected");
+            settings.sync();
+        }
+        DesktopAnalytics restored({server.base(), path, true});
+        QCOMPARE(restored.choice(), QString("accepted"));
+        QVERIFY(!restored.promptVisible());
+        QSettings settings(path, QSettings::IniFormat);
+        QCOMPARE(settings.value("analytics/v1/choice").toString(), QString("accepted"));
+    }
+    void forcedConsentCollectsOnlyAfterConfigurationAndAuthentication() {
         AnalyticsFixture server; QTemporaryDir dir;
         DesktopAnalytics analytics({server.base(), dir.filePath("prefs.ini"), true});
         analytics.setSession("fixture-access", "fixture-account");
         analytics.reloadConfiguration(); QTRY_VERIFY(analytics.available());
         analytics.record("login", {{"method", "code"}}); analytics.flush();
-        QCOMPARE(analytics.pendingCount(), 0); QCOMPARE(server.events(), 0);
-        analytics.setConsent(false); QVERIFY(!analytics.promptVisible());
-        DesktopAnalytics restored({server.base(), dir.filePath("prefs.ini"), true});
-        QCOMPARE(restored.choice(), QString("rejected"));
+        QTRY_COMPARE(server.events(), 1);
+        QTRY_COMPARE(analytics.pendingCount(), 0);
     }
     void consentedBatchHasNoAuthOrAccountDataInsidePayload() {
         AnalyticsFixture server; QTemporaryDir dir;

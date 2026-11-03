@@ -2,6 +2,14 @@ import XCTest
 @testable import FlixifyCore
 
 final class AnalyticsPolicyTests: XCTestCase {
+    func testConfiguredPolicyStartsAcceptedWithoutChoice() {
+        var sent = [String]()
+        let policy = AnalyticsPolicy(configured: true) { name, _ in sent.append(name) }
+        policy.event("login")
+        XCTAssertEqual(sent, ["login"])
+        let unavailable = AnalyticsPolicy(configured: false) { _, _ in XCTFail("Unconfigured collection") }
+        unavailable.event("login")
+    }
     func testOnlyPublicSafeCatalogueLabelsAreKept() {
         var sent=[[String:Any]]();let p=AnalyticsPolicy(configured:true) { _,v in sent.append(v) };p.choice(accepted:true,version:1)
         p.event("select_content",["content_name":"Şebeke (2023)"])
@@ -11,12 +19,10 @@ final class AnalyticsPolicyTests: XCTestCase {
         }
         XCTAssertEqual(sent.count,19)
     }
-    func testConsentAndStaleWorkAcrossWithdrawal() {
+    func testForcedConsentStillRejectsStaleWorkAcrossInternalReset() {
         var sent = [String]()
         let policy = AnalyticsPolicy(configured: true) { name, _ in sent.append(name) }
-        policy.event("login"); XCTAssertTrue(sent.isEmpty)
-        policy.choice(accepted: true, version: 1); let old = policy.epoch
-        policy.event("login"); XCTAssertEqual(sent, ["login"])
+        let old = policy.epoch; policy.event("login"); XCTAssertEqual(sent, ["login"])
         policy.choice(accepted: false, version: 1); policy.choice(accepted: true, version: 1)
         policy.event("login", epoch: old); XCTAssertEqual(sent.count, 1)
         policy.choice(accepted: true, version: 0); policy.event("login"); XCTAssertEqual(sent.count, 1)

@@ -9,7 +9,7 @@ public final class AnalyticsPolicy {
     private let sink: (String, [String: Any]) -> Void
     private static let events: Set<String> = ["login", "logout", "screen_view", "search", "select_content", "category_select", "catalog_page_loaded", "add_to_wishlist", "remove_from_wishlist", "trial_select", "welcome_offer_select", "select_item", "package_open", "update_offered", "update_selected", "update_downloaded", "playback_request", "video_start", "video_progress", "video_complete", "playback_buffer", "playback_error", "playback_end"]
     private static let screens: Set<String> = ["home", "live", "movies", "series", "favorites", "account", "login", "welcome", "player", "settings"]
-    public init(configured: Bool, sink: @escaping (String, [String: Any]) -> Void) { self.configured = configured; self.sink = sink }
+    public init(configured: Bool, sink: @escaping (String, [String: Any]) -> Void) { self.configured = configured; self.sink = sink; enabled = configured }
     public func choice(accepted: Bool, version: Int) { epoch += 1; enabled = configured && accepted && version == Self.version }
     public static func catalogLabel(_ value: String,maximum: Int = 100) -> String? {
         guard value.utf8.count <= 4096 else { return nil }; let s=value.trimmingCharacters(in:.whitespacesAndNewlines)

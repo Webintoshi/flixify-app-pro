@@ -94,13 +94,13 @@ private slots:
         const auto nextClient=collector->clientId();collector->flush();QTRY_VERIFY(std::any_of(server.requests.begin(),server.requests.end(),[&](const auto &request){return request.startsWith("POST /me/analytics/events ")&&QJsonDocument::fromJson(request.mid(request.indexOf("\r\n\r\n")+4)).object()["clientId"]==nextClient;}));
         for(const auto &request:server.requests)if(request.startsWith("POST /me/analytics/events ")){const auto body=QJsonDocument::fromJson(request.mid(request.indexOf("\r\n\r\n")+4)).object();if(body["clientId"]!=nextClient)continue;QVERIFY(request.contains("Authorization: Bearer fixture-next-access\r\n"));for(const auto &event:body["events"].toArray())QVERIFY(event.toObject()["name"]!="search");}
     }
-    void analyticsConsentAndAuthStaySeparateFromContentAccess() {
+    void analyticsIsAcceptedWithoutAConsentPromptAndStaysSeparateFromContentAccess() {
         FixtureServer server;server.overrides["/analytics/config"]=QJsonObject{{"schema",1},{"consentVersion",1},{"windows",QJsonObject{{"enabled",true},{"measurementId","G-FIXTURE1"}}}};
         QTemporaryDir dir;RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;options.now=[] {return 1900000000000LL;};
+        QSettings preferences(dir.path()+"/analytics.ini",QSettings::IniFormat);preferences.setValue("analytics/v1/choice","rejected");preferences.sync();
         DesktopRepository repo(options);repo.login("ABCDEFGHIJKLMNOP");QTRY_COMPARE(repo.scope(),QString("account:v1"));QTRY_VERIFY(repo.analyticsAvailable());QTRY_VERIFY(!repo.busy());
-        auto *collector=repo.findChild<DesktopAnalytics*>();QVERIFY(collector);QCOMPARE(collector->pendingCount(),0);QVERIFY(repo.analyticsPromptVisible());
-        repo.setAnalyticsConsent(false);QCOMPARE(repo.analyticsChoice(),QString("rejected"));QVERIFY(!repo.analyticsPromptVisible());QVERIFY(repo.account()["canPlay"].toBool());QCOMPARE(collector->pendingCount(),0);
-        repo.setAnalyticsConsent(true);const auto old=repo.analyticsGeneration();QVERIFY(collector->pendingCount()>0);
+        auto *collector=repo.findChild<DesktopAnalytics*>();QVERIFY(collector);QCOMPARE(repo.analyticsChoice(),QString("accepted"));QVERIFY(!repo.analyticsPromptVisible());QVERIFY(repo.account()["canPlay"].toBool());QVERIFY(collector->pendingCount()>0);
+        const auto old=repo.analyticsGeneration();
         repo.setAnalyticsConsent(false);repo.setAnalyticsConsent(true);const auto pending=collector->pendingCount();repo.recordAnalytics("login",{{"method","code"}},old);QCOMPARE(collector->pendingCount(),pending);
         collector->flush();QTRY_VERIFY(std::any_of(server.requests.begin(),server.requests.end(),[](const auto &request){return request.startsWith("POST /me/analytics/events ");}));
         QByteArray body;for(const auto &request:server.requests)if(request.startsWith("POST /me/analytics/events ")){QVERIFY(request.contains("Authorization: Bearer fixture-access"));body=request.mid(request.indexOf("\r\n\r\n")+4);}

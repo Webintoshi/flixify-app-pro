@@ -27,16 +27,14 @@ DesktopAnalytics::DesktopAnalytics(AnalyticsOptions options, QObject *parent)
     if (!((u.scheme() == "https" && u.host() == "api.flixify.vip") || loopback) || !u.userInfo().isEmpty() || !u.path().isEmpty() || u.hasQuery() || u.hasFragment())
         options_.apiBase = QUrl("https://api.flixify.vip");
     QSettings settings(options_.preferencesPath, QSettings::IniFormat);
-    const auto stored = settings.value("analytics/v1/choice").toString();
-    if (stored == "accepted" || stored == "rejected") choice_ = stored;
-    if (choice_ == "accepted") {
-        clientId_ = settings.value("analytics/v1/clientId").toString();
-        if (!matches(clientId_, "^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$")) clientId_.clear();
-        ensureIdentity();
-    }
+    choice_ = "accepted";
+    clientId_ = settings.value("analytics/v1/clientId").toString();
+    if (!matches(clientId_, "^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$")) clientId_.clear();
     const auto storedOwners=settings.value("analytics/v1/revokedOwners").toMap();
     for (const auto &id : settings.value("analytics/v1/revoked").toStringList())
         if (matches(id, "^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$") && matches(storedOwners.value(id).toString(),"^[a-f0-9]{24}$") && !revoked_.contains(id) && revoked_.size() < 100) {revoked_.append(id);revokedOwners_.insert(id,storedOwners.value(id));}
+    ensureIdentity();
+    persist();
     flushTimer_.setInterval(10000);
     connect(&flushTimer_, &QTimer::timeout, this, [this] { revokePending(); flush(); });
     flushTimer_.start();

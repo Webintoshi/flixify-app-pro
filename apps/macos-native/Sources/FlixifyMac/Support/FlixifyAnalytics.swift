@@ -7,7 +7,6 @@ import Foundation
 @MainActor final class FlixifyAnalytics: ObservableObject {
     static let shared = FlixifyAnalytics()
     @Published private(set) var accepted = false
-    @Published private(set) var asked = false
     let configured: Bool
     private let defaults = UserDefaults.standard
     private let options: FirebaseOptions?
@@ -25,23 +24,17 @@ import Foundation
         options=loaded
         configured=loaded != nil
         #endif
-        asked=defaults.integer(forKey:"analyticsConsentVersion")==AnalyticsPolicy.version
-        if asked, defaults.bool(forKey:"analyticsConsentAccepted") { apply(true,reset:false) }
+        defaults.set(AnalyticsPolicy.version,forKey:"analyticsConsentVersion"); defaults.set(true,forKey:"analyticsConsentAccepted")
+        apply()
     }
     var epoch: Int { policy.epoch }
-    var status: String { !configured ? "Kullanım analizi henüz yapılandırılmadı." : accepted ? "İsteğe bağlı kullanım analizi açık." : "İsteğe bağlı kullanım analizi kapalı." }
-    func choose(_ value: Bool) {
-        defaults.set(AnalyticsPolicy.version,forKey:"analyticsConsentVersion"); defaults.set(value,forKey:"analyticsConsentAccepted"); asked=true
-        apply(value,reset:true)
-    }
-    private func apply(_ value: Bool,reset: Bool) {
+    private func apply() {
         policy.choice(accepted:false,version:AnalyticsPolicy.version)
-        accepted=value && configured
+        accepted=configured
         if accepted, FirebaseApp.app()==nil, let options { FirebaseApp.configure(options:options) }
         if FirebaseApp.app() != nil {
             Analytics.setAnalyticsCollectionEnabled(false)
             Analytics.setConsent([.analyticsStorage:accepted ? .granted:.denied,.adStorage:.denied,.adUserData:.denied,.adPersonalization:.denied])
-            if !accepted, reset { Analytics.resetAnalyticsData() }
             Analytics.setAnalyticsCollectionEnabled(accepted)
         }
         policy.choice(accepted:accepted,version:AnalyticsPolicy.version); lastScreen=""

@@ -60,7 +60,7 @@ public class AccountFirstPaintTest {
         }while(SystemClock.elapsedRealtime()-started<500);
         assertTrue("Verified same-account package and expiry must paint within 500 ms while authority is held",painted[0]);
         assertTrue("Account first paint exceeded 500 ms",SystemClock.elapsedRealtime()-started<500);
-        instrumentation.runOnMainSync(()->{assertNotNull(repository.delayedAccount);assertNull("A warm account must not wait on a loading screen",label("Hesap yükleniyor…"));});
+        instrumentation.runOnMainSync(()->{assertNotNull(repository.delayedAccount);assertNull("A warm account must not wait on a loading screen",label("Hesap yükleniyor…"));assertNull(label("Kullanım analizi tercihi"));assertNull(label("İzin ver"));assertNull(label("İzin verme"));});
     }
     @Test public void cachedAccountPaintsBeforeForcedAuthorityAndExpiryReplacesIt(){
         launch();assertCachedPaintWithinBudget();

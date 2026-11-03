@@ -12,7 +12,7 @@ final class AnalyticsPolicy {
     private final Sink sink;
     private boolean accepted;
     private long generation;
-    AnalyticsPolicy(boolean configured, Sink sink) {this.configured=configured;this.sink=sink;}
+    AnalyticsPolicy(boolean configured, Sink sink) {this.configured=configured;this.sink=sink;accepted=configured;}
     void choice(boolean accepted,int version) {generation++;this.accepted=configured && accepted && version==VERSION;}
     long epoch() {return generation;}
     boolean enabled() {return accepted;}

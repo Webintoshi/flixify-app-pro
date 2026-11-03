@@ -11,7 +11,6 @@ import { usePlatform } from "./platform/session";
 import registrationStyles from "./kayit-ol/registration.module.css";
 import { WelcomeOfferBoundary } from "./platform/welcome-offer";
 import { trackAnalytics } from "./platform/analytics";
-import { AnalyticsPreferencesFooter } from "./platform/analytics-provider";
 
 const publicNavigation = [
   { href: "/", label: "Ana Sayfa" },
@@ -197,10 +196,7 @@ function AdminShell({ pathname, children }: { pathname: string; children: ReactN
 }
 
 export default function SiteShell({ children }: { children: ReactNode }) {
-  const pathname = usePathname() ?? "/";
-  const { session } = usePlatform();
-  const hasPreferencesFooter = pathname === "/indir" || (pathname === "/" && !session);
-  return <WelcomeOfferBoundary><SiteShellContent>{children}</SiteShellContent>{!pathname.startsWith("/admin") && !hasPreferencesFooter && <AnalyticsPreferencesFooter />}</WelcomeOfferBoundary>;
+  return <WelcomeOfferBoundary><SiteShellContent>{children}</SiteShellContent></WelcomeOfferBoundary>;
 }
 
 function SiteShellContent({ children }: { children: ReactNode }) {

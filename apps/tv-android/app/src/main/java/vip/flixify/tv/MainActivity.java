@@ -52,7 +52,6 @@ public final class MainActivity extends Activity {
     private final EnumMap<Section,Page> pages=new EnumMap<>(Section.class);
     private TvRepository repository;
     private TvAnalytics analytics;
-    private boolean analyticsPrompted;
     private String visibleAnalyticsScreen="login";
     private ArtworkLoader artwork;
     private CatalogPresentationPreparer presentations;
@@ -556,7 +555,7 @@ public final class MainActivity extends Activity {
         loginCode.setOnEditorActionListener((v,action,event)->{if(action==EditorInfo.IME_ACTION_GO){login();return true;}return false;});
         loginMessage=TvUi.text(this,message,15,TvUi.ACCENT);loginMessage.setMinHeight(TvUi.dp(this,26));form.addView(loginMessage,TvUi.space(this,-1,-2));
         TextView remember=TvUi.text(this,"Oturumunuz bu cihazda güvenle hatırlanır.",14,TvUi.MUTED);form.addView(remember,TvUi.space(this,-1,-2));
-        startup.show(background);loginCode.requestFocus();startup.ready();offerAnalytics();
+        startup.show(background);loginCode.requestFocus();startup.ready();
     }
     private void login() {
         String code=loginCode.getText().toString().trim();
@@ -613,7 +612,7 @@ public final class MainActivity extends Activity {
     private void showPage(boolean reload,boolean contentFocus) {
         if(welcomeBlocked()){loadWelcome();return;}
         if(accessGate())return;packagesVisible=false;
-        visibleAnalyticsScreen=page.section.name().toLowerCase(Locale.ROOT);analytics.screen(visibleAnalyticsScreen);offerAnalytics();
+        visibleAnalyticsScreen=page.section.name().toLowerCase(Locale.ROOT);analytics.screen(visibleAnalyticsScreen);
         discardPreviousSource();
         applyPendingCatalogs(false);
         shell(pageTitle(),page.section==Section.HOME?"Filmler, diziler ve canlı yayınlar tek yerde.":"");
@@ -935,8 +934,6 @@ public final class MainActivity extends Activity {
         Button update=updatePanel.addTo(parent,sizing.contentWidth()-8);markFocus(update,"account:update");
         Button logout=addLocalLogout(parent);update.setNextFocusDownId(logout.getId());logout.setNextFocusUpId(update.getId());linkContent(logout);
         Button packages=TvUi.button(this,"Paketleri gör",this::showPackages);markFocus(packages,"account:packages");parent.addView(packages,TvUi.space(this,Math.min(230,sizing.contentWidth()-8),48));logout.setNextFocusDownId(packages.getId());packages.setNextFocusUpId(logout.getId());
-        parent.addView(TvUi.text(this,analytics.status(),16,TvUi.MUTED),TvUi.space(this,-1,-2));
-        Button privacy=TvUi.button(this,"Kullanım analizi tercihi",()->{AlertDialog consent=analytics.dialog(this,()->{if(!stopped&&!destroyed)showAccount();});dialog=consent;consent.show();consent.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus();});markFocus(privacy,"account:analytics");privacy.setEnabled(analytics.configured());parent.addView(privacy,TvUi.space(this,Math.min(330,sizing.contentWidth()-8),48));packages.setNextFocusDownId(privacy.getId());privacy.setNextFocusUpId(packages.getId());
     }
     private Button addLocalLogout(LinearLayout parent) {
         Button logout=TvUi.button(this,"Oturumu kapat",this::confirmLogout);markFocus(logout,"account:logout");parent.addView(logout,TvUi.space(this,Math.min(230,sizing.contentWidth()-8),48));return logout;
@@ -948,10 +945,6 @@ public final class MainActivity extends Activity {
     }
     private String safeMessage(String message) { return message==null || message.trim().isEmpty()?"İşlem tamamlanamadı. Lütfen tekrar deneyin.":message; }
     private void recordSearch(Catalog catalog,String category,String query){Map<String,Object> values=TvAnalytics.values("query_length",query.trim().length());values.put("result_count",CatalogFilterData.preview(catalog,category,query).count);analytics.event("search",values);}
-    private void offerAnalytics(){
-        if(analyticsPrompted||!analytics.configured()||!analytics.unknown())return;
-        findViewById(android.R.id.content).post(()->{if(destroyed||stopped||analyticsPrompted||dialog!=null&&dialog.isShowing())return;analyticsPrompted=true;AlertDialog consent=analytics.dialog(this,()->{dialog=null;if(!destroyed&&!stopped&&analytics.enabled())analytics.screen(AnalyticsPolicy.visibleScreen(repository.hasSession(),visibleAnalyticsScreen));});dialog=consent;consent.show();consent.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus();});
-    }
     private void showFailure(String message,Runnable retry) {
         int headingCount=page.section==Section.HOME?0:1;
         while(body.getChildCount()>headingCount)body.removeViewAt(headingCount);

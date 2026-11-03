@@ -5,7 +5,6 @@ import { apiRequest } from '../../lib/api';
 import { accountState, type AccountUser } from '../../lib/account-model';
 import { AccountPage, AccountLink, CopyButton, Loading, LoadError, formatDate, useAccountResource } from '../account/components';
 import s from '../account/account.module.css';
-import { AnalyticsPreferences } from '../platform/analytics-provider';
 export default function SettingsPage(){
   const {data,loading,error,reload,refresh}=useAccountResource<{user:AccountUser}>('/me');
   const billing=useAccountResource<{status:string;checkoutEnabled:boolean;periodEnd?:string|null;cancelAtPeriodEnd?:boolean}>('/me/billing/status');
@@ -39,6 +38,5 @@ export default function SettingsPage(){
       {portalError&&<p className={s.errorText} role="alert">Abonelik yönetimi şu anda açılamadı. Biraz sonra tekrar deneyin.</p>}
     </section>}
     <section className={s.shortcuts} aria-label="Hesap işlemleri"><AccountLink href="/davet">Arkadaşını davet et</AccountLink><AccountLink href="/odeme-bildirimi#gecmis">Ödeme bildirimlerim</AccountLink><AccountLink href="/iletisim">Destek al</AccountLink></section>
-    <AnalyticsPreferences />
   </AccountPage>;
 }
