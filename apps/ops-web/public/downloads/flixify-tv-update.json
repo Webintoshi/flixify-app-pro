@@ -1,10 +1,10 @@
 {
   "packageName": "vip.flixify.tv",
-  "versionName": "1.4.10",
-  "versionCode": 18,
+  "versionName": "1.4.11",
+  "versionCode": 19,
   "minSdk": 23,
-  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.10.apk",
-  "sha256": "6c820efbe587a1486441e1991cf289c437e884657ee7d9edf81a3635d87057a9",
-  "sizeBytes": 2147555,
-  "notes": "Büyük içerik listelerinde daha hızlı ve akıcı sayfa geçişleri. Geliştirilmiş cihaz önbelleği, tekrarlanan indirmelerin önlenmesi ve paket yenileme ekranı."
+  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.11.apk",
+  "sha256": "8b8a6672919c54edc8f47190db9249c8c1aeea50dfe2d82fbd4d8f476d9dff9f",
+  "sizeBytes": 2158295,
+  "notes": "İçerik, afiş ve favori yüklemeleri hızlandırıldı. Hazır kanal önbelleğiyle daha hızlı açılış ve sayfa geçişleri."
 }
