@@ -178,6 +178,19 @@ def dockerfile(revision: str) -> str:
     return value.replace(marker, additions + marker)
 
 
+def docker_build_command(context: Path, image: str, build_args: list[str]) -> tuple[str, ...]:
+    # BuildKit retains large snapshot caches for this overlay build. The daemon's
+    # legacy builder creates the same pinned layers without exhausting the live
+    # host, and remains constrained by the reviewed network and memory flags.
+    return (
+        "env", "DOCKER_BUILDKIT=0", "docker", "build", "--no-cache",
+        "--rm", "--force-rm", "--pull=false", "--network=none",
+        "--resource", f"memory={builder.RUN_MEMORY_MIB}m",
+        "--resource", f"memory-swap={builder.RUN_TOTAL_MEMORY_MIB}m",
+        "-t", image, *build_args, str(context),
+    )
+
+
 def verify_candidate(base, revision, updated, web_env, config, expected_public):
     builder.SOURCE_TAG, builder.SOURCE_ID = SOURCE_TAG, SOURCE_ID
     builder.PATHS, builder.target = RUNTIME_PATHS, target
@@ -219,9 +232,7 @@ def main(argv=None):
                 destination.write_bytes(contents)
             (context / "Dockerfile").write_text(dockerfile(args.revision))
             build_args = [value for key in builder.PUBLIC_WEB_KEYS for value in ("--build-arg", f"{key}={web_env[key]}")]
-            command("docker", "build", "--load", "--no-cache", "--rm", "--force-rm", "--pull=false", "--network=none",
-                    "--resource", f"memory={builder.RUN_MEMORY_MIB}m", "--resource", f"memory-swap={builder.RUN_TOTAL_MEMORY_MIB}m",
-                    "-t", target(args.revision), *build_args, str(context), timeout=1200)
+            command(*docker_build_command(context, target(args.revision), build_args), timeout=1200)
     candidate = verify_candidate(base, args.revision, updated, web_env, config, expected_public)
     if protected_snapshot() != before_protected:
         raise GateError("candidate_build_changed_protected_runtime")
