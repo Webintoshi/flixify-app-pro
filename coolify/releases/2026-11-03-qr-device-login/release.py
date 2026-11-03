@@ -19,7 +19,7 @@ reviewed=load('qr_reviewed_release_transaction',HERE.parent/'2026-11-01-packages
 guard=reviewed.guard
 BASELINES={
  'api':('flixify-api:analytics-07fbf0bf4b29-20261102','sha256:b7ef006b1733516a73f5ef1e5388b2cc7e746f738d0e4ebd80c164ad34067eb0'),
- 'ops-web':('flixify-ops-web:tv-first-content-publication-4d6cb8548e1c-20261103','sha256:8cae91c65a3fd53762ed13d6b6d27cd3893f58965b4c3766bed35711e48aa873'),
+ 'ops-web':('flixify-ops-web:forced-consent-eb3867d7dfdc-20261103','sha256:85892877db795825c23fc51ad3f56c77bcb503d0000f2fd35bd1c263a208f7f5'),
 }
 WORKER=('flixify-worker:packages-8fa66d103053-20261101','sha256:9db57cd7e0ddfd3783d6e7522e710c8232c956c2c752ff461947ebb81ecadf57')
 DB='sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea'
