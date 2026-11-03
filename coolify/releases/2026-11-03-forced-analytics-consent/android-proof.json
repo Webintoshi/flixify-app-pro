@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "sourceRevision": "4e0936ed11ecd704c4b9131ba271784d0b1843db",
+  "sourceTree": "df80b9f09805b0469107b9da2d4de510f5ce34e0",
+  "packageName": "vip.flixify.tv",
+  "versionName": "1.4.12",
+  "versionCode": 20,
+  "minSdk": 23,
+  "targetSdk": 35,
+  "sha256": "e4547bb775779e1f9c63842df5af12eccdfe863de6ccba732fca8a86e03beef0",
+  "sizeBytes": 2157091,
+  "certificateSha256": "158ded464486435f9479db84d1eeb9af82e14338e0b4a494c4297c70ae15e594",
+  "signatureSchemes": ["v1", "v2"],
+  "releaseDebuggable": false
+}
