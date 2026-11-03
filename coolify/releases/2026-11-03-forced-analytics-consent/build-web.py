@@ -165,30 +165,52 @@ def source_preflight(repo: Path, revision: str):
     return base, updated, {key: env[key] for key in builder.PUBLIC_WEB_KEYS}, config, expected_public
 
 
-def dockerfile(revision: str) -> str:
-    builder.SOURCE_TAG, builder.SOURCE_ID = SOURCE_TAG, SOURCE_ID
-    builder.PATHS = RUNTIME_PATHS
-    builder.target = target
-    value = builder.dockerfile(revision)
-    marker = "RUN node -e "
-    if value.count(marker) != 1:
-        raise GateError("reviewed_build_dockerfile_shape_changed")
-    additions = "".join(f"COPY {path} /app/{path}\n" for path in PUBLIC_PATHS)
-    additions += f"RUN rm -f /app/{DELETED_PATH}\n"
-    return value.replace(marker, additions + marker)
+def container_build_script() -> str:
+    deleted = json.dumps("/app/" + DELETED_PATH)
+    return f'require("node:fs").rmSync({deleted},{{force:true}});' + builder.build_script()
 
 
-def docker_build_command(context: Path, image: str, build_args: list[str]) -> tuple[str, ...]:
-    # BuildKit retains large snapshot caches for this overlay build. The daemon's
-    # legacy builder creates the same pinned layers without exhausting the live
-    # host, and remains constrained by the reviewed network and memory flags.
-    return (
-        "env", "DOCKER_BUILDKIT=0", "docker", "build", "--no-cache",
-        "--rm", "--force-rm", "--pull=false", "--network=none",
+def container_create_command(name: str, script: str, web_env: dict[str, str]) -> tuple[str, ...]:
+    values = [
+        "docker", "create", "--name", name, "--network", "none",
         "--memory", f"{builder.RUN_MEMORY_MIB}m",
         "--memory-swap", f"{builder.RUN_TOTAL_MEMORY_MIB}m",
-        "-t", image, *build_args, str(context),
+    ]
+    for key in sorted(web_env):
+        values.extend(("--env", f"{key}={web_env[key]}"))
+    values.extend((SOURCE_ID, "node", "-e", script))
+    return tuple(values)
+
+
+def container_commit_command(name: str, image: str, revision: str, base: dict) -> tuple[str, ...]:
+    runtime_cmd = base.get("Config", {}).get("Cmd")
+    if not isinstance(runtime_cmd, list) or not runtime_cmd or not all(isinstance(value, str) for value in runtime_cmd):
+        raise GateError("web_base_runtime_command_invalid")
+    return (
+        "docker", "commit",
+        "--change", "CMD " + json.dumps(runtime_cmd),
+        "--change", "LABEL org.opencontainers.image.revision=" + revision,
+        "--change", "LABEL vip.flixify.edge-recovery.base=" + SOURCE_ID,
+        name, image,
     )
+
+
+def build_candidate(context: Path, revision: str, updated: dict[str, bytes], web_env: dict[str, str], base: dict) -> None:
+    name = "flixify-consent-build-" + revision[:12]
+    existing = command("docker", "container", "ls", "-a", "--filter", f"name=^{name}$", "--format", "{{.Names}}")
+    if existing.decode().splitlines():
+        raise GateError("candidate_build_container_already_exists")
+    created = False
+    try:
+        command(*container_create_command(name, container_build_script(), web_env))
+        created = True
+        for path in updated:
+            command("docker", "cp", str(context / path), f"{name}:/app/{path}")
+        command("docker", "start", "--attach", name, timeout=1200)
+        command(*container_commit_command(name, target(revision), revision, base))
+    finally:
+        if created:
+            command("docker", "rm", "-f", name)
 
 
 def verify_candidate(base, revision, updated, web_env, config, expected_public):
@@ -230,9 +252,7 @@ def main(argv=None):
                 destination = context / path
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(contents)
-            (context / "Dockerfile").write_text(dockerfile(args.revision))
-            build_args = [value for key in builder.PUBLIC_WEB_KEYS for value in ("--build-arg", f"{key}={web_env[key]}")]
-            command(*docker_build_command(context, target(args.revision), build_args), timeout=1200)
+            build_candidate(context, args.revision, updated, web_env, base)
     candidate = verify_candidate(base, args.revision, updated, web_env, config, expected_public)
     if protected_snapshot() != before_protected:
         raise GateError("candidate_build_changed_protected_runtime")
