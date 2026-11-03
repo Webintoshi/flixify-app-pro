@@ -16,6 +16,15 @@ Only these public leaves may change for Android publication:
 
 The full web source change is the reviewed `4d6cb8548e1c17047b78d516599f6d7ba86bbe40..4e0936ed11ecd704c4b9131ba271784d0b1843db` range. A candidate must be built from the exact publication commit with no network during compilation and must preserve all retained public downloads byte-for-byte. Release preflight must verify the current live 1.4.11 descriptor and APK before applying an ops-web-only replacement. Public HEAD, range and complete GET bytes must match the proof after recreation.
 
+`build-web.py` pins the currently running 1.4.11 web image plus the API, worker and database images. It accepts only the reviewed web diff, compiles with no network under the existing 1280/1536 MiB limits, verifies the complete public tree and APK identity, and proves that protected containers and host configuration did not change:
+
+```sh
+python3 coolify/releases/2026-11-03-forced-analytics-consent/build-web.py /data/flixify/app --revision EXACT_COMMIT
+python3 coolify/releases/2026-11-03-forced-analytics-consent/build-web.py /data/flixify/app --revision EXACT_COMMIT --build
+```
+
+The builder never deploys or edits the live checkout or Compose configuration. Deployment remains a separate web-only transaction with the pre-build image retained as the rollback target.
+
 ## Native gates
 
 - macOS public publication remains blocked: the available app is ad-hoc signed, only an Apple Development identity is installed, and the reviewed organization identity policy is absent. Do not weaken signing, notarization, stapling or Gatekeeper requirements.
