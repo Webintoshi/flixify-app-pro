@@ -21,6 +21,15 @@ QR_KEY = 'node_modules/qrcode-generator'
 QR_INTEGRITY = 'sha512-mZSiP6RnbHl4xL2Ap5HfkjLnmxfKcPWpWe/c+5XxCuetEenqmNFf1FH/ftXPCtFG5/TDobjsjz6sSNL0Sr8Z9g=='
 OLD_AUTH = 'authenticateUser(request.headers.authorization)'
 NEW_AUTH = 'authenticateUser(request.headers.authorization, request)'
+SERVER_PATH_IMPORT = 'import path from "node:path";\n'
+QR_SERVER_IMPORTS = (
+    'import { randomUUID } from "node:crypto";\n'
+    'import { DeviceLoginCrypto, DeviceLoginService, redactDeviceLinkedPayload } from "./device-login.js";\n'
+    'import { DeviceLoginStore } from "./device-login-store.js";\n'
+    'import { registerDeviceLoginRoutes } from "./device-login-routes.js";\n'
+)
+BASE_REPOSITORY_DB_IMPORT = 'import { query, withTransaction } from "./db.js";\n'
+QR_REPOSITORY_DB_IMPORT = 'import { pool, query, withTransaction } from "./db.js";\n'
 
 class GateError(RuntimeError): pass
 
@@ -68,6 +77,34 @@ def merge_text(base, changed, actual):
         result = result[:offset] + replacement + result[offset+length:]
     if actual == base and result != changed: raise GateError('canonical_patch_reconstruction_failed')
     return result
+
+def merge_source(path, base, changed, actual):
+    if path == 'apps/api/src/server.ts':
+        prefix = SERVER_PATH_IMPORT + QR_SERVER_IMPORTS
+        base_lines = base.splitlines(keepends=True)
+        if (len(base_lines) < 2 or base_lines[0] != SERVER_PATH_IMPORT
+                or not changed.startswith(prefix + base_lines[1])
+                or any(base.count(line) or changed.count(line) != 1 for line in QR_SERVER_IMPORTS.splitlines(keepends=True))):
+            raise GateError('canonical_server_import_shape_differs')
+        anchor = list(re.finditer('^' + re.escape(SERVER_PATH_IMPORT), actual, re.MULTILINE))
+        if len(anchor) != 1: raise GateError('server_path_import_not_unique')
+        for module in ('./device-login.js', './device-login-store.js', './device-login-routes.js'):
+            if re.search(r'''\bimport\b[^;]*\bfrom\s*["']''' + re.escape(module) + r'''["']''', actual):
+                raise GateError('device_login_import_already_present')
+        if re.search(r'''\bimport\b[^;]*\brandomUUID\b[^;]*\bfrom\s*["']node:crypto["']''', actual):
+            raise GateError('random_uuid_import_already_present')
+        # Operational imports may separate the two sides of the canonical insertion.
+        changed = SERVER_PATH_IMPORT + changed[len(prefix):]
+        merged = merge_text(base, changed, actual)
+        return re.sub('^' + re.escape(SERVER_PATH_IMPORT), lambda match: match.group() + QR_SERVER_IMPORTS,
+                      merged, count=1, flags=re.MULTILINE)
+    if path == 'apps/api/src/repository.ts' and QR_REPOSITORY_DB_IMPORT in actual:
+        if (base.count(BASE_REPOSITORY_DB_IMPORT) != 1 or changed.count(QR_REPOSITORY_DB_IMPORT) != 1
+                or actual.count(QR_REPOSITORY_DB_IMPORT) != 1 or BASE_REPOSITORY_DB_IMPORT in actual):
+            raise GateError('repository_pool_import_shape_differs')
+        # The operational repository already imports pool for unrelated features.
+        base = base.replace(BASE_REPOSITORY_DB_IMPORT, QR_REPOSITORY_DB_IMPORT, 1)
+    return merge_text(base, changed, actual)
 
 def dependencies(base_package, next_package, actual_package, base_lock, next_lock, actual_lock):
     bp, np, ap, bl, nl, al = (json.loads(v) for v in (base_package, next_package, actual_package, base_lock, next_lock, actual_lock))
@@ -120,7 +157,7 @@ def prepare(repo, revision, actual, qrcode_tarball):
             base, changed = base.replace(OLD_AUTH, NEW_AUTH), changed.replace(OLD_AUTH, NEW_AUTH)
             live_for_merge = live.replace(OLD_AUTH, NEW_AUTH)
         else: live_for_merge = live
-        merged = merge_text(base, changed, live_for_merge)
+        merged = merge_source(path, base, changed, live_for_merge)
         if path.endswith('/server.ts') and OLD_AUTH in merged: raise GateError('unprojected_direct_viewer_call')
         updates[path] = merged.encode()
         audit[path] = {'actualSha256':sha(live.encode()), 'mergedSha256':sha(updates[path]), 'forwardedViewerCalls':count}

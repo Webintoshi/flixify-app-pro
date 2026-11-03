@@ -65,28 +65,103 @@ def protected():
     if snapshot['environment']!=ENV_SHA or snapshot['registrationFence']!=FENCE_SHA:raise api.GateError('environment_or_registration_fence_drift')
     return {k:v for k,v in snapshot.items() if not isinstance(v,dict) or v.get('name') not in ('/api-'+guard.UUID,'/ops-web-'+guard.UUID)}
 
+
+def rollback_sql(allow_absent):
+    return ("""begin;
+set local lock_timeout='15s';
+set local statement_timeout='45s';
+lock table public.device_sessions in share row exclusive mode;
+do $qr_rollback$
+declare
+  has_auth boolean;
+  has_family boolean;
+  has_requests boolean;
+begin
+  select exists(select 1 from pg_attribute where attrelid='public.device_sessions'::regclass and attname='auth_method' and not attisdropped) into has_auth;
+  select exists(select 1 from pg_attribute where attrelid='public.device_sessions'::regclass and attname='family_id' and not attisdropped) into has_family;
+  has_requests := to_regclass('public.device_login_requests') is not null;
+  if not has_auth and not has_family and not has_requests and ALLOW_ABSENT then
+    return;
+  end if;
+  if not has_auth or not has_family or not has_requests then
+    raise exception 'qr_rollback_schema_incomplete';
+  end if;
+  lock table public.device_login_requests in share row exclusive mode;
+  update public.device_sessions set revoked_at=coalesce(revoked_at,clock_timestamp())
+    where auth_method='device_link';
+  update public.device_login_requests set state='cancelled',envelope=null;
+  if exists(select 1 from public.device_sessions where auth_method='device_link' and revoked_at is null)
+    or exists(select 1 from public.device_login_requests where envelope is not null or state <> 'cancelled') then
+    raise exception 'qr_rollback_revocation_incomplete';
+  end if;
+end $qr_rollback$;
+commit;
+select 'qr_rollback_revoked';
+""").replace('ALLOW_ABSENT', 'true' if allow_absent else 'false').encode()
+
+
+def safe_rollback():
+    _, compose, env, before, _, _ = guard.preflight('target', recovering=True)
+    candidates = guard.candidate_images()
+    guard.verify_source_images()
+    current = guard.container_snapshot(allow_missing_changed=True)
+    if guard.container_identity(current) != guard.container_identity(before):
+        raise api.GateError('qr_rollback_api_drift')
+    row = current['api']
+    baseline = row['tag'] == guard.SOURCE['api'] and row['image_id'] == guard.SOURCE_IDS['api']
+    if row['tag'] == guard.TARGET['api']:
+        if row['image_id'] != candidates['api']:
+            raise api.GateError('qr_rollback_api_drift')
+        if row['running']:
+            # Stop by immutable container ID; return means all its processes exited.
+            guard.command('docker', 'stop', '--time', '30', row['id'], timeout=45)
+    elif not baseline and row['id'] is not None:
+        raise api.GateError('qr_rollback_api_drift')
+    stopped = guard.container_snapshot(allow_missing_changed=True)
+    # Docker can clear network endpoints on stop; ID/image/tag/config hash stay pinned.
+    expected_stopped = dict(current)
+    if not baseline:
+        expected_stopped['api'] = {**row, 'guard': stopped['api'].get('guard')}
+    if guard.container_identity(stopped) != guard.container_identity(expected_stopped) or (not baseline and stopped['api']['running']):
+        raise api.GateError('qr_rollback_api_not_stopped')
+    guard.verify_recovery_context(before, compose, env)
+    if stopped['db']['image_id'] != DB:
+        raise api.GateError('qr_rollback_database_drift')
+    result = guard.command('docker', 'exec', '-i', stopped['db']['id'], 'sh', '-c',
+        'exec psql -X -q -A -t -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}"',
+        input_data=rollback_sql(baseline), timeout=60)
+    if result.strip() != b'qr_rollback_revoked':
+        raise api.GateError('qr_rollback_revocation_unconfirmed')
+    fresh = guard.container_snapshot(allow_missing_changed=True)
+    if guard.container_identity(fresh) != guard.container_identity(stopped) or (not baseline and fresh['api']['running']):
+        raise api.GateError('qr_rollback_api_restarted')
+    guard.verify_recovery_context(before, compose, env)
+    guard.rollback()
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--revision',required=True);parser.add_argument('--api-candidate-id',required=True);parser.add_argument('--web-candidate-id',required=True)
-    parser.add_argument('--migration-receipt',type=Path,required=True);parser.add_argument('--migration-sha256',required=True)
+    parser.add_argument('--migration-receipt',type=Path);parser.add_argument('--migration-sha256')
     actions=parser.add_mutually_exclusive_group()
     for name in ('apply','recreate','rollback'):actions.add_argument('--'+name,action='store_true')
     args=parser.parse_args();configure(args.revision,{'api':args.api_candidate_id,'ops-web':args.web_candidate_id})
-    receipt=json.loads(args.migration_receipt.read_bytes())
-    if not re.fullmatch('[a-f0-9]{64}',args.migration_sha256) or receipt.get('migrationSha256')!=args.migration_sha256 or receipt.get('applied') is not True or receipt.get('postgresTestsPassed') is not True:
-        raise api.GateError('actual_migration_and_postgres_test_receipt_required')
     action='rollback' if args.rollback else 'recreate' if args.recreate else 'apply' if args.apply else None
+    if action != 'rollback':
+        receipt=json.loads(args.migration_receipt.read_bytes()) if args.migration_receipt else {}
+        if not re.fullmatch('[a-f0-9]{64}',args.migration_sha256 or '') or receipt.get('migrationSha256')!=args.migration_sha256 or receipt.get('applied') is not True or receipt.get('postgresTestsPassed') is not True:
+            raise api.GateError('actual_migration_and_postgres_test_receipt_required')
     def run():
         before=protected()
         if action=='rollback':
-            with contextlib.redirect_stdout(io.StringIO()):guard.rollback()
+            with contextlib.redirect_stdout(io.StringIO()):safe_rollback()
         elif action=='recreate':
             record,compose,env,containers,raw,rendered=guard.preflight('target')
             try:
                 with contextlib.redirect_stdout(io.StringIO()):guard.recreate(containers,compose,env,raw,rendered)
             except Exception:
                 guard.verify_recovery_context(containers,compose,env)
-                with contextlib.redirect_stdout(io.StringIO()):guard.rollback()
+                with contextlib.redirect_stdout(io.StringIO()):safe_rollback()
                 raise api.GateError('cutover_failed_old_images_restored')
         else:
             record,compose,env,containers,raw,rendered=guard.preflight('source')

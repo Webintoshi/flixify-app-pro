@@ -31,10 +31,10 @@ class AdapterTests(unittest.TestCase):
                 events.append('lock')
                 try:yield
                 finally:events.append('unlock')
-            with patch.object(sys,'argv',argv+['--rollback']), \
+            with patch.object(sys,'argv',argv[:7]+['--rollback']), \
                  patch.object(release,'protected',side_effect=lambda:events.append('protected') or {}), \
                  patch.object(release.reviewed,'release_lock',locked), \
-                 patch.object(release.guard,'rollback',side_effect=lambda:events.append('rollback')) as rollback, \
+                 patch.object(release,'safe_rollback',side_effect=lambda:events.append('rollback')) as rollback, \
                  patch.object(release.guard,'command',side_effect=AssertionError('Unexpected build, pull or prune')) as command, \
                  patch.object(release.shutil,'disk_usage',return_value=SimpleNamespace(free=1024**3)), \
                  contextlib.redirect_stdout(io.StringIO()):
@@ -47,6 +47,38 @@ class AdapterTests(unittest.TestCase):
                         with self.assertRaisesRegex(release.api.GateError,'requires_8GiB_no_pruning'):
                             release.main()
                 self.assertEqual(events,['lock','protected','rollback','protected','unlock'])
+
+    def test_failed_recreate_uses_safe_rollback_and_propagates_cleanup_failure(self):
+        with patch.dict(sys.modules, {'yaml': ModuleType('yaml')}):
+            release=load('qr_test_failed_recreate','release.py')
+        with tempfile.TemporaryDirectory() as directory:
+            receipt=Path(directory)/'receipt.json';digest='e'*64
+            receipt.write_text(json.dumps({'migrationSha256':digest,'applied':True,'postgresTestsPassed':True}))
+            argv=['release.py','--revision','b'*40,'--api-candidate-id','sha256:'+'c'*64,
+                  '--web-candidate-id','sha256:'+'d'*64,'--migration-receipt',str(receipt),
+                  '--migration-sha256',digest,'--recreate']
+            for cleanup_fails in (False,True):
+                events=[]
+                @contextlib.contextmanager
+                def locked():
+                    events.append('lock')
+                    try:yield
+                    finally:events.append('unlock')
+                def safe():
+                    events.append('safe_rollback')
+                    if cleanup_fails:raise release.api.GateError('cleanup_failed_api_stopped')
+                with patch.object(sys,'argv',argv), \
+                     patch.object(release,'protected',return_value={}), \
+                     patch.object(release.reviewed,'release_lock',locked), \
+                     patch.object(release.guard,'preflight',return_value=({},b'compose',b'env',{}, {},{})), \
+                     patch.object(release.guard,'recreate',side_effect=release.api.GateError('health_failed')), \
+                     patch.object(release.guard,'verify_recovery_context',side_effect=lambda *args:events.append('recovery_guard')), \
+                     patch.object(release,'safe_rollback',side_effect=safe), \
+                     patch.object(release.guard,'rollback',side_effect=AssertionError('unsafe direct restore')), \
+                     patch.object(release.shutil,'disk_usage',return_value=SimpleNamespace(free=10*1024**3)):
+                    expected='cleanup_failed_api_stopped' if cleanup_fails else 'cutover_failed_old_images_restored'
+                    with self.assertRaisesRegex(release.api.GateError,expected):release.main()
+                self.assertEqual(events,['lock','recovery_guard','safe_rollback','unlock'])
 
     def test_api_compile_caps_and_new_package_directory(self):
         api=load('qr_test_api','build-api.py');calls=[]
