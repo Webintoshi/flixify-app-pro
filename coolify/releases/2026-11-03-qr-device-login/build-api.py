@@ -84,11 +84,14 @@ def candidate_tests(repo,revision,candidate):
     env.update({k:'' for k in ('STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET','TEST_DATABASE_URL','PG_TEST_DATABASE_URL','DEVICE_LOGIN_TEST_DATABASE_URL','PACKAGE_CATALOG_TEST_DATABASE_URL','PACKAGE_PAYMENT_TEST_DATABASE_URL','WELCOME_OFFER_TEST_DATABASE_URL','GA4_WEB_API_SECRET','GA4_WINDOWS_API_SECRET')})
     env.update({'STRIPE_BILLING_ENABLED':'false','GA4_ENABLED':'false'})
     with tempfile.TemporaryDirectory(prefix='qr-candidate-tests-') as directory:
-        args=['docker','run','--rm','--network','none','--cpus','1','--memory','1280m','--memory-swap','1536m','--pids-limit','256']
+        # Logo tests mock fetch but resolve example.com through the real DNS lookup.
+        args=['docker','run','--rm','--network','none','--add-host','example.com:93.184.216.34','--cpus','1','--memory','1280m','--memory-swap','1536m','--pids-limit','256']
         for key,value in env.items(): args+=['-e',key+'='+value]
         for index,path in enumerate(paths+[config]):
             file=Path(directory)/str(index); file.write_bytes(merge.blob(repo,revision,path)); args+=['-v',str(file)+':/app/'+path+':ro']
-        script=backend.legacy.cgroup()+'cp.execFileSync("npx",["--no-install","vitest","run","--root","/app","--config","/app/'+config+'","--maxWorkers=1"],{stdio:"inherit"});'
+        test_args=['--no-install','vitest','run','--root','/app','--config','/app/'+config,'--maxWorkers=1']
+        test_args+=['/app/'+path for path in paths if path.endswith('.test.ts')]
+        script=backend.legacy.cgroup()+'cp.execFileSync("npx",'+json.dumps(test_args)+',{stdio:"inherit"});'
         command(*args,'--entrypoint','node',candidate,'-e',script,timeout=900)
 
 def main():

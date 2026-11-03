@@ -16,6 +16,46 @@ def load(name,file):
     spec=importlib.util.spec_from_file_location(name,HERE/file);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 
 class AdapterTests(unittest.TestCase):
+    def test_candidate_tests_run_only_frozen_mounted_test_paths(self):
+        api=load('qr_test_candidate_scope','build-api.py')
+        paths=[
+            'apps/api/src/device-login.test.ts',
+            'apps/api/src/device-login-routes.test.ts',
+            'apps/api/src/device-login-server.test.ts',
+            'apps/api/src/device-login-postgres.test.ts',
+            'apps/api/src/live-playback.test.ts',
+            'coolify/releases/2026-11-01-welcome-offer/welcome-tests/analytics-policy.test.ts',
+            'coolify/releases/2026-11-01-packages/billing-tests/checkout.test.ts',
+            'coolify/releases/2026-11-01-packages/billing-tests/referral-store.fixture.ts',
+            'coolify/releases/2026-11-01-packages/billing-tests/fixtures.ts',
+        ]
+        calls=[]
+        with patch.object(api.merge,'git',return_value=('\n'.join(paths)+'\n').encode()), \
+             patch.object(api.merge,'blob',return_value=b'export {};\n'), \
+             patch.object(api,'command',side_effect=lambda *args,**kwargs:calls.append(args)):
+            api.candidate_tests(Path('/frozen-repo'),'b'*40,'sha256:'+'c'*64)
+        self.assertEqual(len(calls),1)
+        invocation=calls[0]
+        self.assertEqual(invocation[invocation.index('--network')+1],'none')
+        self.assertEqual(invocation[invocation.index('--add-host')+1],'example.com:93.184.216.34')
+        self.assertEqual(invocation.count('--add-host'),1)
+        script=invocation[-1]
+        marker='cp.execFileSync("npx",'
+        argv,_=json.JSONDecoder().raw_decode(script.split(marker,1)[1])
+        config='coolify/releases/2026-11-03-qr-device-login/candidate-tests.config.ts'
+        self.assertEqual(argv,[
+            '--no-install','vitest','run','--root','/app','--config','/app/'+config,'--maxWorkers=1',
+            '/app/apps/api/src/device-login.test.ts',
+            '/app/apps/api/src/device-login-routes.test.ts',
+            '/app/apps/api/src/device-login-server.test.ts',
+            '/app/apps/api/src/device-login-postgres.test.ts',
+            '/app/apps/api/src/live-playback.test.ts',
+            '/app/coolify/releases/2026-11-01-welcome-offer/welcome-tests/analytics-policy.test.ts',
+            '/app/coolify/releases/2026-11-01-packages/billing-tests/checkout.test.ts',
+        ])
+        mounts=[invocation[index+1].split(':/app/',1)[1] for index,value in enumerate(invocation) if value=='-v']
+        self.assertEqual(mounts,[path+':ro' for path in paths+[config]])
+
     def test_low_disk_rollback_reaches_locked_retained_image_transaction(self):
         with patch.dict(sys.modules, {'yaml': ModuleType('yaml')}):
             release=load('qr_test_low_disk_release','release.py')
