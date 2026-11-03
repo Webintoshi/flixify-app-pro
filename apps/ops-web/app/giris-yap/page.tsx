@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../../lib/api";
 import { trackAnalytics } from "../platform/analytics";
+import { DeviceLoginQr } from "../platform/device-login";
+import { deviceReturnPath } from "../../lib/device-login-client";
+import qrStyles from "../platform/device-login.module.css";
 import type { AccountUser } from "../../lib/account-model";
 
 type LoginResponse = {
@@ -131,6 +134,10 @@ function ArrowLeftIcon() {
 
 export default function LoginPage() {
   const router = useRouter();
+  const [qr,setQr]=useState(false);
+  const [deviceReturn,setDeviceReturn]=useState<string|null>(null);
+  const [returnReady,setReturnReady]=useState(false);
+  useEffect(()=>{setDeviceReturn(deviceReturnPath(new URLSearchParams(window.location.search).get("device_code")??""));setReturnReady(true);},[]);
   const [code, setCode] = useState("");
   const [showCode, setShowCode] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -141,6 +148,8 @@ export default function LoginPage() {
   const [canRequestTrial, setCanRequestTrial] = useState(false);
   const [statusVerified, setStatusVerified] = useState(false);
   const sessionEpoch = useRef(0);
+  const manualRequest=useRef<AbortController|null>(null);
+  useEffect(()=>()=>manualRequest.current?.abort(),[]);
   const [trialMessage, setTrialMessage] = useState<string | null>(null);
   const [whatsappUrl, setWhatsappUrl] = useState(fallbackWhatsappUrl);
 
@@ -195,12 +204,12 @@ export default function LoginPage() {
   }, [router]);
 
   useEffect(() => {
-    if (!statusVerified || !session?.user.hasActiveSubscription) {
+    if (!returnReady || deviceReturn || !statusVerified || !session?.user.hasActiveSubscription) {
       return;
     }
 
     router.replace("/ayarlar");
-  }, [router, session, statusVerified]);
+  }, [router, session, statusVerified, deviceReturn, returnReady]);
 
   useEffect(() => {
     setCanRequestTrial(false);
@@ -227,9 +236,10 @@ export default function LoginPage() {
     setCanRequestTrial(false);
     setStatusVerified(false);
 
+    const controller=new AbortController();manualRequest.current?.abort();manualRequest.current=controller;const initial=localStorage.getItem(storageKey);
     try {
       const response = await apiRequest<LoginResponse>("/auth/login-by-code", {
-        method: "POST",
+        method: "POST", signal:controller.signal,
         body: {
           code: normalizeCode(code),
           deviceName: "Flixify Public Web",
@@ -238,13 +248,14 @@ export default function LoginPage() {
         }
       });
 
+      if(controller.signal.aborted||initial!==localStorage.getItem(storageKey))return;
       setSession(response);
       trackAnalytics("login", { method: "account_code" });
 
       if (typeof window !== "undefined") {
         window.localStorage.setItem(storageKey, JSON.stringify(response));
         window.dispatchEvent(new Event("flixify-session"));
-        router.push("/");
+        router.push(deviceReturn??"/");
       }
     } catch (nextError) {
       setError(getErrorMessage(nextError));
@@ -292,7 +303,7 @@ export default function LoginPage() {
   }
 
   const normalizedCode = normalizeCode(code);
-  const shouldShowPremiumModal = Boolean(session && !session.user.hasActiveSubscription && !premiumDismissed);
+  const shouldShowPremiumModal = Boolean(!deviceReturn && session && !session.user.hasActiveSubscription && !premiumDismissed);
 
   // Calculate progress segments (4 segments for 16 characters)
   const progressSegments = Math.min(Math.ceil(normalizedCode.length / 4), 4);
@@ -312,6 +323,7 @@ export default function LoginPage() {
           />
         </div>
 
+        {qr?<DeviceLoginQr save={next=>{localStorage.setItem(storageKey,JSON.stringify(next));window.dispatchEvent(new Event("flixify-session"));}} onSuccess={()=>router.push("/")} onManual={()=>setQr(false)}/>:<>
         {/* Subtitle */}
         <p className="login-subtitle">16 haneli erişim kodunuzu girin</p>
 
@@ -370,6 +382,8 @@ export default function LoginPage() {
           </button>
         </div>
 
+        {!deviceReturn&&<button type="button" className={qrStyles.qrEntry} disabled={loading} onClick={()=>setQr(true)}>Telefonla QR giriş</button>}
+        </>}
         {/* Links */}
         <div className="login-links">
           <p className="login-register-link">

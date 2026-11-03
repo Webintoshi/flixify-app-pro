@@ -37,6 +37,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import vip.flixify.tv.TvModels.*;
 import vip.flixify.tv.TvRepository;
+import vip.flixify.tv.DeviceLogin;
+import vip.flixify.tv.DeviceLoginQr;
 import vip.flixify.tv.BackgroundWorkGate;
 import vip.flixify.tv.WelcomeOffer;
 
@@ -71,6 +73,9 @@ public final class NetworkTvRepository implements TvRepository {
     private volatile Account currentAccount;
     private volatile long accountCheckedAt, bootstrapCheckedAt;
     private long authGeneration;
+    private long pairingEpoch;
+    private PairingAttempt pairingAttempt;
+    private final ThreadPoolExecutor pairingWorker=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(16),r->{Thread t=new Thread(r,"flixify-device-login");t.setDaemon(true);return t;});
     private final Map<String,Pending<?>> pending=new HashMap<>();
     private final Set<HttpURLConnection> connections=new HashSet<>();
     private final Map<Kind,Catalog> catalogs=new EnumMap<>(Kind.class);
@@ -125,7 +130,7 @@ public final class NetworkTvRepository implements TvRepository {
         positions=app.getSharedPreferences("tv_scoped_resume",Context.MODE_PRIVATE);
         welcomeMemo=app.getSharedPreferences("tv_welcome_resolved_v1",Context.MODE_PRIVATE);
         metadataDisk=new MetadataDiskCache(new java.io.File(app.getFilesDir(),"catalog-cache-v1"));
-        tokens=tokenStore.load(); worker.allowCoreThreadTimeOut(true);epgWorker.allowCoreThreadTimeOut(true);primaryCatalogWorker.allowCoreThreadTimeOut(true);metadataWorker.allowCoreThreadTimeOut(true);cacheWorker.allowCoreThreadTimeOut(true);persistenceWorker.allowCoreThreadTimeOut(true);
+        tokens=tokenStore.load();pairingWorker.allowCoreThreadTimeOut(true); worker.allowCoreThreadTimeOut(true);epgWorker.allowCoreThreadTimeOut(true);primaryCatalogWorker.allowCoreThreadTimeOut(true);metadataWorker.allowCoreThreadTimeOut(true);cacheWorker.allowCoreThreadTimeOut(true);persistenceWorker.allowCoreThreadTimeOut(true);
     }
     @Override public boolean hasSession() { return tokens!=null; }
     @Override public String currentAccountId(){TokenStore.Session value=tokens;return value==null?"":value.accountId;}
@@ -412,6 +417,104 @@ public final class NetworkTvRepository implements TvRepository {
             installTokens(response,auth,null); return loadAccount(auth,true);
         });
     }
+    @Override public void startDeviceLogin(Callback<DeviceLogin.Attempt> callback){
+        final PairingAttempt next,previous;
+        synchronized(lock){
+            if(tokens!=null){callbacks.execute(()->callback.onError(failure(new Problem(Failure.Code.STALE))));return;}
+            previous=pairingAttempt;next=new PairingAttempt(authGeneration,++pairingEpoch);pairingAttempt=next;
+        }
+        if(previous!=null)previous.cancel();
+        next.submit(callback,()->{
+            JSONObject input=new JSONObject().put("platform","android_tv").put("deviceName","Flixify Android TV").put("installationId",tokenStore.installationId());
+            JSONObject raw=next.exchange("start",input,false);
+            String id=ProviderParser.secret(raw.opt("requestId"),64),proof=ProviderParser.secret(raw.opt("deviceSecret"),64);
+            if(!id.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}") || !proof.matches("[A-Za-z0-9_-]{43}"))throw new ProviderParser.Invalid();
+            synchronized(lock){
+                if(next.cancelled || next.auth!=authGeneration || next.epoch!=pairingEpoch){next.cleanup(new JSONObject().put("requestId",id).put("deviceSecret",proof));throw new Problem(Failure.Code.STALE);}
+                next.requestId=id;next.secret=proof;
+            }
+            String code=ProviderParser.text(raw.opt("userCode"),9),png=ProviderParser.secret(raw.opt("qrPngBase64"),350000);
+            if(!code.matches("[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}") || !"https://flixify.vip/cihaz".equals(raw.optString("verificationUri")) || !("https://flixify.vip/cihaz?code="+code).equals(raw.optString("verificationUriComplete")) || raw.optInt("expiresInSeconds")!=180 || raw.optInt("intervalSeconds")<2 || raw.optInt("intervalSeconds")>60 || ProviderParser.date(raw.opt("expiresAt"))<=0)throw new ProviderParser.Invalid();
+            android.graphics.Bitmap image=DeviceLoginQr.decode(png);if(image==null)throw new ProviderParser.Invalid();image.recycle();
+            synchronized(lock){next.checkCurrent();next.presentation=new DeviceLogin.Display(code,png,180,raw.getInt("intervalSeconds"));}
+            return next;
+        });
+    }
+    private interface PairingWork<T>{T run()throws Exception;}
+    private final class PairingAttempt implements DeviceLogin.Attempt {
+        final long auth,epoch;String requestId="",secret="";DeviceLogin.Display presentation;TokenStore.Session issued;
+        boolean cancelled,adopted,polling;HttpURLConnection connection;
+        PairingAttempt(long auth,long epoch){this.auth=auth;this.epoch=epoch;}
+        void checkCurrent()throws Problem{if(cancelled || adopted || auth!=authGeneration || epoch!=pairingEpoch || pairingAttempt!=this || tokens!=null)throw new Problem(Failure.Code.STALE);}
+        @Override public DeviceLogin.Display display(){return presentation;}
+        <T> void submit(Callback<T> callback,PairingWork<T> work){
+            try{pairingWorker.execute(()->{
+                T value=null;Failure error=null;
+                try{value=work.run();}catch(Exception issue){error=failure(issue);}
+                final T result=value;final Failure problem=error;
+                callbacks.execute(()->{
+                    if(problem!=null){if(presentation==null)cancel();callback.onError(problem);return;}
+                    synchronized(lock){try{if(auth!=authGeneration)throw new Problem(Failure.Code.STALE);if(!adopted)checkCurrent();}catch(Problem stale){cancel();callback.onError(failure(stale));return;}}
+                    callback.onResult(result);
+                });
+            });}catch(RejectedExecutionException unavailable){callback.onError(failure(new Problem(Failure.Code.LIMIT)));}
+        }
+        JSONObject proof()throws Exception{synchronized(lock){if(requestId.isEmpty() || secret.isEmpty())throw new Problem(Failure.Code.STALE);return new JSONObject().put("requestId",requestId).put("deviceSecret",secret);}}
+        @Override public void poll(Callback<DeviceLogin.Poll> callback){
+            synchronized(lock){try{checkCurrent();if(polling)throw new Problem(Failure.Code.LIMIT);polling=true;}catch(Problem issue){callbacks.execute(()->callback.onError(failure(issue)));return;}}
+            submit(new Callback<DeviceLogin.Poll>(){public void onResult(DeviceLogin.Poll value){synchronized(lock){polling=false;}callback.onResult(value);}public void onError(Failure failure){synchronized(lock){polling=false;}callback.onError(failure);}},()->{
+                    JSONObject raw=exchange("token",proof(),false);String status=raw.optString("status");
+                    if(!status.matches("pending|authorized|slow_down|denied|cancelled|expired|complete"))throw new ProviderParser.Invalid();
+                    int interval=raw.has("intervalSeconds")?raw.getInt("intervalSeconds"):2;if(interval<2 || interval>240)throw new ProviderParser.Invalid();
+                    synchronized(lock){checkCurrent();issued="authorized".equals(status)?parsePairingSession(ProviderParser.object(raw.opt("session"))):null;}
+                    return new DeviceLogin.Poll(status,interval);
+            });
+        }
+        @Override public void adopt(DeviceLogin.AdoptionGuard allowed,Callback<Void> callback){submit(callback,()->{
+            synchronized(lock){
+                checkCurrent();if(issued==null || !allowed.allowed())throw new Problem(Failure.Code.STALE);
+                tokenStore.save(issued);tokens=issued;issued=null;adopted=true;
+            }return null;
+        });}
+        @Override public void ack(Callback<Void> callback){submit(callback,()->{
+            synchronized(lock){if(!adopted || cancelled || auth!=authGeneration)throw new Problem(Failure.Code.STALE);if(secret.isEmpty())return null;}
+            JSONObject raw=exchange("ack",proof(),true);if(!"complete".equals(raw.optString("status")))throw new ProviderParser.Invalid();
+            synchronized(lock){secret="";requestId="";}return null;
+        });}
+        @Override public void cancel(){
+            final HttpURLConnection running;final JSONObject input;
+            synchronized(lock){
+                if(adopted || cancelled)return;cancelled=true;issued=null;running=connection;
+                if(pairingAttempt==this){pairingAttempt=null;pairingEpoch++;}
+                JSONObject body=null;try{if(!secret.isEmpty())body=proof();}catch(Exception ignored){}input=body;secret="";requestId="";
+            }
+            if(running!=null)running.disconnect();if(input!=null)cleanup(input);
+        }
+        void cleanup(JSONObject input){try{pairingWorker.execute(()->{try{exchange("cancel",input,true);}catch(Exception ignored){}});}catch(RejectedExecutionException ignored){}}
+        JSONObject exchange(String operation,JSONObject body,boolean detached)throws Exception{
+            HttpURLConnection current=null;ScheduledFuture<?> deadline=null;
+            try{
+                if(!detached)synchronized(lock){checkCurrent();}
+                current=connectionFactory.open(new URL(API+"/auth/device/"+operation));current.setInstanceFollowRedirects(false);current.setConnectTimeout(TIMEOUT_MS);current.setReadTimeout(TIMEOUT_MS);current.setUseCaches(false);current.setRequestMethod("POST");current.setDoOutput(true);
+                current.setRequestProperty("Content-Type","application/json; charset=utf-8");current.setRequestProperty("Accept","application/json");current.setRequestProperty("Cache-Control","no-store");current.setRequestProperty("Referer","");current.setRequestProperty("Cookie","");
+                if(!detached)synchronized(lock){checkCurrent();connection=current;}
+                HttpURLConnection bounded=current;deadline=timeout.schedule(bounded::disconnect,TIMEOUT_MS,TimeUnit.MILLISECONDS);
+                byte[] encoded=body.toString().getBytes(StandardCharsets.UTF_8);current.setFixedLengthStreamingMode(encoded.length);try(OutputStream output=current.getOutputStream()){output.write(encoded);}
+                int status=current.getResponseCode();if(status==429)throw new Problem(Failure.Code.LIMIT);if(status==404 || status==400)throw new ProviderParser.Invalid();if(status<200 || status>=300)throw new Problem(Failure.Code.NETWORK);
+                String contentLength=current.getHeaderField("Content-Length");if(contentLength!=null && Long.parseLong(contentLength)>400000)throw new ProviderParser.Invalid();
+                ByteArrayOutputStream bytes=new ByteArrayOutputStream();long started=System.nanoTime();
+                try(InputStream input=current.getInputStream()){
+                    byte[] buffer=new byte[4096];int count;while((count=input.read(buffer))!=-1){if(bytes.size()+count>400000 || TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)>TIMEOUT_MS)throw new ProviderParser.Invalid();bytes.write(buffer,0,count);}
+                }
+                return ProviderParser.object(ProviderParser.parseJson(new String(bytes.toByteArray(),StandardCharsets.UTF_8)));
+            }finally{if(deadline!=null)deadline.cancel(false);if(current!=null){synchronized(lock){if(connection==current)connection=null;}current.disconnect();}}
+        }
+    }
+    private TokenStore.Session parsePairingSession(JSONObject raw)throws Exception{
+        String access=ProviderParser.secret(raw.opt("accessToken"),16384),refresh=ProviderParser.secret(raw.opt("refreshToken"),16384);JSONObject user=ProviderParser.object(raw.opt("user"));
+        String id=ProviderParser.secret(user.opt("id"),256),suffix=ProviderParser.text(user.opt("codeSuffix"),4);
+        if(access.isEmpty() || refresh.isEmpty() || id.isEmpty() || suffix.length()!=4)throw new ProviderParser.Invalid();return new TokenStore.Session(access,refresh,id,suffix);
+    }
     @Override public void account(boolean force,Callback<Account> callback) {
         enqueue(force?"access-refresh":"account",false,callback,auth->loadAccount(auth,force));
     }
@@ -541,7 +644,9 @@ public final class NetworkTvRepository implements TvRepository {
         for(HttpURLConnection connection:cancel)connection.disconnect();
     }
     private void clearSession() {
-        synchronized(lock) {authGeneration++;tokens=null;currentAccount=null;accountCheckedAt=0;tokenStore.clear();}
+        PairingAttempt old;
+        synchronized(lock) {authGeneration++;pairingEpoch++;old=pairingAttempt;pairingAttempt=null;tokens=null;currentAccount=null;accountCheckedAt=0;tokenStore.clear();}
+        if(old!=null)old.cancel();
         clearProvider();
     }
     private void revokeAuth(long auth) { synchronized(lock) { if(auth==authGeneration) {tokens=null;currentAccount=null;accountCheckedAt=0;tokenStore.clear();} } clearProvider(); }

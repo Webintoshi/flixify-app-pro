@@ -1,4 +1,8 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { DeviceLoginCrypto, DeviceLoginService, redactDeviceLinkedPayload } from "./device-login.js";
+import { DeviceLoginStore } from "./device-login-store.js";
+import { registerDeviceLoginRoutes } from "./device-login-routes.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
@@ -175,7 +179,19 @@ import { buildNativePlaybackSource, buildNativeVodPlaybackSource } from "./nativ
 type UserRequest = {
   userId: string;
   sessionId: string;
+  authMethod?: "account_code" | "device_link";
 };
+
+const linkedViewerRequests = new WeakSet<FastifyRequest>();
+const deviceLoginStore = new DeviceLoginStore(pool);
+async function prepareDeviceLoginSession(userId: string) {
+  const id = randomUUID();
+  const secret = generateRefreshToken();
+  const refreshHash = await hashSecret(secret);
+  const accessToken = await signAccessToken({ userId, sessionId: id });
+  return { id, refreshHash, accessToken, refreshToken: `${id}.${secret}` };
+}
+const deviceLoginService = new DeviceLoginService(deviceLoginStore, new DeviceLoginCrypto(env.APP_JWT_SECRET), prepareDeviceLoginSession);
 
 type AdminRequest = {
   adminId: string;
@@ -1236,7 +1252,7 @@ async function issueSession(userId: string, input: { deviceName?: string; platfo
   };
 }
 
-async function authenticateUser(authorization?: string): Promise<UserRequest> {
+async function authenticateUser(authorization?: string, request?: FastifyRequest): Promise<UserRequest> {
   const token = getBearerToken(authorization);
   if (!token) {
     throw new UnauthorizedUserRouteError();
@@ -1273,15 +1289,20 @@ async function authenticateUser(authorization?: string): Promise<UserRequest> {
   }
 
   const session = await getSessionById(payload.sid);
-  if (!session || session.revoked_at || session.user_id !== payload.sub) {
+  if (!session || session.revoked_at || session.user_id !== payload.sub || new Date(session.expires_at).getTime() <= Date.now()) {
     throw new UnauthorizedUserRouteError();
   }
 
+  if (session.auth_method === "device_link") {
+    if (!session.family_id || !await deviceLoginStore.activate(payload.sub, session.id, session.family_id)) throw new UnauthorizedUserRouteError();
+    if (request) linkedViewerRequests.add(request);
+  }
   await touchDeviceSession(session.id);
 
   return {
     userId: payload.sub,
-    sessionId: payload.sid
+    sessionId: payload.sid,
+    authMethod: session.auth_method
   };
 }
 
@@ -1308,6 +1329,14 @@ export function buildServer() {
   });
 
   app.register(cors, API_CORS_CONFIG);
+  app.addHook("preSerialization", async (request, _reply, payload) =>
+    linkedViewerRequests.has(request) ? redactDeviceLinkedPayload(payload) : payload);
+  registerDeviceLoginRoutes(app, { service: deviceLoginService, authenticate: authenticateUser, enabled: !isDemoMode });
+  const deviceLoginCleanup = isDemoMode ? null : setInterval(() => {
+    deviceLoginStore.cleanup().catch(() => app.log.warn({ operation: "device-login-cleanup" }, "Cihaz baglama temizligi kullanilamiyor."));
+  }, 60_000);
+  deviceLoginCleanup?.unref();
+  app.addHook("onClose", async () => { if (deviceLoginCleanup) clearInterval(deviceLoginCleanup); });
 
   app.addHook("onRequest", async (request) => {
     stripEmptyJsonContentType(request.raw.method, request.raw.headers);
@@ -1593,6 +1622,18 @@ export function buildServer() {
       });
     }
 
+    if (session.auth_method === "device_link") {
+      if (!session.family_id) return reply.status(401).send({ reason: "invalid-refresh", message: "Oturum yenilenemedi." });
+      const prepared = await prepareDeviceLoginSession(session.user_id);
+      if (!await deviceLoginStore.refresh(session.user_id, session.id, session.family_id, prepared)) {
+        return reply.status(401).send({ reason: "revoked", message: "Oturum yenilenemedi." });
+      }
+      linkedViewerRequests.add(request);
+      const context = await getUserContext(session.user_id);
+      return { accessToken: prepared.accessToken, refreshToken: prepared.refreshToken,
+        user: context.summary, kryptoniteCode: null };
+    }
+
     await revokeSession(session.id);
     const refreshToken = generateRefreshToken();
     const refreshTokenHash = await hashSecret(refreshToken);
@@ -1619,7 +1660,7 @@ export function buildServer() {
 
   app.get("/me", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
 
       if (isDemoMode) {
         const me = getDemoMe(auth.userId);
@@ -1651,7 +1692,7 @@ export function buildServer() {
     reply.header("pragma", "no-cache");
     reply.header("vary", "Authorization, Origin");
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       if (isDemoMode) {
         return reply.status(403).send({ message: "Kisisel yayin erisimi kullanilamiyor." });
       }
@@ -1673,7 +1714,7 @@ export function buildServer() {
   app.get("/me/app-update/check", async (request, reply) => {
     try {
       reply.header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
-      await authenticateUser(request.headers.authorization);
+      await authenticateUser(request.headers.authorization, request);
       const rawQuery = request.query as Record<string, unknown> | undefined;
       const rawPlatform = normalizeOptionalText(rawQuery?.platform, 80) ?? "unknown";
       const platform = rawPlatform.trim().toLowerCase();
@@ -1697,7 +1738,7 @@ export function buildServer() {
 
   app.get("/me/device-sessions", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       if (isDemoMode) {
         return {
           items: listDemoDeviceSessions(auth.userId, auth.sessionId)
@@ -1714,7 +1755,7 @@ export function buildServer() {
 
   app.post("/me/device-sessions/:sessionId/revoke", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       const { sessionId } = request.params as { sessionId: string };
 
       if (isDemoMode) {
@@ -1731,7 +1772,7 @@ export function buildServer() {
 
   app.get("/me/catalog/live", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       const query = paginationQuerySchema.parse(request.query);
 
       if (isDemoMode) {
@@ -1768,7 +1809,7 @@ export function buildServer() {
 
   app.get("/me/live/:channelId/playback", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       const { channelId } = request.params as { channelId: string };
       const rawQuery = request.query as Record<string, unknown> | undefined;
       const clientRuntime = normalizeClientRuntime(rawQuery?.clientRuntime);
@@ -2108,7 +2149,7 @@ export function buildServer() {
 
   app.get("/me/native/live/:channelId/playback", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       const { channelId } = request.params as { channelId: string };
       const rawQuery = request.query as Record<string, unknown> | undefined;
       const forceRelayRestart =
@@ -2349,7 +2390,7 @@ export function buildServer() {
 
   app.post("/me/live/:channelId/health", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       const { channelId } = request.params as { channelId: string };
       const payload = livePlaybackEventInputSchema.parse(request.body);
 
@@ -2376,7 +2417,7 @@ export function buildServer() {
 
   app.get("/me/catalog/movies", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       const query = paginationQuerySchema.parse(request.query);
 
       if (isDemoMode) {
@@ -2417,7 +2458,7 @@ export function buildServer() {
 
   app.get("/me/catalog/series", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       const query = paginationQuerySchema.parse(request.query);
 
       if (isDemoMode) {
@@ -2458,7 +2499,7 @@ export function buildServer() {
 
   app.get("/me/vod/:kind/:itemId/playback", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       const { kind, itemId } = request.params as { kind: string; itemId: string };
       const rawQuery = request.query as Record<string, unknown> | undefined;
       const clientRuntime = normalizeClientRuntime(rawQuery?.clientRuntime);
@@ -2735,7 +2776,7 @@ export function buildServer() {
 
   app.get("/me/native/vod/:kind/:itemId/playback", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       const { kind, itemId } = request.params as { kind: string; itemId: string };
       const rawQuery = request.query as Record<string, unknown> | undefined;
       const platform = normalizeOptionalText(rawQuery?.platform, 80)?.trim().toLowerCase() ?? null;
@@ -2951,7 +2992,7 @@ export function buildServer() {
 
   app.post("/me/vod/:kind/:itemId/health", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       const { kind, itemId } = request.params as { kind: string; itemId: string };
       const payload = vodPlaybackEventInputSchema.parse(request.body);
 
@@ -3036,7 +3077,7 @@ export function buildServer() {
 
   app.post("/me/payment-requests", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       const payload = paymentRequestInputSchema.parse(request.body);
 
       if (isDemoMode) {
@@ -3057,7 +3098,7 @@ export function buildServer() {
 
   app.get("/me/payment-requests", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       if (isDemoMode) {
         return {
           items: listDemoMyPaymentRequests(auth.userId)
@@ -3073,7 +3114,7 @@ export function buildServer() {
 
   app.post("/me/trial-request", async (request, reply) => {
     try {
-      const auth = await authenticateUser(request.headers.authorization);
+      const auth = await authenticateUser(request.headers.authorization, request);
       const payload = trialRequestInputSchema.parse(request.body);
 
       let trialInfo: { id?: string; createdAt?: string; userId?: string; userCode?: string | null; note?: string | null } | undefined;

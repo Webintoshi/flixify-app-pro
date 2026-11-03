@@ -4,8 +4,10 @@ import XCTest
 private final class MemoryVault: SessionVault, @unchecked Sendable {
     private let lock = NSLock()
     private var value: StoredSession?
+    var failSave = false
+    var onSave: (@Sendable () -> Void)?
     func load() throws -> StoredSession? { lock.lock(); defer { lock.unlock() }; return value }
-    func save(_ session: StoredSession) throws { lock.lock(); value = session; lock.unlock() }
+    func save(_ session: StoredSession) throws { if failSave { throw FlixifyError.keychain }; lock.lock(); value = session; lock.unlock(); onSave?() }
     func clear() { lock.lock(); value = nil; lock.unlock() }
     func installationID() throws -> String { "00000000-0000-0000-0000-000000000001" }
 }
@@ -29,6 +31,12 @@ private final class FixtureClock: @unchecked Sendable {
 private final class FixtureRouter: @unchecked Sendable {
     private let lock = NSLock()
     private var requests: [URLRequest] = []
+    var pairingStatus = "authorized"
+    var pairingDelay: TimeInterval = 0
+    var accountFailure = false
+    var accountAuthFailure = false
+    var foreignPairingURL = false
+    var oversizedPairingPNG = false
     private var sourceVersion = "fixture-source-v1"
     private var forceRefresh = false
     private var refreshes = 0
@@ -68,11 +76,20 @@ private final class FixtureRouter: @unchecked Sendable {
         let path = request.url!.path
         let user: [String: Any] = ["id": "fixture-account", "codeSuffix": "TEST", "status": "active", "hasAssignedLink": true, "hasActiveSubscription": true, "activePackage": ["title": "1 Ay", "endsAt": expires]]
         switch path {
+        case "/auth/device/start": return FixtureReply(["requestId": "00000000-0000-0000-0000-000000000002", "deviceSecret": String(repeating: "a", count: 43), "userCode": "BCDF-GHJK", "verificationUri": "https://flixify.vip/cihaz", "verificationUriComplete": foreignPairingURL ? "https://evil.invalid/cihaz?code=BCDF-GHJK" : "https://flixify.vip/cihaz?code=BCDF-GHJK", "qrPngBase64": oversizedPairingPNG ? "iVBORw0KGgoAAAANSUhEUgAABAEAAAQBCAIAAADU4QRPAAAUn0lEQVR4nO3XMQEAMAyAsPo33brYDhIFvMwCAAAl8zsAAAB4ygMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANByJ7O5tEyOvVQAAAAASUVORK5CYII=" : "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAABKklEQVR4nO3RMQ0AAAjAMPybBhk9WBUs2Wyo0QHfNQBrANYArAFYA7AGYA3AGoA1AGsA1gCsAVgDsAZgDcAagDUAawDWAKwBWAOwBmANwBqANQBrANYArAFYA7AGYA3AGoA1AGsA1gCsAVgDsAZgDcAagDUAawDWAKwBWAOwBmANwBqANQBrANYArAFYA7AGYA3AGoA1AGsA1gCsAVgDsAZgDcAagDUAawDWAKwBWAOwBmANwBqANQBrANYArAFYA7AGYA3AGoA1AGsA1gCsAVgDsAZgDcAagDUAawDWAKwBWAOwBmANwBqANQBrANYArAFYA7AGYA3AGoA1AGsA1gCsAVgDsAZgDcAagDUAawDWAKwBWAOwBmANwBqANQBrANYArAFYA7AGYAeU6UsysMvN4wAAAABJRU5ErkJggg==", "expiresAt": expires, "expiresInSeconds": 180, "intervalSeconds": 2])
+        case "/auth/device/token":
+            var payload: [String: Any] = ["status": pairingStatus]
+            if pairingStatus == "authorized" { payload["session"] = ["accessToken": "fixture-paired-access", "refreshToken": "fixture-paired-refresh", "user": ["id": "fixture-account", "codeSuffix": "TEST"]] }
+            return FixtureReply(payload, delay: pairingDelay)
+        case "/auth/device/cancel": return FixtureReply(["status": "cancelled"])
+        case "/auth/device/ack": return FixtureReply(["status": "complete"])
         case "/auth/login-by-code": return FixtureReply(["accessToken": "fixture-access-old", "refreshToken": "fixture-refresh-old", "user": user])
         case "/auth/refresh":
             lock.lock(); refreshes += 1; lock.unlock()
             return FixtureReply(["accessToken": "fixture-access-new", "refreshToken": "fixture-refresh-new", "user": user], delay: 0.05)
         case "/me":
+            if accountAuthFailure { return FixtureReply(["reason": "unauthorized"], status: 401) }
+            if accountFailure { return FixtureReply(["reason": "unavailable"], status: 503) }
             if expired && request.value(forHTTPHeaderField: "Authorization") != "Bearer fixture-access-new" { return FixtureReply(["reason": "expired"], status: 401) }
             return FixtureReply(["user": user])
         case "/me/provider-session":
@@ -135,13 +152,105 @@ private final class RoutingURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 final class RepositoryNetworkTests: XCTestCase {
+    func testInactivePairingNeverStartsOrAdoptsLateAuthorization() async throws {
+        let vault = MemoryVault(), inactive = repository(vault: vault, pairingActive: { false })
+        do { _ = try await inactive.startDeviceLogin(); XCTFail("inactive surface must not start") } catch {}
+        XCTAssertEqual(RoutingURLProtocol.router.count("/auth/device/start"), 0)
+        let activity = FixtureClock()
+        let repo = repository(vault: vault, pairingActive: { activity.now().timeIntervalSince1970 < 1793538001 })
+        _ = try await repo.startDeviceLogin(); RoutingURLProtocol.router.pairingDelay = 0.1
+        let poll = Task { try await repo.pollDeviceLogin() }
+        try await Task.sleep(nanoseconds: 20_000_000); activity.advance(10)
+        _ = try? await poll.value; XCTAssertNil(try vault.load())
+    }
+    func testRejectedAdoptedSessionReleasesPairingForManualLogin() async throws {
+        let vault = MemoryVault(), repo = repository(vault: vault)
+        _ = try await repo.startDeviceLogin(); _ = try await repo.pollDeviceLogin()
+        RoutingURLProtocol.router.accountAuthFailure = true
+        do { _ = try await repo.refreshSession(); XCTFail("revoked session must fail") } catch { XCTAssertEqual(error as? FlixifyError, .authentication) }
+        let adopted = await repo.hasDeviceLoginSession(); XCTAssertFalse(adopted); XCTAssertNil(try vault.load())
+        RoutingURLProtocol.router.accountAuthFailure = false
+        _ = try await repo.login(code: "ABCDEFGHIJKLMNOP")
+        XCTAssertNotNil(try vault.load())
+    }
+    func testAdoptedSessionSurvivesSurfaceCancellationAndAcknowledges() async throws {
+        let vault = MemoryVault(), repo = repository(vault: vault)
+        _ = try await repo.startDeviceLogin()
+        _ = try await repo.pollDeviceLogin()
+        await repo.cancelDeviceLogin()
+        let adopted = await repo.hasDeviceLoginSession()
+        XCTAssertTrue(adopted)
+        for _ in 0..<30 {
+            if RoutingURLProtocol.router.count("/auth/device/ack") > 0 { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertGreaterThan(RoutingURLProtocol.router.count("/auth/device/ack"), 0)
+        XCTAssertEqual(try vault.load()?.accessToken, "fixture-paired-access")
+    }
+    func testNativePNGDimensionBoundRejectsOversizedImage() async throws {
+        RoutingURLProtocol.router.oversizedPairingPNG = true
+        let repo = repository()
+        do { _ = try await repo.startDeviceLogin(); XCTFail("oversized PNG must be rejected before rendering") } catch { XCTAssertEqual(error as? FlixifyError, .invalidData) }
+    }
+    func testForeignDeviceVerificationURLNeverReachesPresentation() async throws {
+        RoutingURLProtocol.router.foreignPairingURL = true
+        let repo = repository()
+        do { _ = try await repo.startDeviceLogin(); XCTFail("foreign URL must be rejected") } catch { XCTAssertEqual(error as? FlixifyError, .invalidData) }
+    }
+    func testDeviceLoginAdoptsCodeLessSessionOnceAndRetriesBootstrap() async throws {
+        let vault = MemoryVault(), repo = repository(vault: vault)
+        RoutingURLProtocol.router.accountFailure = true
+        let presentation = try await repo.startDeviceLogin()
+        XCTAssertEqual(presentation.userCode, "BCDF-GHJK")
+        let status = try await repo.pollDeviceLogin(); XCTAssertEqual(status, .authorized)
+        XCTAssertEqual(try vault.load()?.accessToken, "fixture-paired-access")
+        do { _ = try await repo.refreshSession(); XCTFail("offline bootstrap must fail") } catch {}
+        RoutingURLProtocol.router.accountFailure = false
+        let state = try await repo.refreshSession()
+        XCTAssertEqual(state.account.codeSuffix, "TEST")
+        XCTAssertEqual(RoutingURLProtocol.router.count("/auth/device/token"), 1)
+        XCTAssertEqual(RoutingURLProtocol.router.count("/auth/login-by-code"), 0)
+        await repo.acknowledgeDeviceLogin()
+        XCTAssertGreaterThanOrEqual(RoutingURLProtocol.router.count("/auth/device/ack"), 1)
+    }
+    func testCancelledDeviceResponseCannotReachVaultOrReplaceManualLogin() async throws {
+        let vault = MemoryVault(), repo = repository(vault: vault)
+        _ = try await repo.startDeviceLogin()
+        RoutingURLProtocol.router.pairingDelay = 0.1
+        let poll = Task { try await repo.pollDeviceLogin() }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        await repo.cancelDeviceLogin()
+        _ = try await repo.login(code: "ABCDEFGHIJKLMNOP")
+        _ = try? await poll.value
+        XCTAssertEqual(try vault.load()?.accessToken, "fixture-access-old")
+        XCTAssertEqual(RoutingURLProtocol.router.count("/auth/device/ack"), 0)
+    }
+    func testSecureSaveFailureNeverAcknowledges() async throws {
+        let vault = MemoryVault(), repo = repository(vault: vault)
+        _ = try await repo.startDeviceLogin(); vault.failSave = true
+        do { _ = try await repo.pollDeviceLogin(); XCTFail("must surface secure save failure") } catch { XCTAssertEqual(error as? FlixifyError, .keychain) }
+        XCTAssertNil(try vault.load())
+        XCTAssertEqual(RoutingURLProtocol.router.count("/auth/device/ack"), 0)
+    }
+    func testDeviceTerminalsAndDeliveryGrace() async throws {
+        let repo = repository()
+        for status in ["denied", "cancelled", "expired", "complete"] {
+            _ = try await repo.startDeviceLogin(); RoutingURLProtocol.router.pairingStatus = status
+            let result = try await repo.pollDeviceLogin(); XCTAssertEqual(result.rawValue, status)
+        }
+        let lifetime = DeviceLoginLifetime(duration: 180, startedAt: 10)
+        XCTAssertEqual(lifetime.remaining(at: 190), 0)
+        XCTAssertTrue(lifetime.canPoll(at: 249))
+        XCTAssertFalse(lifetime.canPoll(at: 250))
+    }
+
     private var directories: [URL] = []
     override func setUp() { super.setUp(); RoutingURLProtocol.router = FixtureRouter() }
     override func tearDown() { for directory in directories { try? FileManager.default.removeItem(at: directory) }; directories.removeAll(); super.tearDown() }
-    private func repository(vault: MemoryVault = MemoryVault(), clock: FixtureClock? = nil) -> FlixifyRepository {
+    private func repository(vault: MemoryVault = MemoryVault(), clock: FixtureClock? = nil, pairingActive: @escaping @Sendable () async -> Bool = { true }) -> FlixifyRepository {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("flixify-repository-test-" + UUID().uuidString); directories.append(root)
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [RoutingURLProtocol.self]
-        return FlixifyRepository(client: HTTPClient(configuration: configuration), vault: vault, cache: MetadataCache(root: root.appendingPathComponent("metadata")), progress: ProgressStore(file: root.appendingPathComponent("progress.json")), now: { clock?.now() ?? Date(timeIntervalSince1970: 1793538000) })
+        return FlixifyRepository(client: HTTPClient(configuration: configuration), vault: vault, cache: MetadataCache(root: root.appendingPathComponent("metadata")), progress: ProgressStore(file: root.appendingPathComponent("progress.json")), now: { clock?.now() ?? Date(timeIntervalSince1970: 1793538000) }, deviceLoginIsActive: pairingActive)
     }
     private func login(_ repository: FlixifyRepository) async throws { let state = try await repository.login(code: "ABCDEFGHIJKLMNOP"); XCTAssertTrue(state.account.canPlay) }
 

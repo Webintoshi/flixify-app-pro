@@ -6,6 +6,9 @@ import vip.flixify.tv.TvModels.*;
 /** Entirely offline account/catalog fixture. No provider or media connection is opened. */
 final class FakeTvRepository implements TvRepository {
     boolean session;
+    DeviceLogin.Attempt pairingAttempt;
+    int pairingStarts;
+    @Override public void startDeviceLogin(Callback<DeviceLogin.Attempt> callback){pairingStarts++;if(pairingAttempt!=null)callback.onResult(pairingAttempt);else callback.onError(new Failure(Failure.Code.NETWORK,"Offline fixture"));}
     String accountId="fixture-account";
     WelcomeOffer welcome=WelcomeOffer.notEligible();
     boolean delayWelcome,delayWelcomeChoice,failWelcome,failWelcomeChoice;

@@ -19,6 +19,7 @@ public interface TvRepository {
     boolean hasSession();
     String currentScope();
     void login(String code,Callback<Account> callback);
+    default void startDeviceLogin(Callback<DeviceLogin.Attempt> callback){callback.onError(new Failure(Failure.Code.NETWORK,"Telefonla giriş şu anda kullanılamıyor."));}
     void account(boolean force,Callback<Account> callback);
     void refreshAccess(Callback<Account> callback);
     void catalog(Kind kind,boolean force,Callback<Catalog> callback);

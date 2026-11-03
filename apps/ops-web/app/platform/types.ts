@@ -13,7 +13,7 @@ export type MediaItem = {
   seasonCount?: number; episodeCount?: number;
 };
 export type Catalog = { items: MediaItem[]; total: number; groups?: { title: string; count: number }[] };
-export type Session = { accessToken: string; refreshToken?: string; kryptoniteCode?: string | null; user?: { kryptoniteCode?: string | null } };
+export type Session = { accessToken: string; refreshToken?: string; kryptoniteCode?: string | null; user?: { id?: string; codeSuffix?: string; kryptoniteCode?: string | null } };
 export const sessionKey = "flixify-public-session";
 export const itemKey = (item: Pick<MediaItem,"kind"|"id">) => `${item.kind}:${item.id}`;
 export const maskCode = (code: string) => code.length > 7 ? `${code.slice(0,4)}••••••${code.slice(-3)}` : "••••••";

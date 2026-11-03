@@ -12,6 +12,9 @@
 #include "catalog.h"
 #include "repository.h"
 #include "analytics.h"
+#include "device_login_policy.h"
+#include <QImage>
+#include <QBuffer>
 class FixtureServer : public QTcpServer {
 public:
     QList<QByteArray> requests;
@@ -69,7 +72,68 @@ public:
 };
 class RepositoryTest : public QObject {
     Q_OBJECT
+private:
+    static QJsonObject challenge() {
+        QImage image(128,128,QImage::Format_RGB32);image.fill(Qt::white);QByteArray png;QBuffer buffer(&png);buffer.open(QIODevice::WriteOnly);image.save(&buffer,"PNG");
+        return {{"requestId","00000000-0000-0000-0000-000000000002"},{"deviceSecret",QString(43,'a')},{"userCode","BCDF-GHJK"},{"verificationUri","https://flixify.vip/cihaz"},{"verificationUriComplete","https://flixify.vip/cihaz?code=BCDF-GHJK"},{"qrPngBase64",QString::fromLatin1(png.toBase64())},{"expiresAt","2026-12-01T00:00:00.000Z"},{"expiresInSeconds",180},{"intervalSeconds",2}};
+    }
 private slots:
+    void pairingAdoptsCodeLessTokensAndAcknowledgesOnce() {
+        FixtureServer server;QTemporaryDir dir;server.overrides["/auth/device/start"]=challenge();
+        server.overrides["/auth/device/token"]=QJsonObject{{"status","authorized"},{"session",QJsonObject{{"accessToken","paired-access"},{"refreshToken","paired-refresh"},{"user",QJsonObject{{"id","account"},{"codeSuffix","TEST"}}}}}};
+        server.overrides["/auth/device/ack"]=QJsonObject{{"status","complete"}};
+        RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;
+        DesktopRepository repo(options);repo.startDeviceLogin();QTRY_COMPARE(repo.pairingCode(),QString("BCDF-GHJK"));
+        QTRY_VERIFY_WITH_TIMEOUT(repo.authenticated(),6000);
+        QTRY_VERIFY(std::any_of(server.requests.begin(),server.requests.end(),[](const auto &r){return r.startsWith("POST /auth/device/ack ");}));
+        QCOMPARE(repo.codeSuffix(),QString("TEST"));
+        int polls=0;for(const auto &r:server.requests){polls+=r.startsWith("POST /auth/device/token ");QVERIFY(!r.startsWith("POST /auth/login-by-code "));}
+        QCOMPARE(polls,1);QVERIFY(!repo.pairingQrSource().contains("paired-access"));
+    }
+    void pairingCancelFencesDelayedAuthorizedResponseBeforeSecureSave() {
+        FixtureServer server;QTemporaryDir dir;server.overrides["/auth/device/start"]=challenge();
+        server.delayedPaths.insert("/auth/device/token");
+        server.overrides["/auth/device/token"]=QJsonObject{{"status","authorized"},{"session",QJsonObject{{"accessToken","stale-access"},{"refreshToken","stale-refresh"},{"user",QJsonObject{{"id","stale-account"},{"codeSuffix","OLDX"}}}}}};
+        RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;
+        DesktopRepository repo(options);repo.startDeviceLogin();QTRY_VERIFY_WITH_TIMEOUT(!server.delayed.isEmpty(),6000);
+        repo.cancelDeviceLogin();repo.login("ABCDEFGHIJKLMNOP");QTRY_VERIFY(repo.authenticated());QCOMPARE(repo.codeSuffix(),QString("TEST"));
+        for(const auto &request:server.requests)QVERIFY(!request.startsWith("POST /auth/device/ack "));
+        QCOMPARE(repo.pairingCode(),QString());
+    }
+    void pairingBootstrapRetryUsesAdoptedSessionWithoutNewIssuance() {
+        FixtureServer server;QTemporaryDir dir;server.overrides["/auth/device/start"]=challenge();server.overrides["/me"]=QJsonObject{};
+        server.overrides["/auth/device/token"]=QJsonObject{{"status","authorized"},{"session",QJsonObject{{"accessToken","paired-access"},{"refreshToken","paired-refresh"},{"user",QJsonObject{{"id","account"},{"codeSuffix","TEST"}}}}}};
+        server.overrides["/auth/device/ack"]=QJsonObject{{"status","complete"}};
+        RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;
+        DesktopRepository repo(options);repo.startDeviceLogin();QTRY_COMPARE_WITH_TIMEOUT(repo.pairingStatus(),QString("bootstrap_error"),6000);QVERIFY(repo.authenticated());
+        server.overrides.remove("/me");repo.retryDeviceBootstrap();QTRY_COMPARE(repo.pairingStatus(),QString("complete"));
+        int polls=0;for(const auto &r:server.requests)polls+=r.startsWith("POST /auth/device/token ");QCOMPARE(polls,1);
+    }
+    void pairingRejectsForeignQRAndTerminalDenialStopsPolling() {
+        FixtureServer server;QTemporaryDir dir;auto value=challenge();value["verificationUriComplete"]="https://evil.invalid/cihaz?code=BCDF-GHJK";server.overrides["/auth/device/start"]=value;
+        RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;
+        DesktopRepository repo(options);repo.startDeviceLogin();QTRY_COMPARE(repo.pairingStatus(),QString("error"));QVERIFY(repo.pairingCode().isEmpty());
+        server.overrides["/auth/device/start"]=challenge();server.overrides["/auth/device/token"]=QJsonObject{{"status","denied"}};
+        repo.startDeviceLogin();QTRY_COMPARE(repo.pairingStatus(),QString("denied"));QVERIFY(!repo.authenticated());
+    }
+    void pairingPrivacyAndDeliveryGrace() {
+        const auto &meta = DesktopRepository::staticMetaObject;
+        QVERIFY(meta.indexOfProperty("pairingCode") >= 0);
+        QVERIFY(meta.indexOfProperty("deviceSecret") < 0);
+        QVERIFY(meta.indexOfProperty("pairingSecret") < 0);
+        QVERIFY(DeviceLoginLifetime::canPoll(239999));
+        QVERIFY(!DeviceLoginLifetime::canPoll(240000));
+        QCOMPARE(DeviceLoginLifetime::remaining(180000), 0);
+    }
+    void cancelDelayedPairingAndPreserveManualLogin() {
+        FixtureServer server; QTemporaryDir dir;
+        server.delayedPaths.insert("/auth/device/start");
+        RepositoryOptions options; options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;
+        DesktopRepository repo(options);repo.startDeviceLogin();
+        QTRY_VERIFY(!server.delayed.isEmpty());repo.cancelDeviceLogin();repo.login("ABCDEFGHIJKLMNOP");
+        QTRY_VERIFY(repo.authenticated());QCOMPARE(repo.pairingCode(),QString());
+        QCOMPARE(repo.codeSuffix(),QString("TEST"));
+    }
     void persistedConsentCountsCurrentScreenAfterDelayedConfiguration() {
         FixtureServer server;server.delayedPaths.insert("/analytics/config");server.overrides["/analytics/config"]=QJsonObject{{"schema",1},{"consentVersion",1},{"windows",QJsonObject{{"enabled",true},{"measurementId","G-FIXTURE1"}}}};
         QTemporaryDir dir;QSettings preferences(dir.path()+"/analytics.ini",QSettings::IniFormat);preferences.setValue("analytics/v1/choice","accepted");preferences.sync();

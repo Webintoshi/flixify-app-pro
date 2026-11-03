@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 private struct PersonalReference: Codable, Hashable {
     let kind: MediaKind
@@ -29,7 +30,13 @@ public actor FlixifyRepository: FlixifyRepositoryProtocol {
     private let vault: any SessionVault
     private let cache: MetadataCache
     private let progress: ProgressStore
+    private let deviceLoginIsActive: @Sendable () async -> Bool
     private let now: @Sendable () -> Date
+    private var pairing: DeviceLoginAttempt?
+    private var pairingEpoch = UUID()
+    private var pairedSessionAdopted = false
+    private var pairingAcknowledgement: Task<Void, Never>?
+    private var pairingCleanup: [UUID: Task<Void, Never>] = [:]
     private var session: StoredSession?
     private var provider: ProviderSession?
     private var authGeneration: UInt64 = 0
@@ -59,11 +66,13 @@ public actor FlixifyRepository: FlixifyRepositoryProtocol {
     private var optionalPausedUntil = Date.distantPast
 
     public init() {
-        client = HTTPClient(); vault = KeychainStore(); cache = MetadataCache(); progress = ProgressStore(); now = { Date() }
+        client = HTTPClient(); vault = KeychainStore(); cache = MetadataCache(); progress = ProgressStore(); now = { Date() }; deviceLoginIsActive = { await MainActor.run { NSApp?.isActive ?? true } }
     }
-    init(client: HTTPClient, vault: any SessionVault, cache: MetadataCache, progress: ProgressStore, now: @escaping @Sendable () -> Date = { Date() }) {
-        self.client = client; self.vault = vault; self.cache = cache; self.progress = progress; self.now = now
+    init(client: HTTPClient, vault: any SessionVault, cache: MetadataCache, progress: ProgressStore, now: @escaping @Sendable () -> Date = { Date() }, deviceLoginIsActive: @escaping @Sendable () async -> Bool = { await MainActor.run { NSApp?.isActive ?? true } }) {
+        self.client = client; self.vault = vault; self.cache = cache; self.progress = progress; self.now = now; self.deviceLoginIsActive = deviceLoginIsActive
     }
+
+    deinit { pairingAcknowledgement?.cancel(); for task in pairingCleanup.values { task.cancel() } }
 
     private func checkAuth(_ generation: UInt64) throws {
         guard authGeneration == generation, session != nil else { throw FlixifyError.staleSource }
@@ -83,6 +92,8 @@ public actor FlixifyRepository: FlixifyRepositoryProtocol {
         references.removeAll(); watched.removeAll(); watchedWrites.removeAll(); resolvedFavorites.removeAll(); libraryScope = ""; librarySavedAt = .distantPast; libraryRevision &+= 1
     }
     public func logout() async {
+        if let attempt = pairing, attempt.adopted { cleanupPairing(attempt) }
+        await cancelDeviceLogin(); pairing = nil; pairingEpoch = UUID(); pairedSessionAdopted = false; pairingAcknowledgement?.cancel(); pairingAcknowledgement = nil
         authGeneration &+= 1; refreshTask?.cancel(); refreshTask = nil; bootstrapFlight?.task.cancel(); bootstrapFlight = nil; session = nil; currentAccount = nil; accountCheckedAt = .distantPast
         clearProvider(); vault.clear()
     }
@@ -103,6 +114,94 @@ public actor FlixifyRepository: FlixifyRepositoryProtocol {
         let stored = try Self.tokens(ProviderParser.object(result.data)); try vault.save(stored); session = stored
         return try await refreshSession()
     }
+    public func startDeviceLogin() async throws -> DeviceLoginPresentation {
+        await cancelDeviceLogin()
+        guard await deviceLoginIsActive(), !Task.isCancelled else { throw FlixifyError.staleSource }
+        guard session == nil else { throw FlixifyError.staleSource }
+        let epoch = UUID(), auth = authGeneration
+        pairingEpoch = epoch
+        let result = try await client.request(url: Self.api.appendingPathComponent("auth/device/start"), method: "POST", body: ["platform": "macos", "deviceName": "Flixify macOS", "installationId": try vault.installationID()])
+        guard result.status == 200 else { throw result.status == 429 ? FlixifyError.limit : FlixifyError.network }
+        let raw = try ProviderParser.object(result.data)
+        guard let request = raw["requestId"] as? String, UUID(uuidString: request) != nil,
+              let proof = raw["deviceSecret"] as? String, Text.matches(proof, #"^[A-Za-z0-9_-]{43}$"#) else { throw FlixifyError.invalidData }
+        let attempt = DeviceLoginAttempt(epoch: epoch, requestID: request, proof: proof, auth: auth, lifetime: DeviceLoginLifetime(startedAt: ProcessInfo.processInfo.systemUptime), interval: 2)
+        let active = await deviceLoginIsActive()
+        guard active, epoch == pairingEpoch, auth == authGeneration, session == nil, !Task.isCancelled else { cleanupPairing(attempt); throw FlixifyError.staleSource }
+        do {
+            let presentation = try DeviceLoginPresentation(raw)
+            pairing = attempt; pairing?.interval = presentation.interval
+            return presentation
+        } catch { cleanupPairing(attempt); throw error }
+    }
+    public func hasDeviceLoginSession() async -> Bool { pairedSessionAdopted && session != nil }
+    public func deviceLoginInterval() async -> Int { pairing?.interval ?? 2 }
+    public func pollDeviceLogin() async throws -> DeviceLoginStatus {
+        guard await deviceLoginIsActive(), !Task.isCancelled else { await cancelDeviceLogin(); throw FlixifyError.staleSource }
+        guard let attempt = pairing, !attempt.adopted, !attempt.polling, attempt.auth == authGeneration, session == nil else { throw FlixifyError.staleSource }
+        guard attempt.lifetime.canPoll(at: ProcessInfo.processInfo.systemUptime) else { await cancelDeviceLogin(); return .expired }
+        pairing?.polling = true
+        do {
+            let result = try await client.request(url: Self.api.appendingPathComponent("auth/device/token"), method: "POST", body: attempt.body)
+            guard pairingEpoch == attempt.epoch, pairing?.epoch == attempt.epoch, authGeneration == attempt.auth, session == nil else { throw FlixifyError.staleSource }
+            try Task.checkCancellation()
+            pairing?.polling = false
+            if result.status == 429 || result.status >= 500 { throw FlixifyError.network }
+            guard result.status == 200 else { throw FlixifyError.invalidData }
+            let raw = try ProviderParser.object(result.data)
+            guard let text = raw["status"] as? String, let status = DeviceLoginStatus(rawValue: text) else { throw FlixifyError.invalidData }
+            if let interval = raw["intervalSeconds"] as? Int { pairing?.interval = min(60, max(2, interval)) }
+            else if status == .slowDown { pairing?.interval = min(60, attempt.interval + 5) }
+            if status == .authorized {
+                guard let rawSession = raw["session"] as? [String: Any] else { throw FlixifyError.invalidData }
+                let stored = try Self.tokens(rawSession)
+                let active = await deviceLoginIsActive()
+                if !active { await cancelDeviceLogin(); throw FlixifyError.staleSource }
+                // No await between the activity/attempt fence and secure adoption.
+                try Task.checkCancellation()
+                guard active, pairingEpoch == attempt.epoch, pairing?.epoch == attempt.epoch, authGeneration == attempt.auth, session == nil else { throw FlixifyError.staleSource }
+                try vault.save(stored); session = stored; pairing?.adopted = true; pairedSessionAdopted = true
+                startPairingAcknowledgement()
+            } else {
+                guard raw["session"] == nil else { throw FlixifyError.invalidData }
+                if status.terminal { pairing = nil; pairingEpoch = UUID() }
+            }
+            return status
+        } catch {
+            if pairing?.epoch == attempt.epoch { pairing?.polling = false; if error as? FlixifyError == .network { pairing?.interval = min(60, (pairing?.interval ?? 2) + 5) } }
+            throw error
+        }
+    }
+    private func startPairingAcknowledgement() {
+        pairingAcknowledgement?.cancel()
+        pairingAcknowledgement = Task { [weak self] in
+            for delay in [0, 2, 5, 10, 20] {
+                if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000) }
+                guard !Task.isCancelled else { return }
+                await self?.acknowledgeDeviceLogin()
+            }
+        }
+    }
+    public func acknowledgeDeviceLogin() async {
+        guard let attempt = pairing, attempt.adopted, session != nil else { return }
+        guard let result = try? await client.request(url: Self.api.appendingPathComponent("auth/device/ack"), method: "POST", body: attempt.body), result.status == 200,
+              let raw = try? ProviderParser.object(result.data), raw["status"] as? String == "complete", pairing?.epoch == attempt.epoch else { return }
+        pairing = nil
+    }
+    public func cancelDeviceLogin() async {
+        pairingEpoch = UUID()
+        guard let attempt = pairing else { return }
+        if attempt.adopted { return }
+        pairing = nil; cleanupPairing(attempt)
+    }
+    private func cleanupPairing(_ attempt: DeviceLoginAttempt) {
+        let ticket = UUID(), client = client
+        pairingCleanup[ticket] = Task { [weak self] in
+            _ = try? await client.request(url: Self.api.appendingPathComponent("auth/device/cancel"), method: "POST", body: attempt.body)
+            await self?.finishedPairingCleanup(ticket)
+        }
+    }
+    private func finishedPairingCleanup(_ ticket: UUID) { pairingCleanup.removeValue(forKey: ticket) }
     private static func tokens(_ raw: [String: Any]) throws -> StoredSession {
         guard let user = raw["user"] as? [String: Any] else { throw FlixifyError.invalidData }
         return try StoredSession(accessToken: ProviderParser.secret(raw["accessToken"], max: 16384), refreshToken: ProviderParser.secret(raw["refreshToken"], max: 16384), accountID: ProviderParser.secret(user["id"], max: 256), codeSuffix: String(Text.clean(user["codeSuffix"], max: 16).suffix(4)))

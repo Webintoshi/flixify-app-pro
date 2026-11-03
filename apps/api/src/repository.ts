@@ -25,7 +25,8 @@ import { getVerifiedTrialProviderExpiry } from "./client-playback-access.js";
 import { buildLiveVariantMetadata, dedupeMovieCatalogEntries } from "@flixify/contracts";
 import { buildPlaylistUrl, buildStreamUrl, parsePlaylistUrl, type PlaylistConfig } from "./iptv.js";
 import { filterStoredMovieCatalogRows, filterStoredSeriesCatalogRows } from "./vod-catalog-filter.js";
-import { query, withTransaction } from "./db.js";
+import { pool, query, withTransaction } from "./db.js";
+import { DeviceLoginStore } from "./device-login-store.js";
 import { env } from "./env.js";
 import { claimRegistrationSlots } from "./registration-limits.js";
 export { AutoTrialRegistrationRateLimitError, RegistrationInstallationLimitError } from "./registration-limits.js";
@@ -821,13 +822,15 @@ export async function getSessionById(sessionId: string) {
     id: string;
     user_id: string;
     refresh_token_hash: string;
+    auth_method: "account_code" | "device_link";
+    family_id: string | null;
     expires_at: string;
     device_name: string | null;
     platform: string | null;
     revoked_at: string | null;
   }>(
     `
-      select id, user_id, refresh_token_hash, expires_at, device_name, platform, revoked_at
+      select id, user_id, refresh_token_hash, auth_method, family_id, expires_at, device_name, platform, revoked_at
       from public.device_sessions
       where id = $1
       limit 1
@@ -2711,6 +2714,11 @@ export async function listDeviceSessionsForUser(userId: string, currentSessionId
 }
 
 export async function revokeDeviceSessionForUser(userId: string, sessionId: string) {
+  const session = await getSessionById(sessionId);
+  if (session?.auth_method === "device_link" && session.family_id) {
+    await new DeviceLoginStore(pool).revokeLinkedSession(userId, sessionId, session.family_id);
+    return;
+  }
   const result = await query(
     `
       update public.device_sessions
@@ -2844,6 +2852,9 @@ export async function getAdminUserDetail(userId: string) {
 }
 
 async function revokeUserSessions(client: PoolClient, userId: string) {
+  // Caller holds the user row first; lock every linked anchor before revoking descendants.
+  await client.query("select id from public.device_login_requests where user_id=$1 order by id for update", [userId]);
+  await client.query("update public.device_login_requests set state='cancelled', envelope=null where user_id=$1", [userId]);
   await client.query(
     `
       update public.device_sessions

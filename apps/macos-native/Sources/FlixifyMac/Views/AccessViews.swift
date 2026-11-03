@@ -1,36 +1,90 @@
+import AppKit
 import FlixifyCore
 import SwiftUI
 
 struct LoginView: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var code = ""
     @FocusState private var codeFocused: Bool
+    private var pairingMessage: String {
+        switch store.deviceLoginStatus {
+        case "starting": return "QR hazırlanıyor…"
+        case "pending": return "Telefonundan QR’ı okut, eşleşen kodu kontrol edip onayla."
+        case "delivery": return "Onayın sonucu kontrol ediliyor…"
+        case "retrying": return "Bağlantı yeniden deneniyor…"
+        case "denied": return "Telefonundan girişe izin verilmedi."
+        case "expired": return "QR’ın süresi doldu. Yeni QR oluşturabilirsin."
+        case "cancelled": return "QR girişi iptal edildi."
+        case "bootstrap_error": return "Giriş kaydedildi. Hesap bilgileri yeniden yüklenebilir."
+        case "authorized": return "Giriş onaylandı. Hesabın yükleniyor…"
+        case "complete": return store.deviceLoginAdopted ? "Giriş onaylandı. Hesabın yükleniyor…" : "Bu QR tamamlandı. Yeni QR oluşturabilirsin."
+        case "error": return "QR hazırlanamadı. Yeniden dene veya kullanıcı kodunla giriş yap."
+        default: return "QR girişini başlat veya kullanıcı kodunla devam et."
+        }
+    }
     var body: some View {
-        VStack(spacing: 26) {
-            BrandLogo(width: 240).padding(.bottom, 14)
-            Text("İçeriklerin. Tek yerde.").font(.system(size: 30, weight: .bold))
-            Text("Mevcut 16 karakterli kullanıcı kodunla giriş yap.")
-                .foregroundStyle(FlixTheme.muted).multilineTextAlignment(.center)
-            VStack(alignment: .leading, spacing: 9) {
-                Text("Kullanıcı kodu").font(.system(size: 13, weight: .medium)).foregroundStyle(FlixTheme.muted)
-                SecureField("16 karakterli kodun", text: $code).font(.system(size: 22, design: .monospaced))
-                    .textFieldStyle(.plain).padding(18).background(FlixTheme.panel, in: RoundedRectangle(cornerRadius: 11))
-                    .focused($codeFocused).onSubmit { submit() }.accessibilityLabel("16 karakterli kullanıcı kodu")
-            }.frame(maxWidth: 400)
-            if let error = store.error { Label(error, systemImage: "exclamationmark.circle").foregroundStyle(FlixTheme.text).font(.system(size: 13)).multilineTextAlignment(.center) }
-            Button(action: submit) {
-                HStack(spacing: 12) { if store.signingIn { ProgressView().controlSize(.small) }; Text(store.signingIn ? "Giriş yapılıyor…" : "Giriş yap") }
-                    .frame(minWidth: 250)
-            }.buttonStyle(PrimaryActionStyle()).disabled(store.signingIn || code.trimmingCharacters(in: .whitespaces).count != 16)
-            Button("Hesap oluştur") { store.openWebsite("https://flixify.vip/kayit-ol") }.buttonStyle(.link)
-            Text("macOS için Flixify Pro").font(.system(size: 12)).foregroundStyle(FlixTheme.muted).padding(.top, 12)
-        }.padding(45).frame(maxWidth: .infinity, maxHeight: .infinity).background(FlixTheme.background)
-            .onAppear { codeFocused = true }
+        ScrollView {
+            VStack(spacing: 26) {
+                BrandLogo(width: 240).padding(.top, 20)
+                Text("İçeriklerin. Tek yerde.").font(.system(size: 30, weight: .bold))
+                HStack(alignment: .top, spacing: 50) {
+                    VStack(spacing: 16) {
+                        Text("Telefonunla giriş yap").font(.title2.bold())
+                        ZStack {
+                            Color.white
+                            if let presentation = store.deviceLogin, let image = NSImage(data: presentation.png) {
+                                Image(nsImage: image).interpolation(.none).resizable().scaledToFit()
+                                    .padding(12).accessibilityLabel("Telefonunla okutabileceğin Flixify giriş QR kodu")
+                            } else if store.deviceLoginStatus == "starting" { ProgressView().tint(.black) }
+                            else { Image(systemName: "qrcode").font(.system(size: 72)).foregroundStyle(.black).accessibilityHidden(true) }
+                        }.frame(width: 220, height: 220)
+                        if let presentation = store.deviceLogin {
+                            Text(presentation.userCode).font(.system(size: 26, weight: .semibold, design: .monospaced)).textSelection(.enabled)
+                                .accessibilityLabel("Eşleştirme kodu " + presentation.userCode)
+                            Text(store.deviceLoginRemaining > 0 ? "Kalan süre: \(store.deviceLoginRemaining) sn" : "Onay sonucu bekleniyor")
+                                .font(.system(size: 13)).foregroundStyle(FlixTheme.muted)
+                        }
+                        Text(pairingMessage).font(.system(size: 14)).foregroundStyle(FlixTheme.muted).multilineTextAlignment(.center)
+                        if store.deviceLoginAdopted {
+                            Button("Hesabımı yeniden yükle") { store.retryDeviceBootstrap() }
+                                .buttonStyle(PrimaryActionStyle()).disabled(store.signingIn)
+                        } else {
+                            HStack {
+                                Button(store.deviceLogin == nil ? "QR ile giriş yap" : "QR’ı yenile") { code = ""; codeFocused = false; store.beginDeviceLogin() }
+                                    .buttonStyle(PrimaryActionStyle(prominent: false)).disabled(store.deviceLoginStatus == "starting")
+                                if store.deviceLogin != nil { Button("İptal") { store.endDeviceLogin(); codeFocused = true }.buttonStyle(.link) }
+                            }
+                        }
+                    }.frame(width: 310)
+                    VStack(spacing: 22) {
+                        Text("Kullanıcı kodunla giriş yap").font(.title2.bold())
+                        Text("Mevcut 16 karakterli kullanıcı kodunla devam et.").foregroundStyle(FlixTheme.muted).multilineTextAlignment(.center)
+                        VStack(alignment: .leading, spacing: 9) {
+                            Text("Kullanıcı kodu").font(.system(size: 13, weight: .medium)).foregroundStyle(FlixTheme.muted)
+                            SecureField("16 karakterli kodun", text: $code).font(.system(size: 22, design: .monospaced))
+                                .textFieldStyle(.plain).padding(18).background(FlixTheme.panel, in: RoundedRectangle(cornerRadius: 11))
+                                .focused($codeFocused).onSubmit { submit() }.accessibilityLabel("16 karakterli kullanıcı kodu")
+                                .disabled(store.deviceLoginAdopted || store.signingIn)
+                                .onChange(of: code) { value in if !value.isEmpty, store.deviceLogin != nil || store.deviceLoginStatus == "starting" { store.endDeviceLogin() } }
+                        }
+                        Button(action: submit) {
+                            HStack(spacing: 12) { if store.signingIn { ProgressView().controlSize(.small) }; Text(store.signingIn ? "Giriş yapılıyor…" : "Giriş yap") }.frame(minWidth: 250)
+                        }.buttonStyle(PrimaryActionStyle()).disabled(store.deviceLoginAdopted || store.signingIn || code.trimmingCharacters(in: .whitespaces).count != 16)
+                        Button("Hesap oluştur") { store.openWebsite("https://flixify.vip/kayit-ol") }.buttonStyle(.link)
+                    }.frame(width: 350)
+                }
+                if let error = store.error { Label(error, systemImage: "exclamationmark.circle").foregroundStyle(FlixTheme.text).font(.system(size: 13)).multilineTextAlignment(.center) }
+                Text("macOS için Flixify Pro").font(.system(size: 12)).foregroundStyle(FlixTheme.muted)
+            }.padding(35).frame(maxWidth: .infinity)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity).background(FlixTheme.background)
+            .onAppear { if scenePhase == .active, NSApplication.shared.isActive, !store.deviceLoginAdopted { store.beginDeviceLogin() } }
+            .onDisappear { store.endDeviceLogin() }
+            .onChange(of: scenePhase) { phase in if phase != .active { store.endDeviceLogin() } else { store.resumeAdoptedDeviceLogin() } }
     }
     private func submit() {
-        guard !store.signingIn else { return }
-        let submittedCode = code
-        code = ""
+        guard !store.signingIn, !store.deviceLoginAdopted else { return }
+        let submittedCode = code; code = ""
         Task { await store.login(code: submittedCode) }
     }
 }

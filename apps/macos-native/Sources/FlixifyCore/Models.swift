@@ -147,6 +147,12 @@ public enum FlixifyError: Error, LocalizedError, Equatable {
 }
 
 public protocol FlixifyRepositoryProtocol: Sendable {
+    func startDeviceLogin() async throws -> DeviceLoginPresentation
+    func pollDeviceLogin() async throws -> DeviceLoginStatus
+    func hasDeviceLoginSession() async -> Bool
+    func deviceLoginInterval() async -> Int
+    func acknowledgeDeviceLogin() async
+    func cancelDeviceLogin() async
     func restore() async throws -> SessionState?
     func login(code: String) async throws -> SessionState
     func refreshSession() async throws -> SessionState

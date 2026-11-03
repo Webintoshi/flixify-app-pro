@@ -90,6 +90,12 @@ public final class MainActivity extends Activity {
     private EditText loginCode;
     private LinearLayout loginForm;
     private ScrollView loginScroll;
+    private LinearLayout loginColumns,loginPairingPanel;
+    private DeviceLoginController deviceLogin;
+    private ImageView pairingQr;
+    private TextView pairingCode,pairingStatus;
+    private android.graphics.Bitmap pairingBitmap;
+    private String pairingPng="";
     private String resizeFocus;
     private static final class FocusToken { final String key;FocusToken(String key){this.key=key;} }
     private TextView loginMessage;
@@ -145,13 +151,14 @@ public final class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();playerLaunching=false;posterSound.resume();updatePanel.resumed(); if(!initialized)return;
         boolean returning=resumeReload || searchPlayerReturn; resumeReload=false;if(searchPlayerReturn)resizeAfterCatalog=false;searchPlayerReturn=false;
-        if(!repository.hasSession()) { if(returning)showLogin(""); return; }
+        if(!repository.hasSession()) { if(returning)showLogin("",false); return; }
         if(welcomeBlocked()){loadWelcome();return;}
         refreshVerifiedAccess(returning);
 
     }
-    @Override protected void onPause() {posterSound.pause();super.onPause();}
+    @Override protected void onPause() {if(deviceLogin!=null)deviceLogin.pause();posterSound.pause();super.onPause();}
     @Override protected void onStop() {
+        if(deviceLogin!=null)deviceLogin.pause();
         startup.cancelPendingFrame();
         presentations.cancel();
         artwork.retireScreen();
@@ -163,7 +170,7 @@ public final class MainActivity extends Activity {
         if(catalogObservation!=null){try{catalogObservation.close();}catch(Exception ignored){}catalogObservation=null;}
         updatePanel.cancel();if(dialog!=null)dialog.dismiss();super.onStop();
     }
-    @Override protected void onDestroy() { destroyed=true; generation++;if(presentations!=null)presentations.close();if(startup!=null)startup.close();if(posterSound!=null)posterSound.close();if(artwork!=null)artwork.close();if(updatePanel!=null)updatePanel.close();super.onDestroy(); }
+    @Override protected void onDestroy() { if(deviceLogin!=null)deviceLogin.cancel();clearPairingBitmap();destroyed=true; generation++;if(presentations!=null)presentations.close();if(startup!=null)startup.close();if(posterSound!=null)posterSound.close();if(artwork!=null)artwork.close();if(updatePanel!=null)updatePanel.close();super.onDestroy(); }
     @Override public void onTrimMemory(int level){super.onTrimMemory(level);if(artwork!=null)artwork.trimMemory(level);trimMetadataMemory(level);}
     @Override public void onLowMemory(){super.onLowMemory();if(artwork!=null)artwork.trimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE);trimMetadataMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE);}
     private void trimMetadataMemory(int level){
@@ -499,7 +506,7 @@ public final class MainActivity extends Activity {
             // Resize existing views: replacing the editor would detach the IME and invalidate a pending login.
             sizing=TvLayout.measure(this);
             if(loginScroll!=null)loginScroll.setPadding(TvUi.dp(this,sizing.inset),TvUi.dp(this,14),TvUi.dp(this,sizing.inset),TvUi.dp(this,14));
-            if(loginForm!=null){ViewGroup.LayoutParams p=loginForm.getLayoutParams();p.width=TvUi.dp(this,Math.min(480,sizing.width-sizing.inset*2-8));loginForm.setLayoutParams(p);}
+            resizeLoginColumns();
             return;
         }
         View focus=getCurrentFocus();boolean posterFocus=focus!=null && focus.getTag() instanceof String;
@@ -531,7 +538,9 @@ public final class MainActivity extends Activity {
             if(target!=null){target.requestFocus();resizeFocus=null;}else if(completeSurface)resizeFocus=null;
         });
     }
-    private void showLogin(String message) {
+    private void showLogin(String message){showLogin(message,true);}
+    private void showLogin(String message,boolean beginPairing) {
+        if(deviceLogin!=null)deviceLogin.cancel();clearPairingBitmap();
         presentations.clear();
         visibleAnalyticsScreen="login";analytics.screen(visibleAnalyticsScreen);
         artwork.retireScreen();
@@ -541,21 +550,72 @@ public final class MainActivity extends Activity {
         ScrollView background=new ScrollView(this);loginScroll=background;background.setTag("tv-login");background.setFillViewport(true);background.setBackgroundColor(TvUi.BACKGROUND);
         background.setClipToPadding(false);background.setPadding(TvUi.dp(this,sizing.inset),TvUi.dp(this,14),TvUi.dp(this,sizing.inset),TvUi.dp(this,14));
         LinearLayout center=TvUi.column(this);center.setGravity(Gravity.CENTER);background.addView(center,new ScrollView.LayoutParams(-1,-2));
+        loginColumns=TvUi.row(this);loginColumns.setGravity(Gravity.CENTER);center.addView(loginColumns,new LinearLayout.LayoutParams(-1,-2));
+        loginPairingPanel=TvUi.column(this);loginPairingPanel.setGravity(Gravity.CENTER_HORIZONTAL);loginColumns.addView(loginPairingPanel,new LinearLayout.LayoutParams(TvUi.dp(this,240),-2));
+        TextView phoneTitle=TvUi.text(this,"Telefonla giriş",23,TvUi.WHITE);TvUi.heading(phoneTitle);loginPairingPanel.addView(phoneTitle,TvUi.space(this,-1,-2));
+        TextView phoneHint=TvUi.text(this,"Telefonunuzun kamerasıyla tarayın ve eşleşen kodu onaylayın.",15,TvUi.MUTED);phoneHint.setGravity(Gravity.CENTER);loginPairingPanel.addView(phoneHint,TvUi.space(this,-1,-2));
+        pairingQr=new ImageView(this);pairingQr.setContentDescription("Telefonla giriş için QR kodu");pairingQr.setScaleType(ImageView.ScaleType.FIT_CENTER);pairingQr.setBackgroundColor(android.graphics.Color.WHITE);loginPairingPanel.addView(pairingQr,TvUi.space(this,188,188));
+        pairingCode=TvUi.text(this,"",24,TvUi.WHITE);pairingCode.setGravity(Gravity.CENTER);loginPairingPanel.addView(pairingCode,TvUi.space(this,-1,-2));
+        TextView pairingUrl=TvUi.text(this,"flixify.vip/cihaz",15,TvUi.MUTED);pairingUrl.setGravity(Gravity.CENTER);loginPairingPanel.addView(pairingUrl,TvUi.space(this,-1,-2));
+        pairingStatus=TvUi.text(this,"QR kodu hazırlanıyor…",14,TvUi.MUTED);pairingStatus.setGravity(Gravity.CENTER);pairingStatus.setMinHeight(TvUi.dp(this,44));loginPairingPanel.addView(pairingStatus,TvUi.space(this,-1,-2));
+        Button renew=TvUi.button(this,"QR kodunu yenile",()->{if(deviceLogin!=null)deviceLogin.start();});loginPairingPanel.addView(renew,TvUi.space(this,-1,48));
+        Button cancelPairing=TvUi.button(this,"Telefonla girişi durdur",()->{if(deviceLogin!=null)deviceLogin.pause();loginCode.requestFocus();});loginPairingPanel.addView(cancelPairing,TvUi.space(this,-1,48));renew.setNextFocusDownId(cancelPairing.getId());cancelPairing.setNextFocusUpId(renew.getId());
         LinearLayout form=TvUi.column(this);loginForm=form;form.setGravity(Gravity.CENTER_HORIZONTAL);
-        center.addView(form,new LinearLayout.LayoutParams(TvUi.dp(this,Math.min(480,sizing.width-sizing.inset*2-8)),-2));
+        loginColumns.addView(form,new LinearLayout.LayoutParams(TvUi.dp(this,480),-2));resizeLoginColumns();
         ImageView logo=new ImageView(this);logo.setImageResource(R.drawable.flixify_logo);logo.setContentDescription("Flixify");logo.setScaleType(ImageView.ScaleType.FIT_CENTER);form.addView(logo,TvUi.space(this,220,sizing.shortScreen?44:66));
         TextView title=TvUi.text(this,"TV'de izlemeye başlayın",sizing.compact?23:28,TvUi.WHITE);TvUi.heading(title);form.addView(title,TvUi.space(this,-1,-2));
         TextView hint=TvUi.text(this,"16 karakterli hesap kodunuzla giriş yapın.",16,TvUi.MUTED);form.addView(hint,TvUi.space(this,-1,-2));
-        loginCode=new RemoteEditText(this);loginCode.setId(View.generateViewId());loginCode.setTextColor(TvUi.WHITE);loginCode.setTextSize(22);loginCode.setSingleLine(true);
+        loginCode=new RemoteEditText(this){
+            @Override public boolean onKeyPreIme(int key,KeyEvent event){if(key==KeyEvent.KEYCODE_DPAD_LEFT && event.getAction()==KeyEvent.ACTION_DOWN && imeHidden()){renew.requestFocus();return true;}return super.onKeyPreIme(key,event);}
+        };loginCode.setId(View.generateViewId());loginCode.setTextColor(TvUi.WHITE);loginCode.setTextSize(22);loginCode.setSingleLine(true);
         loginCode.setHint("Giriş kodu");loginCode.setHintTextColor(TvUi.MUTED);loginCode.setContentDescription("16 karakterli giriş kodu");
         loginCode.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);loginCode.setFilters(new InputFilter[]{new InputFilter.LengthFilter(16)});
         loginCode.setImeOptions(EditorInfo.IME_ACTION_GO);loginCode.setPadding(TvUi.dp(this,16),TvUi.dp(this,8),TvUi.dp(this,16),TvUi.dp(this,8));loginCode.setBackground(TvUi.focusBackground(this));form.addView(loginCode,TvUi.space(this,-1,54));
         Button submit=TvUi.button(this,"Giriş yap",this::login);form.addView(submit,TvUi.space(this,-1,48));loginCode.setNextFocusDownId(submit.getId());submit.setNextFocusUpId(loginCode.getId());
-        loginCode.setOnKeyListener((v,key,event)->{if(key==KeyEvent.KEYCODE_DPAD_DOWN && event.getAction()==KeyEvent.ACTION_DOWN){submit.requestFocus();return true;}return false;});
+        renew.setNextFocusRightId(loginCode.getId());cancelPairing.setNextFocusRightId(loginCode.getId());loginCode.setNextFocusLeftId(renew.getId());submit.setNextFocusLeftId(renew.getId());
+        loginCode.setOnKeyListener((v,key,event)->{if(key==KeyEvent.KEYCODE_DPAD_LEFT && event.getAction()==KeyEvent.ACTION_DOWN){renew.requestFocus();return true;}if(key==KeyEvent.KEYCODE_DPAD_DOWN && event.getAction()==KeyEvent.ACTION_DOWN){submit.requestFocus();return true;}return false;});
         loginCode.setOnEditorActionListener((v,action,event)->{if(action==EditorInfo.IME_ACTION_GO){login();return true;}return false;});
         loginMessage=TvUi.text(this,message,15,TvUi.ACCENT);loginMessage.setMinHeight(TvUi.dp(this,26));form.addView(loginMessage,TvUi.space(this,-1,-2));
         TextView remember=TvUi.text(this,"Oturumunuz bu cihazda güvenle hatırlanır.",14,TvUi.MUTED);form.addView(remember,TvUi.space(this,-1,-2));
         startup.show(background);loginCode.requestFocus();startup.ready();
+        android.os.Handler pairingMain=new android.os.Handler(android.os.Looper.getMainLooper());
+        DeviceLoginController.Scheduler scheduler=new DeviceLoginController.Scheduler(){
+            public long now(){return android.os.SystemClock.elapsedRealtime();}
+            public void schedule(Runnable task,long delay){pairingMain.removeCallbacksAndMessages(null);pairingMain.postDelayed(task,delay);}
+            public void clear(){pairingMain.removeCallbacksAndMessages(null);}
+        };
+        deviceLogin=new DeviceLoginController(repository::startDeviceLogin,scheduler,new DeviceLoginController.Listener(){
+            public void changed(DeviceLogin.ViewState state){renderPairing(state);}
+            public void adopted(){if(destroyed || stopped || isFinishing())return;loginCode.setText("");page=pages.get(Section.HOME);welcomeResolved=false;loadWelcome();}
+        });
+        if(beginPairing)deviceLogin.start();else deviceLogin.pause();
+    }
+    private void resizeLoginColumns(){
+        if(loginColumns==null || loginForm==null || loginPairingPanel==null)return;
+        int available=sizing.width-sizing.inset*2-8;boolean sideBySide=available>=700;
+        loginColumns.setOrientation(sideBySide?LinearLayout.HORIZONTAL:LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams manual=new LinearLayout.LayoutParams(TvUi.dp(this,Math.min(440,sideBySide?available-272:available)),-2);
+        if(sideBySide)manual.leftMargin=TvUi.dp(this,32);else manual.topMargin=TvUi.dp(this,24);loginForm.setLayoutParams(manual);
+    }
+    private void clearPairingBitmap(){if(pairingQr!=null)pairingQr.setImageDrawable(null);if(pairingBitmap!=null){pairingBitmap.recycle();pairingBitmap=null;}pairingPng="";}
+    private void renderPairing(DeviceLogin.ViewState state){
+        boolean show=state.display!=null && state.remainingSeconds>0 && ("pending".equals(state.status) || "slow_down".equals(state.status) || "network".equals(state.status));
+        if(show){
+            if(!state.display.qrPngBase64.equals(pairingPng)){clearPairingBitmap();pairingBitmap=DeviceLoginQr.decode(state.display.qrPngBase64);pairingPng=state.display.qrPngBase64;if(pairingBitmap!=null){android.graphics.drawable.BitmapDrawable drawable=new android.graphics.drawable.BitmapDrawable(getResources(),pairingBitmap);drawable.setFilterBitmap(false);drawable.setAntiAlias(false);pairingQr.setImageDrawable(drawable);}}
+            pairingCode.setText(state.display.userCode);pairingQr.setVisibility(View.VISIBLE);
+        }else{clearPairingBitmap();pairingCode.setText("");pairingQr.setVisibility(View.GONE);}
+        String message;
+        switch(state.status){
+            case "pending":case "slow_down":message=state.remainingSeconds>0?"Telefonunuzdan onay bekleniyor · "+state.remainingSeconds+" sn":"Onay sonucu kontrol ediliyor…";break;
+            case "network":message=state.remainingSeconds>0?"Bağlantı tekrar deneniyor · "+state.remainingSeconds+" sn":"Onay sonucu tekrar kontrol ediliyor…";break;
+            case "starting":message="QR kodu hazırlanıyor…";break;
+            case "denied":message="Giriş onaylanmadı. Yeni bir QR kodu oluşturabilirsiniz.";break;
+            case "expired":message="QR kodunun süresi doldu. Yenile düğmesini kullanın.";break;
+            case "paused":case "cancelled":message="Telefonla giriş durduruldu. Yenileyerek tekrar başlayın.";break;
+            case "complete":message="Giriş tamamlandı.";break;
+            default:message="Telefonla giriş şu anda kullanılamıyor. Kodunuzla giriş yapabilir veya QR kodunu yenileyebilirsiniz.";
+        }
+        pairingStatus.setText(message);
     }
     private void login() {
         String code=loginCode.getText().toString().trim();
@@ -563,6 +623,7 @@ public final class MainActivity extends Activity {
             loginMessage.setText("16 karakterli giriş kodunuzu yazın.");
             loginMessage.post(()->loginMessage.requestRectangleOnScreen(new android.graphics.Rect(0,0,loginMessage.getWidth(),loginMessage.getHeight()),true));return;
         }
+        if(deviceLogin!=null)deviceLogin.pause();
         ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(loginCode.getWindowToken(),0);
         final long ticket=++generation,analyticsTicket=analytics.epoch(); loginMessage.setText("Giriş yapılıyor…"); loginCode.setEnabled(false);
         repository.login(code,new TvRepository.Callback<Account>() {

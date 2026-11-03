@@ -3,7 +3,7 @@ name: Windows native TEST package
 on:
   workflow_dispatch:
   push:
-    branches: [codex/windows-native-20261101]
+    branches: [codex/windows-native-20261101, codex/qr-device-login-20261103]
     paths:
       - 'apps/windows-native/**'
       - '.github/workflows/build-windows-native.yml'

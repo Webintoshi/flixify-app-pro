@@ -1,4 +1,11 @@
 #include "repository.h"
+#include "device_login_policy.h"
+#include <QGuiApplication>
+#include <QElapsedTimer>
+#include <QImageReader>
+#include <QImage>
+#include <QBuffer>
+#include <QUuid>
 #include "catalog.h"
 #include "session_store.h"
 #include "analytics.h"
@@ -59,6 +66,13 @@ public:
     bool analyticsPlayerVisible=false;
     quint64 analyticsPendingAttempt=0,analyticsPendingEpoch=0;
     QHash<QString,quint64> catalogAnalyticsEpoch;
+    QString pairRequestID, pairProof, pairCode, pairQr, pairState;
+    quint64 pairEpoch=0;
+    bool pairAdopted=false;
+    int pairRemaining=180, pairInterval=2, pairAckAttempts=0;
+    QElapsedTimer pairClock;
+    QTimer pairPollTimer, pairCountdownTimer, pairAckTimer;
+    QPointer<QNetworkReply> pairReply;
     StoredSession session;QString providerOrigin,username,password,version,policyRevision;QSet<QString> excluded;QString currentScope;quint64 authGeneration=0,sourceGeneration=0;QSet<QNetworkReply*> replies;QHash<QNetworkReply*,QString> replyScopes;
     bool boot=true,working=false,detailLoading=false,moreLoading=false,sound=true,rotating=false,refreshing=false;int visible=96,revision=0;QString failure,currentRoute="home",searchQuery,selectedCategory,selectedCountry;QVariantMap currentAccount,currentHero,detail,offer;QVariantList visibleItems,currentShelves,currentCategories,currentCountries,favoriteItems,epgRows,filtered;QHash<QString,QVariantList> catalogs;QHash<QString,QHash<QString,int>> catalogIndices;QHash<QString,qint64> catalogSaved;QHash<QString,QVariantMap> details;QHash<QString,qint64> detailSaved;QSet<QString> detailRefreshing;bool bypassDetailDisk=false;QHash<QString,QString> liveAliases;QHash<QString,QList<Done>> catalogFlights;QSet<QString> diskChecked;QHash<QString,QVariantMap> references;QSet<QString> watched,watchedWrites;QList<Done> rotationWaiters;QString libraryScope;qint64 deadline=0;int playbackSerial=0;quint64 viewGeneration=0,accountFlight=0,rotationTicket=0,detailSelection=0,epgSelection=0,detailEpoch=0;QTimer queryTimer;
     Private(DesktopRepository *owner,RepositoryOptions o):q(owner),options(std::move(o)),network(owner),vault(options.storageDirectory.isEmpty()?defaultStorage():options.storageDirectory,options.allowLoopbackForTests),cache(options.storageDirectory.isEmpty()?defaultStorage():options.storageDirectory){
@@ -69,9 +83,115 @@ public:
         analytics=std::make_unique<DesktopAnalytics>(AnalyticsOptions{options.apiBase,(options.storageDirectory.isEmpty()?defaultStorage():options.storageDirectory)+"/analytics.ini",options.allowLoopbackForTests},owner);
         QObject::connect(analytics.get(),&DesktopAnalytics::stateChanged,q,[this]{const auto ticket=analyticsEpoch;QTimer::singleShot(0,q,[this,ticket]{if(ticket==analyticsEpoch)screen(analyticsPlayerVisible?"player":currentRoute);});emit q->stateChanged();});
         QTimer::singleShot(0,q,[this]{analytics->reloadConfiguration();});
+        pairPollTimer.setSingleShot(true);pairAckTimer.setSingleShot(true);
+        QObject::connect(&pairPollTimer,&QTimer::timeout,q,[this]{pollPairing();});
+        QObject::connect(&pairAckTimer,&QTimer::timeout,q,[this]{ackPairing();});
+        QObject::connect(&pairCountdownTimer,&QTimer::timeout,q,[this]{
+            if(pairAdopted||pairRequestID.isEmpty())return;
+            pairRemaining=DeviceLoginLifetime::remaining(pairClock.elapsed());
+            if(!DeviceLoginLifetime::canPoll(pairClock.elapsed())){cancelPairing();pairState="expired";}
+            changed();
+        });
+        pairCountdownTimer.setInterval(250);
+        if(auto *application=qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
+            QObject::connect(application,&QGuiApplication::applicationStateChanged,q,[this](Qt::ApplicationState state){if(state!=Qt::ApplicationActive&&!pairAdopted){cancelPairing();changed();}});
         queryTimer.setSingleShot(true);queryTimer.setInterval(90);QObject::connect(&queryTimer,&QTimer::timeout,q,[this]{rebuild();});
         QObject::connect(&expiryTimer,&QTimer::timeout,q,[this]{if(deadline&&deadline<=now())revoke();});expiryTimer.start(250);
         QObject::connect(&refreshTimer,&QTimer::timeout,q,[this]{if(session.valid()&&!refreshing&&!working)refreshAccount(false);});refreshTimer.start(60000);
+    }
+    void pairingRequest(QString path,QJsonObject body,quint64 epoch,Reply callback){
+        QNetworkRequest request(options.apiBase.resolved(QUrl(path)));
+        request.setTransferTimeout(15000);request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,QNetworkRequest::ManualRedirectPolicy);
+        request.setHeader(QNetworkRequest::ContentTypeHeader,"application/json");request.setRawHeader("Accept","application/json");
+        auto *reply=network.post(request,QJsonDocument(body).toJson(QJsonDocument::Compact));pairReply=reply;
+        reply->setReadBufferSize(64*1024);
+        auto bytes=std::make_shared<QByteArray>();
+        QObject::connect(reply,&QNetworkReply::readyRead,q,[reply,bytes]{*bytes+=reply->readAll();if(bytes->size()>512*1024)reply->abort();});
+        QObject::connect(reply,&QNetworkReply::finished,q,[this,reply,bytes,epoch,callback]{
+            if(reply->isOpen())*bytes+=reply->readAll();const auto status=reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const bool valid=bytes->size()<=512*1024&&(reply->error()==QNetworkReply::NoError||status>=400);
+            reply->deleteLater();if(pairReply==reply)pairReply=nullptr;
+            if(epoch!=pairEpoch){bytes->fill('\0');return;}
+            QJsonDocument doc;if(valid&&StrictJson(*bytes).valid())doc=QJsonDocument::fromJson(*bytes);bytes->fill('\0');
+            callback(valid?status:0,jsonBounded(doc)?doc:QJsonDocument{});
+        });
+    }
+    void abandonProof(QString id,QString proof){
+        if(id.isEmpty()||proof.isEmpty())return;
+        QNetworkRequest request(options.apiBase.resolved(QUrl("/auth/device/cancel")));request.setTransferTimeout(5000);
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,QNetworkRequest::ManualRedirectPolicy);request.setHeader(QNetworkRequest::ContentTypeHeader,"application/json");
+        auto *reply=network.post(request,QJsonDocument(QJsonObject{{"requestId",id},{"deviceSecret",proof}}).toJson(QJsonDocument::Compact));
+        reply->setReadBufferSize(1024);QObject::connect(reply,&QNetworkReply::readyRead,reply,[reply]{reply->readAll();});QObject::connect(reply,&QNetworkReply::finished,reply,&QObject::deleteLater);
+    }
+    void cancelPairing(bool force=false){
+        if(pairAdopted&&!force){pairCode.clear();pairQr.clear();return;}
+        const auto id=pairRequestID,proof=pairProof;const bool adopted=pairAdopted;
+        ++pairEpoch;pairPollTimer.stop();pairCountdownTimer.stop();pairAckTimer.stop();
+        if(pairReply){auto reply=pairReply;pairReply=nullptr;reply->abort();}
+        pairRequestID.clear();pairProof.clear();pairCode.clear();pairQr.clear();pairState.clear();pairAdopted=false;pairRemaining=180;pairAckAttempts=0;
+        if(!adopted||force)abandonProof(id,proof);
+    }
+    QJsonObject pairingBody() const {return {{"requestId",pairRequestID},{"deviceSecret",pairProof}};}
+    void pairingError(){const auto message=QString::fromUtf8("QR girişi tamamlanamadı. Yeniden dene veya kullanıcı kodunla giriş yap.");cancelPairing();pairState="error";fail(message);}
+    bool pairingIsActive() const {return !qobject_cast<QGuiApplication*>(QCoreApplication::instance())||QGuiApplication::applicationState()==Qt::ApplicationActive;}
+    void beginPairing(){
+        if(!pairingIsActive()){cancelPairing();pairState="paused";changed();return;}
+        if(session.valid()||working)return;
+        cancelPairing();pairState="starting";failure.clear();const auto epoch=pairEpoch,auth=authGeneration;
+        QJsonObject body{{"platform","windows"},{"deviceName","Flixify Windows"}};const auto installation=vault.installationID();if(!installation.isEmpty())body["installationId"]=installation;
+        changed();pairingRequest("/auth/device/start",body,epoch,[this,epoch,auth](int status,QJsonDocument doc){
+            if(epoch!=pairEpoch||auth!=authGeneration||session.valid())return;
+            if(!pairingIsActive()){cancelPairing();pairState="paused";changed();return;}
+            const auto raw=doc.object();const auto id=raw["requestId"].toString(),proof=raw["deviceSecret"].toString();
+            if(status!=200||QUuid(id).isNull()||!QRegularExpression("^[A-Za-z0-9_-]{43}$").match(proof).hasMatch()){pairingError();return;}
+            pairRequestID=id;pairProof=proof;
+            const auto code=raw["userCode"].toString(),encoded=raw["qrPngBase64"].toString();
+            if(!QRegularExpression("^[A-Z]{4}-[A-Z]{4}$").match(code).hasMatch()||raw["verificationUri"].toString()!="https://flixify.vip/cihaz"||raw["verificationUriComplete"].toString()!="https://flixify.vip/cihaz?code="+code||encoded.size()>350000||raw["expiresInSeconds"].toInt()!=180||!date(raw["expiresAt"])||raw["intervalSeconds"].toInt()<2||raw["intervalSeconds"].toInt()>60){pairingError();return;}
+            auto decoded=QByteArray::fromBase64Encoding(encoded.toLatin1(),QByteArray::AbortOnBase64DecodingErrors);
+            if(!decoded||decoded.decoded.size()>256*1024||!decoded.decoded.startsWith(QByteArray::fromHex("89504e470d0a1a0a"))){pairingError();return;}
+            QBuffer buffer(&decoded.decoded);buffer.open(QIODevice::ReadOnly);QImageReader reader(&buffer,"PNG");const auto size=reader.size();
+            if(size.width()<=0||size.width()>1024||size.width()!=size.height()||reader.read().isNull()){pairingError();return;}
+            pairCode=code;pairQr="data:image/png;base64,"+QString::fromLatin1(decoded.decoded.toBase64());pairState="pending";
+            pairClock.start();pairRemaining=180;pairInterval=raw["intervalSeconds"].toInt();pairCountdownTimer.start();pairPollTimer.start(pairInterval*1000);changed();
+        });
+    }
+    void pollPairing(){
+        if(!pairingIsActive()){cancelPairing();pairState="paused";changed();return;}
+        if(pairAdopted||pairRequestID.isEmpty()||pairReply||session.valid())return;
+        if(!DeviceLoginLifetime::canPoll(pairClock.elapsed())){cancelPairing();pairState="expired";changed();return;}
+        const auto epoch=pairEpoch,auth=authGeneration;
+        pairingRequest("/auth/device/token",pairingBody(),epoch,[this,epoch,auth](int status,QJsonDocument doc){
+            if(epoch!=pairEpoch||auth!=authGeneration||session.valid()||pairAdopted)return;
+            if(status==0||status==429||status>=500){pairInterval=qMin(60,pairInterval+5);pairState="retrying";pairPollTimer.start(pairInterval*1000);changed();return;}
+            if(status!=200){pairingError();return;}
+            auto raw=doc.object();const auto state=raw["status"].toString();
+            if(raw.contains("intervalSeconds"))pairInterval=qBound(2,raw["intervalSeconds"].toInt(),60);
+            else if(state=="slow_down")pairInterval=qMin(60,pairInterval+5);
+            if(state=="authorized"){
+                const auto incoming=tokens(raw["session"].toObject());if(!incoming.valid()){pairingError();return;}
+                if(!pairingIsActive()){cancelPairing();pairState="paused";changed();return;}
+                // The synchronous secure save is adjacent to the activity/current-attempt fence.
+                if(epoch!=pairEpoch||auth!=authGeneration||session.valid()||pairAdopted)return;
+                if(!vault.save(incoming)){pairingError();return;}
+                session=incoming;pairAdopted=true;pairState="authorized";pairCode.clear();pairQr.clear();pairPollTimer.stop();pairCountdownTimer.stop();
+                analyticsSession();ackPairing();refreshAccount(true,[this,epoch](bool ok){if(epoch==pairEpoch&&pairAdopted){pairState=ok?"complete":"bootstrap_error";changed();}});changed();return;
+            }
+            if(raw.contains("session")){pairingError();return;}
+            if(QStringList{"denied","cancelled","expired","complete"}.contains(state)){
+                pairPollTimer.stop();pairCountdownTimer.stop();pairRequestID.clear();pairProof.clear();pairCode.clear();pairQr.clear();pairState=state;changed();return;
+            }
+            if(state!="pending"&&state!="slow_down"){pairingError();return;}
+            pairState=pairRemaining==0?"delivery":"pending";pairPollTimer.start(pairInterval*1000);changed();
+        });
+    }
+    void ackPairing(){
+        if(!pairAdopted||!session.valid()||pairRequestID.isEmpty()||pairReply)return;
+        const auto epoch=pairEpoch;++pairAckAttempts;
+        pairingRequest("/auth/device/ack",pairingBody(),epoch,[this,epoch](int status,QJsonDocument doc){
+            if(epoch!=pairEpoch||!pairAdopted)return;
+            if(status==200&&doc.object()["status"].toString()=="complete"){pairRequestID.clear();pairProof.clear();return;}
+            if(pairAckAttempts<5)pairAckTimer.start(qMin(30000,2000*pairAckAttempts));
+        });
     }
     qint64 now()const{return options.now();}
     void analyticsSession(){analytics->setSession(session.accessToken,session.accountID);}
@@ -135,8 +255,8 @@ public:
         if(!session.valid()){boot=false;working=false;changed();if(complete)complete(false);return;}refreshing=true;const auto auth=authGeneration;const auto ticket=++accountFlight;
         api("/me","GET",{},[this,withWelcome,complete,auth,ticket](int status,QJsonDocument doc){if(ticket!=accountFlight||auth!=authGeneration)return;auto user=doc.object()["user"].toObject();if(status!=200||user["id"].toString()!=session.accountID||!user["hasAssignedLink"].isBool()||!user["hasActiveSubscription"].isBool()){refreshing=false;boot=false;working=false;if(status==200)revoke();fail();if(complete)complete(false);return;}auto package=user["activePackage"].toObject();auto title=Catalog::clean(package["title"],256);auto end=date(package["endsAt"]);bool blocked=user["status"].toString()=="blocked",eligible=!blocked&&user["hasAssignedLink"].toBool()&&user["hasActiveSubscription"].toBool()&&end>now();
             currentAccount={{"packageTitle",title},{"canPlay",false},{"trial",title==QString::fromUtf8("3 Saat Deneme")||title==QString::fromUtf8("24 Saat Test")},{"expiresAt",end},{"message",eligible?QString::fromUtf8("İzleme erişimin açık."):blocked?QString::fromUtf8("Hesabın için destek ekibimizle iletişime geç."):!user["hasAssignedLink"].toBool()?QString::fromUtf8("İçerik bağlantın henüz hazır değil."):QString::fromUtf8("Aktif izleme erişimin bulunmuyor.")}};
-            auto finish=[this,withWelcome,complete,auth,ticket](bool access){if(auth!=authGeneration||ticket!=accountFlight)return;currentAccount["canPlay"]=access;if(access)currentAccount["expiresAt"]=deadline;auto done=[this,complete,ticket]{if(ticket!=accountFlight)return;refreshing=false;working=false;boot=false;failure.clear();changed();if(!currentScope.isEmpty()){loadLibrary(false);loadRoute(false);}if(complete)complete(true);};if(withWelcome)api("/me/welcome-offer","GET",{},[this,done,ticket](int status,QJsonDocument doc){if(ticket!=accountFlight)return;if(status==200&&!installWelcome(doc.object()))fail(QString::fromUtf8("Karşılama bilgileri doğrulanamadı."));done();});else done();};
-            if(!eligible){revoke();finish(false);return;}api("/me/provider-session","GET",{},[this,finish,ticket](int status,QJsonDocument doc){if(ticket!=accountFlight)return;bool valid=status==200&&installProvider(doc.object());if(!valid)revoke();finish(valid);});
+            auto finish=[this,withWelcome,complete,auth,ticket](bool access){if(auth!=authGeneration||ticket!=accountFlight)return;currentAccount["canPlay"]=access;if(access)currentAccount["expiresAt"]=deadline;auto done=[this,complete,ticket]{if(ticket!=accountFlight)return;refreshing=false;working=false;boot=false;failure.clear();changed();if(!currentScope.isEmpty()){loadLibrary(false);loadRoute(false);}if(complete)complete(true);};if(withWelcome)api("/me/welcome-offer","GET",{},[this,done,ticket,complete](int status,QJsonDocument doc){if(ticket!=accountFlight)return;if(status!=200||!installWelcome(doc.object())){if(pairAdopted){refreshing=false;working=false;boot=false;fail(QString::fromUtf8("Hesap bilgileri yüklenemedi. Yeniden dene."));if(complete)complete(false);return;}if(status==200)fail(QString::fromUtf8("Karşılama bilgileri doğrulanamadı."));}done();});else done();};
+            if(!eligible){revoke();finish(false);return;}api("/me/provider-session","GET",{},[this,finish,ticket,complete](int status,QJsonDocument doc){if(ticket!=accountFlight)return;bool valid=status==200&&installProvider(doc.object());if(pairAdopted&&!valid&&status!=403){refreshing=false;working=false;boot=false;fail(QString::fromUtf8("Hesap bilgileri yüklenemedi. Yeniden dene."));if(complete)complete(false);return;}if(!valid)revoke();finish(valid);});
         });
     }
     void providerRequest(QString action,QString id,Reply callback){auto scope=currentScope;auto generation=sourceGeneration;if(!sourceValid(scope,generation)){callback(403,{});return;}static const QSet<QString> actions{"get_vod_categories","get_vod_streams","get_series_categories","get_series","get_live_categories","get_live_streams","get_series_info","get_short_epg"};if(!actions.contains(action)){callback(0,{});return;}QUrl u(providerOrigin+"/player_api.php");QByteArray encodedQuery="username="+QUrl::toPercentEncoding(username)+"&password="+QUrl::toPercentEncoding(password)+"&action="+QUrl::toPercentEncoding(action);if(!id.isEmpty()){if(Catalog::id(id).isEmpty()){callback(0,{});return;}encodedQuery+="&"+QByteArray(action=="get_series_info"?"series_id":"stream_id")+"="+QUrl::toPercentEncoding(id);}if(action=="get_short_epg")encodedQuery+="&limit=24";u.setQuery(QString::fromLatin1(encodedQuery),QUrl::StrictMode);request(u,"GET",{},{},[this,scope,generation,callback](int status,QJsonDocument doc){if(!sourceValid(scope,generation))return;if(status==401||status==403){revoke();callback(403,{});return;}callback(status,doc);},scope);}
@@ -270,7 +390,7 @@ public:
 
 DesktopRepository::DesktopRepository(QObject *parent):DesktopRepository(RepositoryOptions{},parent){}
 DesktopRepository::DesktopRepository(const RepositoryOptions &options,QObject *parent):QObject(parent),d(std::make_unique<Private>(this,options)){}
-DesktopRepository::~DesktopRepository(){d->authGeneration++;d->abort();}
+DesktopRepository::~DesktopRepository(){d->cancelPairing(true);d->authGeneration++;d->abort();}
 #define GET(type,name,value) type DesktopRepository::name() const{return value;}
 GET(bool,bootstrapping,d->boot) GET(bool,authenticated,d->session.valid()) GET(bool,busy,d->working||d->refreshing||d->detailLoading) GET(bool,loadingMore,d->moreLoading) GET(bool,hasMore,d->filtered.size()>d->visibleItems.size()) GET(bool,welcomeVisible,d->offer.value("showPrompt").toBool()) GET(bool,posterSoundEnabled,d->sound)
 GET(bool,analyticsAvailable,d->analytics->available()) GET(bool,analyticsPromptVisible,d->analytics->promptVisible()) GET(QString,analyticsChoice,d->analytics->choice())
@@ -279,8 +399,15 @@ GET(QVariantMap,account,d->currentAccount) GET(QVariantMap,hero,d->currentHero) 
 #undef GET
 QString DesktopRepository::sectionTitle()const {static const QHash<QString,QString> titles{{"home",QString::fromUtf8("Ana Sayfa")},{"movies",QString::fromUtf8("Filmler")},{"series",QString::fromUtf8("Diziler")},{"live",QString::fromUtf8("Canlı TV")},{"favorites",QString::fromUtf8("Listem")},{"account",QString::fromUtf8("Hesabım")},{"search",QString::fromUtf8("Ara")}};return titles.value(d->currentRoute);}
 void DesktopRepository::restore(){d->session=d->vault.load();d->analyticsSession();d->boot=true;d->changed();if(!d->session.valid()){d->screen("login");d->boot=false;d->changed();return;}d->screen(d->currentRoute);d->refreshAccount(true);}
-void DesktopRepository::login(QString code){code=code.trimmed().toUpper();if(!QRegularExpression("^[A-Z0-9]{16}$").match(code).hasMatch()){d->fail(QString::fromUtf8("16 karakterli giriş kodunu kontrol et."));return;}logout();d->boot=false;d->working=true;d->failure.clear();d->changed();auto installation=d->vault.installationID();if(installation.isEmpty()){d->working=false;d->fail(QString::fromUtf8("Güvenli oturum kaydı oluşturulamadı."));return;}const auto analyticsTicket=d->analyticsEpoch;d->request(d->options.apiBase.resolved(QUrl("/auth/login-by-code")),"POST",{{"code",code},{"deviceName","Flixify Windows"},{"platform","windows"},{"installationId",installation}},{},[this,analyticsTicket](int status,QJsonDocument doc){auto session=tokens(doc.object());if(status!=200||!session.valid()){d->working=false;d->fail(status==401?QString::fromUtf8("Giriş kodun doğrulanamadı."):QString::fromUtf8("Giriş tamamlanamadı. Yeniden dene."));return;}if(!d->vault.save(session)){d->working=false;d->fail(QString::fromUtf8("Güvenli oturum kaydı oluşturulamadı."));return;}d->session=session;d->analyticsSession();recordAnalytics("login",{{"method","code"}},analyticsTicket);d->screen("home");d->refreshAccount(true);});}
-void DesktopRepository::logout(){d->failPlaybackMeasurement(d->analyticsPendingAttempt,d->analyticsPendingEpoch,"canceled");d->analyticsPlayerVisible=false;if(d->session.valid())d->analytics->recordLogoutAndDetach();d->analyticsEpoch++;d->authGeneration++;d->accountFlight++;d->rotationTicket++;d->rotating=false;d->rotationWaiters.clear();d->abort();d->clearSource();d->vault.clear();d->session={};d->analyticsSession();d->analyticsScreen.clear();d->searchMeasurementPending=false;d->currentAccount.clear();d->offer.clear();d->working=false;d->refreshing=false;d->rotating=false;d->rotationWaiters.clear();d->boot=false;d->failure.clear();d->currentRoute="home";d->searchQuery.clear();d->selectedCategory.clear();d->selectedCountry.clear();emit accessRevoked();d->changed();}
+QString DesktopRepository::pairingCode()const{return d->pairCode;}
+QString DesktopRepository::pairingQrSource()const{return d->pairQr;}
+QString DesktopRepository::pairingStatus()const{return d->pairState;}
+int DesktopRepository::pairingRemaining()const{return d->pairRemaining;}
+void DesktopRepository::startDeviceLogin(){d->beginPairing();}
+void DesktopRepository::cancelDeviceLogin(){d->cancelPairing();d->changed();}
+void DesktopRepository::retryDeviceBootstrap(){if(d->session.valid()&&!d->refreshing){d->failure.clear();d->pairState="authorized";const auto epoch=d->pairEpoch;d->refreshAccount(true,[this,epoch](bool ok){if(epoch==d->pairEpoch&&d->pairAdopted){d->pairState=ok?"complete":"bootstrap_error";d->changed();}});d->changed();}}
+void DesktopRepository::login(QString code){d->cancelPairing();code=code.trimmed().toUpper();if(!QRegularExpression("^[A-Z0-9]{16}$").match(code).hasMatch()){d->fail(QString::fromUtf8("16 karakterli giriş kodunu kontrol et."));return;}logout();d->boot=false;d->working=true;d->failure.clear();d->changed();auto installation=d->vault.installationID();if(installation.isEmpty()){d->working=false;d->fail(QString::fromUtf8("Güvenli oturum kaydı oluşturulamadı."));return;}const auto analyticsTicket=d->analyticsEpoch;d->request(d->options.apiBase.resolved(QUrl("/auth/login-by-code")),"POST",{{"code",code},{"deviceName","Flixify Windows"},{"platform","windows"},{"installationId",installation}},{},[this,analyticsTicket](int status,QJsonDocument doc){auto session=tokens(doc.object());if(status!=200||!session.valid()){d->working=false;d->fail(status==401?QString::fromUtf8("Giriş kodun doğrulanamadı."):QString::fromUtf8("Giriş tamamlanamadı. Yeniden dene."));return;}if(!d->vault.save(session)){d->working=false;d->fail(QString::fromUtf8("Güvenli oturum kaydı oluşturulamadı."));return;}d->session=session;d->analyticsSession();recordAnalytics("login",{{"method","code"}},analyticsTicket);d->screen("home");d->refreshAccount(true);});}
+void DesktopRepository::logout(){d->cancelPairing(true);d->failPlaybackMeasurement(d->analyticsPendingAttempt,d->analyticsPendingEpoch,"canceled");d->analyticsPlayerVisible=false;if(d->session.valid())d->analytics->recordLogoutAndDetach();d->analyticsEpoch++;d->authGeneration++;d->accountFlight++;d->rotationTicket++;d->rotating=false;d->rotationWaiters.clear();d->abort();d->clearSource();d->vault.clear();d->session={};d->analyticsSession();d->analyticsScreen.clear();d->searchMeasurementPending=false;d->currentAccount.clear();d->offer.clear();d->working=false;d->refreshing=false;d->rotating=false;d->rotationWaiters.clear();d->boot=false;d->failure.clear();d->currentRoute="home";d->searchQuery.clear();d->selectedCategory.clear();d->selectedCountry.clear();emit accessRevoked();d->changed();}
 void DesktopRepository::navigate(QString route){if(!QStringList{"home","movies","series","live","favorites","account","search"}.contains(route))return;d->screen(route);d->searchMeasurementPending=false;d->detailSelection++;d->epgSelection++;d->detailLoading=false;d->epgRows.clear();d->currentRoute=route;d->visible=96;d->searchQuery.clear();d->selectedCategory.clear();d->selectedCountry.clear();d->detail.clear();d->failure.clear();d->loadRoute(false);}
 void DesktopRepository::setQuery(QString query){if(query.size()>256)query=query.left(256);if(query==d->searchQuery)return;d->searchAnalyticsEpoch=d->analyticsEpoch;d->searchMeasurementPending=!query.trimmed().isEmpty();d->searchQuery=query;d->visible=96;d->queryTimer.start();d->changed();}
 void DesktopRepository::setCategory(QString c){d->selectedCategory=c=="all"?QString():c;auto ref=DesktopAnalytics::categoryReference(d->selectedCategory);if(!ref.isEmpty()){QVariantMap values{{"category_id",ref}};for(const auto &row:d->currentCategories){const auto category=row.toMap();if(category["id"].toString()==d->selectedCategory){const auto label=DesktopAnalytics::catalogLabel(category["title"].toString(),80);if(!label.isEmpty())values["category_name"]=label;break;}}d->analytics->record("category_select",values);}d->visible=96;d->rebuild();}

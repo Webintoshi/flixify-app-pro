@@ -32,7 +32,8 @@ ApplicationWindow {
     property string requestedSeries: ""
     property var seriesData: repository.seriesDetail
     property bool seriesPending: false
-    property bool accessExpired: repository.authenticated && !repository.welcomeVisible && repository.account.canPlay === false
+    property bool deviceLoginCompleting: repository.pairingStatus === "authorized" || repository.pairingStatus === "bootstrap_error"
+    property bool accessExpired: repository.authenticated && !repository.welcomeVisible && !deviceLoginCompleting && repository.account.canPlay === false
     onSeriesDataChanged: {
         if (seriesPending && seriesData.series && String(seriesData.series.id) === requestedSeries) {
             seriesPending = false;
@@ -94,7 +95,7 @@ ApplicationWindow {
     }
     Item {
         anchors.fill: parent
-        visible: !repository.bootstrapping && repository.authenticated && !repository.welcomeVisible && !root.accessExpired
+        visible: !repository.bootstrapping && repository.authenticated && !repository.welcomeVisible && !root.accessExpired && !root.deviceLoginCompleting
         enabled: !player.active
         Rectangle {
             id: sidebar
@@ -295,7 +296,7 @@ ApplicationWindow {
     }
     AccessPage {
         anchors.fill: parent
-        visible: !repository.bootstrapping && (!repository.authenticated || repository.welcomeVisible)
+        visible: !repository.bootstrapping && (!repository.authenticated || repository.welcomeVisible || root.deviceLoginCompleting)
     }
     AccessExpired { anchors.fill: parent; visible: !repository.bootstrapping && root.accessExpired }
     Rectangle {

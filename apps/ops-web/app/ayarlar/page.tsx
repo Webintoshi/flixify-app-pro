@@ -37,6 +37,6 @@ export default function SettingsPage(){
       <button type="button" className={s.secondary} disabled={portalPending} onClick={async()=>{setPortalPending(true);setPortalError(false);try{const result=await apiRequest<{url:string}>('/me/billing/portal-session',{method:'POST'});const target=new URL(result.url);if(target.protocol!=='https:'||target.hostname!=='billing.stripe.com')throw new Error('invalid_portal_url');window.location.assign(result.url);}catch{setPortalError(true);setPortalPending(false);}}}>{portalPending?'Açılıyor…':'Aboneliği ve kartı yönet'}</button>
       {portalError&&<p className={s.errorText} role="alert">Abonelik yönetimi şu anda açılamadı. Biraz sonra tekrar deneyin.</p>}
     </section>}
-    <section className={s.shortcuts} aria-label="Hesap işlemleri"><AccountLink href="/davet">Arkadaşını davet et</AccountLink><AccountLink href="/odeme-bildirimi#gecmis">Ödeme bildirimlerim</AccountLink><AccountLink href="/iletisim">Destek al</AccountLink></section>
+    <section className={s.shortcuts} aria-label="Hesap işlemleri"><AccountLink href="/cihaz">Cihaz bağla</AccountLink><AccountLink href="/davet">Arkadaşını davet et</AccountLink><AccountLink href="/odeme-bildirimi#gecmis">Ödeme bildirimlerim</AccountLink><AccountLink href="/iletisim">Destek al</AccountLink></section>
   </AccountPage>;
 }

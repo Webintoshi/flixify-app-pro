@@ -9,6 +9,9 @@ actor FixtureRepository: FlixifyRepositoryProtocol {
     private var positions: [String: Double] = [:]
     private var acknowledged = false
     private var signedOut = false
+    private var fixturePaired = false
+    private var fixturePairingCancelled = false
+    private var fixtureBootstrapFailed = false
     private let expiry = Date().addingTimeInterval(86_400)
 
     private func argument(_ name: String) -> String? {
@@ -56,8 +59,33 @@ actor FixtureRepository: FlixifyRepositoryProtocol {
         return state()
     }
     func login(code: String) async throws -> SessionState { guard code.count == 16 else { throw FlixifyError.invalidCode }; signedOut = false; return state() }
-    func refreshSession() async throws -> SessionState { state() }
-    func logout() async { signedOut = true; favorites = []; positions = [:]; watched = [] }
+    func startDeviceLogin() async throws -> DeviceLoginPresentation {
+        fixturePairingCancelled = false
+        guard let path = argument("--fixture-qr-png"), let png = try? Data(contentsOf: URL(fileURLWithPath: path)), png.count <= 256 * 1024 else { throw FlixifyError.network }
+        return try DeviceLoginPresentation(["userCode": "BCDF-GHJK", "verificationUri": "https://flixify.vip/cihaz", "verificationUriComplete": "https://flixify.vip/cihaz?code=BCDF-GHJK", "qrPngBase64": png.base64EncodedString(), "expiresAt": "2026-12-01T00:00:00.000Z", "expiresInSeconds": 180, "intervalSeconds": 2])
+    }
+    func pollDeviceLogin() async throws -> DeviceLoginStatus {
+        guard !fixturePairingCancelled else { throw FlixifyError.staleSource }
+        let mode = argument("--fixture-pairing") ?? "pending"
+        if mode == "save-failure" { throw FlixifyError.keychain }
+        let status = DeviceLoginStatus(rawValue: mode) ?? .pending
+        if status == .authorized { fixturePaired = true; signedOut = false }
+        return status
+    }
+    func hasDeviceLoginSession() async -> Bool { fixturePaired }
+    func deviceLoginInterval() async -> Int { 2 }
+    func cancelDeviceLogin() async { if !fixturePaired { fixturePairingCancelled = true } }
+    func acknowledgeDeviceLogin() async {}
+    func refreshSession() async throws -> SessionState {
+        if fixturePaired, CommandLine.arguments.contains("--fixture-pairing-auth-failure") {
+            fixturePaired = false; signedOut = true; throw FlixifyError.authentication
+        }
+        if fixturePaired, CommandLine.arguments.contains("--fixture-pairing-bootstrap-failure"), !fixtureBootstrapFailed {
+            fixtureBootstrapFailed = true; throw FlixifyError.network
+        }
+        return state()
+    }
+    func logout() async { fixturePaired = false; fixturePairingCancelled = true; signedOut = true; favorites = []; positions = [:]; watched = [] }
     func catalog(_ kind: MediaKind, force: Bool) async throws -> Catalog {
         let values = kind == .movie ? movies() : kind == .series ? shows() : channels()
         return Catalog(kind: kind, items: values)

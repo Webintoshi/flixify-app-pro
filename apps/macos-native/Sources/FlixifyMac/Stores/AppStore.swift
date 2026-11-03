@@ -25,6 +25,13 @@ enum AppRoute: String, CaseIterable, Identifiable {
     @Published var library = PersonalLibrary()
     @Published var initialLoading = true
     @Published var signingIn = false
+    @Published var deviceLogin: DeviceLoginPresentation?
+    @Published var deviceLoginStatus = ""
+    @Published var deviceLoginRemaining = 180
+    @Published var deviceLoginAdopted = false
+    private var pairingEpoch = UUID()
+    private var pairingTask: Task<Void, Never>?
+    private var pairingStopTask: Task<Void, Never>?
     @Published var loadingKinds = Set<MediaKind>()
     @Published var error: String?
     @Published var searchText = ""
@@ -98,7 +105,8 @@ enum AppRoute: String, CaseIterable, Identifiable {
     }
 
     func login(code: String) async {
-        guard !signingIn else { return }
+        guard !signingIn, !deviceLoginAdopted else { return }
+        endDeviceLogin(); await pairingStopTask?.value
         signingIn = true; error = nil
         let lease = generation, analyticsTicket = FlixifyAnalytics.shared.epoch
         do {
@@ -111,7 +119,107 @@ enum AppRoute: String, CaseIterable, Identifiable {
         if lease == generation { signingIn = false }
     }
 
+    func beginDeviceLogin() {
+        guard NSApplication.shared.isActive, session == nil, !deviceLoginAdopted, !signingIn else { return }
+        endDeviceLogin()
+        let epoch = UUID(), stop = pairingStopTask
+        pairingEpoch = epoch; deviceLoginStatus = "starting"; error = nil
+        pairingTask = Task { [weak self] in
+            await stop?.value
+            guard let self, NSApplication.shared.isActive, self.pairingEpoch == epoch, !Task.isCancelled else { return }
+            do {
+                if await self.repository.hasDeviceLoginSession() {
+                    guard self.pairingEpoch == epoch, !Task.isCancelled else { return }
+                    self.deviceLoginAdopted = true
+                    await self.finishDeviceLogin(); return
+                }
+                let value = try await self.repository.startDeviceLogin()
+                guard self.pairingEpoch == epoch, !Task.isCancelled else { return }
+                self.deviceLogin = value; self.deviceLoginStatus = "pending"
+                let lifetime = DeviceLoginLifetime(duration: value.duration, startedAt: ProcessInfo.processInfo.systemUptime)
+                var nextPoll = ProcessInfo.processInfo.systemUptime + Double(value.interval)
+                while !Task.isCancelled, self.pairingEpoch == epoch {
+                    guard NSApplication.shared.isActive else { self.endDeviceLogin(); return }
+                    let uptime = ProcessInfo.processInfo.systemUptime
+                    self.deviceLoginRemaining = lifetime.remaining(at: uptime)
+                    guard lifetime.canPoll(at: uptime) else {
+                        self.deviceLoginStatus = "expired"; self.deviceLogin = nil
+                        await self.repository.cancelDeviceLogin(); return
+                    }
+                    if uptime >= nextPoll {
+                        do {
+                            let status = try await self.repository.pollDeviceLogin()
+                            guard self.pairingEpoch == epoch, !Task.isCancelled else { return }
+                            // Adoption and ACK ownership already belong to the repository.
+                            if status == .authorized {
+                                self.deviceLoginAdopted = true; self.deviceLogin = nil; self.deviceLoginStatus = "authorized"
+                                await self.finishDeviceLogin(); return
+                            }
+                            guard self.pairingEpoch == epoch, !Task.isCancelled else { return }
+                            if status.terminal { self.deviceLoginStatus = status.rawValue; self.deviceLogin = nil; return }
+                            self.deviceLoginStatus = self.deviceLoginRemaining == 0 ? "delivery" : "pending"
+                        } catch {
+                            guard self.pairingEpoch == epoch, !Task.isCancelled else { return }
+                            if error as? FlixifyError != .network && error as? FlixifyError != .limit {
+                                self.error = self.userMessage(error); self.deviceLoginStatus = "error"; self.deviceLogin = nil
+                                await self.repository.cancelDeviceLogin(); return
+                            }
+                            self.deviceLoginStatus = "retrying"
+                        }
+                        nextPoll = ProcessInfo.processInfo.systemUptime + Double(await self.repository.deviceLoginInterval())
+                    }
+                    try await Task.sleep(nanoseconds: 250_000_000)
+                }
+            } catch {
+                guard self.pairingEpoch == epoch, !Task.isCancelled else { return }
+                self.error = self.userMessage(error); self.deviceLoginStatus = "error"
+            }
+        }
+    }
+    func endDeviceLogin() {
+        pairingEpoch = UUID(); pairingTask?.cancel(); pairingTask = nil
+        deviceLogin = nil
+        if !deviceLoginAdopted { deviceLoginStatus = "" }
+        let previous = pairingStopTask, repository = repository
+        pairingStopTask = Task { await previous?.value; await repository.cancelDeviceLogin() }
+    }
+    func resumeAdoptedDeviceLogin() {
+        guard session == nil, !signingIn, pairingTask == nil else { return }
+        let epoch = pairingEpoch
+        pairingTask = Task { [weak self] in
+            guard let self, await self.repository.hasDeviceLoginSession(), self.pairingEpoch == epoch, !Task.isCancelled else { return }
+            self.deviceLoginAdopted = true
+            await self.finishDeviceLogin()
+        }
+    }
+    func retryDeviceBootstrap() {
+        guard deviceLoginAdopted else { return }
+        pairingTask?.cancel()
+        pairingTask = Task { await finishDeviceLogin() }
+    }
+    private func finishDeviceLogin() async {
+        let lease = generation
+        signingIn = true; error = nil
+        do {
+            let result = try await repository.refreshSession()
+            guard lease == generation, deviceLoginAdopted else { return }
+            applySession(result); showWelcome = result.welcomeOffer?.showPrompt == true
+            beginSessionWork(); deviceLoginStatus = "complete"
+        } catch {
+            if lease == generation, deviceLoginAdopted {
+                let retained = await repository.hasDeviceLoginSession()
+                guard lease == generation else { return }
+                self.error = userMessage(error)
+                deviceLoginAdopted = retained
+                deviceLoginStatus = retained ? "bootstrap_error" : "error"
+            }
+        }
+        if lease == generation { signingIn = false }
+    }
+
     func logout() async {
+        endDeviceLogin(); await pairingStopTask?.value
+        deviceLoginAdopted = false
         finishPreparingAnalytics(reason:"closed",failed:false)
         FlixifyAnalytics.shared.event("logout")
         generation = UUID(); selection = UUID(); inspection = UUID(); loadTask?.cancel(); refreshTask?.cancel()

@@ -22,8 +22,8 @@ from macos_privacy import (audit_release_privacy, known_personal_identifiers,
 PRODUCT = "FlixifyMac"
 APP_NAME = "Flixify Pro"
 BUNDLE_ID = "vip.flixify.mac"
-VERSION = "1.0.1"
-BUILD = 3
+VERSION = "1.0.2"
+BUILD = 4
 MINIMUM_SYSTEM = "13.0"
 DMG_NAME = f"Flixify-Pro-{VERSION}-macos-universal.dmg"
 DOWNLOAD_URL = f"https://flixify.vip/downloads/{DMG_NAME}"

@@ -27,6 +27,10 @@ class DesktopRepository final : public QObject {
     REPO_PROPERTY(bool, analyticsAvailable)
     REPO_PROPERTY(bool, analyticsPromptVisible)
     REPO_PROPERTY(QString, analyticsChoice)
+    REPO_PROPERTY(QString, pairingCode)
+    REPO_PROPERTY(QString, pairingQrSource)
+    REPO_PROPERTY(QString, pairingStatus)
+    REPO_PROPERTY(int, pairingRemaining)
     REPO_PROPERTY(QString, error)
     REPO_PROPERTY(QString, route)
     REPO_PROPERTY(QString, query)
@@ -56,12 +60,16 @@ public:
     REPO_GET(bool, bootstrapping) REPO_GET(bool, authenticated) REPO_GET(bool, busy)
     REPO_GET(bool, loadingMore) REPO_GET(bool, hasMore) REPO_GET(bool, welcomeVisible) REPO_GET(bool, posterSoundEnabled)
     REPO_GET(bool, analyticsAvailable) REPO_GET(bool, analyticsPromptVisible) REPO_GET(QString, analyticsChoice)
+    REPO_GET(QString, pairingCode) REPO_GET(QString, pairingQrSource) REPO_GET(QString, pairingStatus) REPO_GET(int, pairingRemaining)
     REPO_GET(QString, error) REPO_GET(QString, route) REPO_GET(QString, query) REPO_GET(QString, category)
     REPO_GET(QString, country) REPO_GET(QString, sectionTitle) REPO_GET(QString, codeSuffix) REPO_GET(QString, scope)
     REPO_GET(QVariantMap, account) REPO_GET(QVariantMap, hero) REPO_GET(QVariantMap, seriesDetail) REPO_GET(QVariantMap, welcome)
     REPO_GET(QVariantList, shelves) REPO_GET(QVariantList, items) REPO_GET(QVariantList, categories) REPO_GET(QVariantList, countries)
     REPO_GET(QVariantList, favorites) REPO_GET(QVariantList, programmes) REPO_GET(int, libraryRevision) REPO_GET(qint64, expiresAt)
 #undef REPO_GET
+    Q_INVOKABLE void startDeviceLogin();
+    Q_INVOKABLE void cancelDeviceLogin();
+    Q_INVOKABLE void retryDeviceBootstrap();
     Q_INVOKABLE void restore();
     Q_INVOKABLE void login(QString code);
     Q_INVOKABLE void logout();
