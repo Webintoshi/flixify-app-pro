@@ -240,14 +240,19 @@ class RuntimePolicyTests(unittest.TestCase):
 
 
 class PublicSequenceTests(unittest.TestCase):
-    def exercise(self, app_status="Accepted", dmg_status="Accepted", deny_gatekeeper=False):
+    def exercise(self, app_status="Accepted", dmg_status="Accepted", deny_gatekeeper=False, individual=False):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             app = root / "dist/Flixify Pro.app"
             (app / "Contents").mkdir(parents=True)
             (app / "Contents/Info.plist").write_bytes(plistlib.dumps(metadata()))
             policy = root / "corporate-policy.json"
-            policy.write_text(json.dumps(organization_policy()))
+            reviewed = organization_policy()
+            if individual:
+                reviewed.pop("organizationEnrollmentVerified")
+                reviewed.update(identityKind="individual", individualEnrollmentVerified=True,
+                                personalNameVisibilityAccepted=True)
+            policy.write_text(json.dumps(reviewed))
             calls = []
             status = iter([app_status, dmg_status])
             app_stapled = False
@@ -258,7 +263,7 @@ class PublicSequenceTests(unittest.TestCase):
                 nonlocal app_stapled
                 calls.append(args)
                 if args[0] == "/usr/bin/security":
-                    return '1) ' + 'A' * 40 + ' "Developer ID Application: Test (ABCDEFGHIJ)"'
+                    return '1) ' + 'A' * 40 + ' "Developer ID Application: ' + ('Private Person' if individual else 'Test') + ' (ABCDEFGHIJ)"'
                 if "notarytool" in args:
                     return json.dumps({"id": "01234567-89ab-cdef-0123-456789abcdef", "status": next(status)})
                 if "stapler" in args and "staple" in args and args[-1].endswith(".app"):
@@ -272,22 +277,28 @@ class PublicSequenceTests(unittest.TestCase):
                     return plistlib.dumps({"system-entities": [{"mount-point": str(mounted), "dev-entry": "/dev/test"}]}).decode()
                 return ""
 
+            arguments = {"identity_policy": policy} if individual else {"organization_policy": policy}
             with patch.object(release, "ROOT", root), patch.object(release, "run", side_effect=runner), \
                  patch.object(release, "audit_app", return_value=[]), patch.object(release, "codesign_app"), \
                  patch.object(release, "known_personal_identifiers", return_value=set()):
                 if app_status != "Accepted" or dmg_status != "Accepted" or deny_gatekeeper:
                     with self.assertRaises(release.ReleaseError):
-                        release.package_release(app, None, "Test", policy)
+                        release.package_release(app, None, "Test", **arguments)
                     self.assertFalse((root / "dist/public" / release.DMG_NAME).exists())
                     self.assertFalse((root / "dist/public/flixify-macos-update.json").exists())
                 else:
-                    result = release.package_release(app, None, "Test", policy)
+                    result = release.package_release(app, None, "Test", **arguments)
                     descriptor = json.loads((root / "dist/public/flixify-macos-update.json").read_text())
                     self.assertEqual(descriptor["sha256"], release.sha256(result))
                     self.assertEqual(descriptor["sizeBytes"], result.stat().st_size)
                     self.assertEqual(descriptor["dmgUrl"], release.DOWNLOAD_URL)
                     proof = json.loads((root / "dist/public/release-proof.json").read_text())
                     self.assertTrue(proof["publicDistributionReady"])
+                    if individual:
+                        self.assertEqual(proof["signingIdentityKind"], "individual")
+                        self.assertTrue(proof["personalNameVisibilityAccepted"])
+                        self.assertNotIn("Private Person", json.dumps(proof))
+                        self.assertTrue(proof["privacyAudit"]["individualNameVisibilityAccepted"])
             return calls
 
     def test_success_requires_app_then_dmg_notarization_and_gatekeeper(self):
@@ -305,6 +316,12 @@ class PublicSequenceTests(unittest.TestCase):
 
     def test_gatekeeper_failure_produces_no_public_download(self):
         self.exercise(deny_gatekeeper=True)
+
+    def test_approved_individual_release_keeps_all_notary_and_gatekeeper_gates(self):
+        self.exercise(individual=True)
+        self.exercise(individual=True, app_status="Invalid")
+        self.exercise(individual=True, dmg_status="Invalid")
+        self.exercise(individual=True, deny_gatekeeper=True)
 
 
 if __name__ == "__main__":

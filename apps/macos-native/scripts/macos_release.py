@@ -17,7 +17,8 @@ from macos_runtime import (EXECUTABLE_RELATIVE, FRAMEWORK_RELATIVE, ROOT,
                            REQUIRED_ARCHITECTURES, ReleaseError,
                            macho_architectures, prepare_runtime, sha256)
 from macos_privacy import (audit_release_privacy, known_personal_identifiers,
-                           read_organization_policy, validate_organization_subject)
+                           read_identity_policy, read_organization_policy,
+                           validate_signing_subject)
 
 PRODUCT = "FlixifyMac"
 APP_NAME = "Flixify Pro"
@@ -25,7 +26,7 @@ BUNDLE_ID = "vip.flixify.mac"
 VERSION = "1.0.2"
 BUILD = 4
 MINIMUM_SYSTEM = "13.0"
-DMG_NAME = f"Flixify-Pro-{VERSION}-macos-universal.dmg"
+DMG_NAME = f"Flixify-Pro-{VERSION}-build{BUILD}-macos-universal.dmg"
 DOWNLOAD_URL = f"https://flixify.vip/downloads/{DMG_NAME}"
 
 
@@ -369,13 +370,18 @@ def build_app(configuration: str, host_only: bool) -> Path:
 
 
 def package_release(app: Path, requested_identity: str | None, profile: str | None,
-                    organization_policy: Path | None = None) -> Path:
-    policy = read_organization_policy(organization_policy)
+                    organization_policy: Path | None = None, *,
+                    identity_policy: Path | None = None) -> Path:
+    if organization_policy is not None and identity_policy is not None:
+        raise ReleaseError("Select one reviewed signing identity policy")
+    policy_path = identity_policy if identity_policy is not None else organization_policy
+    policy = read_identity_policy(identity_policy) if identity_policy is not None else read_organization_policy(organization_policy)
     profile = validate_notary_profile(profile)
     identity_output = run(["/usr/bin/security", "find-identity", "-p", "codesigning", "-v"], capture=True)
     identity = select_identity(identity_output, requested_identity)
     identifiers = known_personal_identifiers(identity_output)
-    validate_organization_subject(identity_output, identity, policy, identifiers)
+    approval = validate_signing_subject(identity_output, identity, policy, identifiers)
+    identifiers |= approval.personal_name_identifiers()
     validate_app_metadata(app, public=True)
     audit_app(app)
     audit_release_privacy(app, identifiers=identifiers)
@@ -391,7 +397,7 @@ def package_release(app: Path, requested_identity: str | None, profile: str | No
         public_app = image_root / app.name
         shutil.copytree(app, public_app, symlinks=True)
         codesign_app(public_app, identity, public=True)
-        privacy = audit_release_privacy(public_app, identifiers=identifiers)
+        privacy = audit_release_privacy(public_app, identifiers=identifiers, signing_identity=approval)
         app_zip = working / "notarize-app.zip"
         run(["/usr/bin/ditto", "-c", "-k", "--keepParent", "--sequesterRsrc", str(public_app), str(app_zip)])
         app_submission = submit_notary(app_zip, profile)
@@ -420,17 +426,23 @@ def package_release(app: Path, requested_identity: str | None, profile: str | No
             run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(installed_app)])
             run(["/usr/bin/xcrun", "stapler", "validate", str(installed_app)])
             run(["/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=4", str(installed_app)])
+            audit_release_privacy(installed_app, identifiers=identifiers, signing_identity=approval)
         finally:
             run(["/usr/bin/hdiutil", "detach", mount["dev-entry"]])
         proof = {"checkedAt": datetime.now(timezone.utc).isoformat(), "bundleIdentifier": BUNDLE_ID,
                  "versionName": VERSION, "buildNumber": BUILD, "architectures": sorted(REQUIRED_ARCHITECTURES),
                  "identityFingerprint": identity, "appNotarization": app_submission,
-                 "organizationTeamIdentifier": policy["teamIdentifier"],
-                 "organizationIdentityPolicySha256": sha256(organization_policy), "privacyAudit": privacy,
+                 "signingIdentityKind": policy["identityKind"],
+                 "signingTeamIdentifier": policy["teamIdentifier"],
+                 "identityPolicySha256": sha256(policy_path),
+                 "personalNameVisibilityAccepted": policy["identityKind"] == "individual", "privacyAudit": privacy,
                  "dmgNotarization": dmg_submission, "appStapledBeforeDmgCreation": True,
                  "appAndDmgStaplesValidated": True, "gatekeeperAppDmgAndMountedAppPassed": True,
                  "binaries": audit_app(public_app), "sha256": sha256(dmg), "sizeBytes": dmg.stat().st_size,
                  "publicDistributionReady": True}
+        if policy["identityKind"] == "organization":
+            proof.update(organizationTeamIdentifier=policy["teamIdentifier"],
+                         organizationIdentityPolicySha256=sha256(policy_path))
         descriptor = {"bundleIdentifier": BUNDLE_ID, "versionName": VERSION, "buildNumber": BUILD,
                       "minSystemVersion": MINIMUM_SYSTEM, "architectures": sorted(REQUIRED_ARCHITECTURES),
                       "dmgUrl": DOWNLOAD_URL, "sha256": proof["sha256"], "sizeBytes": proof["sizeBytes"],
@@ -454,7 +466,11 @@ def package_main():
     parser.add_argument("--app", type=Path, default=ROOT / "dist" / f"{APP_NAME}.app")
     parser.add_argument("--identity", help="Installed Developer ID Application name or certificate fingerprint")
     parser.add_argument("--notary-profile", default=os.environ.get("FLIXIFY_NOTARY_PROFILE"))
-    parser.add_argument("--organization-identity-policy", type=Path,
-                        help="Reviewed corporate enrollment and certificate approval; individual identity is blocked")
+    policies = parser.add_mutually_exclusive_group()
+    policies.add_argument("--organization-identity-policy", type=Path,
+                          help="Reviewed organization enrollment and certificate approval")
+    policies.add_argument("--identity-policy", type=Path,
+                          help="Reviewed organization or explicitly approved individual identity and public-name visibility")
     args = parser.parse_args()
-    print(package_release(args.app.resolve(), args.identity, args.notary_profile, args.organization_identity_policy))
+    print(package_release(args.app.resolve(), args.identity, args.notary_profile, args.organization_identity_policy,
+                          identity_policy=args.identity_policy))

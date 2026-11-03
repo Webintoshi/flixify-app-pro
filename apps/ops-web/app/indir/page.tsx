@@ -50,7 +50,7 @@ export default function DownloadsPage() {
         <span className={styles.eyebrow}>FLIXIFY PRO · UYGULAMALAR</span>
         <h1>Flixify’ı cihazına indir.</h1>
         <p>TV’nde, Mac’inde veya Windows bilgisayarında aynı kullanıcı kodunla giriş yap. Cihazına uygun sürümü seç.</p>
-        <nav className={styles.platformLinks} aria-label="Uygulama seç"><a href="#android-tv">Android TV</a><a href="#macos">macOS · Test</a><a href="#windows">Windows · Test</a></nav>
+        <nav className={styles.platformLinks} aria-label="Uygulama seç"><a href="#android-tv">Android TV</a><a href="#macos">macOS{macDownload.notarized ? "" : " · Test"}</a><a href="#windows">Windows · Test</a></nav>
         <div className={styles.platforms}>
           <section className={styles.platform} id="android-tv" aria-labelledby="android-tv-heading">
             <h2 id="android-tv-heading">Android TV</h2>
@@ -67,14 +67,14 @@ export default function DownloadsPage() {
           <section className={styles.platform} id="macos" aria-labelledby="macos-heading">
             <div className={styles.platformTitle}><h2 id="macos-heading">macOS</h2><span className={styles.testBadge}>{macDownload.status}</span></div>
             <p>Film, dizi ve canlı TV’yi Mac’inde izle. Favorilerin ve kullanıcı kodun aynı hesapta.</p>
-            <a className={styles.download} href={macDownload.href} download={macDownload.filename} aria-describedby="macos-release macos-notice" onClick={() => trackAnalyticsDownload("macos", macDownload)}>macOS DMG indir <span aria-hidden="true">↓</span></a>
+            <a className={styles.download} href={macDownload.href} download={macDownload.filename} aria-describedby="macos-release macos-notice" onClick={() => trackAnalyticsDownload("macos", macDownload)}>macOS indir <span aria-hidden="true">↓</span></a>
             <p className={styles.release} id="macos-release">{macDownload.version} · {macDownload.minimumMacOS}<br/>{macDownload.architecture} · {macDownload.size}</p>
             <p className={styles.notice} id="macos-notice">{macDownload.notice}</p>
             <h3>Mac’e nasıl kurulur?</h3>
             <ol className={styles.steps}>
-              <li>DMG dosyasını Mac’ine indir ve aç.</li>
+              <li>{macDownload.filename.endsWith(".zip") ? "ZIP dosyasını Mac’ine indir ve çift tıklayarak aç." : "DMG dosyasını Mac’ine indir ve aç."}</li>
               <li>Flixify Pro’yu Uygulamalar klasörüne sürükle.</li>
-              <li>Uygulamalar’dan Flixify Pro’yu aç ve mevcut 16 karakterli kullanıcı kodunla giriş yap.</li>
+              <li>Uygulamalar’dan Flixify Pro’yu aç. QR kodunu telefonunla okut veya mevcut 16 karakterli kullanıcı kodunla giriş yap.</li>
             </ol>
           </section>
           <section className={styles.platform} id="windows" aria-labelledby="windows-heading">

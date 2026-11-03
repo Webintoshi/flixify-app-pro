@@ -1,6 +1,6 @@
 # Flixify Pro for macOS
 
-Native SwiftUI/AppKit client for macOS 13 or newer, using the current Android TV feature contract. Bundle identifier `vip.flixify.mac`; version 1.0.1, build 3. Public builds contain both Apple Silicon and Intel code.
+Native SwiftUI/AppKit client for macOS 13 or newer, using the current Android TV feature contract. Bundle identifier `vip.flixify.mac`; version 1.0.2, build 4. Public builds contain both Apple Silicon and Intel code.
 
 The client uses the existing account-code, provider-session, personal-library and welcome-offer services. Provider metadata and media requests originate from the viewer's Mac. The TV branding, discovery collections, live channel identities and access/payment policies remain the reference. Keyboard, pointer, menus and a resizable window adapt those features to the desktop.
 
@@ -61,7 +61,7 @@ Decoded frames count video starts; decoder EOF counts completion. Progress has o
 
 ## Public distribution
 
-Public packaging is a separate, deliberately strict operation. It is currently suspended until an **organization** signing identity is reviewed and approved. An individual Developer ID certificate exposes its holder's legal name; that subject cannot be hidden from a recipient inspecting the signature. An installed **Developer ID Application** organization certificate with its private key and a previously configured `notarytool` Keychain profile are required. The local Apple Development certificate is not sufficient. Certificate creation, Apple account sign-in and credential setup are user-controlled; the scripts never create credentials or change security settings.
+Public packaging is a separate, deliberately strict operation. It requires a reviewed signing-identity approval, an installed **Developer ID Application** certificate with its private key, and a previously configured `notarytool` Keychain profile. Organization enrollment remains the default policy. An individual identity is permitted only after the owner explicitly accepts that the certificate exposes their legal name and approves public distribution. That name cannot be hidden from a recipient inspecting the signature. The local Apple Development certificate is not sufficient. Certificate creation, Apple account sign-in and credential setup are user-controlled; the scripts never create credentials or change security settings.
 
 After the release app and credentials are ready:
 
@@ -74,7 +74,11 @@ python3 scripts/package-release.py \
 
 `FLIXIFY_NOTARY_PROFILE` can provide the profile name instead. Do not put passwords, private keys or certificate exports in the repository.
 
-The private reviewed identity policy has schema 1, `identityKind: "organization"`, `organizationEnrollmentVerified: true`, `publicDistributionApproved: true`, and exact `teamIdentifier`/`certificateSha1` values for the approved certificate. It is an operator approval record, not a way to convert an individual Apple membership into an organization. Missing approval, a different team/certificate or a certificate subject matching a known local personal identity blocks signing and notarization before any public submission. The policy is not included in the app or update descriptor.
+The private reviewed organization policy has schema 1, `identityKind: "organization"`, `organizationEnrollmentVerified: true`, `publicDistributionApproved: true`, and exact `teamIdentifier`/`certificateSha1` values for the approved certificate. It is an operator approval record, not a way to convert an individual Apple membership into an organization. Missing approval, a different team/certificate or an organization certificate subject matching a known local personal identity blocks signing and notarization before any public submission. The policy is not included in the app or update descriptor.
+
+For an explicitly approved individual identity, use `--identity-policy` instead of `--organization-identity-policy`. Its schema is exactly: `schema: 1`, `identityKind: "individual"`, `individualEnrollmentVerified: true`, `personalNameVisibilityAccepted: true`, `publicDistributionApproved: true`, plus the actual certificate's `teamIdentifier` and `certificateSha1`. The approval must be prepared only after verifying the real enrollment/certificate and recording the owner's decision. The old organization option continues to reject individual policies; neither option can omit approval or accept an unavailable certificate.
+
+Individual signing does not disable the privacy audit. For each Mach-O, the audit verifies the actual signature and team, extracts the leaf certificate, requires its SHA-1 to match the reviewed certificate, and locates it inside the embedded CMS signature of every architecture. Only the exact approved common-name and organization-name subject values are exempted from the known-name scan. Copies in resources, executable data or other certificate fields still fail. Developer paths, temporary paths, email, credential URLs and private/source files use the original bytes and remain blocked. The redacted proof records the identity kind and explicit name-visibility acceptance without copying the name.
 
 The public pipeline:
 
@@ -85,9 +89,29 @@ The public pipeline:
 5. Creates the drag-to-Applications DMG, signs it, separately notarizes it, staples it and verifies both its ticket and Gatekeeper assessment.
 6. Mounts the image read-only, validates the contained app again, then writes the immutable DMG, proof and update descriptor under `dist/public/`.
 
-Expected public files are `Flixify-Pro-1.0.1-macos-universal.dmg`, `release-proof.json` and `flixify-macos-update.json`. The descriptor uses the fixed `https://flixify.vip/downloads/` origin and includes the final DMG's size and SHA256. Publication to the existing website is performed only after the real release checks pass.
+Expected public files are `Flixify-Pro-1.0.2-build4-macos-universal.dmg`, `release-proof.json` and `flixify-macos-update.json`. The descriptor uses the fixed `https://flixify.vip/downloads/` origin and includes the final DMG's size and SHA256. An existing version/build package is never overwritten. Publication to the existing website is performed only after the real release checks pass.
 
 Missing signing credentials, rejected/incomplete notarization or failed Gatekeeper checks stop public packaging. Development output must not be published as an approved release. The workflow does not disable Gatekeeper, remove quarantine metadata, weaken certificate verification or request unnecessary entitlements. Intel slices are inspected during packaging; execution on a physical Intel Mac requires separate QA.
+
+### Distribute an app already accepted through Xcode
+
+When Xcode Organizer has completed notarization and exported the accepted, stapled app, a separate ZIP workflow can distribute that app without a command-line notary profile:
+
+```sh
+python3 scripts/package-notarized-zip.py \
+  --app "/operator/export/Flixify Pro.app" \
+  --identity-policy "/operator/private/approved-identity-policy.json"
+```
+
+The tool never signs, staples or alters the accepted input. It requires the universal release metadata and bundled dependencies, strict signatures for all architectures, the exact reviewed Developer ID certificate/team, the privacy audit, an existing valid stapled ticket, and a successful Gatekeeper assessment whose source is `Notarized Developer ID`. An optional `--xcode-notarization-id` records only provenance; a UUID never substitutes for those actual checks.
+
+It creates a ZIP with Apple's `ditto --keepParent --sequesterRsrc`, extracts it into a fresh private directory, and repeats all trust checks. File bytes, permissions, internal symlinks and file extended attributes must match the source. Directory extended attributes are excluded from archive equality because `ditto --keepParent` does not preserve all app-root directory metadata; a separate full source-metadata manifest still proves the original accepted app was not changed. Both source and extracted apps must retain valid tickets and Gatekeeper acceptance. A real macOS `ditto`/`xattr` integration test covers the archive contract.
+
+All extended-attribute names and values are also privacy-checked on both the source and extracted app, including directory attributes. Known personal identifiers, user/temporary paths, non-public email addresses and credential URLs block packaging; raw and UTF-16 text forms are checked. Approved certificate-subject exceptions apply only inside verified Mach-O CMS signatures, never to arbitrary extended attributes. The tool rejects private metadata without removing or modifying it, and redacted source/extracted attribute-audit results are included in the proof.
+
+Outputs are immutable under `dist/public-zip/1.0.2-build4/`: `Flixify-Pro-1.0.2-build4-macos-universal.zip`, `zip-release-proof.json` and `flixify-macos-zip.json`. The separate descriptor has `format: "zip"` and `zipUrl`; it is not written to or consumed by the existing DMG-only updater. This is a website-download distribution path. Users extract the ZIP, drag Flixify Pro into Applications and open it normally.
+
+Apple documents that a ZIP itself cannot receive a staple: distribute a new ZIP containing the already-stapled app. See [Customizing the notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow). The original two-stage notarized-DMG workflow and all its gates remain unchanged.
 
 ## Release metadata privacy
 
