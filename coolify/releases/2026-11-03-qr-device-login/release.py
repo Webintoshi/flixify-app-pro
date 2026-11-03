@@ -26,6 +26,7 @@ WORKER=('flixify-worker:packages-8fa66d103053-20261101','sha256:9db57cd7e0ddfd37
 DB='sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea'
 ENV_SHA='c64b280b5c24f67964259a5de5e8aa883bd9d925ec1336614cd23e8fb5f46a42'
 FENCE_SHA='5d904f0016bf2274e146b54a713295fb80db1cc1a1f9e42533a290099868574b'
+MIN_CUTOVER_FREE_BYTES=4*1024**3
 
 
 def configure(revision,candidates):
@@ -173,7 +174,7 @@ def main():
         if protected()!=before:raise api.GateError('protected_runtime_or_environment_changed')
         print('qr_'+(action or 'preflight')+'_verified; additive_schema_retained')
     if action:
-        if action!='rollback' and shutil.disk_usage('/var/lib/docker').free<8*1024**3:raise api.GateError('requires_8GiB_no_pruning')
+        if action!='rollback' and shutil.disk_usage('/var/lib/docker').free<MIN_CUTOVER_FREE_BYTES:raise api.GateError('cutover_requires_4GiB_no_pruning')
         with reviewed.release_lock():run()
     else:run()
 

@@ -279,9 +279,45 @@ class AdapterTests(unittest.TestCase):
                 self.assertEqual(events,['lock','protected','rollback','protected','unlock'])
                 for action in ('--apply','--recreate'):
                     with self.subTest(action=action), patch.object(sys,'argv',argv+[action]):
-                        with self.assertRaisesRegex(release.api.GateError,'requires_8GiB_no_pruning'):
+                        with self.assertRaisesRegex(release.api.GateError,'cutover_requires_4GiB_no_pruning'):
                             release.main()
                 self.assertEqual(events,['lock','protected','rollback','protected','unlock'])
+
+    def test_cutover_disk_boundary_preserves_locked_metadata_and_recreation(self):
+        with patch.dict(sys.modules, {'yaml': ModuleType('yaml')}):
+            release=load('qr_test_cutover_disk_boundary','release.py')
+        with tempfile.TemporaryDirectory() as directory:
+            receipt=Path(directory)/'receipt.json';digest='e'*64
+            receipt.write_text(json.dumps({'migrationSha256':digest,'applied':True,'postgresTestsPassed':True}))
+            argv=['release.py','--revision','b'*40,'--api-candidate-id','sha256:'+'c'*64,
+                  '--web-candidate-id','sha256:'+'d'*64,'--migration-receipt',str(receipt),
+                  '--migration-sha256',digest]
+            for action in ('--apply','--recreate'):
+                for available in (4*1024**3-1,4*1024**3,5*1024**3):
+                    with self.subTest(action=action,available=available):
+                        events=[]
+                        @contextlib.contextmanager
+                        def locked():
+                            events.append('lock')
+                            try:yield
+                            finally:events.append('unlock')
+                        with patch.object(sys,'argv',argv+[action]), \
+                             patch.object(release,'protected',side_effect=lambda:events.append('protected') or {}), \
+                             patch.object(release.reviewed,'release_lock',locked), \
+                             patch.object(release.guard,'preflight',side_effect=lambda stage:events.append(stage) or ({},b'compose',b'env',{}, {},{})), \
+                             patch.object(release.guard,'sync_images',side_effect=lambda *args:events.append('sync')), \
+                             patch.object(release.guard,'recreate',side_effect=lambda *args:events.append('recreate')), \
+                             patch.object(release.guard,'command',side_effect=AssertionError('Unexpected build, pull or prune')), \
+                             patch.object(release.shutil,'disk_usage',return_value=SimpleNamespace(free=available)), \
+                             contextlib.redirect_stdout(io.StringIO()):
+                            if available<4*1024**3:
+                                with self.assertRaisesRegex(release.api.GateError,'cutover_requires_4GiB_no_pruning'):
+                                    release.main()
+                                self.assertEqual(events,[])
+                            else:
+                                release.main()
+                                stage,operation=('source','sync') if action=='--apply' else ('target','recreate')
+                                self.assertEqual(events,['lock','protected',stage,operation,'protected','unlock'])
 
     def test_failed_recreate_uses_safe_rollback_and_propagates_cleanup_failure(self):
         with patch.dict(sys.modules, {'yaml': ModuleType('yaml')}):
