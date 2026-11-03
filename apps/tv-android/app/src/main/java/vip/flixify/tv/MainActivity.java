@@ -551,6 +551,9 @@ public final class MainActivity extends Activity {
         background.setClipToPadding(false);background.setPadding(TvUi.dp(this,sizing.inset),TvUi.dp(this,14),TvUi.dp(this,sizing.inset),TvUi.dp(this,14));
         LinearLayout center=TvUi.column(this);center.setGravity(Gravity.CENTER);background.addView(center,new ScrollView.LayoutParams(-1,-2));
         loginColumns=TvUi.row(this);loginColumns.setGravity(Gravity.CENTER);center.addView(loginColumns,new LinearLayout.LayoutParams(-1,-2));
+        loginColumns.addOnLayoutChangeListener((v,l,t,r,b,oldL,oldT,oldR,oldB)->{
+            if(l!=oldL || t!=oldT || r!=oldR || b!=oldB)revealLoginControl(false);
+        });
         loginPairingPanel=TvUi.column(this);loginPairingPanel.setGravity(Gravity.CENTER_HORIZONTAL);loginColumns.addView(loginPairingPanel,new LinearLayout.LayoutParams(TvUi.dp(this,240),-2));
         TextView phoneTitle=TvUi.text(this,"Telefonla giriş",23,TvUi.WHITE);TvUi.heading(phoneTitle);loginPairingPanel.addView(phoneTitle,TvUi.space(this,-1,-2));
         TextView phoneHint=TvUi.text(this,"Telefonunuzun kamerasıyla tarayın ve eşleşen kodu onaylayın.",15,TvUi.MUTED);phoneHint.setGravity(Gravity.CENTER);loginPairingPanel.addView(phoneHint,TvUi.space(this,-1,-2));
@@ -597,6 +600,16 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams manual=new LinearLayout.LayoutParams(TvUi.dp(this,Math.min(440,sideBySide?available-272:available)),-2);
         if(sideBySide)manual.leftMargin=TvUi.dp(this,32);else manual.topMargin=TvUi.dp(this,24);loginForm.setLayoutParams(manual);
     }
+    private void revealLoginControl(boolean message){
+        final ScrollView scroll=loginScroll;
+        if(scroll==null)return;
+        scroll.post(()->{
+            if(destroyed || stopped || repository.hasSession() || scroll!=loginScroll)return;
+            View target=(message || loginCode!=null && !loginCode.isEnabled())?loginMessage:getCurrentFocus();
+            if(target!=null && target.isAttachedToWindow() && target.getWidth()>0 && target.getHeight()>0)
+                target.requestRectangleOnScreen(new android.graphics.Rect(0,0,target.getWidth(),target.getHeight()),true);
+        });
+    }
     private void clearPairingBitmap(){if(pairingQr!=null)pairingQr.setImageDrawable(null);if(pairingBitmap!=null){pairingBitmap.recycle();pairingBitmap=null;}pairingPng="";}
     private void renderPairing(DeviceLogin.ViewState state){
         boolean show=state.display!=null && state.remainingSeconds>0 && ("pending".equals(state.status) || "slow_down".equals(state.status) || "network".equals(state.status));
@@ -625,7 +638,7 @@ public final class MainActivity extends Activity {
         }
         if(deviceLogin!=null)deviceLogin.pause();
         ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(loginCode.getWindowToken(),0);
-        final long ticket=++generation,analyticsTicket=analytics.epoch(); loginMessage.setText("Giriş yapılıyor…"); loginCode.setEnabled(false);
+        final long ticket=++generation,analyticsTicket=analytics.epoch(); loginMessage.setText("Giriş yapılıyor…"); loginCode.setEnabled(false);revealLoginControl(true);
         repository.login(code,new TvRepository.Callback<Account>() {
             public void onResult(Account account) {
                 if(destroyed || stopped || ticket!=generation)return;

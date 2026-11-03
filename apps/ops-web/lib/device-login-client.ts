@@ -5,7 +5,7 @@ type Call=(path:string,body:unknown,signal?:AbortSignal)=>Promise<any>;
 export function deviceReturnPath(code:string):string|null {return /^[A-HJ-NP-Z]{4}-[A-HJ-NP-Z]{4}$/.test(code)?`/cihaz?code=${code}`:null;}
 function validChallenge(value:Challenge) {
   if(!value || !/^[a-f0-9-]{36}$/i.test(value.requestId) || !/^[A-Za-z0-9_-]{43}$/.test(value.deviceSecret) || !deviceReturnPath(value.userCode))return false;
-  if(value.verificationUri!=='https://flixify.vip/cihaz'||value.verificationUriComplete!==`https://flixify.vip${deviceReturnPath(value.userCode)}`||value.expiresInSeconds!==180||value.intervalSeconds<2||value.intervalSeconds>30)return false;
+  if(value.verificationUri!=='https://flixify.vip/cihaz'||value.verificationUriComplete!==`https://flixify.vip${deviceReturnPath(value.userCode)}`||value.expiresInSeconds!==180||!Number.isInteger(value.intervalSeconds)||value.intervalSeconds<2||value.intervalSeconds>60)return false;
   if(typeof value.qrPngBase64!=='string'||value.qrPngBase64.length>200000||!/^[A-Za-z0-9+/]+=*$/.test(value.qrPngBase64))return false;
   try{const bytes=Uint8Array.from(atob(value.qrPngBase64),v=>v.charCodeAt(0));const view=new DataView(bytes.buffer);return bytes.length>=24&&view.getUint32(0)===0x89504e47&&view.getUint32(4)===0x0d0a1a0a&&view.getUint32(12)===0x49484452&&view.getUint32(16)>=128&&view.getUint32(16)<=1024&&view.getUint32(20)===view.getUint32(16);}catch{return false;}
 }
@@ -39,6 +39,7 @@ export class DeviceLoginClient {
       if(result.status==='authorized'){if(!validSession(result.session))throw Error('invalid_session');this.pendingSession={accessToken:result.session.accessToken,refreshToken:result.session.refreshToken,user:{id:result.session.user.id,codeSuffix:result.session.user.codeSuffix}};this.stopTimers();this.retrySave();return;}
       if(['denied','cancelled','expired','complete'].includes(result.status)){this.stopTimers();this.emit({phase:result.status});return;}
       if(result.status!=='pending'&&result.status!=='slow_down')throw Error('invalid_status');
+      if(result.intervalSeconds!==undefined&&(!Number.isInteger(result.intervalSeconds)||result.intervalSeconds<2||result.intervalSeconds>60))throw Error('invalid_interval');
       this.interval=Math.min(60,Math.max(this.interval,result.intervalSeconds??(result.status==='slow_down'?this.interval+5:2)));this.schedule(epoch);
     }catch{if(epoch===this.epoch){this.interval=Math.min(60,this.interval+3);this.schedule(epoch);}}
     finally{if(epoch===this.epoch)this.inFlight=false;}

@@ -8,8 +8,9 @@ export function DeviceLoginQr({save,onSuccess,onManual}:{save:(session:LinkedSes
   const [state,setState]=useState<DeviceDisplay>({phase:'loading'});
   const client=useRef<DeviceLoginClient|null>(null);const callbacks=useRef({save,onSuccess});callbacks.current={save,onSuccess};
   useEffect(()=>{
-    const initial=localStorage.getItem('flixify-public-session');
-    const active=new DeviceLoginClient((path,body,signal)=>apiRequest(path,{method:'POST',body,signal,skipAuthRefresh:true}),session=>callbacks.current.save(session),next=>{setState(next);if(next.phase==='adopted')callbacks.current.onSuccess();},()=>performance.now(),()=>document.visibilityState!=='hidden'&&localStorage.getItem('flixify-public-session')===initial);
+    let initial:string|null,installationId:string;
+    try{initial=localStorage.getItem('flixify-public-session');installationId=localStorage.getItem('flixify-installation-id')||crypto.randomUUID();localStorage.setItem('flixify-installation-id',installationId);}catch{setState({phase:'error',message:'Giriş için tarayıcının depolama iznini açıp tekrar dene.'});return;}
+    const active=new DeviceLoginClient((path,body,signal)=>apiRequest(path,{method:'POST',body:path.endsWith('/start')?{...(body as object),installationId}:body,signal,skipAuthRefresh:true}),session=>callbacks.current.save(session),next=>{setState(next);if(next.phase==='adopted')callbacks.current.onSuccess();},()=>performance.now(),()=>{try{return document.visibilityState!=='hidden'&&localStorage.getItem('flixify-public-session')===initial;}catch{return false;}});
     client.current=active;void active.start();
     const changed=()=>{if(localStorage.getItem('flixify-public-session')!==initial)active.cancel();};
     const hidden=()=>{if(document.visibilityState==='hidden')active.pause();};

@@ -41,6 +41,11 @@ public class DeviceLoginRemoteTest {
         key(KeyEvent.KEYCODE_DPAD_RIGHT);instrumentation.runOnMainSync(()->assertTrue(activity.getCurrentFocus() instanceof EditText));key(KeyEvent.KEYCODE_DPAD_DOWN);instrumentation.runOnMainSync(()->assertEquals("Giriş yap",((TextView)activity.getCurrentFocus()).getText().toString()));
     }
     @Test public void manualSubmissionInvalidatesPendingQrBeforeSigningIn(){
-        instrumentation.runOnMainSync(()->((EditText)activity.getCurrentFocus()).setText("ABCD1234EFGH5678"));key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_CENTER);assertEquals(1,attempt.cancelled);assertTrue(repository.hasSession());
+        instrumentation.runOnMainSync(()->((EditText)activity.getCurrentFocus()).setText("1234567890123456"));
+        key(KeyEvent.KEYCODE_DPAD_DOWN);
+        instrumentation.runOnMainSync(()->assertEquals("Giriş yap",((TextView)activity.getCurrentFocus()).getText().toString()));
+        key(KeyEvent.KEYCODE_DPAD_CENTER);
+        assertEquals(1,attempt.cancelled);
+        instrumentation.runOnMainSync(()->{assertTrue(repository.hasSession());assertNotNull("Existing welcome/access flow reaches catalogue",text(activity.getWindow().getDecorView(),"Uzay Yolculuğu"));});
     }
 }
