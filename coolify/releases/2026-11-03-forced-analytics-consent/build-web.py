@@ -93,7 +93,8 @@ def protected_snapshot() -> dict:
         row = rows[0]
         tag, image = expected[name]
         if (row.get("Image") != image or row.get("Config", {}).get("Image") != tag
-                or row.get("State", {}).get("Running") is not True or row.get("RestartCount") != 0):
+                or row.get("State", {}).get("Running") is not True
+                or row.get("State", {}).get("Health", {}).get("Status") == "unhealthy"):
             raise GateError("protected_container_drift:" + name)
         result[name] = {
             "id": row.get("Id"), "image": row.get("Image"),
