@@ -290,8 +290,19 @@ public class MainRemoteTest {
         repository.failCatalog=false;click();visible("Uzay Yolculuğu");
     }
     @Test public void accountLogoutStaysReachableDuringLoadingAndAfterFailure() {
+        repository.failAccess=true;
+        assertAccountLogoutStaysReachableDuringPendingAuthorityAndFailure(false);
+    }
+    @Test public void accountLogoutStaysReachableDuringCachedRefreshAndAfterFailure() {
+        assertAccountLogoutStaysReachableDuringPendingAuthorityAndFailure(true);
+    }
+    private void assertAccountLogoutStaysReachableDuringPendingAuthorityAndFailure(boolean cached) {
         repository.delayAccount=true;repository.failAccount=true;
-        launch(true);down(5);click();visible("Hesap yükleniyor…");visible("Oturumu kapat");
+        launch(true);down(5);click();
+        instrumentation.runOnMainSync(()->assertNotNull("Account authority must remain pending during remote navigation",repository.delayedAccount));
+        if(cached){visible("Test Paketi");absent("Hesap yükleniyor…");}
+        else{visible("Hesap yükleniyor…");absent("Test Paketi");assertEquals("Unverified startup must not fetch provider catalogs",0,repository.catalogRequests);}
+        visible("Oturumu kapat");
         key(KeyEvent.KEYCODE_DPAD_RIGHT);focused("Oturumu kapat");key(KeyEvent.KEYCODE_BACK);focused("Hesabım");
         instrumentation.runOnMainSync(()->repository.releaseDelayedAccount());idle();visible("Hesap bilgisi alınamadı");
         key(KeyEvent.KEYCODE_DPAD_RIGHT);focused("Oturumu kapat");down(1);focused("Tekrar dene");key(KeyEvent.KEYCODE_DPAD_UP);focused("Oturumu kapat");click();

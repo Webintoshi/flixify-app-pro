@@ -7,6 +7,7 @@ import android.os.SystemClock;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -37,8 +38,23 @@ public final class PosterSoundRemoteTest {
     @After public void tearDown(){InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{
         PosterFocusSound.setOutputFactoryForTests(null);TvApplication.setRepositoryForTests(null);
     });}
-    ActivityScenario<MainActivity> launch(){ActivityScenario<MainActivity> scenario=ActivityScenario.launch(new Intent(ApplicationProvider.getApplicationContext(),MainActivity.class));key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_CENTER);return scenario;}
+    ActivityScenario<MainActivity> launch(){ActivityScenario<MainActivity> scenario=ActivityScenario.launch(new Intent(ApplicationProvider.getApplicationContext(),MainActivity.class));awaitCatalogSurface(scenario);key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_CENTER);awaitCatalogSurface(scenario);return scenario;}
     void key(int code){InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(code);InstrumentationRegistry.getInstrumentation().waitForIdleSync();}
+    void awaitCatalogSurface(ActivityScenario<MainActivity> scenario){
+        long deadline=SystemClock.uptimeMillis()+3000;AtomicBoolean ready=new AtomicBoolean();String[] actual={""};
+        do{scenario.onActivity(a->{
+            ViewGroup content=a.findViewById(android.R.id.content);View overlay=content.findViewWithTag("tv-startup-overlay"),surface=content.findViewWithTag("tv-discovery"),search=findSearch(content);android.graphics.Rect visible=new android.graphics.Rect();
+            ready.set(a.hasWindowFocus() && (overlay==null || !overlay.isShown()) && surface!=null && surface.isAttachedToWindow() && surface.isLaidOut() && surface.getWidth()>0 && surface.getHeight()>0 && surface.getGlobalVisibleRect(visible) && search!=null && search.getWidth()>0 && search.getHeight()>0 && search.getGlobalVisibleRect(visible));
+            actual[0]="window="+a.hasWindowFocus()+", focus="+(a.getCurrentFocus()==null?"none":a.getCurrentFocus().getTag())+", overlay="+(overlay!=null && overlay.isShown())+", discovery="+(surface!=null);
+        });if(!ready.get())SystemClock.sleep(25);}while(!ready.get() && SystemClock.uptimeMillis()<deadline);
+        assertTrue("Catalogue surface is ready before remote navigation; "+actual[0],ready.get());
+    }
+    View findSearch(View view){
+        if(view.getVisibility()!=View.VISIBLE)return null;
+        if(view instanceof TextView && "Ara".contentEquals(((TextView)view).getText()))return view;
+        if(view instanceof ViewGroup)for(int n=0;n<((ViewGroup)view).getChildCount();n++){View found=findSearch(((ViewGroup)view).getChildAt(n));if(found!=null)return found;}
+        return null;
+    }
     void enterGrid(ActivityScenario<MainActivity> scenario){enterGrid(scenario,repository.movie.key());}
     void enterGrid(ActivityScenario<MainActivity> scenario,String first){key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_DOWN);assertFocus(scenario,first);}
     void assertFocus(ActivityScenario<MainActivity> scenario,String key){

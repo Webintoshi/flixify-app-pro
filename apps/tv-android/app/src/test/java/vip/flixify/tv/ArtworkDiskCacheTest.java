@@ -6,6 +6,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -90,5 +92,36 @@ public class ArtworkDiskCacheTest {
         assertTrue(cache.write("scope-a",ADDRESS,bytes(1),()->true));assertTrue(cache.write("scope-b",ADDRESS,bytes(2),()->true));
         cache.remove("scope-a",ADDRESS);assertNull(cache.read("scope-a",ADDRESS));assertArrayEquals(bytes(2),cache.read("scope-b",ADDRESS));
         cache.clear();assertNull(cache(directory,1024).read("scope-b",ADDRESS));assertEquals(0,directory.listFiles().length);
+    }
+    @Test public void optionalWritesAreBoundedAndFinishWritesWaitsForAcceptedEntries() throws Exception {
+        File directory=temporary.newFolder();CountDownLatch writing=new CountDownLatch(1),release=new CountDownLatch(1),finished=new CountDownLatch(1);
+        ArtworkDiskCache cache=new ArtworkDiskCache(directory,1024,7000,0,now::get,()->{
+            writing.countDown();try{release.await(5,TimeUnit.SECONDS);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}return 4096;
+        });
+        Thread drain=new Thread(()->{cache.finishWrites();finished.countDown();});
+        try {
+            assertTrue(cache.writeLater("scope","first",bytes(1),()->true));assertTrue(writing.await(2,TimeUnit.SECONDS));
+            assertTrue(cache.writeLater("scope","second",bytes(2),()->true));assertTrue(cache.writeLater("scope","third",bytes(3),()->true));
+            assertFalse("A full optional queue drops persistence instead of blocking delivery",cache.writeLater("scope","overflow",bytes(4),()->true));
+            drain.start();assertFalse("Drain must include the active and queued accepted writes",finished.await(100,TimeUnit.MILLISECONDS));
+            release.countDown();assertTrue(finished.await(3,TimeUnit.SECONDS));
+            assertArrayEquals(bytes(1),cache.read("scope","first"));assertArrayEquals(bytes(2),cache.read("scope","second"));assertArrayEquals(bytes(3),cache.read("scope","third"));
+            assertNull(cache.read("scope","overflow"));
+        } finally {release.countDown();cache.finishWrites();drain.join(3000);}
+    }
+    @Test public void clearRevokesActiveAndQueuedOptionalWritesWithoutWaitingForSlowDisk() throws Exception {
+        File directory=temporary.newFolder();CountDownLatch writing=new CountDownLatch(1),release=new CountDownLatch(1),cleared=new CountDownLatch(1);
+        ArtworkDiskCache cache=new ArtworkDiskCache(directory,1024,7000,0,now::get,()->{
+            writing.countDown();try{release.await(5,TimeUnit.SECONDS);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}return 4096;
+        });
+        Thread clear=new Thread(()->{cache.clear();cleared.countDown();});
+        try {
+            assertTrue(cache.writeLater("scope","active",bytes(1),()->true));assertTrue(writing.await(2,TimeUnit.SECONDS));
+            assertTrue(cache.writeLater("scope","queued",bytes(2),()->true));clear.start();
+            assertTrue("Clear revokes writes without waiting for the held disk operation",cleared.await(500,TimeUnit.MILLISECONDS));
+            release.countDown();cache.finishWrites();
+            assertNull(cache.read("scope","active"));assertNull(cache.read("scope","queued"));assertEquals(0,directory.listFiles().length);
+            assertTrue(cache.write("scope","current",bytes(3),()->true));assertArrayEquals(bytes(3),cache.read("scope","current"));
+        } finally {release.countDown();cache.finishWrites();clear.join(3000);}
     }
 }

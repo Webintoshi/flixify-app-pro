@@ -13,6 +13,7 @@ public final class LiveChannelCuration {
     private static final Map<String,String> COUNTRY_ALIASES=new HashMap<>();
     static {for(String pair:"UK:GB USA:US TUR:TR GER:DE FRA:FR ITA:IT ESP:ES POR:PT GRE:GR NED:NL RUS:RU BRA:BR COL:CO KSA:SA UAE:AE".split(" ")){String[] p=pair.split(":");COUNTRY_ALIASES.put(p[0],p[1]);}}
     private static final String[][] COUNTRY_NAMES={{"GB","united kingdom|great britain|britain|england|ingiltere"},{"US","united states|united states of america|america|abd"},{"TR","turkey|turkiye"},{"DE","germany|deutschland|almanya"},{"FR","france|fransa"},{"IT","italy|italia|italya"},{"ES","spain|espana|ispanya"},{"PT","portugal|portekiz"},{"BR","brazil|brasil|brezilya"},{"SE","sweden|sverige|isvec"},{"NO","norway|norge|norvec"},{"DK","denmark|danmark|danimarka"},{"FI","finland|finlandiya"},{"NL","netherlands|nederland|holland|hollanda"},{"BE","belgium|belgique|belgien|belcika"},{"CH","switzerland|schweiz|suisse|isvicre"},{"AT","austria|osterreich|avusturya"},{"RU","russia|rusya"},{"UA","ukraine|ukrayna"},{"BY","belarus|beyaz rusya"},{"MX","mexico|meksika"},{"CO","colombia|kolombiya"},{"CA","canada|kanada"},{"AU","australia|avustralya"},{"NZ","new zealand|yeni zelanda"},{"PL","poland|polska|polonya"},{"RO","romania|romanya"},{"GR","greece|ellada|yunanistan"},{"BG","bulgaria|bulgaristan"},{"HU","hungary|macaristan"},{"HR","croatia|hirvatistan"},{"RS","serbia|sirbistan"},{"BA","bosnia|bosna"},{"AL","albania|arnavutluk"},{"AZ","azerbaijan|azerbaycan"},{"GE","georgia|gurcistan"},{"AM","armenia|ermenistan"},{"CZ","czech republic|czechia|cekya"},{"SK","slovakia|slovakya"},{"SI","slovenia|slovenya"},{"MK","macedonia|makedonya"},{"ME","montenegro|karadag"},{"MD","moldova"},{"IR","iran"},{"IQ","iraq|irak"},{"SA","saudi arabia|suudi arabistan"},{"AE","united arab emirates|birlesik arap emirlikleri"},{"QA","qatar|katar"},{"EG","egypt|misir"},{"IL","israel|israil"},{"MA","morocco|fas"},{"TN","tunisia|tunus"},{"DZ","algeria|cezayir"},{"IN","india|hindistan"},{"PK","pakistan"},{"BD","bangladesh"},{"AF","afghanistan|afganistan"},{"NP","nepal"},{"LK","sri lanka"},{"CN","china|cin"},{"JP","japan|japonya"},{"KR","south korea|korea|guney kore"},{"ID","indonesia|endonezya"},{"MY","malaysia|malezya"},{"SG","singapore|singapur"},{"TH","thailand|tayland"},{"VN","vietnam"},{"PH","philippines|filipinler"},{"ZA","south africa|guney afrika"},{"NG","nigeria|nijerya"},{"KE","kenya"},{"GH","ghana"},{"AR","argentina|arjantin"},{"CL","chile|sili"},{"PE","peru"},{"VE","venezuela|venezüella"},{"EC","ecuador|ekvador"},{"UY","uruguay"},{"PY","paraguay"},{"BO","bolivia|bolivya"},{"CR","costa rica"},{"PA","panama"},{"DO","dominican republic|dominik cumhuriyeti"},{"IE","ireland|irlanda"},{"IS","iceland|izlanda"},{"EE","estonia|estonya"},{"LV","latvia|letonya"},{"LT","lithuania|litvanya"},{"CY","cyprus|kibris"},{"MT","malta"},{"UZ","uzbekistan|ozbekistan"},{"KZ","kazakhstan|kazakistan"},{"KG","kyrgyzstan|kirgizistan"},{"TJ","tajikistan|tacikistan"},{"TM","turkmenistan"}};
+    private static final Pattern MARKS=Pattern.compile("[\\u0300-\\u036f]"),CONTROLS=Pattern.compile("[\\u0000-\\u001f\\u007f-\\u009f]"),QUOTES=Pattern.compile("[’'`\"]");
     private static final String SMALL="ꜰʜᴅᴇᴠᴄʀᴀᴡꜱᴘᴛɪɴᴏᴜʟᴋᴍʙɢᴊ",LARGE="FHDEVCRAWSPTINOULKMBGJ";
     private static final List<String> QUALITIES=Arrays.asList("fhd","hd","raw","unknown","sd","uhd");
     private static final String BOUNDARY="(?:(?<![A-Za-z0-9_])(?=[A-Za-z0-9_])|(?<=[A-Za-z0-9_])(?![A-Za-z0-9_]))";
@@ -31,7 +32,7 @@ public final class LiveChannelCuration {
     private static final String[] LANGUAGE_CODES={"ar","de","en","es","fr","it","ku","pt","ru","tr"};
     private static final Pattern[] LANGUAGES={pattern("\\b(?:arabic|arapca)\\b"),pattern("\\b(?:german|deutsch|almanca)\\b"),pattern("\\b(?:english|ingilizce|eng)\\b"),pattern("\\b(?:spanish|espanol|ispanyolca)\\b"),pattern("\\b(?:french|francais|fransizca)\\b"),pattern("\\b(?:italian|italiano|italyanca)\\b"),pattern("\\b(?:kurdish|kurtce)\\b"),pattern("\\b(?:portuguese|portugues|portekizce)\\b"),pattern("\\b(?:russian|rusca)\\b"),pattern("\\b(?:turkish|turkce)\\b")};
     private static String smallcaps(String value){StringBuilder out=new StringBuilder();for(char c:Normalizer.normalize(value==null?"":value,Normalizer.Form.NFKC).toCharArray()){int i=SMALL.indexOf(c);out.append(i<0?c:LARGE.charAt(i));}return out.toString();}
-    private static String folded(String value){return Normalizer.normalize(smallcaps(value),Normalizer.Form.NFKD).replaceAll("[\\u0300-\\u036f]","").replace('ı','i').toLowerCase(Locale.ROOT);}
+    private static String folded(String value){return MARKS.matcher(Normalizer.normalize(smallcaps(value),Normalizer.Form.NFKD)).replaceAll("").replace('ı','i').toLowerCase(Locale.ROOT);}
     private static String join(List<String> values){StringBuilder result=new StringBuilder();for(String value:values){if(result.length()>0)result.append(',');result.append(value);}return result.toString();}
     private static String country(String value){String code=value.toUpperCase(Locale.ROOT);return COUNTRY_ALIASES.containsKey(code)?COUNTRY_ALIASES.get(code):COUNTRIES.contains(code)?code:null;}
     private static final class Prefix {final String country,quality,rest;Prefix(String c,String q,String r){country=c;quality=q;rest=r;}}
@@ -61,21 +62,32 @@ public final class LiveChannelCuration {
         public final String displayName,groupKey,countryCode,quality;public final boolean hevc,eventOnly,lowBandwidth,raw;
         Description(String name,String key,String country,String quality,boolean hevc,boolean event,boolean low,boolean raw){displayName=name;groupKey=key;countryCode=country;this.quality=quality;this.hevc=hevc;eventOnly=event;lowBandwidth=low;this.raw=raw;}
     }
-    public static Description describe(String title,String groupTitle){
+    static final class GroupDetails {
+        final String country,unknownScope;final boolean sports;
+        GroupDetails(String group){
+            country=groupCountry(smallcaps(group));String normalized=folded(group);sports=pattern("\\b(?:spor|sport|sports)\\b").matcher(normalized).find();
+            unknownScope=pattern("\\s+").matcher(pattern("[^\\p{L}\\p{N}\\s]").matcher(normalized).replaceAll(" ")).replaceAll(" ").trim();
+        }
+    }
+    static Description describeForLineup(String title,String groupTitle,Map<String,GroupDetails> groups){return describe(title,groupTitle,true,groups);}
+    public static Description describe(String title,String groupTitle){return describe(title,groupTitle,false,null);}
+    private static Description describe(String title,String groupTitle,boolean lineup,Map<String,GroupDetails> groups){
         String group=groupTitle==null?"":groupTitle;
-        String original=pattern("<br\\s*/?\\s*>").matcher(smallcaps(title)).replaceAll(" ").replaceAll("[\\u0000-\\u001f\\u007f-\\u009f]"," ").trim();
-        String distribution=pattern("^\\s*\\[\\s*fubotv\\s*\\]\\s*").matcher(original).replaceFirst("");distribution=pattern("\\b(fhd|uhd|hevc|hd|sd)(?=7\\s*/\\s*24)").matcher(distribution).replaceAll("$1 ");distribution=pattern("(7\\s*/\\s*24)(?=canl[ıi])").matcher(distribution).replaceAll("$1 ");Prefix p=prefix(distribution);String fromGroup=groupCountry(smallcaps(group)),country=p.country==null?fromGroup:p.country;
-        String analysis=folded(p.quality+" "+p.rest);boolean hevc=HEVC.matcher(analysis).find(),raw=pattern("\\braw\\b").matcher(analysis).find();
-        String quality=UHD.matcher(analysis).find()?"uhd":SD.matcher(analysis).find()?"sd":pattern("\\b720[pi]?\\b").matcher(analysis).find()?"hd":FHD.matcher(analysis).find()?"fhd":pattern("\\bhd\\b").matcher(analysis).find()?"hd":raw?"raw":"unknown";
+        GroupDetails details=groups==null?null:groups.get(group);if(details==null){details=new GroupDetails(group);if(groups!=null)groups.put(group,details);}
+        String original=CONTROLS.matcher(pattern("<br\\s*/?\\s*>").matcher(smallcaps(title)).replaceAll(" ")).replaceAll(" ").trim();
+        String distribution=pattern("^\\s*\\[\\s*fubotv\\s*\\]\\s*").matcher(original).replaceFirst("");distribution=pattern("\\b(fhd|uhd|hevc|hd|sd)(?=7\\s*/\\s*24)").matcher(distribution).replaceAll("$1 ");distribution=pattern("(7\\s*/\\s*24)(?=canl[ıi])").matcher(distribution).replaceAll("$1 ");Prefix p=prefix(distribution);String fromGroup=details.country,country=p.country==null?fromGroup:p.country;
+        String analysis=lineup?"":folded(p.quality+" "+p.rest);boolean hevc=!lineup && HEVC.matcher(analysis).find(),raw=!lineup && pattern("\\braw\\b").matcher(analysis).find();
+        String quality=lineup?"":UHD.matcher(analysis).find()?"uhd":SD.matcher(analysis).find()?"sd":pattern("\\b720[pi]?\\b").matcher(analysis).find()?"hd":FHD.matcher(analysis).find()?"fhd":pattern("\\bhd\\b").matcher(analysis).find()?"hd":raw?"raw":"unknown";
         Matcher notes=pattern("\\[([^\\]]*)\\]|\\(([^)]*)\\)|\\{([^}]*)\\}").matcher(p.rest);StringBuffer display=new StringBuffer();while(notes.find()){String note=notes.group(1)!=null?notes.group(1):notes.group(2)!=null?notes.group(2):notes.group(3);notes.appendReplacement(display,Matcher.quoteReplacement(removableNote(note)?" ":notes.group()));}notes.appendTail(display);
         String name=pattern("^VIP\\s+(?=be[iıİ]n\\s*sports?|s\\s*sport|exxen\\b)").matcher(display.toString()).replaceFirst("");boolean branded4k=pattern("^\\s*(trt|bein\\s*sports?)\\s*4k(?:\\s|$)").matcher(name).find();
         name=TECHNICAL.matcher(LOW_DISPLAY.matcher(EVENT_DISPLAY.matcher(name).replaceAll(" ")).replaceAll(" ")).replaceAll(" ");
         name=pattern("\\b7\\s*[/x]\\s*24(?:\\s+canl[ıi])?\\b").matcher(name).replaceAll(" ");name=pattern("\\b(?:canl[ıi]\\s*yay[ıi]n|canl[ıi])\\s*$").matcher(name).replaceAll(" ");name=pattern("^[\\s•·|:\\-]+|[\\s•·|:\\-]+$").matcher(name).replaceAll("");name=pattern("\\s+").matcher(name).replaceAll(" ").trim();
-        name=canonicalBrand(name,pattern("\\b(?:spor|sport|sports)\\b").matcher(folded(group)).find());if(branded4k && pattern("^(?:trt|bein\\s*sport)$").matcher(name).matches())name=pattern("^trt$").matcher(name).matches()?"TRT 4K":"BEIN Sport 4K";
+        name=canonicalBrand(name,details.sports);if(branded4k && pattern("^(?:trt|bein\\s*sport)$").matcher(name).matches())name=pattern("^trt$").matcher(name).matches()?"TRT 4K":"BEIN Sport 4K";
+        if(lineup)return new Description(name,"",country,"",false,false,false,false);
         String languageText=folded(name+" "+group);List<String> languages=new ArrayList<>();for(int i=0;i<LANGUAGES.length;i++)if(LANGUAGES[i].matcher(languageText).find())languages.add(LANGUAGE_CODES[i]);
-        String normalized=folded(name).replaceAll("[’'`\"]","");normalized=pattern("[^\\p{L}\\p{N}+\\s]").matcher(normalized).replaceAll(" ");normalized=pattern("\\s+").matcher(normalized).replaceAll(" ").trim();
+        String normalized=QUOTES.matcher(folded(name)).replaceAll("");normalized=pattern("[^\\p{L}\\p{N}+\\s]").matcher(normalized).replaceAll(" ");normalized=pattern("\\s+").matcher(normalized).replaceAll(" ").trim();
         String conflict=p.country!=null && fromGroup!=null && !p.country.equals(fromGroup)?"!"+fromGroup:"";
-        String unknownScope=pattern("[^\\p{L}\\p{N}\\s]").matcher(folded(group)).replaceAll(" ");unknownScope=pattern("\\s+").matcher(unknownScope).replaceAll(" ").trim();
+        String unknownScope=details.unknownScope;
         return new Description(name,(country==null?"unknown:"+unknownScope:country)+conflict+"|"+join(languages)+"|"+normalized,country,quality,hevc,EVENT.matcher(analysis).find() || pattern("[\\[({]\\s*live\\s*events?\\s*[\\])}]").matcher(analysis).find(),LOW.matcher(analysis).find(),raw);
     }
     public static final class Channel {
@@ -83,18 +95,18 @@ public final class LiveChannelCuration {
         public Channel(String id,String title,String groupTitle,String sourceTitle,String providerId,boolean available,boolean playbackAllowed,boolean lookupFailed){this.id=id;this.title=title;this.groupTitle=groupTitle==null?"":groupTitle;this.sourceTitle=sourceTitle;this.providerId=providerId==null?id:providerId;this.available=available;this.playbackAllowed=playbackAllowed;this.lookupFailed=lookupFailed;}
     }
     public static final class Selection {
-        public final List<Channel> items;public final Map<String,String> canonicalById;
-        Selection(List<Channel> items,Map<String,String> aliases){this.items=Collections.unmodifiableList(items);canonicalById=Collections.unmodifiableMap(aliases);}
+        public final List<Channel> items;public final Map<String,String> canonicalById;private final Map<Channel,Description> descriptions;
+        Selection(List<Channel> items,Map<String,String> aliases,Map<Channel,Description> descriptions){this.items=Collections.unmodifiableList(items);canonicalById=Collections.unmodifiableMap(aliases);this.descriptions=descriptions;}
     }
-    private static final class Candidate {final Channel row;final String source;final Description description;Candidate(Channel row){this.row=row;source=row.sourceTitle==null?row.title:row.sourceTitle;description=describe(source,row.groupTitle);}}
+    private static final class Candidate {final Channel row;final String source;final Description description;Candidate(Channel row,Map<String,GroupDetails> groups){this.row=row;source=row.sourceTitle==null?row.title:row.sourceTitle;description=describe(source,row.groupTitle,false,groups);}}
     private static int compareIds(String left,String right){if(left.matches("[0-9]+") && right.matches("[0-9]+")){String a=left.replaceFirst("^0+(?=\\d)",""),b=right.replaceFirst("^0+(?=\\d)","");int c=Integer.compare(a.length(),b.length());if(c==0)c=a.compareTo(b);if(c!=0)return c;}return left.compareTo(right);}
     private static int compare(Candidate a,Candidate b){int c=Boolean.compare(a.description.hevc,b.description.hevc);if(c==0)c=Integer.compare(QUALITIES.indexOf(a.description.quality),QUALITIES.indexOf(b.description.quality));if(c==0)c=Boolean.compare(a.description.eventOnly,b.description.eventOnly);if(c==0)c=Boolean.compare(a.description.lowBandwidth,b.description.lowBandwidth);if(c==0)c=Boolean.compare(a.description.raw,b.description.raw);if(c==0)c=compareIds(a.row.providerId,b.row.providerId);if(c==0)c=a.row.id.compareTo(b.row.id);if(c==0)c=a.source.compareTo(b.source);if(c==0)c=a.row.groupTitle.compareTo(b.row.groupTitle);return c;}
     public static Selection curateChannels(List<Channel> rows,Set<String> excluded){
-        Map<String,List<Candidate>> groups=new TreeMap<>();for(Channel row:rows){if(excluded.contains(row.id) || excluded.contains(row.providerId))continue;Candidate c=new Candidate(row);if(c.description.displayName.isEmpty() || c.description.groupKey.endsWith("|"))continue;List<Candidate> bucket=groups.get(c.description.groupKey);if(bucket==null){bucket=new ArrayList<>();groups.put(c.description.groupKey,bucket);}bucket.add(c);}
-        List<Channel> output=new ArrayList<>();Map<String,String> aliases=new LinkedHashMap<>();for(List<Candidate> bucket:groups.values()){
+        Map<String,GroupDetails> descriptionsByGroup=new HashMap<>();Map<String,List<Candidate>> groups=new TreeMap<>();for(Channel row:rows){if(excluded.contains(row.id) || excluded.contains(row.providerId))continue;Candidate c=new Candidate(row,descriptionsByGroup);if(c.description.displayName.isEmpty() || c.description.groupKey.endsWith("|"))continue;List<Candidate> bucket=groups.get(c.description.groupKey);if(bucket==null){bucket=new ArrayList<>();groups.put(c.description.groupKey,bucket);}bucket.add(c);}
+        List<Channel> output=new ArrayList<>();Map<String,String> aliases=new LinkedHashMap<>();Map<Channel,Description> descriptions=new IdentityHashMap<>();for(List<Candidate> bucket:groups.values()){
             Candidate selected=null;for(Candidate c:bucket)if(c.row.available && c.row.playbackAllowed && !c.row.lookupFailed && (selected==null || compare(c,selected)<0))selected=c;if(selected==null)continue;
-            Channel r=selected.row;output.add(new Channel(r.id,selected.description.displayName,r.groupTitle,selected.source,r.providerId,r.available,r.playbackAllowed,r.lookupFailed));Collections.sort(bucket,(a,b)->a.row.id.compareTo(b.row.id));for(Candidate c:bucket)aliases.put(c.row.id,r.id);
-        }return new Selection(output,aliases);
+            Channel r=selected.row;Channel chosen=new Channel(r.id,selected.description.displayName,r.groupTitle,selected.source,r.providerId,r.available,r.playbackAllowed,r.lookupFailed);descriptions.put(chosen,selected.description);output.add(chosen);Collections.sort(bucket,(a,b)->a.row.id.compareTo(b.row.id));for(Candidate c:bucket)aliases.put(c.row.id,r.id);
+        }return new Selection(output,aliases,descriptions);
     }
     public static final class Projection {
         public final Catalog catalog;private final Map<String,String> aliases;private final Map<String,Item> originals,selected;private final Map<String,List<String>> rawIdsBySelected;
@@ -104,11 +116,41 @@ public final class LiveChannelCuration {
             Map<String,List<String>> indexed=new HashMap<>();for(Map.Entry<String,List<String>> entry:groups.entrySet()){Collections.sort(entry.getValue(),LiveChannelCuration::compareIds);indexed.put(entry.getKey(),Collections.unmodifiableList(entry.getValue()));}rawIdsBySelected=Collections.unmodifiableMap(indexed);
         }
         public Item resolve(String id){return selected.get(aliases.get(id));}public Item original(String id){return originals.get(id);}
+        String canonicalId(String id){return aliases.get(id);}
         public List<String> aliases(String selectedId){List<String> result=rawIdsBySelected.get(selectedId);return result==null?Collections.emptyList():result;}
+    }
+    static final class ReadyItem {
+        final String id,title;final LiveChannelLineup.Info info;
+        ReadyItem(String id,String title,LiveChannelLineup.Info info){this.id=id;this.title=title;this.info=info;}
+    }
+    static Projection restore(Catalog raw,List<ReadyItem> rows,Map<String,String> completeAliases,Set<String> excluded){
+        if(raw.kind!=Kind.LIVE || rows.size()>raw.items.size() || completeAliases.size()!=raw.items.size())throw new IllegalArgumentException();
+        Map<String,Item> originals=new HashMap<>(),selected=new HashMap<>();List<Item> items=new ArrayList<>();Set<String> groups=new HashSet<>();
+        for(Item item:raw.items)if(item.kind!=Kind.LIVE || originals.put(item.id,item)!=null)throw new IllegalArgumentException();
+        for(ReadyItem row:rows){
+            Item r=originals.get(row.id);
+            if(r==null || excluded.contains(row.id) || row.title.isEmpty() || selected.containsKey(row.id) || !LiveChannelLineup.validSnapshot(row.info,row.id,row.title))throw new IllegalArgumentException();
+            Item item=new Item(r.kind,r.id,row.title,r.categoryId,r.categoryName,r.artwork,r.extension,r.scope,r.seriesId,r.season,r.episode,r.description,r.sourceTitle,r.releaseYear);
+            items.add(item);selected.put(item.id,item);groups.add(item.categoryId);
+        }
+        Map<String,String> aliases=new LinkedHashMap<>();
+        for(Map.Entry<String,String> entry:completeAliases.entrySet()){
+            String id=entry.getKey(),target=entry.getValue();if(!originals.containsKey(id) || target==null)throw new IllegalArgumentException();
+            if(!target.isEmpty()){
+                if(excluded.contains(id) || !selected.containsKey(target))throw new IllegalArgumentException();aliases.put(id,target);
+            }
+        }
+        for(String id:selected.keySet())if(!id.equals(aliases.get(id)))throw new IllegalArgumentException();
+        List<Category> categories=new ArrayList<>();for(Category category:raw.categories)if(groups.contains(category.id))categories.add(category);
+        Projection result=new Projection(new Catalog(Kind.LIVE,items,categories),Collections.unmodifiableMap(aliases),Collections.unmodifiableMap(originals),Collections.unmodifiableMap(selected));
+        return result;
+    }
+    static void prime(Projection projection,List<ReadyItem> rows){
+        for(int i=0;i<rows.size();i++)LiveChannelLineup.primeSnapshot(projection.catalog.items.get(i),rows.get(i).info);
     }
     public static Projection curate(Catalog raw,Set<String> excluded){
         List<Channel> rows=new ArrayList<>();Map<String,Item> originals=new HashMap<>();for(Item item:raw.items){rows.add(new Channel(item.id,item.title,item.categoryName,item.sourceTitle,item.id,true,true,false));originals.put(item.id,item);}
-        Selection selection=curateChannels(rows,excluded);List<Item> items=new ArrayList<>();Map<String,Item> selected=new HashMap<>();Set<String> groups=new HashSet<>();for(Channel channel:selection.items){Item r=originals.get(channel.id);Item item=new Item(r.kind,r.id,channel.title,r.categoryId,r.categoryName,r.artwork,r.extension,r.scope,r.seriesId,r.season,r.episode,r.description,channel.sourceTitle,r.releaseYear);items.add(item);selected.put(item.id,item);groups.add(item.categoryId);}
+        Selection selection=curateChannels(rows,excluded);Map<String,String> foldedGroups=new HashMap<>();List<Item> items=new ArrayList<>();Map<String,Item> selected=new HashMap<>();Set<String> groups=new HashSet<>();for(Channel channel:selection.items){Item r=originals.get(channel.id);Item item=new Item(r.kind,r.id,channel.title,r.categoryId,r.categoryName,r.artwork,r.extension,r.scope,r.seriesId,r.season,r.episode,r.description,channel.sourceTitle,r.releaseYear);if(channel.groupTitle.equals(r.categoryName))LiveChannelLineup.prepareInfo(item,selection.descriptions.get(channel),foldedGroups);items.add(item);selected.put(item.id,item);groups.add(item.categoryId);}
         List<Category> categories=new ArrayList<>();for(Category category:raw.categories)if(groups.contains(category.id))categories.add(category);
         return new Projection(new Catalog(raw.kind,LiveChannelLineup.sort(items),categories),selection.canonicalById,Collections.unmodifiableMap(originals),Collections.unmodifiableMap(selected));
     }

@@ -1,6 +1,7 @@
 package vip.flixify.tv.data;
 
 import java.text.Collator;
+import java.text.CollationKey;
 import java.text.Normalizer;
 import java.util.*;
 import java.util.regex.*;
@@ -9,6 +10,7 @@ import vip.flixify.tv.TvModels.Item;
 /** Presentation order and friendly filters from the website's reviewed TV+ reference. */
 public final class LiveChannelLineup {
     private LiveChannelLineup(){}
+    private static final Pattern MARKS=Pattern.compile("[\\u0300-\\u036f]"),SEARCH=Pattern.compile("[^\\p{L}\\p{N}]");
     private static final Map<Item,Info> CACHE=Collections.synchronizedMap(new WeakHashMap<>());
     private static final java.util.concurrent.ConcurrentMap<String,Pattern> PATTERNS=new java.util.concurrent.ConcurrentHashMap<>();
     private static final Map<String,String> NAMES=new HashMap<>(),COUNTRIES=new LinkedHashMap<>(),ALIASES=new HashMap<>();
@@ -206,8 +208,8 @@ public final class LiveChannelLineup {
         alias("Sinema 2","SİNEMA TV 2");
         alias("Sinema 1001","SİNEMA TV 1001");
     }
-    public static String fold(String value){return Normalizer.normalize(value==null?"":value,Normalizer.Form.NFKD).replaceAll("[\\u0300-\\u036f]","").replace('ı','i').toLowerCase(Locale.ROOT);}
-    public static String search(String value){return fold(value).replaceAll("[^\\p{L}\\p{N}]","");}
+    public static String fold(String value){return MARKS.matcher(Normalizer.normalize(value==null?"":value,Normalizer.Form.NFKD)).replaceAll("").replace('ı','i').toLowerCase(Locale.ROOT);}
+    public static String search(String value){return SEARCH.matcher(fold(value)).replaceAll("");}
     private static String station(String value){String key=search(value);return NAMES.containsKey(key)?NAMES.get(key):key;}
     private static void position(int rank,String title){POSITIONS.put(station(title),(double)rank);}
     private static void alias(String source,String target){ALIASES.put(station(source),station(target));}
@@ -215,6 +217,17 @@ public final class LiveChannelLineup {
     public static final class Info {
         public final String countryId,categoryId,name,id;public final int section;public final double position;
         Info(String country,String category,String name,String id,int section,double position){countryId=country;categoryId=category;this.name=name;this.id=id;this.section=section;this.position=position;}
+    }
+    static Info snapshotInfo(Item item){return CACHE.get(item);}
+    static boolean validSnapshot(Info value,String id,String title){
+        if(value==null || !id.equals(value.id) || !title.equals(value.name) || !COUNTRIES.containsKey(value.countryId)
+                || !Arrays.asList(CATEGORY_IDS).contains(value.categoryId) || Double.isNaN(value.position) || Double.isInfinite(value.position)
+                || value.position<0 || value.position>1000 || value.section<0 || value.section>12)return false;
+        return value.section==(value.position==1000?(value.categoryId.equals("radio")?12:11):section(value.position));
+    }
+    static void primeSnapshot(Item item,Info value){
+        if(!validSnapshot(value,item.id,item.title))throw new IllegalArgumentException("Invalid lineup snapshot");
+        CACHE.put(item,value);
     }
     private static String country(String code,String group,String source){
         if(code!=null){String key=code.equals("CO")?"latam":code.toLowerCase(Locale.ROOT);if(COUNTRIES.containsKey(key))return key;}
@@ -253,25 +266,61 @@ public final class LiveChannelLineup {
         if(has(group,"dini|religio|diyanet"))return 247.5;
         switch(category){case "national":return 48.9;case "news":return 69.9;case "sports":return 94.9;case "documentary":return 117.9;case "kids":return 136.9;case "music":return 199.9;case "local":return 299.9;default:return 1000;}
     }
-    public static Info info(Item item){
+    public static Info info(Item item){return info(item,null,null);}
+    private static Info info(Item item,Map<String,LiveChannelCuration.GroupDetails> groups,Map<String,String> foldedGroups){
         Info prior=CACHE.get(item);if(prior!=null)return prior;
-        String source=item.sourceTitle.isEmpty()?item.title:item.sourceTitle;LiveChannelCuration.Description d=LiveChannelCuration.describe(source,item.categoryName);
-        String group=fold(item.categoryName),title=fold(d.displayName),name=station(title),category=category(group,name,title);double rank=rank(name,category,group);
+        String source=item.sourceTitle.isEmpty()?item.title:item.sourceTitle;LiveChannelCuration.Description d=LiveChannelCuration.describeForLineup(source,item.categoryName,groups);
+        return prepareInfo(item,d,foldedGroups);
+    }
+    static Info prepareInfo(Item item,LiveChannelCuration.Description d,Map<String,String> foldedGroups){
+        String source=item.sourceTitle.isEmpty()?item.title:item.sourceTitle;
+        String group=foldedGroups==null?null:foldedGroups.get(item.categoryName);if(group==null){group=fold(item.categoryName);if(foldedGroups!=null)foldedGroups.put(item.categoryName,group);}
+        String title=fold(d.displayName),name=station(title),category=category(group,name,title);double rank=rank(name,category,group);
         int section=rank==1000?(category.equals("radio")?12:11):section(rank);
         Info result=new Info(country(d.countryCode,group,source),category,d.displayName,item.id,section,rank);CACHE.put(item,result);return result;
     }
     public static String countryTitle(String id){return COUNTRIES.containsKey(id)?COUNTRIES.get(id):"Diğer";}
     public static List<String> countries(){return Collections.unmodifiableList(new ArrayList<>(COUNTRIES.keySet()));}
     public static String categoryTitle(String id){for(int i=0;i<CATEGORY_IDS.length;i++)if(CATEGORY_IDS[i].equals(id))return CATEGORY_TITLES[i];return "Tümü";}
-    private static int natural(String a,String b,Collator collator){
-        int i=0,j=0;while(i<a.length() && j<b.length()){
-            if(Character.isDigit(a.charAt(i)) && Character.isDigit(b.charAt(j))){int x=i,y=j;while(i<a.length() && Character.isDigit(a.charAt(i)))i++;while(j<b.length() && Character.isDigit(b.charAt(j)))j++;String left=a.substring(x,i).replaceFirst("^0+(?!$)",""),right=b.substring(y,j).replaceFirst("^0+(?!$)","");int c=Integer.compare(left.length(),right.length());if(c==0)c=left.compareTo(right);if(c!=0)return c;}
-            else{int x=i,y=j;while(i<a.length() && !Character.isDigit(a.charAt(i)))i++;while(j<b.length() && !Character.isDigit(b.charAt(j)))j++;int c=collator.compare(a.substring(x,i),b.substring(y,j));if(c!=0)return c;}
-        }return Integer.compare(a.length()-i,b.length()-j);
+    private static final class Part {
+        final int start;final String number;final CollationKey text;
+        Part(int start,String number,CollationKey text){this.start=start;this.number=number;this.text=text;}
+    }
+    private static final class NaturalKey {
+        final int length;final Part[] parts;
+        NaturalKey(String value,Collator collator,Map<String,CollationKey> texts){
+            length=value.length();List<Part> parsed=new ArrayList<>();
+            for(int i=0;i<length;){
+                int start=i;boolean digit=Character.isDigit(value.charAt(i));
+                while(i<length && Character.isDigit(value.charAt(i))==digit)i++;
+                String run=value.substring(start,i);
+                if(digit){int zeros=0;while(zeros<run.length()-1 && run.charAt(zeros)=='0')zeros++;parsed.add(new Part(start,run.substring(zeros),null));}
+                else{CollationKey key=texts.get(run);if(key==null){key=collator.getCollationKey(run);texts.put(run,key);}parsed.add(new Part(start,null,key));}
+            }
+            parts=parsed.toArray(new Part[0]);
+        }
+    }
+    private static int natural(NaturalKey a,NaturalKey b,CollationKey empty){
+        int i=0,j=0;
+        while(i<a.parts.length && j<b.parts.length){
+            Part x=a.parts[i],y=b.parts[j];int c;
+            if(x.number!=null && y.number!=null){c=Integer.compare(x.number.length(),y.number.length());if(c==0)c=x.number.compareTo(y.number);i++;j++;}
+            else{c=(x.text==null?empty:x.text).compareTo(y.text==null?empty:y.text);if(x.text!=null)i++;if(y.text!=null)j++;}
+            if(c!=0)return c;
+        }
+        return Integer.compare(i==a.parts.length?0:a.length-a.parts[i].start,j==b.parts.length?0:b.length-b.parts[j].start);
     }
     public static List<Item> sort(List<Item> items){
-        List<Item> result=new ArrayList<>(items);Map<Item,Info> infos=new IdentityHashMap<>();for(Item item:items)infos.put(item,info(item));
+        List<Item> result=new ArrayList<>(items);Map<Item,Info> infos=new IdentityHashMap<>();
+        Map<String,LiveChannelCuration.GroupDetails> groups=new HashMap<>();Map<String,String> foldedGroups=new HashMap<>();
         final Collator collator=Collator.getInstance(new Locale("tr","TR"));collator.setStrength(Collator.PRIMARY);
-        Collections.sort(result,(a,b)->{Info x=infos.get(a),y=infos.get(b);int c=Boolean.compare(y.countryId.equals("tr"),x.countryId.equals("tr"));if(c!=0)return c;if(!x.countryId.equals("tr"))return 0;c=Integer.compare(x.section,y.section);if(c==0)c=Double.compare(x.position,y.position);if(c==0)c=natural(x.name,y.name,collator);if(c==0)c=natural(x.id,y.id,collator);return c;});return result;
+        Map<String,CollationKey> texts=new HashMap<>();final CollationKey empty=collator.getCollationKey("");
+        Map<String,NaturalKey> keys=new HashMap<>();Map<Item,NaturalKey> names=new IdentityHashMap<>(),ids=new IdentityHashMap<>();
+        for(Item item:items){
+            Info info=info(item,groups,foldedGroups);infos.put(item,info);if(!info.countryId.equals("tr"))continue;
+            NaturalKey name=keys.get(info.name);if(name==null){name=new NaturalKey(info.name,collator,texts);keys.put(info.name,name);}names.put(item,name);
+            NaturalKey id=keys.get(info.id);if(id==null){id=new NaturalKey(info.id,collator,texts);keys.put(info.id,id);}ids.put(item,id);
+        }
+        Collections.sort(result,(a,b)->{Info x=infos.get(a),y=infos.get(b);int c=Boolean.compare(y.countryId.equals("tr"),x.countryId.equals("tr"));if(c!=0)return c;if(!x.countryId.equals("tr"))return 0;c=Integer.compare(x.section,y.section);if(c==0)c=Double.compare(x.position,y.position);if(c==0)c=natural(names.get(a),names.get(b),empty);if(c==0)c=natural(ids.get(a),ids.get(b),empty);return c;});return result;
     }
 }

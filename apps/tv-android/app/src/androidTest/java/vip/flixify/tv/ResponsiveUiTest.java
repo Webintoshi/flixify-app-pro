@@ -43,8 +43,18 @@ public class ResponsiveUiTest {
             viewport.setLayoutParams(p);viewport.requestLayout();
         });
         settle();
+        if(signedIn)awaitCatalogSurface();
     }
     private void settle() { instrumentation.waitForIdleSync(); android.os.SystemClock.sleep(120);instrumentation.waitForIdleSync(); }
+    private void awaitCatalogSurface() {
+        long deadline=android.os.SystemClock.uptimeMillis()+3000;java.util.concurrent.atomic.AtomicBoolean ready=new java.util.concurrent.atomic.AtomicBoolean();String[] actual={""};
+        do{instrumentation.runOnMainSync(()->{
+            View overlay=viewport.findViewWithTag("tv-startup-overlay"),surface=viewport.findViewWithTag("tv-discovery"),search=find(viewport,"Ara");Rect visible=new Rect();
+            ready.set(activity.hasWindowFocus() && (overlay==null || !overlay.isShown()) && surface!=null && surface.isAttachedToWindow() && surface.isLaidOut() && surface.getWidth()>0 && surface.getHeight()>0 && surface.getGlobalVisibleRect(visible) && search!=null && search.getWidth()>0 && search.getHeight()>0 && search.getGlobalVisibleRect(visible));
+            actual[0]="window="+activity.hasWindowFocus()+", focus="+(activity.getCurrentFocus() instanceof TextView?((TextView)activity.getCurrentFocus()).getText():activity.getCurrentFocus())+", overlay="+(overlay!=null && overlay.isShown())+", discovery="+(surface!=null);
+        });if(!ready.get())android.os.SystemClock.sleep(25);}while(!ready.get() && android.os.SystemClock.uptimeMillis()<deadline);
+        assertTrue("Catalogue surface is ready before remote navigation; "+actual[0],ready.get());
+    }
     private void key(int key) { instrumentation.sendKeyDownUpSync(key);settle(); }
     private void down(int count) { for(int n=0;n<count;n++)key(KeyEvent.KEYCODE_DPAD_DOWN); }
     private void click() { key(KeyEvent.KEYCODE_DPAD_CENTER); }
@@ -79,7 +89,7 @@ public class ResponsiveUiTest {
         key(KeyEvent.KEYCODE_BACK);focusVisible("Hesabım");
     }
     @Test public void narrowMeasuredViewportKeepsLongCategoryToolbarReachable() {
-        launch(true,620,390);down(2);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);focusVisible("Ara");
+        launch(true,620,390);down(2);click();awaitCatalogSurface();key(KeyEvent.KEYCODE_DPAD_RIGHT);focusVisible("Ara");
         key(KeyEvent.KEYCODE_DPAD_RIGHT);click();down(1);click();
         key(KeyEvent.KEYCODE_DPAD_UP);focusVisible("Ara");key(KeyEvent.KEYCODE_DPAD_RIGHT);
         focusVisible("Kategori: "+ResponsiveFixture.LONG_CATEGORY);key(KeyEvent.KEYCODE_DPAD_RIGHT);focusVisible("Yenile");
@@ -98,7 +108,7 @@ public class ResponsiveUiTest {
         instrumentation.runOnMainSync(()->{assertTrue("Accepted login retains its authenticated session",repository.hasSession());assertNotNull("Accepted login result must render Home discovery",viewport.findViewWithTag("tv-discovery"));assertNotNull("Home retains its active navigation rail",find(viewport,"Ana Sayfa"));});
     }
     @Test public void longPosterRemainsReachableInShortVirtualizedCatalog() {
-        launch(true,620,330);down(2);click();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);
+        launch(true,620,330);down(2);click();awaitCatalogSurface();key(KeyEvent.KEYCODE_DPAD_RIGHT);down(1);
         focusVisible(ResponsiveFixture.LONG_TITLE);resize(650,340);focusVisible(ResponsiveFixture.LONG_TITLE);
         instrumentation.runOnMainSync(()->{
             RecyclerView recycler=findGrid(viewport);assertNotNull("Catalog remains virtualized",recycler);

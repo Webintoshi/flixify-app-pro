@@ -19,6 +19,13 @@ public class MetadataDiskCacheTest {
     private Item item(Kind kind,String id,String scope) {return new Item(kind,id,"Fixture","9","Filmler","https://images.test/poster.jpg",kind==Kind.SERIES?"":"mp4",scope,kind==Kind.EPISODE?"56":"",kind==Kind.EPISODE?1:0,kind==Kind.EPISODE?1:0,"Description");}
     private Catalog catalog(String scope) {return new Catalog(Kind.MOVIE,Collections.singletonList(item(Kind.MOVIE,"12",scope)),Collections.singletonList(new Category("9","Filmler")));}
     private File directory() throws Exception {return Files.createTempDirectory("flixify-metadata-test-").toFile();}
+    @Test public void defaultCacheCreatesFreshDirectoryBeforeCheckingItsFreeSpace() throws Exception {
+        File parent=directory(),root=new File(parent,"new-catalog-cache");assertFalse(root.exists());
+        MetadataDiskCache cache=new MetadataDiskCache(root);cache.writeCatalog(SCOPE,EXPIRY,NOW,catalog(SCOPE),()->true);
+        assertTrue("First optional write must create its cache directory",root.isDirectory());
+        MetadataDiskCache.Snapshot<Catalog> saved=new MetadataDiskCache(root).readCatalog(SCOPE,Kind.MOVIE,EXPIRY,NOW+1);
+        assertNotNull("Default free-space measurement must not reject every first write",saved);assertEquals("12",saved.value.items.get(0).id);
+    }
     @Test public void scopedLibraryRestoresRefsAndResolvedFavoritesWithoutCredentials() throws Exception {
         File root=directory();MetadataDiskCache first=new MetadataDiskCache(root);
         MetadataDiskCache.Library library=new MetadataDiskCache.Library(
@@ -87,6 +94,55 @@ public class MetadataDiskCacheTest {
         byte[] bytes=Files.readAllBytes(record.toPath());bytes[bytes.length-1]^=1;Files.write(record.toPath(),bytes);
         assertNull(cache.readCatalog(SCOPE,Kind.MOVIE,EXPIRY,NOW+1));
     }
+    @Test public void bufferedPayloadRejectsChecksummedTrailingBytesAndMalformedUtf8() throws Exception {
+        File root=directory();MetadataDiskCache cache=new MetadataDiskCache(root);
+        for(boolean trailing:new boolean[]{true,false}){
+            cache.writeCatalog(SCOPE,EXPIRY,NOW,catalog(SCOPE),()->true);
+            assertNotNull("Integrity fixture must start with a readable record",cache.readCatalog(SCOPE,Kind.MOVIE,EXPIRY,NOW+1));
+            File record=Arrays.stream(root.listFiles()).filter(file->file.getName().endsWith(".bin")).findFirst().get();
+            byte[] original=Files.readAllBytes(record.toPath()),changed=Arrays.copyOf(original,original.length+(trailing?1:0));
+            if(trailing)changed[changed.length-1]=127;
+            else changed[96]=(byte)255; // First category ID byte follows the group count and string length.
+            java.nio.ByteBuffer.wrap(changed).putInt(52,changed.length-88);
+            byte[] checksum=java.security.MessageDigest.getInstance("SHA-256").digest(Arrays.copyOfRange(changed,88,changed.length));
+            System.arraycopy(checksum,0,changed,56,checksum.length);Files.write(record.toPath(),changed);
+            assertNull(trailing?"A valid checksum cannot admit bytes after the complete decoded payload":"A valid checksum cannot admit malformed UTF-8",cache.readCatalog(SCOPE,Kind.MOVIE,EXPIRY,NOW+1));
+        }
+    }
+    @Test public void optimizedUtf8MatchesFrozenReportingDecoderAndUtf16Limits() throws Exception {
+        for(int first=0;first<256;first++){
+            assertUtf8Equivalent(new byte[]{(byte)first},2);
+            for(int second=0;second<256;second++)assertUtf8Equivalent(new byte[]{(byte)first,(byte)second},4);
+        }
+        int[][] boundaries={
+            {0x7f},{0xc2,0x80},{0xdf,0xbf},{0xe0,0xa0,0x80},{0xed,0x9f,0xbf},{0xee,0x80,0x80},{0xef,0xbf,0xbf},{0xf0,0x90,0x80,0x80},{0xf4,0x8f,0xbf,0xbf},
+            {0xc0,0x80},{0xc1,0xbf},{0xe0,0x9f,0xbf},{0xed,0xa0,0x80},{0xed,0xbf,0xbf},{0xf0,0x8f,0xbf,0xbf},{0xf4,0x90,0x80,0x80},{0xf5,0x80,0x80,0x80},{0xff},
+            {0xc2},{0xe0,0xa0},{0xf0,0x90,0x80},{0xc2,0x20},{0xe0,0xa0,0x7f},{0xf0,0x90,0x80,0xc0},{0x61,0x00,0xc2,0x80,0xe2,0x82,0xac,0xf0,0x9f,0x98,0x80}
+        };
+        for(int[] boundary:boundaries){
+            byte[] bytes=new byte[boundary.length];for(int n=0;n<bytes.length;n++)bytes[n]=(byte)boundary[n];
+            for(int length=0;length<=bytes.length;length++)for(int max=0;max<=bytes.length+1;max++)assertUtf8Equivalent(Arrays.copyOf(bytes,length),max);
+        }
+        java.util.Random random=new java.util.Random(0x46434d32L);
+        for(int attempt=0;attempt<10000;attempt++){
+            byte[] bytes=new byte[random.nextInt(65)];random.nextBytes(bytes);assertUtf8Equivalent(bytes,random.nextInt(65));
+            StringBuilder valid=new StringBuilder();int count=random.nextInt(17);
+            for(int n=0;n<count;n++){int point;do{point=random.nextInt(0x110000);}while(point>=0xd800 && point<=0xdfff);valid.appendCodePoint(point);}
+            byte[] encoded=valid.toString().getBytes(StandardCharsets.UTF_8);
+            assertUtf8Equivalent(encoded,valid.length());assertUtf8Equivalent(encoded,Math.max(0,valid.length()-1));
+        }
+    }
+    private void assertUtf8Equivalent(byte[] bytes,int max)throws Exception{
+        String expected=null;boolean accepted;
+        try{
+            expected=StandardCharsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT).onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT).decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+            accepted=expected.length()<=max;
+        }catch(java.nio.charset.CharacterCodingException invalid){accepted=false;}
+        String actual=null;boolean restored;
+        try{actual=MetadataDiskCache.decodeUtf8(bytes,max);restored=true;}catch(java.io.IOException invalid){restored=false;}
+        String evidence="bytes="+Arrays.toString(bytes)+", maxUtf16="+max;
+        assertEquals(evidence,accepted,restored);if(accepted)assertEquals(evidence,expected,actual);
+    }
     @Test public void lowDiskOversizeAndFailedGuardPreserveExistingData() throws Exception {
         File root=directory();MetadataDiskCache cache=new MetadataDiskCache(root);cache.writeCatalog(SCOPE,EXPIRY,NOW,catalog(SCOPE),()->true);
         MetadataDiskCache low=new MetadataDiskCache(root,1024*1024,512*1024,32768,()->0L);
@@ -129,6 +185,29 @@ public class MetadataDiskCacheTest {
         Thread clear=new Thread(cache::clear);clear.start();long until=System.nanoTime()+TimeUnit.SECONDS.toNanos(3);
         while(clear.getState()!=Thread.State.BLOCKED && clear.isAlive() && System.nanoTime()<until)Thread.yield();
         release.countDown();writer.join(3000);clear.join(3000);assertFalse(writer.isAlive());assertFalse(clear.isAlive());assertEquals(0,root.listFiles().length);
+    }
+    @Test public void heldWriteDoesNotBlockUnrelatedReadOrClearAndCannotPublishAfterClear() throws Exception {
+        File root=directory();MetadataDiskCache cache=new MetadataDiskCache(root);
+        cache.writeCatalog(SCOPE,EXPIRY,NOW,catalog(SCOPE),()->true);
+        AtomicInteger checks=new AtomicInteger();CountDownLatch writing=new CountDownLatch(1),release=new CountDownLatch(1),readDone=new CountDownLatch(1),cleared=new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<MetadataDiskCache.Snapshot<Catalog>> restored=new java.util.concurrent.atomic.AtomicReference<>();
+        String other="account-b:source-b";
+        Thread writer=new Thread(()->cache.writeCatalog(other,EXPIRY,NOW,catalog(other),()->{
+            if(checks.incrementAndGet()==3){writing.countDown();try{release.await(5,TimeUnit.SECONDS);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();return false;}}
+            return true;
+        }));
+        Thread reader=new Thread(()->{restored.set(cache.readCatalog(SCOPE,Kind.MOVIE,EXPIRY,NOW+1));readDone.countDown();});
+        Thread clear=new Thread(()->{cache.clear();cleared.countDown();});
+        try{
+            writer.start();assertTrue("Write did not reach its pre-sync lease check",writing.await(3,TimeUnit.SECONDS));
+            reader.start();assertTrue("An unrelated read must not wait for the held write",readDone.await(500,TimeUnit.MILLISECONDS));
+            assertNotNull(restored.get());assertEquals("12",restored.get().value.items.get(0).id);
+            clear.start();assertTrue("Clear must revoke an in-flight write without waiting for its storage work",cleared.await(500,TimeUnit.MILLISECONDS));
+            assertNull(cache.readCatalog(SCOPE,Kind.MOVIE,EXPIRY,NOW+1));
+        }finally{release.countDown();writer.join(3000);if(reader.getState()!=Thread.State.NEW)reader.join(3000);if(clear.getState()!=Thread.State.NEW)clear.join(3000);}
+        assertFalse(writer.isAlive());assertEquals("A cleared write must not recreate its removed temporary or publish a record",0,root.listFiles().length);
+        cache.writeCatalog(other,EXPIRY,NOW+2,catalog(other),()->true);
+        assertNotNull("A new write after clear has its own valid lease",cache.readCatalog(other,Kind.MOVIE,EXPIRY,NOW+3));
     }
     @Test public void restartRemovesOrphanedTempsAndTinyRecordsCannotExhaustInodes() throws Exception {
         File root=directory();MetadataDiskCache cache=new MetadataDiskCache(root);

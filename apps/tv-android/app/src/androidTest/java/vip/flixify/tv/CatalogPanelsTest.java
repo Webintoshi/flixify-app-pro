@@ -43,7 +43,26 @@ public class CatalogPanelsTest {
     interface Check{boolean ok(MainActivity a);}
     void await(ActivityScenario<MainActivity> s,String reason,Check check){long end=SystemClock.uptimeMillis()+4000;AtomicBoolean result=new AtomicBoolean();do{s.onActivity(a->result.set(check.ok(a)));if(result.get())return;SystemClock.sleep(30);}while(SystemClock.uptimeMillis()<end);fail(reason);}
     void openSearch(ActivityScenario<MainActivity> s){key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_CENTER);await(s,"Native search input focus",a->tag(a,"tv_search_input")!=null && tag(a,"tv_search_input").hasFocus());}
-    void openCategories(ActivityScenario<MainActivity> s){key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_CENTER);await(s,"Native category list focus",a->tag(a,"tv_categories_list")!=null && tag(a,"tv_categories_list").hasFocus());}
+    void openCategories(ActivityScenario<MainActivity> s){key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_CENTER);awaitCategoryList(s,"Native category list focus");}
+    boolean categoryListReady(MainActivity a){
+        Dialog d=panel(a);View view=tag(a,"tv_categories_list");if(d==null || !d.isShowing() || !(view instanceof ListView))return false;
+        ListView list=(ListView)view;View selected=list.getSelectedView();Rect visible=new Rect();
+        android.view.WindowInsets insets=list.getRootWindowInsets();
+        return list.isAttachedToWindow() && list.isLaidOut() && !list.isLayoutRequested() && list.getWidth()>0 && list.getHeight()>0 && list.getGlobalVisibleRect(visible)
+                && list.hasFocus() && list.hasWindowFocus() && list.isEnabled() && !list.isInTouchMode() && list.getAdapter()!=null && list.getSelectedItemPosition()>=0
+                && list.getSelectedItemPosition()<list.getAdapter().getCount() && selected!=null && selected.isShown() && selected.isLaidOut() && selected.getWidth()>0 && selected.getHeight()>0
+                && (android.os.Build.VERSION.SDK_INT<30 || insets!=null && !insets.isVisible(android.view.WindowInsets.Type.ime()));
+    }
+    String categoryListState(MainActivity a){
+        Dialog d=panel(a);View view=tag(a,"tv_categories_list");if(!(view instanceof ListView))return "dialog="+(d!=null && d.isShowing())+", list=absent";
+        ListView list=(ListView)view;View selected=list.getSelectedView();android.view.WindowInsets insets=list.getRootWindowInsets();
+        return "dialog="+d.isShowing()+", focus="+list.hasFocus()+", window="+list.hasWindowFocus()+", attached="+list.isAttachedToWindow()+", laidOut="+list.isLaidOut()+", layoutPending="+list.isLayoutRequested()+", size="+list.getWidth()+"x"+list.getHeight()+", touch="+list.isInTouchMode()+", selected="+list.getSelectedItemPosition()+", tag="+(selected==null?"none":selected.getTag())+", ime="+(android.os.Build.VERSION.SDK_INT>=30 && insets!=null?insets.isVisible(android.view.WindowInsets.Type.ime()):"unknown");
+    }
+    void awaitCategoryList(ActivityScenario<MainActivity> s,String reason){
+        long end=SystemClock.uptimeMillis()+4000;AtomicBoolean ready=new AtomicBoolean();String[] actual={"not observed"};
+        do{s.onActivity(a->{ready.set(categoryListReady(a));actual[0]=categoryListState(a);});if(ready.get()){android.util.Log.i("FlixifyFixture",reason+": "+actual[0]);return;}SystemClock.sleep(30);}while(SystemClock.uptimeMillis()<end);
+        fail(reason+": "+actual[0]);
+    }
     void draft(ActivityScenario<MainActivity> s,String tag,String value){s.onActivity(a->((EditText)tag(a,tag)).setText(value));}
     void focusSearchApply(ActivityScenario<MainActivity> s){AtomicBoolean focused=new AtomicBoolean();for(int n=0;n<5;n++){key(KeyEvent.KEYCODE_DPAD_DOWN);s.onActivity(a->focused.set(tag(a,"tv_search_apply").hasFocus()));if(focused.get())return;}fail("Ara remains reachable after preview results");}
     void applySearch(ActivityScenario<MainActivity> s){focusSearchApply(s);key(KeyEvent.KEYCODE_DPAD_CENTER);}
@@ -76,7 +95,7 @@ public class CatalogPanelsTest {
         try(ActivityScenario<MainActivity> s=launch()){
             openCategories(s);
             s.onActivity(a->{ListView list=(ListView)tag(a,"tv_categories_list");assertEquals(6,list.getAdapter().getCount());View selected=list.getSelectedView();assertTrue(selected instanceof Checkable && ((Checkable)selected).isChecked());assertTrue(selected.getContentDescription().toString().contains("4 içerik"));});
-            key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_CENTER);
+            key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_DOWN);awaitCategoryList(s,"Category selection before Drama OK");key(KeyEvent.KEYCODE_DPAD_CENTER);
             await(s,"Drama commits",a->text(a.findViewById(android.R.id.content),"Kategori: Film · Drama")!=null);
             key(KeyEvent.KEYCODE_DPAD_UP);key(KeyEvent.KEYCODE_DPAD_RIGHT);key(KeyEvent.KEYCODE_DPAD_CENTER);
             await(s,"Selected Drama stays checked",a->{ListView list=(ListView)tag(a,"tv_categories_list");return list!=null && list.getSelectedView()!=null && "tv_category_@catalog/MOVIE/2".equals(list.getSelectedView().getTag()) && ((Checkable)list.getSelectedView()).isChecked();});

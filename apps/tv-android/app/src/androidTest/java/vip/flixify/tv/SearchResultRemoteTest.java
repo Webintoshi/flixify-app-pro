@@ -3,12 +3,14 @@ package vip.flixify.tv;
 import android.app.Dialog;
 import android.app.Instrumentation;
 import android.content.Intent;
+import android.graphics.Rect;
 import android.os.SystemClock;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
+import android.widget.ListView;
 import android.widget.TextView;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -36,6 +38,25 @@ public final class SearchResultRemoteTest {
     void await(String message,Check check){boolean[] ready={false};long end=SystemClock.uptimeMillis()+5000;do{instrumentation.runOnMainSync(()->ready[0]=check.ready());if(ready[0])return;SystemClock.sleep(25);}while(SystemClock.uptimeMillis()<end);fail(message);}
     Dialog panel(){try{Field f=MainActivity.class.getDeclaredField("catalogDialog");f.setAccessible(true);return (Dialog)f.get(activity);}catch(Exception e){throw new AssertionError(e);}}
     View tag(String value){Dialog d=panel();return d==null?null:d.findViewById(android.R.id.content).findViewWithTag(value);}
+    boolean categoryListReady(){
+        Dialog d=panel();View view=tag("tv_categories_list");if(d==null || !d.isShowing() || !(view instanceof ListView))return false;
+        ListView list=(ListView)view;View selected=list.getSelectedView();Rect visible=new Rect();
+        android.view.WindowInsets insets=list.getRootWindowInsets();
+        return list.isAttachedToWindow() && list.isLaidOut() && !list.isLayoutRequested() && list.getWidth()>0 && list.getHeight()>0 && list.getGlobalVisibleRect(visible)
+                && list.hasFocus() && list.hasWindowFocus() && list.isEnabled() && !list.isInTouchMode() && list.getAdapter()!=null && list.getSelectedItemPosition()>=0
+                && list.getSelectedItemPosition()<list.getAdapter().getCount() && selected!=null && selected.isShown() && selected.isLaidOut() && selected.getWidth()>0 && selected.getHeight()>0
+                && (android.os.Build.VERSION.SDK_INT<30 || insets!=null && !insets.isVisible(android.view.WindowInsets.Type.ime()));
+    }
+    String categoryListState(){
+        Dialog d=panel();View view=tag("tv_categories_list");if(!(view instanceof ListView))return "dialog="+(d!=null && d.isShowing())+", list=absent";
+        ListView list=(ListView)view;View selected=list.getSelectedView();android.view.WindowInsets insets=list.getRootWindowInsets();
+        return "dialog="+d.isShowing()+", focus="+list.hasFocus()+", window="+list.hasWindowFocus()+", attached="+list.isAttachedToWindow()+", laidOut="+list.isLaidOut()+", layoutPending="+list.isLayoutRequested()+", size="+list.getWidth()+"x"+list.getHeight()+", touch="+list.isInTouchMode()+", selected="+list.getSelectedItemPosition()+", tag="+(selected==null?"none":selected.getTag())+", ime="+(android.os.Build.VERSION.SDK_INT>=30 && insets!=null?insets.isVisible(android.view.WindowInsets.Type.ime()):"unknown");
+    }
+    void awaitCategoryList(String reason){
+        long end=SystemClock.uptimeMillis()+5000;boolean[] ready={false};String[] actual={"not observed"};
+        do{instrumentation.runOnMainSync(()->{ready[0]=categoryListReady();actual[0]=categoryListState();});if(ready[0]){android.util.Log.i("FlixifyFixture",reason+": "+actual[0]);return;}SystemClock.sleep(25);}while(SystemClock.uptimeMillis()<end);
+        fail(reason+": "+actual[0]);
+    }
     View text(View v,String title){if(!v.isShown())return null;if(v instanceof TextView && title.contentEquals(((TextView)v).getText()))return v;if(v instanceof ViewGroup)for(int n=0;n<((ViewGroup)v).getChildCount();n++){View found=text(((ViewGroup)v).getChildAt(n),title);if(found!=null)return found;}return null;}
     View result(String title){View preview=tag("tv_search_preview");return preview==null?null:text(preview,title);}
     void awaitResult(String title){await("Current query preview contains the matching item",()->result(title)!=null && text(tag("tv_search_preview"),"1 sonuç")!=null);}
@@ -71,7 +92,7 @@ public final class SearchResultRemoteTest {
         Item first=new Item(Kind.MOVIE,"first","Avengers","1","Bilim Kurgu","","mp4",repository.scope,"",0,0,"");
         Item second=new Item(Kind.MOVIE,"second","Avengers","2","Drama","","mp4",repository.scope,"",0,0,"");
         repository.catalogOverrides.put(Kind.MOVIE,new Catalog(Kind.MOVIE,Arrays.asList(first,second),Arrays.asList(new Category("1","Bilim Kurgu"),new Category("2","Drama"))));
-        launch();instrumentation.runOnMainSync(()->text(activity.findViewById(android.R.id.content),"Kategori: Tümü").requestFocus());key(KeyEvent.KEYCODE_DPAD_CENTER);await("Category panel focused",()->tag("tv_categories_list")!=null && tag("tv_categories_list").hasFocus());key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_CENTER);
+        launch();instrumentation.runOnMainSync(()->text(activity.findViewById(android.R.id.content),"Kategori: Tümü").requestFocus());key(KeyEvent.KEYCODE_DPAD_CENTER);awaitCategoryList("Category panel focused");key(KeyEvent.KEYCODE_DPAD_DOWN);key(KeyEvent.KEYCODE_DPAD_DOWN);awaitCategoryList("Category selection before Drama OK");key(KeyEvent.KEYCODE_DPAD_CENTER);
         await("Drama category applied",()->text(activity.findViewById(android.R.id.content),"Kategori: Film · Drama")!=null);
         instrumentation.runOnMainSync(()->{try{Field pageField=MainActivity.class.getDeclaredField("page");pageField.setAccessible(true);Object page=pageField.get(activity);Field category=page.getClass().getDeclaredField("category");category.setAccessible(true);assertEquals("@catalog/MOVIE/2",category.get(page));}catch(ReflectiveOperationException error){throw new AssertionError(error);}});
         openSearch("Avengers");Item chosen=selectResultWithRemote("Avengers");assertEquals("second",chosen.id);

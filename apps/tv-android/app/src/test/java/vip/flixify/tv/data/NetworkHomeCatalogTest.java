@@ -77,7 +77,21 @@ public class NetworkHomeCatalogTest {
         <T> void await(Result<T> result,long millis)throws Exception{long end=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(millis);while(result.calls==0 && System.nanoTime()<end){Runnable next=deliveries.poll(Math.min(50,millis),TimeUnit.MILLISECONDS);if(next!=null)next.run();}assertEquals("Repository callback must complete once within the bound",1,result.calls);}
         <T> T value(Result<T> result,long millis)throws Exception{await(result,millis);assertNull(result.error==null?"":result.error.code.name(),result.error);return result.value;}
         Catalog home(Kind kind)throws Exception{Result<Catalog> result=new Result<>();repository.homeCatalog(kind,false,result);return value(result,2000);}
-        void stopWorkers()throws Exception{for(String name:Arrays.asList("worker","epgWorker","primaryCatalogWorker","metadataWorker","timeout")){Field field=NetworkTvRepository.class.getDeclaredField(name);field.setAccessible(true);((ExecutorService)field.get(repository)).shutdownNow();}}
+        void settleMetadata()throws Exception{
+            for(String name:Arrays.asList("metadataWorker","persistenceWorker")){
+                Field field=NetworkTvRepository.class.getDeclaredField(name);field.setAccessible(true);
+                ((ExecutorService)field.get(repository)).submit(()->{}).get(3,TimeUnit.SECONDS);
+            }
+            MetadataDiskCache disk=new MetadataDiskCache(new File(context.root,"catalog-cache-v1"));
+            assertNotNull("Independent library hydration must be durable before restart or membership assertions",disk.readLibrary(repository.currentScope(),NOW+600000,NOW));
+        }
+        void stopWorkers()throws Exception{
+            List<ExecutorService> executors=new ArrayList<>();
+            for(Field field:NetworkTvRepository.class.getDeclaredFields())if(ExecutorService.class.isAssignableFrom(field.getType())){
+                field.setAccessible(true);ExecutorService executor=(ExecutorService)field.get(repository);executors.add(executor);executor.shutdownNow();
+            }
+            for(ExecutorService executor:executors)assertTrue("Repository worker did not stop",executor.awaitTermination(2,TimeUnit.SECONDS));
+        }
         public void close()throws Exception{fixture.release.countDown();repository.logout();stopWorkers();}
     }
     @Test public void foregroundCatalogCompletesWhileOptionalMetadataLaneIsHeld()throws Exception{
@@ -134,19 +148,19 @@ public class NetworkHomeCatalogTest {
     }
     @Test public void blockedColdTabDoesNotDelayAccountOrCachedOtherKind()throws Exception{
         try(Harness h=new Harness()){
-            Catalog movie=h.home(Kind.MOVIE);h.fixture.blockedAction="get_series";Result<Catalog> series=new Result<>();
+            Catalog movie=h.home(Kind.MOVIE);h.settleMetadata();assertEquals(1,h.fixture.reads("/me/personal-library"));h.fixture.apiThreads.clear();h.fixture.blockedAction="get_series";Result<Catalog> series=new Result<>();
             h.repository.catalog(Kind.SERIES,false,series);assertTrue(h.fixture.started.await(1,TimeUnit.SECONDS));
             Result<Account> account=new Result<>();Result<Catalog> cached=new Result<>();h.repository.account(false,account);h.repository.catalog(Kind.MOVIE,false,cached);
             assertTrue(h.value(account,750).canPlay);assertSame(movie,h.value(cached,750));assertEquals(1,h.fixture.reads("get_vod_streams"));
-            for(String thread:h.fixture.apiThreads)assertEquals("flixify-personal-data",thread);
+            assertEquals("Verified fresh library must not be fetched during blocked-provider navigation",1,h.fixture.reads("/me/personal-library"));for(String thread:h.fixture.apiThreads)assertEquals("flixify-personal-data",thread);
         }
     }
     @Test public void blockedHomeShelvesYieldWithoutDelayingMoviePlaybackOrMovingApiWork()throws Exception{
         Object player=new Object();try(Harness h=new Harness()){
-            Item movie=h.home(Kind.MOVIE).items.get(0);h.fixture.blockedAction="get_series";Result<Catalog> series=new Result<>(),live=new Result<>();h.repository.homeCatalog(Kind.SERIES,false,series);h.repository.homeCatalog(Kind.LIVE,false,live);assertTrue(h.fixture.started.await(1,TimeUnit.SECONDS));
+            Item movie=h.home(Kind.MOVIE).items.get(0);h.settleMetadata();assertEquals(1,h.fixture.reads("/me/personal-library"));h.fixture.apiThreads.clear();h.fixture.blockedAction="get_series";Result<Catalog> series=new Result<>(),live=new Result<>();h.repository.homeCatalog(Kind.SERIES,false,series);h.repository.homeCatalog(Kind.LIVE,false,live);assertTrue(h.fixture.started.await(1,TimeUnit.SECONDS));
             BackgroundWorkGate.beginPlayback(player);Result<Playback> playback=new Result<>();h.repository.playback(movie,playback);assertEquals("12",h.value(playback,1200).item.id);assertTrue(h.fixture.disconnected.await(1,TimeUnit.SECONDS));
             h.await(series,1200);h.await(live,1200);assertNotNull(series.error);assertNotNull(live.error);assertEquals(0,h.fixture.reads("get_live_categories"));assertTrue(h.repository.hasSession());
-            for(String thread:h.fixture.apiThreads)assertEquals("flixify-personal-data",thread);for(String thread:h.fixture.providerThreads)assertEquals("flixify-catalog-primary",thread);
+            assertEquals("Verified fresh library must not be fetched during blocked-provider navigation",1,h.fixture.reads("/me/personal-library"));for(String thread:h.fixture.apiThreads)assertEquals("flixify-personal-data",thread);for(String thread:h.fixture.providerThreads)assertEquals("flixify-catalog-primary",thread);
         }finally{BackgroundWorkGate.endPlayback(player);}
     }
     @Test public void cachedHomeHitDoesNotQueueBehindAnotherKindsSlowProviderBody()throws Exception{
@@ -168,7 +182,8 @@ public class NetworkHomeCatalogTest {
         }
     }
     @Test public void diskCachedHomeCatalogRestoresWithoutProviderOrLibraryFetch()throws Exception{
-        FixtureContext context=new FixtureContext();Harness first=new Harness(context,new Fixture());try{first.home(Kind.MOVIE);first.stopWorkers();try(Harness restored=new Harness(context,new Fixture())){
+        FixtureContext context=new FixtureContext();Harness first=new Harness(context,new Fixture());try{first.home(Kind.MOVIE);first.settleMetadata();
+            assertNotNull(new MetadataDiskCache(new File(context.root,"catalog-cache-v1")).readCatalog(first.repository.currentScope(),Kind.MOVIE,NOW+600000,NOW));first.stopWorkers();try(Harness restored=new Harness(context,new Fixture())){
             assertEquals(2026,restored.home(Kind.MOVIE).items.get(0).releaseYear);assertEquals(0,restored.fixture.reads("get_vod_categories"));assertEquals(0,restored.fixture.reads("get_vod_streams"));assertEquals(0,restored.fixture.reads("/me/personal-library"));assertEquals(1,restored.fixture.reads("/me/provider-session"));
         }}finally{first.close();}
     }

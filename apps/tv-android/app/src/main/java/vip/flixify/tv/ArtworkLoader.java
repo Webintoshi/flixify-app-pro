@@ -92,14 +92,14 @@ final class ArtworkLoader implements AutoCloseable {
                 if(!valid(this))return;
                 ArtworkDiskCache.Entry stored=disk.readEntry(scope,address);
                 if(!valid(this))return;
-                Bitmap image=stored==null?null:decode(stored.bytes);long expiresAt=stored==null?0:stored.expiresAt;
+                Bitmap image=stored==null?null:decode(stored.bytes);long expiresAt=stored==null?0:stored.expiresAt;byte[] persistence=null;
                 if(stored!=null && image==null)disk.remove(scope,address);
                 if(image==null) {
                     ArtworkDiskCache.Allowed allowed=()->valid(this) && !BackgroundWorkGate.isPlaybackActive();
                     if(!allowed.getAsBoolean())return;
                     byte[] bytes=fetch(this,allowed);if(bytes==null || !allowed.getAsBoolean())return;
                     image=decode(bytes);if(image==null || !allowed.getAsBoolean())return;
-                    disk.write(scope,address,bytes,()->allowed.getAsBoolean() && !diskClearPending);
+                    persistence=bytes;
                     expiresAt=System.currentTimeMillis()+ArtworkDiskCache.TTL_MS;
                 }
                 final Bitmap result=image;final List<Ticket> recipients;
@@ -109,6 +109,7 @@ final class ArtworkLoader implements AutoCloseable {
                     recipients=new ArrayList<>(tickets);
                 }
                 main.post(()->{for(Ticket ticket:recipients){ImageView view=ticket.view.get();if(valid(ticket) && view!=null && view.getTag()==ticket)view.setImageBitmap(result);}});
+                if(persistence!=null)disk.writeLater(scope,address,persistence,()->valid(this) && hasSubscribers(recipients) && !BackgroundWorkGate.isPlaybackActive() && !diskClearPending);
             } finally {
                 synchronized(lifecycle){if(jobs.get(key)==this)jobs.remove(key);for(Ticket ticket:tickets)ticket.job=null;tickets.clear();}
             }
@@ -123,6 +124,10 @@ final class ArtworkLoader implements AutoCloseable {
     }
     private boolean valid(Ticket ticket){return !closed && !ticket.cancelled && ticket.generation==generation;}
     private boolean valid(Job job){return !closed && !job.cancelled && job.generation==generation && !Thread.currentThread().isInterrupted();}
+    private boolean hasSubscribers(List<Ticket> tickets) {
+        for(Ticket ticket:tickets)if(valid(ticket) && ticket.view.get()!=null)return true;
+        return false;
+    }
     private void cancel(Job job) {
         synchronized(lifecycle){job.cancelled=true;if(jobs.get(job.key)==job)jobs.remove(job.key);for(Ticket ticket:job.tickets){ticket.cancelled=true;ticket.job=null;}job.tickets.clear();}
         job.task.cancel(true);pool.remove(job.task);requestCleanup(job.connection,false,false);

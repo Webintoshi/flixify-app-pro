@@ -70,7 +70,21 @@ public class NetworkLiveCurationTest {
         <T> T deliver(Result<T> result)throws Exception{await(result);assertNull(result.failure);return result.value;}
         void awaitQueued(int count)throws Exception{long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);while(deliveries.size()<count && System.nanoTime()<end)Thread.sleep(1);assertTrue("Expected queued callbacks",deliveries.size()>=count);}
         Catalog catalog()throws Exception{Result<Catalog> r=new Result<>();repository.catalog(Kind.LIVE,false,r);return deliver(r);}
-        void stopWorkers()throws Exception{for(String name:Arrays.asList("worker","epgWorker","primaryCatalogWorker","metadataWorker","timeout")){Field f=NetworkTvRepository.class.getDeclaredField(name);f.setAccessible(true);((ExecutorService)f.get(repository)).shutdownNow();}}
+        void settleMetadata()throws Exception{
+            for(String name:Arrays.asList("metadataWorker","persistenceWorker")){
+                Field field=NetworkTvRepository.class.getDeclaredField(name);field.setAccessible(true);
+                ((ExecutorService)field.get(repository)).submit(()->{}).get(3,TimeUnit.SECONDS);
+            }
+            MetadataDiskCache disk=new MetadataDiskCache(new File(context.root,"catalog-cache-v1"));
+            assertNotNull("Independent library hydration must be durable before restart or membership assertions",disk.readLibrary(repository.currentScope(),NOW+600000,NOW));
+        }
+        void stopWorkers()throws Exception{
+            List<ExecutorService> executors=new ArrayList<>();
+            for(Field field:NetworkTvRepository.class.getDeclaredFields())if(ExecutorService.class.isAssignableFrom(field.getType())){
+                field.setAccessible(true);ExecutorService executor=(ExecutorService)field.get(repository);executors.add(executor);executor.shutdownNow();
+            }
+            for(ExecutorService executor:executors)assertTrue("Repository worker did not stop",executor.awaitTermination(2,TimeUnit.SECONDS));
+        }
         public void close()throws Exception{repository.logout();stopWorkers();}
     }
     private Item station(Catalog catalog,String title){for(Item item:catalog.items)if(item.title.equals(title))return item;throw new AssertionError("Missing canonical station: "+title);}
@@ -107,7 +121,7 @@ public class NetworkLiveCurationTest {
         }
     }
     @Test public void diskRestorationAndPolicyRefreshRecomputeAliasesWithoutProviderRefetch()throws Exception{
-        FixtureContext context=new FixtureContext();Harness first=new Harness(context,new Fixture());assertEquals("35",station(first.catalog(),"ATV").id);first.stopWorkers();
+        FixtureContext context=new FixtureContext();Harness first=new Harness(context,new Fixture());assertEquals("35",station(first.catalog(),"ATV").id);first.settleMetadata();assertNotNull(new MetadataDiskCache(new File(context.root,"catalog-cache-v1")).readCatalog(SCOPE,Kind.LIVE,NOW+600000,NOW));first.stopWorkers();
         Fixture fixture=new Fixture();fixture.exclusions.add("35");try(Harness h=new Harness(context,fixture)){
             assertEquals("36",station(h.catalog(),"ATV").id);assertEquals(0,fixture.streams);
             Result<List<Item>> favorites=new Result<>();h.repository.favorites(favorites);assertEquals("36",h.deliver(favorites).get(0).id);assertTrue(fixture.writes.isEmpty());
@@ -140,7 +154,7 @@ public class NetworkLiveCurationTest {
     }
     @Test public void sourceReplacementDoesNotReuseOldAliasOrSavedFavoriteIdentity()throws Exception{
         try(Harness h=new Harness()){
-            Item previous=station(h.catalog(),"ATV");assertTrue(h.repository.isFavorite(previous));h.fixture.source="source-b";
+            Item previous=station(h.catalog(),"ATV");h.settleMetadata();assertTrue(h.repository.isFavorite(previous));h.fixture.source="source-b";
             Result<Account> access=new Result<>();h.repository.refreshAccess(access);h.deliver(access);Catalog current=h.catalog();assertEquals("fixture-account:source-b",station(current,"ATV").scope);assertFalse(h.repository.isFavorite(station(current,"ATV")));
             Result<Playback> old=new Result<>();h.repository.playback(legacy(),old);h.await(old);assertNull(old.value);assertNotNull(old.failure);assertTrue(h.fixture.writes.isEmpty());
         }

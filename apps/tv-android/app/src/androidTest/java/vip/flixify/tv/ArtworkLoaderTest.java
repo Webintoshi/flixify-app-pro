@@ -57,12 +57,17 @@ public class ArtworkLoaderTest {
         do {value=bitmap();if(value!=null)return value;SystemClock.sleep(20);}while(SystemClock.uptimeMillis()<until);
         fail("Visible artwork was not decoded and attached");return null;
     }
+    private void awaitPersisted(String address) {
+        long until=SystemClock.uptimeMillis()+4000;
+        do {if(disk.read(SCOPE,address)!=null)return;SystemClock.sleep(10);}while(SystemClock.uptimeMillis()<until);
+        fail("Optional artwork persistence did not complete");
+    }
     private void completed(FakeConnection connection) throws Exception {assertTrue("Artwork worker completed",connection.done.await(4,TimeUnit.SECONDS));if(connection.inputOpened)assertTrue("Artwork read closed",connection.streamClosed.await(4,TimeUnit.SECONDS));InstrumentationRegistry.getInstrumentation().waitForIdleSync();}
 
     @Test public void decodedArtworkSurvivesColdLoaderReopenWithoutAnotherRequest() throws Exception {
         FakeConnection first=new FakeConnection(red);create(address->first);load(ADDRESS,SCOPE);
         Bitmap decoded=awaitBitmap();assertTrue(decoded.getWidth()<=512);assertTrue(decoded.getHeight()<=768);assertEquals(Color.RED,decoded.getPixel(0,0));
-        completed(first);assertNotNull(disk.read(SCOPE,ADDRESS));main(()->loader.close());
+        completed(first);awaitPersisted(ADDRESS);main(()->loader.close());
         create(address->new FakeConnection(null));load(ADDRESS,SCOPE);assertEquals(Color.RED,awaitBitmap().getPixel(0,0));assertEquals(1,opens.get());
     }
     @Test public void sameAddressFromAnotherScopeCannotReuseRamOrDiskArtwork() throws Exception {
@@ -126,7 +131,7 @@ public class ArtworkLoaderTest {
         assertNotNull(bitmap(second[0]));assertEquals(Color.BLUE,bitmap(second[0]).getPixel(0,0));assertNull(bitmap());assertEquals(1,opens.get());
     }
     @Test public void memoryPressureDropsDecodedRamButKeepsTheScopedDiskHit() throws Exception {
-        create(address->new FakeConnection(blue));load(ADDRESS,SCOPE);Bitmap first=awaitBitmap();
+        create(address->new FakeConnection(blue));load(ADDRESS,SCOPE);Bitmap first=awaitBitmap();awaitPersisted(ADDRESS);
         main(()->{loader.unbind(image);loader.trimMemory(ComponentCallbacks2.TRIM_MEMORY_COMPLETE);});load(ADDRESS,SCOPE);
         Bitmap restored=awaitBitmap();assertNotSame(first,restored);assertEquals(Color.BLUE,restored.getPixel(0,0));assertEquals(1,opens.get());
     }

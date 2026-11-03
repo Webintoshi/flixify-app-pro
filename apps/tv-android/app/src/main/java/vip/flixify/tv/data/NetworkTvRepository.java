@@ -52,6 +52,10 @@ public final class NetworkTvRepository implements TvRepository {
     private final ThreadPoolExecutor epgWorker=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(16),r->{Thread t=new Thread(r,"flixify-personal-epg");t.setDaemon(true);return t;});
     private final ThreadPoolExecutor primaryCatalogWorker=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(4),r->{Thread t=new Thread(r,"flixify-catalog-primary");t.setDaemon(true);return t;});
     private final ThreadPoolExecutor metadataWorker=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(4),r->{Thread t=new Thread(r,"flixify-catalog-refresh");t.setDaemon(true);return t;});
+    // This lane admits memory hits only; misses return to the authority worker.
+    private final ThreadPoolExecutor cacheWorker=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(64),r->{Thread t=new Thread(r,"flixify-cache-delivery");t.setDaemon(true);return t;});
+    // Dropping optional writes under pressure must never delay a verified result.
+    private final ThreadPoolExecutor persistenceWorker=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(4),r->{Thread t=new Thread(r,"flixify-metadata-persistence");t.setDaemon(true);return t;});
     private final ScheduledExecutorService timeout=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"flixify-request-deadline");t.setDaemon(true);return t;});
     interface Clock { long now(); }
     interface ConnectionFactory { HttpURLConnection open(URL url) throws Exception; }
@@ -95,6 +99,21 @@ public final class NetworkTvRepository implements TvRepository {
     private Catalog curatedInput;
     private String curatedRevision="";
     private LiveChannelCuration.Projection curatedLive;
+    private MetadataDiskCache.Snapshot<Catalog> liveRawSnapshot;
+    private volatile PolicyIdentity verifiedLivePolicy=new PolicyIdentity(null);
+    private static final class PolicyIdentity {
+        final ProviderParser.LivePolicy policy;final String key;
+        PolicyIdentity(ProviderParser.LivePolicy policy){
+            this.policy=policy;if(policy==null){key="";return;}
+            try{
+                StringBuilder values=new StringBuilder();for(String id:new java.util.TreeSet<>(policy.excludedIds))values.append(id).append('\0');
+                byte[] hash=MessageDigest.getInstance("SHA-256").digest(values.toString().getBytes(StandardCharsets.UTF_8));StringBuilder digest=new StringBuilder(64);
+                for(byte value:hash){digest.append(Character.forDigit((value&255)>>>4,16));digest.append(Character.forDigit(value&15,16));}
+                key=policy.revision+":"+digest;
+            }catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
+        }
+    }
+    private static final class MemoryProjectionMiss extends RuntimeException {}
     private Runnable refreshTimer, expiryTimer;
 
     public NetworkTvRepository(Context context) { this(context,null,null,null); }
@@ -106,7 +125,7 @@ public final class NetworkTvRepository implements TvRepository {
         positions=app.getSharedPreferences("tv_scoped_resume",Context.MODE_PRIVATE);
         welcomeMemo=app.getSharedPreferences("tv_welcome_resolved_v1",Context.MODE_PRIVATE);
         metadataDisk=new MetadataDiskCache(new java.io.File(app.getFilesDir(),"catalog-cache-v1"));
-        tokens=tokenStore.load(); worker.allowCoreThreadTimeOut(true);epgWorker.allowCoreThreadTimeOut(true);primaryCatalogWorker.allowCoreThreadTimeOut(true);metadataWorker.allowCoreThreadTimeOut(true);
+        tokens=tokenStore.load(); worker.allowCoreThreadTimeOut(true);epgWorker.allowCoreThreadTimeOut(true);primaryCatalogWorker.allowCoreThreadTimeOut(true);metadataWorker.allowCoreThreadTimeOut(true);cacheWorker.allowCoreThreadTimeOut(true);persistenceWorker.allowCoreThreadTimeOut(true);
     }
     @Override public boolean hasSession() { return tokens!=null; }
     @Override public String currentAccountId(){TokenStore.Session value=tokens;return value==null?"":value.accountId;}
@@ -179,6 +198,9 @@ public final class NetworkTvRepository implements TvRepository {
         enqueuePrepared(name,sourceBound,callback,preparation,optional,null);
     }
     private <T> void enqueuePrepared(String name,boolean sourceBound,Callback<T> callback,Preparation<T> preparation,boolean optional,CatalogDemand demand) {
+        enqueuePrepared(name,sourceBound,callback,preparation,optional,demand,null);
+    }
+    private <T> void enqueuePrepared(String name,boolean sourceBound,Callback<T> callback,Preparation<T> preparation,boolean optional,CatalogDemand demand,Preparation<T> fastPreparation) {
         final Pending<T> operation; final String key;
         synchronized(lock) {
             String scope=currentScope();String selected=name+"@"+authGeneration+"@"+scope;
@@ -196,25 +218,72 @@ public final class NetworkTvRepository implements TvRepository {
             }
             operation=new Pending<>(authGeneration,scope,sourceBound);operation.catalogDemand=demand; if(callback!=null) operation.callbacks.add(callback); pending.put(key,operation);
         }
-        try { worker.execute(()->{
-            try {
-                checkAuth(operation.auth);Prepared<T> prepared=preparation.run(operation.auth);checkAuth(operation.auth);
-                synchronized(lock){operation.preparedSource=prepared.source;operation.preparedScope=prepared.scope;}
-                Runnable request=()->runPrepared(key,operation,prepared);
-                if(prepared.background!=null)prepared.background.execute(request);else if(optional)epgWorker.execute(request);else request.run();
-            } catch(RejectedExecutionException rejected) {complete(key,operation,null,failure(new Problem(Failure.Code.LIMIT)),-1,null);}
-            catch(Exception error) {complete(key,operation,null,failure(error),-1,null);}
-        }); } catch(RejectedExecutionException ignored) {
-            complete(key,operation,null,failure(new Problem(Failure.Code.LIMIT)),-1,null);
+        Runnable authority=()->prepareOperation(key,operation,preparation,optional);
+        try {
+            if(fastPreparation==null)worker.execute(authority);
+            else cacheWorker.execute(()->{
+                try {
+                    checkAuth(operation.auth);Prepared<T> cached=fastPreparation.run(operation.auth);checkAuth(operation.auth);
+                    if(cached==null)worker.execute(authority);else dispatchPrepared(key,operation,cached,optional,true);
+                }catch(RejectedExecutionException rejected){complete(key,operation,null,failure(new Problem(Failure.Code.LIMIT)),-1,null);}
+                catch(Exception error){complete(key,operation,null,failure(error),-1,null);}
+            });
+        } catch(RejectedExecutionException ignored) {
+            // Cache delivery is optional; saturation still admits the existing authority path.
+            try{worker.execute(authority);}catch(RejectedExecutionException rejected){complete(key,operation,null,failure(new Problem(Failure.Code.LIMIT)),-1,null);}
         }
     }
-    private <T> void runPrepared(String key,Pending<T> operation,Prepared<T> prepared) {
+    private <T> void prepareOperation(String key,Pending<T> operation,Preparation<T> preparation,boolean optional){
+        try{
+            checkAuth(operation.auth);Prepared<T> prepared=preparation.run(operation.auth);checkAuth(operation.auth);
+            dispatchPrepared(key,operation,prepared,optional);
+        }catch(RejectedExecutionException rejected){complete(key,operation,null,failure(new Problem(Failure.Code.LIMIT)),-1,null);}
+        catch(Exception error){complete(key,operation,null,failure(error),-1,null);}
+    }
+    private <T> void dispatchPrepared(String key,Pending<T> operation,Prepared<T> prepared,boolean optional){dispatchPrepared(key,operation,prepared,optional,false);}
+    private <T> void dispatchPrepared(String key,Pending<T> operation,Prepared<T> prepared,boolean optional,boolean memoryOnly){
+        synchronized(lock){operation.preparedSource=prepared.source;operation.preparedScope=prepared.scope;}
+        Runnable request=()->runPrepared(key,operation,prepared,memoryOnly);
+        if(prepared.background!=null)prepared.background.execute(request);else if(optional)epgWorker.execute(request);else request.run();
+    }
+    private ProviderParser.Bootstrap freshMemoryBootstrap(long auth)throws Problem{
+        requireTokens(auth);ProviderParser.Bootstrap b=guard.current();long now=clock.now();
+        if(b==null || !guard.active(guard.generation(),b.scope(),now) || now<bootstrapCheckedAt || now-bootstrapCheckedAt>=60000)return null;
+        TokenStore.Session session=requireTokens(auth);
+        return session.accountId.isEmpty() || session.accountId.equals(b.accountId)?b:null;
+    }
+    private Prepared<Catalog> memoryCatalog(long auth,Kind kind)throws Exception{
+        synchronized(lock){
+            ProviderParser.Bootstrap b=freshMemoryBootstrap(auth);if(b==null || !cacheAgeValid(catalogSavedAt.get(kind),catalogValidUntil.get(kind)))return null;
+            Catalog value=catalogs.get(kind);if(value==null || kind==Kind.LIVE && !hasLiveProjection(value))return null;long source=guard.generation();
+            return new Prepared<>(cachedAuth->{active(cachedAuth,source,b.scope());return value;},source,b.scope());
+        }
+    }
+    private Prepared<List<Item>> memoryFavorites(long auth)throws Exception{
+        synchronized(lock){
+            ProviderParser.Bootstrap b=freshMemoryBootstrap(auth);if(b==null || !b.scope().equals(libraryScope) || !cacheAgeValid(librarySavedAt,libraryValidUntil))return null;
+            for(String reference:favoriteRefs){
+                if(resolvedFavorites.containsKey(reference))continue;
+                if(reference.startsWith("LIVE::") && b.livePolicy!=null && b.livePolicy.excludedIds.contains(reference.substring(6)))continue;
+                return null;
+            }
+            Catalog live=catalogs.get(Kind.LIVE);if(live!=null && !hasLiveProjection(live))return null;
+            List<Item> value=favoriteItems;long source=guard.generation();
+            return new Prepared<>(cachedAuth->{active(cachedAuth,source,b.scope());return value;},source,b.scope());
+        }
+    }
+    private void persistMetadata(Runnable write){try{persistenceWorker.execute(write);}catch(RejectedExecutionException ignored){}}
+    private boolean persistenceLease(long auth,long source,String scope,long epoch){
+        synchronized(lock){return auth==authGeneration && memoryEpoch==epoch && guard.active(source,scope,clock.now()) && optionalWorkAllowed();}
+    }
+    private <T> void runPrepared(String key,Pending<T> operation,Prepared<T> prepared,boolean memoryOnly) {
         T value=null;Failure issue=null;
         try {checkAuth(operation.auth);value=prepared.work.run(operation.auth);checkAuth(operation.auth);}
         catch(Exception error) {issue=failure(error);}
-        complete(key,operation,value,issue,prepared.source,prepared.scope);
+        complete(key,operation,value,issue,prepared.source,prepared.scope,memoryOnly);
     }
-    private <T> void complete(String key,Pending<T> operation,T value,Failure issue,long preparedSource,String preparedScope) {
+    private <T> void complete(String key,Pending<T> operation,T value,Failure issue,long preparedSource,String preparedScope) {complete(key,operation,value,issue,preparedSource,preparedScope,false);}
+    private <T> void complete(String key,Pending<T> operation,T value,Failure issue,long preparedSource,String preparedScope,boolean memoryOnly) {
         final String completedScope;final long completedSource;
         synchronized(lock) {
             completedScope=preparedScope==null?currentScope():preparedScope;
@@ -226,11 +295,14 @@ public final class NetworkTvRepository implements TvRepository {
         if(issue==null && policyBound) {
             try {
                 for(int attempt=0;attempt<3;attempt++){
-                    revision=currentPolicyRevision();synchronized(lock){favoriteEpoch=libraryEpoch;}projection=policyResult(value,favorites);
+                    revision=currentPolicyRevision();synchronized(lock){favoriteEpoch=libraryEpoch;}projection=policyResult(value,favorites,memoryOnly);
                     boolean unchanged;synchronized(lock){unchanged=!favorites || favoriteEpoch==libraryEpoch;}
                     if(unchanged && revision.equals(currentPolicyRevision()))break;
                     if(attempt==2)throw new IllegalStateException();
                 }
+            }catch(MemoryProjectionMiss retry){
+                try{worker.execute(()->complete(key,operation,value,issue,preparedSource,preparedScope));}
+                catch(RejectedExecutionException rejected){complete(key,operation,null,failure(new Problem(Failure.Code.LIMIT)),preparedSource,preparedScope);}return;
             }catch(RuntimeException ignored){preparedIssue=failure(new Problem(Failure.Code.STALE));}
         }
         final T published=projection;final String publishedPolicy=revision;final long publishedLibraryEpoch=favoriteEpoch;final Failure finalIssue=preparedIssue;
@@ -257,15 +329,38 @@ public final class NetworkTvRepository implements TvRepository {
             }
         });
     }
-    private String currentPolicyRevision(){ProviderParser.Bootstrap b=guard.current();return b==null || b.livePolicy==null?"":b.livePolicy.revision;}
-    private LiveChannelCuration.Projection liveProjection(Catalog raw) {
+    private String currentPolicyRevision(){return verifiedLivePolicy.key;}
+    private boolean hasLiveProjection(Catalog raw){return curatedInput==raw && curatedLive!=null && curatedRevision.equals(currentPolicyRevision());}
+    private LiveChannelCuration.Projection liveProjection(Catalog raw){return liveProjection(raw,false);}
+    private LiveChannelCuration.Projection liveProjection(Catalog raw,boolean memoryOnly) {
         for(int attempt=0;attempt<3;attempt++){
             final String revision;final Set<String> excluded;
-            synchronized(lock){revision=currentPolicyRevision();if(curatedInput==raw && curatedLive!=null && curatedRevision.equals(revision))return curatedLive;ProviderParser.Bootstrap b=guard.current();excluded=b==null || b.livePolicy==null?Collections.emptySet():b.livePolicy.excludedIds;}
-            LiveChannelCuration.Projection projected=LiveChannelCuration.curate(raw,excluded);
-            synchronized(lock){if(revision.equals(currentPolicyRevision())){if(catalogs.get(Kind.LIVE)==raw){curatedInput=raw;curatedRevision=revision;curatedLive=projected;}return projected;}}
+            synchronized(lock){revision=currentPolicyRevision();if(hasLiveProjection(raw))return curatedLive;if(memoryOnly)throw new MemoryProjectionMiss();ProviderParser.Bootstrap b=guard.current();excluded=b==null || b.livePolicy==null?Collections.emptySet():b.livePolicy.excludedIds;}
+            LiveChannelCuration.Projection projected=LiveChannelCuration.curate(raw,excluded);boolean current=false,remember=false;
+            synchronized(lock){if(revision.equals(currentPolicyRevision())){current=true;remember=catalogs.get(Kind.LIVE)==raw;if(remember){curatedInput=raw;curatedRevision=revision;curatedLive=projected;}}}
+            if(current){if(remember)persistReadyLive(raw,projected,revision);return projected;}
         }
         throw new IllegalStateException("Live projection changed");
+    }
+    private void persistReadyLive(Catalog raw,LiveChannelCuration.Projection projection,String policy){
+        final long auth,source,memory;final Long ticket;final ProviderParser.Bootstrap b;
+        synchronized(lock){
+            b=guard.current();if(b==null || catalogs.get(Kind.LIVE)!=raw || !policy.equals(currentPolicyRevision()) || !optionalWorkAllowed())return;
+            auth=authGeneration;source=guard.generation();memory=memoryEpoch;ticket=catalogFetches.get(Kind.LIVE);
+        }
+        persistMetadata(()->{
+            final MetadataDiskCache.Snapshot<Catalog> snapshot;final long effectiveUntil;
+            synchronized(lock){
+                snapshot=liveRawSnapshot;ProviderParser.Bootstrap current=guard.current();
+                if(snapshot==null || snapshot.value!=raw || current==null)return;
+                effectiveUntil=Math.min(snapshot.expiresAt,Math.min(b.expiresAtMs,current.expiresAtMs));
+            }
+            MetadataDiskCache.Valid valid=()->{synchronized(lock){ProviderParser.Bootstrap current=guard.current();return current!=null && current.expiresAtMs>=effectiveUntil
+                && snapshot==liveRawSnapshot && snapshot.value==catalogs.get(Kind.LIVE)
+                && curatedInput==raw && curatedLive==projection && policy.equals(currentPolicyRevision()) && java.util.Objects.equals(ticket,catalogFetches.get(Kind.LIVE))
+                && persistenceLease(auth,source,b.scope(),memory);}};
+            if(valid.get())metadataDisk.writeReadyLive(b.scope(),effectiveUntil,clock.now(),snapshot,policy,projection,valid);
+        });
     }
     private Catalog currentLiveCatalog(Catalog value) {return value.kind==Kind.LIVE?liveProjection(value).catalog:value;}
     private Item resolveLiveItem(Catalog fallback,String id) {Catalog raw;synchronized(lock){raw=catalogs.get(Kind.LIVE);}return liveProjection(raw==null?fallback:raw).resolve(id);}
@@ -276,10 +371,11 @@ public final class NetworkTvRepository implements TvRepository {
         if(selected!=null)for(String id:projection.aliases(selected.id)){Item original=projection.original(id);if(original!=null && saved.contains(refKey(original)))result.add(original);}
         return result;
     }
-    private void rebuildFavorites(){
+    private void rebuildFavorites(){rebuildFavorites(false);}
+    private void rebuildFavorites(boolean memoryOnly){
         final Set<String> refs;final Map<String,Item> prior;final Map<Kind,Map<String,Item>> indexes;final Map<Kind,Catalog> snapshots;final Catalog live;final String scope,revision;final long epoch;final Set<String> excluded;
         synchronized(lock){refs=new HashSet<>(favoriteRefs);prior=resolvedFavorites;indexes=new EnumMap<>(catalogIndexes);snapshots=new EnumMap<>(catalogs);live=catalogs.get(Kind.LIVE);scope=libraryScope;epoch=libraryEpoch;revision=currentPolicyRevision();ProviderParser.Bootstrap b=guard.current();excluded=b==null || b.livePolicy==null?Collections.emptySet():b.livePolicy.excludedIds;}
-        LiveChannelCuration.Projection projection=live==null?null:liveProjection(live);Map<String,Item> resolved=new LinkedHashMap<>(),unique=new LinkedHashMap<>();Set<String> membership=new HashSet<>();
+        LiveChannelCuration.Projection projection=live==null?null:liveProjection(live,memoryOnly);Map<String,Item> resolved=new LinkedHashMap<>(),unique=new LinkedHashMap<>();Set<String> membership=new HashSet<>();
         for(String ref:refs){
             String[] parts=ref.split(":",-1);if(parts.length!=3)continue;Kind kind;try{kind=Kind.valueOf(parts[0]);}catch(IllegalArgumentException ignored){continue;}
             if(kind==Kind.LIVE && excluded.contains(parts[2]))continue;
@@ -289,9 +385,9 @@ public final class NetworkTvRepository implements TvRepository {
         }
         synchronized(lock){if(epoch==libraryEpoch && scope.equals(libraryScope) && revision.equals(currentPolicyRevision()) && snapshots.equals(catalogs)){resolvedFavorites=Collections.unmodifiableMap(resolved);favoriteItems=Collections.unmodifiableList(new ArrayList<>(unique.values()));favoriteMembership=Collections.unmodifiableSet(membership);}}
     }
-    @SuppressWarnings("unchecked") private <T> T policyResult(T value,boolean favorites) {
-        if(value instanceof Catalog)return (T)currentLiveCatalog((Catalog)value);
-        if(favorites && value instanceof List){rebuildFavorites();synchronized(lock){return (T)favoriteItems;}}
+    @SuppressWarnings("unchecked") private <T> T policyResult(T value,boolean favorites,boolean memoryOnly) {
+        if(value instanceof Catalog){Catalog catalog=(Catalog)value;return (T)(catalog.kind==Kind.LIVE?liveProjection(catalog,memoryOnly).catalog:catalog);}
+        if(favorites && value instanceof List){rebuildFavorites(memoryOnly);synchronized(lock){return (T)favoriteItems;}}
         return value;
     }
     private void checkAuth(long auth) throws Problem { synchronized(lock) { if(auth!=authGeneration) throw new Problem(Failure.Code.STALE); } }
@@ -390,14 +486,15 @@ public final class NetworkTvRepository implements TvRepository {
         catch(ProviderParser.Invalid invalid) { clearProvider();throw invalid; }
         checkAuth(auth); TokenStore.Session t=requireTokens(auth);
         if(!t.accountId.isEmpty() && !t.accountId.equals(incoming.accountId)) {clearProvider();throw new Problem(Failure.Code.STALE);}
+        incoming=ProviderParser.retainLivePolicy(incoming,old);
+        PolicyIdentity priorPolicy=verifiedLivePolicy;final PolicyIdentity incomingPolicy=incoming.livePolicy==priorPolicy.policy?priorPolicy:new PolicyIdentity(incoming.livePolicy);
         Catalog policyCatalog=null;long policySource=-1;
         synchronized(lock) {
             checkAuth(auth);
             if(!incoming.sameIdentity(old)) clearMetadataLocked();
-            incoming=ProviderParser.retainLivePolicy(incoming,old);
+            String previousPolicy=currentPolicyRevision();verifiedLivePolicy=incomingPolicy;
             guard.install(incoming);bootstrapCheckedAt=clock.now();scheduleAccessLocked(auth,incoming);
-            String previousPolicy=old==null || old.livePolicy==null?"":old.livePolicy.revision;
-            String nextPolicy=incoming.livePolicy==null?"":incoming.livePolicy.revision;
+            String nextPolicy=currentPolicyRevision();
             if(!previousPolicy.equals(nextPolicy)){policyCatalog=catalogs.get(Kind.LIVE);policySource=guard.generation();}
         }
         if(old!=null && !incoming.sameIdentity(old))metadataDisk.clear();
@@ -422,7 +519,7 @@ public final class NetworkTvRepository implements TvRepository {
         };
         main.postDelayed(expiryTimer,Math.min(Math.max(1,b.expiresAtMs-clock.now()),Integer.MAX_VALUE));
     }
-    private void clearMetadataLocked() { curatedInput=null;curatedLive=null;curatedRevision="";catalogs.clear();catalogIndexes.clear();catalogSavedAt.clear();catalogValidUntil.clear();catalogFetches.clear();foregroundCatalogFetches.clear();details.clear();detailSavedAt.clear();detailValidUntil.clear();detailFetches.clear();foregroundDetailFetches.clear();metadataRefreshes.clear();favoriteRefs.clear();watchedRefs.clear();libraryScope="";librarySavedAt=0;libraryValidUntil=0;libraryEpoch++;favoriteItems=Collections.emptyList();resolvedFavorites=Collections.emptyMap();favoriteMembership=Collections.emptySet(); }
+    private void clearMetadataLocked() { liveRawSnapshot=null;curatedInput=null;curatedLive=null;curatedRevision="";catalogs.clear();catalogIndexes.clear();catalogSavedAt.clear();catalogValidUntil.clear();catalogFetches.clear();foregroundCatalogFetches.clear();details.clear();detailSavedAt.clear();detailValidUntil.clear();detailFetches.clear();foregroundDetailFetches.clear();metadataRefreshes.clear();favoriteRefs.clear();watchedRefs.clear();libraryScope="";librarySavedAt=0;libraryValidUntil=0;libraryEpoch++;favoriteItems=Collections.emptyList();resolvedFavorites=Collections.emptyMap();favoriteMembership=Collections.emptySet(); }
     private void clearProvider() {clearProvider(-1,-1,null);}
     private void clearProvider(long auth,long source,String scope) {clearProvider(auth,source,scope,false);}
     private void clearProvider(long auth,long source,String scope,boolean expiredOnly) {
@@ -434,7 +531,7 @@ public final class NetworkTvRepository implements TvRepository {
                 if(auth!=authGeneration || source!=guard.generation() || current==null || !scope.equals(current.scope()))return;
                 if(expiredOnly?current.expiresAtMs>clock.now():!guard.active(source,scope,clock.now()))return;
             }
-            guard.clear();bootstrapCheckedAt=0;clearMetadataLocked();
+            guard.clear();verifiedLivePolicy=new PolicyIdentity(null);bootstrapCheckedAt=0;clearMetadataLocked();
             Account previous=currentAccount;if(previous!=null && previous.canPlay)currentAccount=new Account(previous.id,previous.codeSuffix,previous.packageTitle,previous.expiresAtMs,false,previous.trial,"İçerik hizmetine şu anda ulaşılamıyor.",Account.Access.SERVICE_UNAVAILABLE);
             accountCheckedAt=0;
             if(refreshTimer!=null)main.removeCallbacks(refreshTimer);if(expiryTimer!=null)main.removeCallbacks(expiryTimer);
@@ -458,10 +555,9 @@ public final class NetworkTvRepository implements TvRepository {
             public void onResult(Catalog value){if(callback!=null)callback.onResult(value);if(!force)refreshCatalogIfStale(kind);refreshLibraryIfStale();}
             public void onError(Failure issue){if(callback!=null)callback.onError(issue);}
         },auth->{
-            ProviderParser.Bootstrap b=bootstrap(auth,false);boolean refs=restoreLibrary(auth,b);
+            ProviderParser.Bootstrap b=bootstrap(auth,false);
             Catalog local=force?null:cachedCatalog(auth,b,kind);long source=guard.generation();
             if(local!=null)return new Prepared<>(cachedAuth->{active(cachedAuth,source,b.scope());return local;},source,b.scope());
-            if(!refs)library(auth,b,false);
             // Only provider metadata runs here; API calls and token rotation stay in preparation.
             return new Prepared<>(optionalAuth->{
                 metadataActive(optionalAuth,source,b.scope(),true,demand);
@@ -469,7 +565,7 @@ public final class NetworkTvRepository implements TvRepository {
                 long ticket;synchronized(lock){Long current=catalogFetches.get(kind);ticket=current==null?0:current;}
                 return fetchCatalog(optionalAuth,b,source,kind,true,ticket,true,force,demand);
             },source,b.scope(),primaryCatalogWorker);
-        },false,demand);
+        },false,demand,force?null:auth->memoryCatalog(auth,kind));
     }
     private boolean optionalWorkAllowed(){return !BackgroundWorkGate.isPlaybackActive() && clock.now()>=optionalWorkPausedUntil;}
     private boolean optionalWorkAllowed(CatalogDemand demand){return demand!=null && demand.foreground || optionalWorkAllowed();}
@@ -483,7 +579,7 @@ public final class NetworkTvRepository implements TvRepository {
     }
     @Override public void trimMemory(Kind keep){
         synchronized(lock){
-            long now=clock.now();optionalWorkPausedUntil=Math.max(optionalWorkPausedUntil,now>Long.MAX_VALUE-60000?Long.MAX_VALUE:now+60000);memoryEpoch++;
+            long now=clock.now();optionalWorkPausedUntil=Math.max(optionalWorkPausedUntil,now>Long.MAX_VALUE-60000?Long.MAX_VALUE:now+60000);memoryEpoch++;liveRawSnapshot=null;
             // A prepared main-thread playback callback still validates its canonical LIVE projection.
             boolean pendingLive=pendingLivePlaybackLocked(currentScope());
             for(Kind kind:new Kind[]{Kind.LIVE,Kind.MOVIE,Kind.SERIES})if(kind!=keep && !(kind==Kind.LIVE && pendingLive)){catalogs.remove(kind);catalogIndexes.remove(kind);catalogSavedAt.remove(kind);catalogValidUntil.remove(kind);}
@@ -522,10 +618,24 @@ public final class NetworkTvRepository implements TvRepository {
     private Catalog cachedCatalog(long auth,ProviderParser.Bootstrap b,Kind kind)throws Exception{return cachedCatalog(auth,b,kind,false);}
     private Catalog cachedCatalog(long auth,ProviderParser.Bootstrap b,Kind kind,boolean optional)throws Exception{
         long source=guard.generation();metadataActive(auth,source,b.scope(),optional);if(kind==null || kind==Kind.EPISODE)throw new ProviderParser.Invalid();
-        Catalog memory=null;final Long previousTicket;final long epoch;synchronized(lock){epoch=memoryEpoch;previousTicket=catalogFetches.get(kind);if(cacheAgeValid(catalogSavedAt.get(kind),catalogValidUntil.get(kind)))memory=catalogs.get(kind);}if(memory!=null)return memory;
+        Catalog memory=null;final Long previousTicket;final long epoch;
+        synchronized(lock){epoch=memoryEpoch;previousTicket=catalogFetches.get(kind);if(cacheAgeValid(catalogSavedAt.get(kind),catalogValidUntil.get(kind)))memory=catalogs.get(kind);}if(memory!=null)return memory;
         MetadataDiskCache.Snapshot<Catalog> cached=metadataDisk.readCatalog(b.scope(),kind,b.expiresAtMs,clock.now());metadataActive(auth,source,b.scope(),optional);if(cached==null)return null;
+        final String policy;final Set<String> excluded;
+        synchronized(lock){policy=currentPolicyRevision();ProviderParser.Bootstrap current=guard.current();excluded=current==null || current.livePolicy==null?Collections.emptySet():current.livePolicy.excludedIds;}
+        LiveChannelCuration.Projection ready=kind==Kind.LIVE?metadataDisk.readReadyLive(b.scope(),b.expiresAtMs,clock.now(),cached,policy,excluded):null;
         Map<String,Item> index=indexCatalog(cached.value);
-        synchronized(lock){metadataActive(auth,source,b.scope(),optional);if(optional && epoch!=memoryEpoch)throw new Problem(Failure.Code.STALE);if(!java.util.Objects.equals(previousTicket,catalogFetches.get(kind)))memory=catalogs.get(kind);else{catalogs.put(kind,cached.value);catalogIndexes.put(kind,index);catalogSavedAt.put(kind,cached.savedAt);catalogValidUntil.put(kind,cached.expiresAt);memory=cached.value;}}
+        synchronized(lock){
+            metadataActive(auth,source,b.scope(),optional);if(optional && epoch!=memoryEpoch)throw new Problem(Failure.Code.STALE);
+            if(!java.util.Objects.equals(previousTicket,catalogFetches.get(kind)))memory=catalogs.get(kind);
+            else{
+                catalogs.put(kind,cached.value);catalogIndexes.put(kind,index);catalogSavedAt.put(kind,cached.savedAt);catalogValidUntil.put(kind,cached.expiresAt);memory=cached.value;
+                if(kind==Kind.LIVE){
+                    liveRawSnapshot=epoch==memoryEpoch?cached:null;curatedInput=null;curatedLive=null;curatedRevision="";
+                    if(ready!=null && epoch==memoryEpoch && policy.equals(currentPolicyRevision())){curatedInput=cached.value;curatedLive=ready;curatedRevision=policy;}
+                }
+            }
+        }
         if(memory==null)return null;rebuildFavorites();persistLibrary(auth,b,source);return memory;
     }
     private Catalog catalogFor(long auth,ProviderParser.Bootstrap b,Kind kind,boolean force) throws Exception {
@@ -540,7 +650,7 @@ public final class NetworkTvRepository implements TvRepository {
         synchronized(lock){
             metadataActive(auth,source,b.scope(),optional,demand);Long previous=catalogFetches.get(kind);long current=previous==null?0:previous;
             if(optional && (current!=queuedTicket || foregroundCatalogFetches.containsKey(kind) || !allowMissing && !catalogs.containsKey(kind) || !allowFresh && catalogs.containsKey(kind) && !cacheStale(catalogSavedAt.get(kind))))throw new Problem(Failure.Code.STALE);
-            ticket=current+1;catalogFetches.put(kind,ticket);if(primary)foregroundCatalogFetches.put(kind,ticket);
+            ticket=current+1;catalogFetches.put(kind,ticket);if(kind==Kind.LIVE)liveRawSnapshot=null;if(primary)foregroundCatalogFetches.put(kind,ticket);
         }
         try {
             String prefix=kind==Kind.MOVIE?"vod":kind.name().toLowerCase(Locale.ROOT);
@@ -551,10 +661,14 @@ public final class NetworkTvRepository implements TvRepository {
             catalogFetchActive(auth,source,b.scope(),kind,ticket,optional,demand);
             List<Item> cleaned=new ArrayList<>(); for(Item item:parsed.items)cleaned.add(safeArtwork(item,b));
             Catalog result=new Catalog(kind,cleaned,parsed.categories);active(auth,source,b.scope());
-            long saved=clock.now();Map<String,Item> index=indexCatalog(result);
-            synchronized(lock) {catalogFetchActive(auth,source,b.scope(),kind,ticket,optional,demand);catalogs.put(kind,result);catalogIndexes.put(kind,index);catalogSavedAt.put(kind,saved);catalogValidUntil.put(kind,b.expiresAtMs);}
+            long saved=clock.now();Map<String,Item> index=indexCatalog(result);final long persistenceEpoch;
+            synchronized(lock) {catalogFetchActive(auth,source,b.scope(),kind,ticket,optional,demand);persistenceEpoch=memoryEpoch;catalogs.put(kind,result);catalogIndexes.put(kind,index);catalogSavedAt.put(kind,saved);catalogValidUntil.put(kind,b.expiresAtMs);}
+            persistMetadata(()->{
+                MetadataDiskCache.Valid valid=()->{synchronized(lock){return catalogs.get(kind)==result && persistenceLease(auth,source,b.scope(),persistenceEpoch) && catalogWriteLease(auth,source,b.scope(),kind,ticket);}};
+                MetadataDiskCache.Snapshot<Catalog> committed=metadataDisk.writeCatalog(b.scope(),b.expiresAtMs,saved,result,valid);
+                if(kind==Kind.LIVE && committed!=null)synchronized(lock){if(valid.get())liveRawSnapshot=committed;}
+            });
             rebuildFavorites();persistLibrary(auth,b,source);
-            metadataDisk.writeCatalog(b.scope(),b.expiresAtMs,saved,result,()->catalogWriteLease(auth,source,b.scope(),kind,ticket,demand));
             catalogFetchActive(auth,source,b.scope(),kind,ticket,optional,demand);if(optional && (demand==null || !demand.foreground))publishCatalog(result,auth,source,b.scope(),ticket);return result;
         } finally {
             if(primary)synchronized(lock){Long current=foregroundCatalogFetches.get(kind);if(current!=null && current==ticket)foregroundCatalogFetches.remove(kind);}
@@ -564,8 +678,7 @@ public final class NetworkTvRepository implements TvRepository {
     private void metadataActive(long auth,long source,String scope,boolean optional,CatalogDemand demand)throws Problem {active(auth,source,scope);if(optional && !optionalWorkAllowed(demand))throw new Problem(Failure.Code.NETWORK);}
     private void catalogFetchActive(long auth,long source,String scope,Kind kind,long ticket,boolean optional)throws Problem{catalogFetchActive(auth,source,scope,kind,ticket,optional,null);}
     private void catalogFetchActive(long auth,long source,String scope,Kind kind,long ticket,boolean optional,CatalogDemand demand)throws Problem{synchronized(lock){metadataActive(auth,source,scope,optional,demand);Long current=catalogFetches.get(kind);if(current==null || current!=ticket)throw new Problem(Failure.Code.STALE);}}
-    private boolean catalogWriteLease(long auth,long source,String scope,Kind kind,long ticket){return catalogWriteLease(auth,source,scope,kind,ticket,null);}
-    private boolean catalogWriteLease(long auth,long source,String scope,Kind kind,long ticket,CatalogDemand demand){try{catalogFetchActive(auth,source,scope,kind,ticket,true,demand);return true;}catch(Problem ignored){return false;}}
+    private boolean catalogWriteLease(long auth,long source,String scope,Kind kind,long ticket){try{catalogFetchActive(auth,source,scope,kind,ticket,true);return true;}catch(Problem ignored){return false;}}
     private boolean cacheAgeValid(Long saved,Long until){long now=clock.now();return saved!=null && until!=null && saved<=now && now-saved<MetadataDiskCache.MAX_AGE_MS && until>now;}
     private boolean cacheStale(Long saved){return saved==null || clock.now()-saved>=MetadataDiskCache.FRESH_MS;}
     private void refreshCatalogIfStale(Kind kind) {
@@ -646,9 +759,9 @@ public final class NetworkTvRepository implements TvRepository {
         try {
             SeriesDetail parsed=ProviderParser.series(provider(auth,b,source,"get_series_info",parent.id,optional),parent);seriesFetchActive(auth,source,b.scope(),parent.id,ticket,optional);
             List<Season> seasons=new ArrayList<>();for(Season season:parsed.seasons){List<Item> episodes=new ArrayList<>();for(Item episode:season.episodes)episodes.add(safeArtwork(episode,b));seasons.add(new Season(season.number,episodes));}
-            SeriesDetail result=new SeriesDetail(safeArtwork(parsed.series,b),seasons);long saved=clock.now();
-            synchronized(lock){seriesFetchActive(auth,source,b.scope(),parent.id,ticket,optional);details.put(parent.id,result);detailSavedAt.put(parent.id,saved);detailValidUntil.put(parent.id,b.expiresAtMs);trimDetailsLocked();}
-            metadataDisk.writeSeries(b.scope(),b.expiresAtMs,saved,result,()->{try{seriesFetchActive(auth,source,b.scope(),parent.id,ticket,true);return true;}catch(Problem ignored){return false;}});seriesFetchActive(auth,source,b.scope(),parent.id,ticket,optional);return result;
+            SeriesDetail result=new SeriesDetail(safeArtwork(parsed.series,b),seasons);long saved=clock.now();final long persistenceEpoch;
+            synchronized(lock){seriesFetchActive(auth,source,b.scope(),parent.id,ticket,optional);persistenceEpoch=memoryEpoch;details.put(parent.id,result);detailSavedAt.put(parent.id,saved);detailValidUntil.put(parent.id,b.expiresAtMs);trimDetailsLocked();}
+            persistMetadata(()->metadataDisk.writeSeries(b.scope(),b.expiresAtMs,saved,result,()->{synchronized(lock){try{if(!persistenceLease(auth,source,b.scope(),persistenceEpoch))return false;seriesFetchActive(auth,source,b.scope(),parent.id,ticket,true);return true;}catch(Problem ignored){return false;}}}));seriesFetchActive(auth,source,b.scope(),parent.id,ticket,optional);return result;
         } finally {
             if(!optional)synchronized(lock){Long current=foregroundDetailFetches.get(parent.id);if(current!=null && current==ticket)foregroundDetailFetches.remove(parent.id);}
         }
@@ -746,14 +859,20 @@ public final class NetworkTvRepository implements TvRepository {
         rebuildFavorites();persistLibrary(auth,b,source);return changed;
     }
     private void persistLibrary(long auth,ProviderParser.Bootstrap b,long source){
-        final MetadataDiskCache.Library value;final Map<String,Item> resolved;final long saved,until,epoch;
-        synchronized(lock){if(!b.scope().equals(libraryScope) || librarySavedAt<=0)return;resolved=resolvedFavorites;value=new MetadataDiskCache.Library(favoriteRefs,watchedRefs,resolved);saved=librarySavedAt;until=Math.min(libraryValidUntil,b.expiresAtMs);epoch=libraryEpoch;}
-        metadataDisk.writeLibrary(b.scope(),until,saved,value,()->{synchronized(lock){return auth==authGeneration && guard.active(source,b.scope(),clock.now()) && epoch==libraryEpoch && resolvedFavorites==resolved && optionalWorkAllowed();}});
+        final MetadataDiskCache.Library value;final Map<String,Item> resolved;final long saved,until,epoch,persistenceEpoch;
+        synchronized(lock){if(!b.scope().equals(libraryScope) || librarySavedAt<=0)return;resolved=resolvedFavorites;value=new MetadataDiskCache.Library(favoriteRefs,watchedRefs,resolved);saved=librarySavedAt;until=Math.min(libraryValidUntil,b.expiresAtMs);epoch=libraryEpoch;persistenceEpoch=memoryEpoch;}
+        persistMetadata(()->metadataDisk.writeLibrary(b.scope(),until,saved,value,()->{synchronized(lock){return persistenceLease(auth,source,b.scope(),persistenceEpoch) && epoch==libraryEpoch && resolvedFavorites==resolved;}}));
     }
     private void refreshLibraryIfStale(){
-        final ProviderParser.Bootstrap b;final long auth,source,epoch;final String key;
-        synchronized(lock){b=guard.current();if(b==null || !optionalWorkAllowed() || b.scope().equals(libraryScope) && clock.now()-librarySavedAt<LIBRARY_FRESH_MS)return;auth=authGeneration;source=guard.generation();epoch=libraryEpoch;key="library:"+auth+":"+source;if(!metadataRefreshes.add(key))return;}
-        try{metadataWorker.execute(()->{try{if(fetchLibrary(auth,b,source,true,epoch))notifyFavoriteCatalogs(auth,source,b.scope());}catch(Exception ignored){}finally{synchronized(lock){metadataRefreshes.remove(key);}}});}
+        final ProviderParser.Bootstrap b;final long auth,source;final String key;
+        synchronized(lock){b=guard.current();if(b==null || !optionalWorkAllowed() || b.scope().equals(libraryScope) && cacheAgeValid(librarySavedAt,libraryValidUntil) && clock.now()-librarySavedAt<LIBRARY_FRESH_MS)return;auth=authGeneration;source=guard.generation();key="library:"+auth+":"+source;if(!metadataRefreshes.add(key))return;}
+        try{metadataWorker.execute(()->{try{
+            metadataActive(auth,source,b.scope(),true);long before;synchronized(lock){before=libraryEpoch;}
+            restoreLibrary(auth,b);metadataActive(auth,source,b.scope(),true);
+            long epoch;boolean fresh,restored;synchronized(lock){epoch=libraryEpoch;restored=epoch!=before;fresh=b.scope().equals(libraryScope) && cacheAgeValid(librarySavedAt,libraryValidUntil) && clock.now()-librarySavedAt<LIBRARY_FRESH_MS;}
+            if(restored)notifyFavoriteCatalogs(auth,source,b.scope());
+            if(!fresh && fetchLibrary(auth,b,source,true,epoch))notifyFavoriteCatalogs(auth,source,b.scope());
+        }catch(Exception ignored){}finally{synchronized(lock){metadataRefreshes.remove(key);}}});}
         catch(RejectedExecutionException ignored){synchronized(lock){metadataRefreshes.remove(key);}}
     }
     private void notifyFavoriteCatalogs(long auth,long source,String scope){List<Catalog> snapshots;synchronized(lock){if(catalogObservers.isEmpty())return;snapshots=new ArrayList<>(catalogs.values());}for(Catalog snapshot:snapshots)publishPolicyCatalog(snapshot,auth,source,scope);}
@@ -767,20 +886,23 @@ public final class NetworkTvRepository implements TvRepository {
         }return output;
     }
     @Override public void favorites(Callback<List<Item>> callback) {
-        enqueue("favorites",true,new Callback<List<Item>>(){public void onResult(List<Item> value){if(callback!=null)callback.onResult(value);refreshLibraryIfStale();}public void onError(Failure failure){if(callback!=null)callback.onError(failure);}},auth->{
-            ProviderParser.Bootstrap b=bootstrap(auth,false);library(auth,b,false);rebuildFavorites();Set<String> wanted;Map<String,Item> resolved;
-            synchronized(lock){wanted=new HashSet<>(favoriteRefs);resolved=resolvedFavorites;}
-            for(Kind kind:new Kind[]{Kind.LIVE,Kind.MOVIE,Kind.SERIES}){
-                boolean needed=false;
-                for(String key:wanted){
-                    if(!key.startsWith(kind.name()+":") || resolved.containsKey(key))continue;
-                    if(kind==Kind.LIVE && b.livePolicy!=null && b.livePolicy.excludedIds.contains(key.substring(key.lastIndexOf(':')+1)))continue;
-                    needed=true;break;
+        enqueuePrepared("favorites",true,new Callback<List<Item>>(){public void onResult(List<Item> value){if(callback!=null)callback.onResult(value);refreshLibraryIfStale();}public void onError(Failure failure){if(callback!=null)callback.onError(failure);}},auth->{
+            ProviderParser.Bootstrap b=bootstrap(auth,false);long source=guard.generation();
+            return new Prepared<>(favoriteAuth->{
+                active(favoriteAuth,source,b.scope());library(favoriteAuth,b,false);rebuildFavorites();Set<String> wanted;Map<String,Item> resolved;
+                synchronized(lock){wanted=new HashSet<>(favoriteRefs);resolved=resolvedFavorites;}
+                for(Kind kind:new Kind[]{Kind.LIVE,Kind.MOVIE,Kind.SERIES}){
+                    boolean needed=false;
+                    for(String key:wanted){
+                        if(!key.startsWith(kind.name()+":") || resolved.containsKey(key))continue;
+                        if(kind==Kind.LIVE && b.livePolicy!=null && b.livePolicy.excludedIds.contains(key.substring(key.lastIndexOf(':')+1)))continue;
+                        needed=true;break;
+                    }
+                    if(needed)catalogFor(favoriteAuth,b,kind,false);
                 }
-                if(needed)catalogFor(auth,b,kind,false);
-            }
-            rebuildFavorites();persistLibrary(auth,b,guard.generation());synchronized(lock){return favoriteItems;}
-        });
+                rebuildFavorites();persistLibrary(favoriteAuth,b,source);synchronized(lock){return favoriteItems;}
+            },source,b.scope());
+        },false,null,this::memoryFavorites);
     }
     @Override public void toggleFavorite(Item candidate,Callback<Boolean> callback) {
         enqueue("favorite-toggle-"+(candidate==null?"":candidate.key()),true,callback,auth->{

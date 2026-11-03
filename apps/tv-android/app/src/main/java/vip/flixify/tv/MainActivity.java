@@ -912,8 +912,12 @@ public final class MainActivity extends Activity {
         packagesVisible=false;
         if(welcomeBlocked()){loadWelcome();return;}
         visibleAnalyticsScreen="account";analytics.screen(visibleAnalyticsScreen);
-        page=pages.get(Section.ACCOUNT);shell("Hesabım","");
-        LinearLayout loading=scrollContent();loading.addView(TvUi.text(this,"Hesap yükleniyor…",20,TvUi.MUTED),TvUi.space(this,-1,64));addAccountActions(loading);
+        page=pages.get(Section.ACCOUNT);
+        if(verifiedAccount!=null&&verifiedOwner.equals(repository.currentAccountId()))renderAccount(verifiedAccount);
+        else{
+            shell("Hesabım","");
+            LinearLayout loading=scrollContent();loading.addView(TvUi.text(this,"Hesap yükleniyor…",20,TvUi.MUTED),TvUi.space(this,-1,64));addAccountActions(loading);
+        }
         recoveringCatalog=false;resolveVerifiedAccess(false,true);
     }
     private void renderAccount(Account account){

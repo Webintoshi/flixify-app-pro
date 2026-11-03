@@ -1,5 +1,6 @@
 package vip.flixify.tv;
 
+import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Rect;
@@ -64,17 +65,35 @@ public final class PlayerRemoteTest {
             if(result.get())return;
             SystemClock.sleep(20);
         } while(SystemClock.elapsedRealtime()<end);
-        scenario.onActivity(activity -> fail(reason+"; window="+activity.hasWindowFocus()+", focus="+(activity.getCurrentFocus()==null?"none":activity.getCurrentFocus().getTag())));
+        scenario.onActivity(activity -> fail(reason+"; window="+activity.hasWindowFocus()+", focus="+(activity.getCurrentFocus()==null?"none":activity.getCurrentFocus().getTag())+", "+dialogState(activity)));
     }
-    private void awaitDialog(String uniqueText) {
+    private Dialog trackedDialog(PlayerActivity activity) {
+        try {java.lang.reflect.Field field=PlayerActivity.class.getDeclaredField("trackDialog");field.setAccessible(true);return (Dialog)field.get(activity);}
+        catch(ReflectiveOperationException failure){throw new AssertionError(failure);}
+    }
+    private boolean dialogWindowReady(PlayerActivity activity) {
+        Dialog dialog=trackedDialog(activity);if(dialog==null || !dialog.isShowing() || dialog.getWindow()==null)return false;
+        View decor=dialog.getWindow().getDecorView(),content=dialog.findViewById(android.R.id.content);Rect visible=new Rect();
+        return decor.hasWindowFocus() && decor.isAttachedToWindow() && decor.isLaidOut() && !decor.isLayoutRequested() && decor.getWidth()>0 && decor.getHeight()>0 && decor.getGlobalVisibleRect(visible)
+                && content!=null && content.isAttachedToWindow() && content.isLaidOut() && !content.isLayoutRequested() && content.getWidth()>0 && content.getHeight()>0 && content.getGlobalVisibleRect(visible);
+    }
+    private String dialogState(PlayerActivity activity) {
+        Dialog dialog=trackedDialog(activity);if(dialog==null)return "trackDialog=none";
+        View decor=dialog.getWindow()==null?null:dialog.getWindow().getDecorView(),focus=dialog.getCurrentFocus();
+        return "trackDialog="+System.identityHashCode(dialog)+", showing="+dialog.isShowing()+", dialogWindow="+(decor!=null && decor.hasWindowFocus())+", attached="+(decor!=null && decor.isAttachedToWindow())+", laidOut="+(decor!=null && decor.isLaidOut())+", layoutPending="+(decor!=null && decor.isLayoutRequested())+", size="+(decor==null?"none":decor.getWidth()+"x"+decor.getHeight())+", dialogFocus="+(focus==null?"none":focus.getClass().getSimpleName()+":"+focus.getTag());
+    }
+    private void awaitDialog(ActivityScenario<PlayerActivity> scenario,String uniqueText) {
         long end=SystemClock.elapsedRealtime()+3000;
+        AtomicBoolean windowReady=new AtomicBoolean();String[] actual={"not observed"};
         do {
             AccessibilityNodeInfo root=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
-            if(dialogContentVisible(root,uniqueText))return;
+            boolean contentVisible=dialogContentVisible(root,uniqueText);
+            scenario.onActivity(activity->{windowReady.set(dialogWindowReady(activity));actual[0]=dialogState(activity);});
+            if(contentVisible && windowReady.get()){android.util.Log.i("FlixifyFixture","Player dialog ready for "+uniqueText+"; "+actual[0]);return;}
             SystemClock.sleep(20);
         } while(SystemClock.elapsedRealtime()<end);
         AccessibilityNodeInfo last=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
-        fail("Track dialog did not expose "+uniqueText+"; "+nodeText(last));
+        fail("Track dialog did not expose "+uniqueText+" in a ready input window; "+actual[0]+"; "+nodeText(last));
     }
     private boolean dialogContentVisible(AccessibilityNodeInfo root,String uniqueText) {
         if(root==null)return false;
@@ -294,9 +313,9 @@ public final class PlayerRemoteTest {
                 View action=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_episodes");
                 assertNotNull(action);assertTrue(action.requestFocus());action.performClick();
             });
-            awaitDialog("Fixture 5");
+            awaitDialog(scenario,"Fixture 5");
             key(KeyEvent.KEYCODE_DPAD_DOWN);
-            awaitDialog("Fixture 4, şu anki bölüm");
+            awaitDialog(scenario,"Fixture 4, şu anki bölüm");
             key(KeyEvent.KEYCODE_DPAD_CENTER);
             scenario.onActivity(activity -> {
                 assertEquals(repository.next.id,repository.lastPlayback.id);
@@ -304,7 +323,7 @@ public final class PlayerRemoteTest {
                 assertEquals(2,engines.size());assertTrue(engines.get(0).released);
                 View action=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_episodes");action.requestFocus();action.performClick();
             });
-            awaitDialog("Fixture 4");key(KeyEvent.KEYCODE_BACK);
+            awaitDialog(scenario,"Fixture 4");key(KeyEvent.KEYCODE_BACK);
             await(scenario,"Episode Back restores icon",activity -> focused(activity,"tv_player_episodes"));
         }
     }
@@ -322,7 +341,7 @@ public final class PlayerRemoteTest {
                 View actual=((FrameLayout)activity.findViewById(android.R.id.content)).getChildAt(0);assertTrue(actual.getGlobalVisibleRect(player));
                 View action=actual.findViewWithTag("tv_player_episodes");action.requestFocus();action.performClick();
             });
-            awaitDialog("Bölümler");InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            awaitDialog(scenario,"Bölümler");InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             AccessibilityNodeInfo panel=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();Rect bounds=new Rect();panel.getBoundsInScreen(bounds);
             assertTrue("Episode panel must fit actual player "+player+", panel="+bounds,player.contains(bounds));
             scenario.onActivity(activity -> {
@@ -352,24 +371,24 @@ public final class PlayerRemoteTest {
                 assertEquals("Automatic next must not replace an open picker",1,engines.size());
                 assertEquals(repository.episode.id,repository.lastPlayback.id);
             });
-            awaitDialog("Bölümler");key(KeyEvent.KEYCODE_BACK);
+            awaitDialog(scenario,"Bölümler");key(KeyEvent.KEYCODE_BACK);
             await(scenario,"Manual picker Back restores opener",activity -> focused(activity,"tv_player_episodes"));
         }
     }
     @Test public void actualEndWhileEpisodePickerOpenDoesNotReplaceManualChoice() throws Exception {
         try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
             scenario.onActivity(activity -> activity.findViewById(android.R.id.content).findViewWithTag("tv_player_episodes").performClick());
-            awaitDialog("Bölümler");ended(scenario);
+            awaitDialog(scenario,"Bölümler");ended(scenario);
             scenario.onActivity(activity -> assertEquals("Manual picker owns choice when playback ends",View.GONE,activity.findViewById(android.R.id.content).findViewWithTag("tv_player_countdown").getVisibility()));
             Thread.sleep(5300);
             scenario.onActivity(activity -> {assertEquals(1,engines.size());assertEquals(repository.episode.id,repository.lastPlayback.id);});
-            awaitDialog("Bölümler");key(KeyEvent.KEYCODE_BACK);
+            awaitDialog(scenario,"Bölümler");key(KeyEvent.KEYCODE_BACK);
         }
     }
     @Test public void browsingAndClosingEpisodePickerMidEpisodePreservesAutomaticContinuation() {
         try(ActivityScenario<PlayerActivity> scenario=launch(repository.episode)) {
             scenario.onActivity(activity -> activity.findViewById(android.R.id.content).findViewWithTag("tv_player_episodes").performClick());
-            awaitDialog("Bölümler");key(KeyEvent.KEYCODE_BACK);
+            awaitDialog(scenario,"Bölümler");key(KeyEvent.KEYCODE_BACK);
             await(scenario,"Closed episode picker returns input to its opener",activity->focused(activity,"tv_player_episodes"));
             ended(scenario);assertCountdown(scenario);
         }
@@ -394,7 +413,7 @@ public final class PlayerRemoteTest {
                 View guide=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_guide");
                 assertNotNull("Existing guide belongs in player",guide);guide.requestFocus();guide.performClick();
             });
-            awaitDialog("Fixture programme");
+            awaitDialog(scenario,"Fixture programme");
             scenario.onActivity(activity -> {assertEquals(1,repository.epgCalls);assertEquals(1,repository.playbackCalls);assertEquals(1,engines.size());assertFalse(latest().released);});
             key(KeyEvent.KEYCODE_BACK);await(scenario,"Guide Back restores opener",activity -> focused(activity,"tv_player_guide"));
         }
@@ -405,9 +424,9 @@ public final class PlayerRemoteTest {
             scenario.onActivity(activity -> {
                 View guide=activity.findViewById(android.R.id.content).findViewWithTag("tv_player_guide");assertNotNull(guide);guide.performClick();
             });
-            awaitDialog("Yayın bilgisi bulunamadı.");key(KeyEvent.KEYCODE_BACK);
+            awaitDialog(scenario,"Yayın bilgisi bulunamadı.");key(KeyEvent.KEYCODE_BACK);
             scenario.onActivity(activity -> {repository.epgFailure=Failure.Code.NETWORK;activity.findViewById(android.R.id.content).findViewWithTag("tv_player_guide").performClick();});
-            awaitDialog("Yayın akışı yüklenemedi.");key(KeyEvent.KEYCODE_BACK);
+            awaitDialog(scenario,"Yayın akışı yüklenemedi.");key(KeyEvent.KEYCODE_BACK);
             scenario.onActivity(activity -> {repository.epgFailure=null;repository.deferEpg=true;activity.findViewById(android.R.id.content).findViewWithTag("tv_player_guide").performClick();repository.scope="fixture:source2";repository.pendingEpg.onResult(Arrays.asList(new Programme("Late source programme",1,2)));});
             AccessibilityNodeInfo window=InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
             assertFalse(nodeText(window).contains("Late source programme"));
@@ -469,9 +488,9 @@ public final class PlayerRemoteTest {
         repository.initialPlay=false;
         try(ActivityScenario<PlayerActivity> scenario=launch(repository.movie)) {
             key(KeyEvent.KEYCODE_DPAD_UP);key(KeyEvent.KEYCODE_DPAD_RIGHT);
-            key(KeyEvent.KEYCODE_DPAD_CENTER);awaitDialog("Otomatik, seçili");
+            key(KeyEvent.KEYCODE_DPAD_CENTER);awaitDialog(scenario,"Otomatik, seçili");
             scenario.onActivity(activity -> assertFalse("Utility OK opens its panel without toggling playback",latest().playing()));
-            key(KeyEvent.KEYCODE_DPAD_DOWN);awaitDialog("Otomatik, seçili");
+            key(KeyEvent.KEYCODE_DPAD_DOWN);awaitDialog(scenario,"Otomatik, seçili");
             key(KeyEvent.KEYCODE_BACK);
             await(scenario,"Panel Back must restore originating icon",activity -> focused(activity,"tv_player_audio"));
         }
@@ -519,14 +538,14 @@ public final class PlayerRemoteTest {
             key(KeyEvent.KEYCODE_DPAD_RIGHT); // Subtitles then audio.
             scenario.onActivity(activity -> assertEquals("tv_player_audio", activity.getCurrentFocus().getTag()));
             key(KeyEvent.KEYCODE_DPAD_CENTER);
-            awaitDialog("Otomatik");
+            awaitDialog(scenario,"Otomatik");
             key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_CENTER);
             await(scenario,"Audio choice must apply",activity -> latest().selectedAudio>=0);
             await(scenario,"Audio dialog must restore remote focus",activity -> focused(activity,"tv_player_audio"));
             key(KeyEvent.KEYCODE_DPAD_LEFT);
             await(scenario,"Subtitles must be remote reachable",activity -> focused(activity,"tv_player_subtitles"));
             key(KeyEvent.KEYCODE_DPAD_CENTER);
-            awaitDialog("Kapalı");
+            awaitDialog(scenario,"Kapalı");
             key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_CENTER);
             await(scenario,"Subtitle choice must apply",activity -> latest().selectedSubtitle>=0);
             await(scenario,"Subtitle dialog must restore remote focus",activity -> focused(activity,"tv_player_subtitles"));
