@@ -95,7 +95,7 @@ def main():
         if protected()!=before:raise api.GateError('protected_runtime_or_environment_changed')
         print('qr_'+(action or 'preflight')+'_verified; additive_schema_retained')
     if action:
-        if shutil.disk_usage('/var/lib/docker').free<8*1024**3:raise api.GateError('requires_8GiB_no_pruning')
+        if action!='rollback' and shutil.disk_usage('/var/lib/docker').free<8*1024**3:raise api.GateError('requires_8GiB_no_pruning')
         with reviewed.release_lock():run()
     else:run()
 

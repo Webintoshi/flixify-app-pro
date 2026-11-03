@@ -15,6 +15,8 @@
 #include "device_login_policy.h"
 #include <QImage>
 #include <QBuffer>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 class FixtureServer : public QTcpServer {
 public:
     QList<QByteArray> requests;
@@ -78,6 +80,39 @@ private:
         return {{"requestId","00000000-0000-0000-0000-000000000002"},{"deviceSecret",QString(43,'a')},{"userCode","BCDF-GHJK"},{"verificationUri","https://flixify.vip/cihaz"},{"verificationUriComplete","https://flixify.vip/cihaz?code=BCDF-GHJK"},{"qrPngBase64",QString::fromLatin1(png.toBase64())},{"expiresAt","2026-12-01T00:00:00.000Z"},{"expiresInSeconds",180},{"intervalSeconds",2}};
     }
 private slots:
+    void pairingAuthorizationAtFinalDeadlineNeverAdopts() {
+        FixtureServer server;QTemporaryDir dir;qint64 monotonic=0;
+        server.overrides["/auth/device/start"]=challenge();server.delayedPaths.insert("/auth/device/token");
+        server.overrides["/auth/device/token"]=QJsonObject{{"status","authorized"},{"session",QJsonObject{{"accessToken","late-access"},{"refreshToken","late-refresh"},{"user",QJsonObject{{"id","late-account"},{"codeSuffix","LATE"}}}}}};
+        RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;options.deviceLoginClock=[&]{return monotonic;};
+        DesktopRepository repo(options);bool adopted=false;
+        connect(&repo,&DesktopRepository::stateChanged,&repo,[&]{adopted=adopted||repo.authenticated();});
+        repo.startDeviceLogin();QTRY_COMPARE(repo.pairingCode(),QString("BCDF-GHJK"));monotonic=239999;
+        QTRY_VERIFY_WITH_TIMEOUT(!server.delayed.isEmpty(),6000);
+        QNetworkReply *tokenReply=nullptr;
+        for(auto *reply:repo.findChildren<QNetworkReply*>())if(reply->url().path()=="/auth/device/token")tokenReply=reply;
+        QVERIFY(tokenReply);
+        // Move the deadline during response delivery, after all countdown/preflight checks.
+        connect(tokenReply,&QIODevice::readyRead,&repo,[&]{monotonic=240000;});
+        server.respond(server.delayed.takeFirst(),"/auth/device/token");
+        QTRY_COMPARE(repo.pairingStatus(),QString("expired"));
+        QVERIFY(!repo.authenticated());QVERIFY(!adopted);QVERIFY(repo.pairingCode().isEmpty());
+        QTRY_VERIFY(std::any_of(server.requests.begin(),server.requests.end(),[](const auto &r){return r.startsWith("POST /auth/device/cancel ");}));
+        for(const auto &r:server.requests){QVERIFY(!r.startsWith("POST /auth/device/ack "));QVERIFY(!r.startsWith("GET /me "));}
+        repo.restore();QTRY_VERIFY(!repo.bootstrapping());QVERIFY(!repo.authenticated());
+    }
+
+    void pairingAuthorizationWithinFinalGraceStillAdopts() {
+        FixtureServer server;QTemporaryDir dir;qint64 monotonic=0;
+        server.overrides["/auth/device/start"]=challenge();server.delayedPaths.insert("/auth/device/token");
+        server.overrides["/auth/device/token"]=QJsonObject{{"status","authorized"},{"session",QJsonObject{{"accessToken","grace-access"},{"refreshToken","grace-refresh"},{"user",QJsonObject{{"id","account"},{"codeSuffix","TEST"}}}}}};
+        server.overrides["/auth/device/ack"]=QJsonObject{{"status","complete"}};
+        RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;options.deviceLoginClock=[&]{return monotonic;};
+        DesktopRepository repo(options);repo.startDeviceLogin();QTRY_COMPARE(repo.pairingCode(),QString("BCDF-GHJK"));monotonic=239999;
+        QTRY_VERIFY_WITH_TIMEOUT(!server.delayed.isEmpty(),6000);server.respond(server.delayed.takeFirst(),"/auth/device/token");
+        QTRY_VERIFY(repo.authenticated());QCOMPARE(repo.codeSuffix(),QString("TEST"));
+    }
+
     void pairingAdoptsCodeLessTokensAndAcknowledgesOnce() {
         FixtureServer server;QTemporaryDir dir;server.overrides["/auth/device/start"]=challenge();
         server.overrides["/auth/device/token"]=QJsonObject{{"status","authorized"},{"session",QJsonObject{{"accessToken","paired-access"},{"refreshToken","paired-refresh"},{"user",QJsonObject{{"id","account"},{"codeSuffix","TEST"}}}}}};

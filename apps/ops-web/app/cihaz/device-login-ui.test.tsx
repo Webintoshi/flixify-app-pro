@@ -254,6 +254,48 @@ describe('phone device consent', () => {
 });
 
 describe('target manual and QR controls', () => {
+  it('a hidden QR mount stays cancelled until explicit renewal after returning', async () => {
+    route('/giris-yap');
+    await render(<LoginPage/>);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    await click('Telefonla QR giriş');
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(calls('/auth/device/start')).toHaveLength(0);
+    expect(calls('/auth/device/token')).toHaveLength(0);
+    expect(container.textContent).toContain('Giriş isteği iptal edildi.');
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    await settle(() => document.dispatchEvent(new Event('visibilitychange')));
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(calls('/auth/device/start')).toHaveLength(0);
+    await click('Yeni QR oluştur');
+    expect(calls('/auth/device/start')).toHaveLength(1);
+    expect(container.textContent).toContain(userCode);
+  });
+
+  it('hiding a visible QR aborts the pending poll and never resumes it automatically', async () => {
+    route('/giris-yap');
+    const pending = deferred<unknown>();
+    const normalRequest = fixture.request.getMockImplementation()!;
+    fixture.request.mockImplementation((path: string, options: any) => path === '/auth/device/token' ? pending.promise : normalRequest(path, options));
+    await render(<LoginPage/>);
+    await click('Telefonla QR giriş');
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    const signal = calls('/auth/device/token')[0][1].signal;
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    await settle(() => document.dispatchEvent(new Event('visibilitychange')));
+    expect(signal.aborted).toBe(true);
+    expect(calls('/auth/device/cancel')).toHaveLength(1);
+    await settle(() => pending.resolve({ status: 'authorized', session }));
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    await settle(() => document.dispatchEvent(new Event('visibilitychange')));
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(calls('/auth/device/start')).toHaveLength(1);
+    expect(calls('/auth/device/token')).toHaveLength(1);
+    expect(calls('/auth/device/ack')).toHaveLength(0);
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(button('Yeni QR oluştur')).toBeDefined();
+  });
+
   it('starts only on explicit QR entry and ignores authorization arriving after returning to manual login', async () => {
     route('/giris-yap');
     const pending = deferred<unknown>();

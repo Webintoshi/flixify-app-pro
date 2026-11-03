@@ -31,6 +31,7 @@ public actor FlixifyRepository: FlixifyRepositoryProtocol {
     private let cache: MetadataCache
     private let progress: ProgressStore
     private let deviceLoginIsActive: @Sendable () async -> Bool
+    private let deviceLoginClock: @Sendable () -> TimeInterval
     private let now: @Sendable () -> Date
     private var pairing: DeviceLoginAttempt?
     private var pairingEpoch = UUID()
@@ -67,9 +68,11 @@ public actor FlixifyRepository: FlixifyRepositoryProtocol {
 
     public init() {
         client = HTTPClient(); vault = KeychainStore(); cache = MetadataCache(); progress = ProgressStore(); now = { Date() }; deviceLoginIsActive = { await MainActor.run { NSApp?.isActive ?? true } }
+        deviceLoginClock = { ProcessInfo.processInfo.systemUptime }
     }
-    init(client: HTTPClient, vault: any SessionVault, cache: MetadataCache, progress: ProgressStore, now: @escaping @Sendable () -> Date = { Date() }, deviceLoginIsActive: @escaping @Sendable () async -> Bool = { await MainActor.run { NSApp?.isActive ?? true } }) {
+    init(client: HTTPClient, vault: any SessionVault, cache: MetadataCache, progress: ProgressStore, now: @escaping @Sendable () -> Date = { Date() }, deviceLoginIsActive: @escaping @Sendable () async -> Bool = { await MainActor.run { NSApp?.isActive ?? true } }, deviceLoginClock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.client = client; self.vault = vault; self.cache = cache; self.progress = progress; self.now = now; self.deviceLoginIsActive = deviceLoginIsActive
+        self.deviceLoginClock = deviceLoginClock
     }
 
     deinit { pairingAcknowledgement?.cancel(); for task in pairingCleanup.values { task.cancel() } }
@@ -125,7 +128,7 @@ public actor FlixifyRepository: FlixifyRepositoryProtocol {
         let raw = try ProviderParser.object(result.data)
         guard let request = raw["requestId"] as? String, UUID(uuidString: request) != nil,
               let proof = raw["deviceSecret"] as? String, Text.matches(proof, #"^[A-Za-z0-9_-]{43}$"#) else { throw FlixifyError.invalidData }
-        let attempt = DeviceLoginAttempt(epoch: epoch, requestID: request, proof: proof, auth: auth, lifetime: DeviceLoginLifetime(startedAt: ProcessInfo.processInfo.systemUptime), interval: 2)
+        let attempt = DeviceLoginAttempt(epoch: epoch, requestID: request, proof: proof, auth: auth, lifetime: DeviceLoginLifetime(startedAt: deviceLoginClock()), interval: 2)
         let active = await deviceLoginIsActive()
         guard active, epoch == pairingEpoch, auth == authGeneration, session == nil, !Task.isCancelled else { cleanupPairing(attempt); throw FlixifyError.staleSource }
         do {
@@ -139,7 +142,7 @@ public actor FlixifyRepository: FlixifyRepositoryProtocol {
     public func pollDeviceLogin() async throws -> DeviceLoginStatus {
         guard await deviceLoginIsActive(), !Task.isCancelled else { await cancelDeviceLogin(); throw FlixifyError.staleSource }
         guard let attempt = pairing, !attempt.adopted, !attempt.polling, attempt.auth == authGeneration, session == nil else { throw FlixifyError.staleSource }
-        guard attempt.lifetime.canPoll(at: ProcessInfo.processInfo.systemUptime) else { await cancelDeviceLogin(); return .expired }
+        guard attempt.lifetime.canPoll(at: deviceLoginClock()) else { await cancelDeviceLogin(); return .expired }
         pairing?.polling = true
         do {
             let result = try await client.request(url: Self.api.appendingPathComponent("auth/device/token"), method: "POST", body: attempt.body)
@@ -160,6 +163,7 @@ public actor FlixifyRepository: FlixifyRepositoryProtocol {
                 // No await between the activity/attempt fence and secure adoption.
                 try Task.checkCancellation()
                 guard active, pairingEpoch == attempt.epoch, pairing?.epoch == attempt.epoch, authGeneration == attempt.auth, session == nil else { throw FlixifyError.staleSource }
+                guard attempt.lifetime.canPoll(at: deviceLoginClock()) else { await cancelDeviceLogin(); return .expired }
                 try vault.save(stored); session = stored; pairing?.adopted = true; pairedSessionAdopted = true
                 startPairingAcknowledgement()
             } else {

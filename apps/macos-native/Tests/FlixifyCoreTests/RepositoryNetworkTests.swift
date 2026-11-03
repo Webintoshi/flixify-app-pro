@@ -33,6 +33,7 @@ private final class FixtureRouter: @unchecked Sendable {
     private var requests: [URLRequest] = []
     var pairingStatus = "authorized"
     var pairingDelay: TimeInterval = 0
+    var onPairingDelivery: (@Sendable () -> Void)?
     var accountFailure = false
     var accountAuthFailure = false
     var foreignPairingURL = false
@@ -80,7 +81,7 @@ private final class FixtureRouter: @unchecked Sendable {
         case "/auth/device/token":
             var payload: [String: Any] = ["status": pairingStatus]
             if pairingStatus == "authorized" { payload["session"] = ["accessToken": "fixture-paired-access", "refreshToken": "fixture-paired-refresh", "user": ["id": "fixture-account", "codeSuffix": "TEST"]] }
-            return FixtureReply(payload, delay: pairingDelay)
+            return FixtureReply(payload, delay: pairingDelay, onDelivery: onPairingDelivery)
         case "/auth/device/cancel": return FixtureReply(["status": "cancelled"])
         case "/auth/device/ack": return FixtureReply(["status": "complete"])
         case "/auth/login-by-code": return FixtureReply(["accessToken": "fixture-access-old", "refreshToken": "fixture-refresh-old", "user": user])
@@ -152,6 +153,37 @@ private final class RoutingURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 final class RepositoryNetworkTests: XCTestCase {
+    func testAuthorizationDeliveredAtFinalDeadlineNeverReachesVault() async throws {
+        let clock = FixtureClock(), vault = MemoryVault()
+        let repo = repository(vault: vault, pairingClock: { clock.now().timeIntervalSince1970 })
+        let saved = expectation(description: "expired delivery is never saved"); saved.isInverted = true
+        vault.onSave = { saved.fulfill() }
+        _ = try await repo.startDeviceLogin()
+        clock.advance(239)
+        RoutingURLProtocol.router.onPairingDelivery = { clock.advance(1) }
+        let status = try await repo.pollDeviceLogin()
+        XCTAssertEqual(status, .expired)
+        XCTAssertNil(try vault.load())
+        let adopted = await repo.hasDeviceLoginSession(); XCTAssertFalse(adopted)
+        for _ in 0..<30 {
+            if RoutingURLProtocol.router.count("/auth/device/cancel") > 0 { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(RoutingURLProtocol.router.count("/auth/device/token"), 1)
+        XCTAssertEqual(RoutingURLProtocol.router.count("/auth/device/cancel"), 1)
+        XCTAssertEqual(RoutingURLProtocol.router.count("/auth/device/ack"), 0)
+        await fulfillment(of: [saved], timeout: 0.05)
+    }
+
+    func testAuthorizationStillAdoptsDuringFinalDeliveryGrace() async throws {
+        let clock = FixtureClock(), vault = MemoryVault()
+        let repo = repository(vault: vault, pairingClock: { clock.now().timeIntervalSince1970 })
+        _ = try await repo.startDeviceLogin(); clock.advance(238)
+        RoutingURLProtocol.router.onPairingDelivery = { clock.advance(1) }
+        let status = try await repo.pollDeviceLogin()
+        XCTAssertEqual(status, .authorized)
+        XCTAssertEqual(try vault.load()?.accessToken, "fixture-paired-access")
+    }
     func testInactivePairingNeverStartsOrAdoptsLateAuthorization() async throws {
         let vault = MemoryVault(), inactive = repository(vault: vault, pairingActive: { false })
         do { _ = try await inactive.startDeviceLogin(); XCTFail("inactive surface must not start") } catch {}
@@ -247,10 +279,10 @@ final class RepositoryNetworkTests: XCTestCase {
     private var directories: [URL] = []
     override func setUp() { super.setUp(); RoutingURLProtocol.router = FixtureRouter() }
     override func tearDown() { for directory in directories { try? FileManager.default.removeItem(at: directory) }; directories.removeAll(); super.tearDown() }
-    private func repository(vault: MemoryVault = MemoryVault(), clock: FixtureClock? = nil, pairingActive: @escaping @Sendable () async -> Bool = { true }) -> FlixifyRepository {
+    private func repository(vault: MemoryVault = MemoryVault(), clock: FixtureClock? = nil, pairingActive: @escaping @Sendable () async -> Bool = { true }, pairingClock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) -> FlixifyRepository {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("flixify-repository-test-" + UUID().uuidString); directories.append(root)
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [RoutingURLProtocol.self]
-        return FlixifyRepository(client: HTTPClient(configuration: configuration), vault: vault, cache: MetadataCache(root: root.appendingPathComponent("metadata")), progress: ProgressStore(file: root.appendingPathComponent("progress.json")), now: { clock?.now() ?? Date(timeIntervalSince1970: 1793538000) }, deviceLoginIsActive: pairingActive)
+        return FlixifyRepository(client: HTTPClient(configuration: configuration), vault: vault, cache: MetadataCache(root: root.appendingPathComponent("metadata")), progress: ProgressStore(file: root.appendingPathComponent("progress.json")), now: { clock?.now() ?? Date(timeIntervalSince1970: 1793538000) }, deviceLoginIsActive: pairingActive, deviceLoginClock: pairingClock)
     }
     private func login(_ repository: FlixifyRepository) async throws { let state = try await repository.login(code: "ABCDEFGHIJKLMNOP"); XCTAssertTrue(state.account.canPlay) }
 

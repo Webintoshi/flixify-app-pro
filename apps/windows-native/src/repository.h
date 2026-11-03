@@ -12,6 +12,7 @@ struct RepositoryOptions {
     bool allowLoopbackForTests = false;
     std::function<qint64()> now;
     std::function<qint64()> analyticsClock;
+    std::function<qint64()> deviceLoginClock;
 };
 
 class DesktopRepository final : public QObject {

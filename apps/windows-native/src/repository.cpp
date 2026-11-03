@@ -71,6 +71,7 @@ public:
     bool pairAdopted=false;
     int pairRemaining=180, pairInterval=2, pairAckAttempts=0;
     QElapsedTimer pairClock;
+    qint64 pairStartedAt=0;
     QTimer pairPollTimer, pairCountdownTimer, pairAckTimer;
     QPointer<QNetworkReply> pairReply;
     StoredSession session;QString providerOrigin,username,password,version,policyRevision;QSet<QString> excluded;QString currentScope;quint64 authGeneration=0,sourceGeneration=0;QSet<QNetworkReply*> replies;QHash<QNetworkReply*,QString> replyScopes;
@@ -88,8 +89,8 @@ public:
         QObject::connect(&pairAckTimer,&QTimer::timeout,q,[this]{ackPairing();});
         QObject::connect(&pairCountdownTimer,&QTimer::timeout,q,[this]{
             if(pairAdopted||pairRequestID.isEmpty())return;
-            pairRemaining=DeviceLoginLifetime::remaining(pairClock.elapsed());
-            if(!DeviceLoginLifetime::canPoll(pairClock.elapsed())){cancelPairing();pairState="expired";}
+            pairRemaining=DeviceLoginLifetime::remaining(pairElapsed());
+            if(!DeviceLoginLifetime::canPoll(pairElapsed())){cancelPairing();pairState="expired";}
             changed();
         });
         pairCountdownTimer.setInterval(250);
@@ -132,6 +133,7 @@ public:
         if(!adopted||force)abandonProof(id,proof);
     }
     QJsonObject pairingBody() const {return {{"requestId",pairRequestID},{"deviceSecret",pairProof}};}
+    qint64 pairElapsed() const {return options.deviceLoginClock?options.deviceLoginClock()-pairStartedAt:pairClock.elapsed();}
     void pairingError(){const auto message=QString::fromUtf8("QR girişi tamamlanamadı. Yeniden dene veya kullanıcı kodunla giriş yap.");cancelPairing();pairState="error";fail(message);}
     bool pairingIsActive() const {return !qobject_cast<QGuiApplication*>(QCoreApplication::instance())||QGuiApplication::applicationState()==Qt::ApplicationActive;}
     void beginPairing(){
@@ -152,13 +154,13 @@ public:
             QBuffer buffer(&decoded.decoded);buffer.open(QIODevice::ReadOnly);QImageReader reader(&buffer,"PNG");const auto size=reader.size();
             if(size.width()<=0||size.width()>1024||size.width()!=size.height()||reader.read().isNull()){pairingError();return;}
             pairCode=code;pairQr="data:image/png;base64,"+QString::fromLatin1(decoded.decoded.toBase64());pairState="pending";
-            pairClock.start();pairRemaining=180;pairInterval=raw["intervalSeconds"].toInt();pairCountdownTimer.start();pairPollTimer.start(pairInterval*1000);changed();
+            pairClock.start();pairStartedAt=options.deviceLoginClock?options.deviceLoginClock():0;pairRemaining=180;pairInterval=raw["intervalSeconds"].toInt();pairCountdownTimer.start();pairPollTimer.start(pairInterval*1000);changed();
         });
     }
     void pollPairing(){
         if(!pairingIsActive()){cancelPairing();pairState="paused";changed();return;}
         if(pairAdopted||pairRequestID.isEmpty()||pairReply||session.valid())return;
-        if(!DeviceLoginLifetime::canPoll(pairClock.elapsed())){cancelPairing();pairState="expired";changed();return;}
+        if(!DeviceLoginLifetime::canPoll(pairElapsed())){cancelPairing();pairState="expired";changed();return;}
         const auto epoch=pairEpoch,auth=authGeneration;
         pairingRequest("/auth/device/token",pairingBody(),epoch,[this,epoch,auth](int status,QJsonDocument doc){
             if(epoch!=pairEpoch||auth!=authGeneration||session.valid()||pairAdopted)return;
@@ -172,6 +174,7 @@ public:
                 if(!pairingIsActive()){cancelPairing();pairState="paused";changed();return;}
                 // The synchronous secure save is adjacent to the activity/current-attempt fence.
                 if(epoch!=pairEpoch||auth!=authGeneration||session.valid()||pairAdopted)return;
+                if(!DeviceLoginLifetime::canPoll(pairElapsed())){cancelPairing();pairState="expired";changed();return;}
                 if(!vault.save(incoming)){pairingError();return;}
                 session=incoming;pairAdopted=true;pairState="authorized";pairCode.clear();pairQr.clear();pairPollTimer.stop();pairCountdownTimer.stop();
                 analyticsSession();ackPairing();refreshAccount(true,[this,epoch](bool ok){if(epoch==pairEpoch&&pairAdopted){pairState=ok?"complete":"bootstrap_error";changed();}});changed();return;

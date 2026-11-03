@@ -7,6 +7,10 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QDateTime>
+#include <QQuickWindow>
+#include <QQuickItem>
+#include <QQmlProperty>
+#include <algorithm>
 #include "analytics.h"
 #include "app_bridge.h"
 #include "player.h"
@@ -44,6 +48,28 @@ class BridgeTest:public QObject {
     Q_OBJECT
 private slots:
     void init(){FakeVlc::reset();}
+    void accessPageQueuesPairingVisibilityWithoutBindingLoopsOrDuplicateStarts(){
+        BridgeFixture server;QTemporaryDir storage;RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=storage.path();options.allowLoopbackForTests=true;
+        DesktopRepository repo(options);DesktopPlayer player;QQmlApplicationEngine engine;installDesktop(engine,repo,player);
+        QSignalSpy warnings(&engine,&QQmlEngine::warnings);
+        engine.load(QUrl("qrc:/qml/Root.qml"));QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);
+        window->show();window->requestActivate();QTRY_COMPARE(QGuiApplication::applicationState(),Qt::ApplicationActive);
+        repo.restore();QTRY_VERIFY(!repo.bootstrapping());
+        auto starts=[&]{return std::count_if(server.requests.begin(),server.requests.end(),[](const auto &request){return request.startsWith("POST /auth/device/start ");});};
+        QTRY_COMPARE(repo.pairingStatus(),QString("error"));QCOMPARE(starts(),1);
+        QQuickItem *access=nullptr;
+        for(auto *item:window->findChildren<QQuickItem*>())if(item->metaObject()->indexOfProperty("qrSurfaceVisible")>=0)access=item;
+        QVERIFY(access);QVERIFY(access->property("qrSurfaceVisible").toBool());
+        QQmlProperty visibility(access,"visible");
+        QVERIFY(visibility.write(false));QVERIFY(visibility.write(true));
+        QTest::qWait(50);QCOMPARE(starts(),1);
+        QVERIFY(visibility.write(false));QTRY_VERIFY(repo.pairingStatus().isEmpty());
+        QVERIFY(visibility.write(true));QTRY_COMPARE(repo.pairingStatus(),QString("error"));QCOMPARE(starts(),2);
+        QVERIFY(window->findChild<QObject*>("loginCode"));QVERIFY(window->findChild<QObject*>("loginAction"));QVERIFY(window->findChild<QObject*>("pairingRenew"));
+        QVERIFY2(warnings.isEmpty(),"Production AccessPage must emit no QML runtime warnings");
+        window->hide();
+    }
     void userTapIncludesPreflightAndPlayerReturnRestoresActualRoute(){
         BridgeFixture server;QTemporaryDir storage;qint64 now=1000;RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=storage.path();options.allowLoopbackForTests=true;options.analyticsClock=[&]{return now;};
         DesktopRepository repo(options);DesktopPlayer player;QQmlApplicationEngine engine;installDesktop(engine,repo,player);player.setSurface(1);repo.login("ABCDEFGHIJKLMNOP");QTRY_VERIFY(repo.analyticsAvailable()&&!repo.scope().isEmpty()&&!repo.busy());repo.navigate("movies");QTRY_COMPARE(repo.items().size(),1);auto item=repo.items().first().toMap();repo.navigate("home");QTRY_VERIFY(!repo.busy());repo.setAnalyticsConsent(true);auto collector=repo.findChild<DesktopAnalytics*>();QVERIFY(collector);collector->flush();QTRY_COMPARE(collector->pendingCount(),0);

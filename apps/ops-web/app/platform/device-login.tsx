@@ -11,12 +11,13 @@ export function DeviceLoginQr({save,onSuccess,onManual}:{save:(session:LinkedSes
     let initial:string|null,installationId:string;
     try{initial=localStorage.getItem('flixify-public-session');installationId=localStorage.getItem('flixify-installation-id')||crypto.randomUUID();localStorage.setItem('flixify-installation-id',installationId);}catch{setState({phase:'error',message:'Giriş için tarayıcının depolama iznini açıp tekrar dene.'});return;}
     const active=new DeviceLoginClient((path,body,signal)=>apiRequest(path,{method:'POST',body:path.endsWith('/start')?{...(body as object),installationId}:body,signal,skipAuthRefresh:true}),session=>callbacks.current.save(session),next=>{setState(next);if(next.phase==='adopted')callbacks.current.onSuccess();},()=>performance.now(),()=>{try{return document.visibilityState!=='hidden'&&localStorage.getItem('flixify-public-session')===initial;}catch{return false;}});
-    client.current=active;void active.start();
+    client.current=active;
     const changed=()=>{if(localStorage.getItem('flixify-public-session')!==initial)active.cancel();};
     const hidden=()=>{if(document.visibilityState==='hidden')active.pause();};
     const leave=()=>active.pause();
     window.addEventListener('storage',changed);window.addEventListener('flixify-session',changed);
     document.addEventListener('visibilitychange',hidden);window.addEventListener('pagehide',leave);
+    if(document.visibilityState==='hidden')active.pause();else void active.start();
     return()=>{window.removeEventListener('storage',changed);window.removeEventListener('flixify-session',changed);document.removeEventListener('visibilitychange',hidden);window.removeEventListener('pagehide',leave);active.cancel();client.current=null;};
   },[]);
   const pending=state.phase==='pending';

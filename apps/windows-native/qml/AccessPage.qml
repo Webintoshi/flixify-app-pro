@@ -21,12 +21,32 @@ Item {
         repository.login(value);
     }
     property bool qrSurfaceVisible: Qt.application.state === Qt.ApplicationActive && visible && !repository.bootstrapping && !repository.authenticated && !repository.welcomeVisible
-    onQrSurfaceVisibleChanged: {
-        if (qrSurfaceVisible) repository.startDeviceLogin();
+    property bool qrLifecycleReady: false
+    property bool qrLifecycleActive: false
+    function reconcileQrSurface() {
+        if (!qrLifecycleReady || qrLifecycleActive === qrSurfaceVisible)
+            return;
+        qrLifecycleActive = qrSurfaceVisible;
+        if (qrLifecycleActive) repository.startDeviceLogin();
         else repository.cancelDeviceLogin();
     }
-    Component.onCompleted: { if (qrSurfaceVisible) repository.startDeviceLogin(); }
-    Component.onDestruction: repository.cancelDeviceLogin()
+    function startPairing() {
+        qrLifecycleActive = qrSurfaceVisible;
+        repository.startDeviceLogin();
+    }
+    function cancelPairing() {
+        qrLifecycleActive = qrSurfaceVisible;
+        repository.cancelDeviceLogin();
+    }
+    onQrSurfaceVisibleChanged: Qt.callLater(access.reconcileQrSurface)
+    Component.onCompleted: {
+        qrLifecycleReady = true;
+        Qt.callLater(access.reconcileQrSurface);
+    }
+    Component.onDestruction: {
+        qrLifecycleReady = false;
+        repository.cancelDeviceLogin();
+    }
     function pairingMessage() {
         switch (repository.pairingStatus) {
         case "starting": return "QR hazırlanıyor…";
@@ -139,14 +159,14 @@ Item {
                             text: repository.pairingCode ? "QR’ı yenile" : "QR ile giriş yap"
                             visible: !repository.authenticated
                             enabled: repository.pairingStatus !== "starting"
-                            onClicked: { code.clear(); repository.startDeviceLogin(); }
+                            onClicked: { code.clear(); access.startPairing(); }
                         }
                         ActionButton {
                             objectName: "pairingCancel"
                             visible: !!repository.pairingCode
                             text: "İptal"
                             quiet: true
-                            onClicked: { repository.cancelDeviceLogin(); code.forceActiveFocus(); }
+                            onClicked: { access.cancelPairing(); code.forceActiveFocus(); }
                         }
                     }
                 }
@@ -196,7 +216,7 @@ Item {
                                 border.color: code.activeFocus ? "#F5F6F8" : "#343D4B"
                                 border.width: code.activeFocus ? 2 : 1
                             }
-                            onTextEdited: { if (text.length > 0) repository.cancelDeviceLogin(); }
+                            onTextEdited: { if (text.length > 0) access.cancelPairing(); }
                             onAccepted: access.submit()
                             Component.onCompleted: forceActiveFocus()
                         }
