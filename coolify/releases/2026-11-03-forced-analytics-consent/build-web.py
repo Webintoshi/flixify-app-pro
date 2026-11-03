@@ -185,8 +185,8 @@ def docker_build_command(context: Path, image: str, build_args: list[str]) -> tu
     return (
         "env", "DOCKER_BUILDKIT=0", "docker", "build", "--no-cache",
         "--rm", "--force-rm", "--pull=false", "--network=none",
-        "--resource", f"memory={builder.RUN_MEMORY_MIB}m",
-        "--resource", f"memory-swap={builder.RUN_TOTAL_MEMORY_MIB}m",
+        "--memory", f"{builder.RUN_MEMORY_MIB}m",
+        "--memory-swap", f"{builder.RUN_TOTAL_MEMORY_MIB}m",
         "-t", image, *build_args, str(context),
     )
 

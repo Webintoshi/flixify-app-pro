@@ -21,8 +21,9 @@ class DockerBuildCommandTests(unittest.TestCase):
         self.assertEqual(command[:3], ("env", "DOCKER_BUILDKIT=0", "docker"))
         self.assertEqual(command[3:5], ("build", "--no-cache"))
         self.assertNotIn("--load", command)
-        self.assertIn("memory=1280m", command)
-        self.assertIn("memory-swap=1536m", command)
+        self.assertEqual(command[command.index("--memory") + 1], "1280m")
+        self.assertEqual(command[command.index("--memory-swap") + 1], "1536m")
+        self.assertNotIn("--resource", command)
         self.assertEqual(command[-1], "/tmp/context")
 
 
