@@ -214,6 +214,32 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(release.guard.PROTECTED_DB_IMAGE_ID, self.c.DB)
         self.assertEqual(release.guard.SOURCE_IDS, {'ops-web': self.c.SOURCE_ID})
 
+    def test_compose_only_persistence_changes_one_exact_vendor_call_inside_original_transaction(self):
+        release = self.release()
+        original = release.ORIGINAL_PHP_APPLY
+        anchor = '$service->saveComposeConfigs();'
+        prefix, suffix = original.split(anchor)
+        release.configure('b' * 40, 'sha256:' + 'c' * 64)
+        replacement = ("instant_remote_write_file($service->server, "
+                       "$service->workdir().'/docker-compose.yml', $service->docker_compose);")
+        self.assertEqual(release.guard.PHP_APPLY, prefix + replacement + suffix)
+        self.assertIn('DB::transaction(function () use ($p, &$phase)', prefix)
+        self.assertIn("$phase = 'transaction_commit';", suffix)
+        self.assertIn("$phase = 'save_compose_files';", prefix)
+        self.assertNotIn('saveComposeConfigs', release.guard.PHP_APPLY)
+        self.assertNotIn('.env', replacement)
+        self.assertNotIn('environment_variables', replacement)
+        accepted = release.guard.PHP_APPLY
+        release.configure('d' * 40, 'sha256:' + 'e' * 64)
+        self.assertEqual(release.guard.PHP_APPLY, accepted)
+        self.assertEqual(release.ORIGINAL_PHP_APPLY, original)
+
+    def test_compose_only_adapter_rejects_missing_or_ambiguous_vendor_anchor(self):
+        release = self.release()
+        for original in ('different', '$service->saveComposeConfigs();' * 2):
+            with self.subTest(original=original), self.assertRaisesRegex(release.c.GateError, 'unique_compose'):
+                release.compose_only_php(original)
+
     def test_cutover_boundaries_locking_and_low_disk_rollback(self):
         release = self.release()
         argv = ['release.py', '--revision', 'b' * 40, '--candidate-id', 'sha256:' + 'c' * 64]

@@ -15,6 +15,18 @@ c = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(c)
 reviewed = c.load('mac_withdrawal_reviewed_transaction', HERE.parent / '2026-11-01-packages/release-backend.py')
 guard = reviewed.guard
+ORIGINAL_PHP_APPLY = guard.PHP_APPLY
+
+
+def compose_only_php(original):
+    anchor = '$service->saveComposeConfigs();'
+    if original.count(anchor) != 1:
+        raise c.GateError('unique_compose_persistence_anchor_required')
+    # The installed vendor method writes Compose, then regenerates .env.
+    # Use its exact Compose writer inside the existing database transaction.
+    replacement = ("instant_remote_write_file($service->server, "
+                   "$service->workdir().'/docker-compose.yml', $service->docker_compose);")
+    return original.replace(anchor, replacement)
 
 
 def configure(revision, candidate_id):
@@ -22,6 +34,7 @@ def configure(revision, candidate_id):
     if not isinstance(candidate_id, str) or not re.fullmatch('sha256:[a-f0-9]{64}', candidate_id):
         raise c.GateError('exact_candidate_id_required')
     guard.REVISION, guard.CANDIDATE_ID = revision, candidate_id
+    guard.PHP_APPLY = compose_only_php(ORIGINAL_PHP_APPLY)
     guard.CHANGED, guard.PROTECTED = ('ops-web',), ('db', 'api', 'worker')
     guard.SOURCE, guard.SOURCE_IDS = {'ops-web': c.SOURCE_TAG}, {'ops-web': c.SOURCE_ID}
     guard.TARGET = {'ops-web': target}
