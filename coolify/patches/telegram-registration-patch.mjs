@@ -66,25 +66,27 @@ export function transformTelegramRegistrationSource(source, expectedSha256) {
   if (sha(source) !== expectedSha256) throw new Error("registration_source_hash_mismatch");
   if (source.includes(MARKER)) throw new Error("registration_already_patched");
   const startAnchor = "async function pollNewUsers({ seedOnly = false } = {}) {";
-  const endAnchor = "\nasync function startNotifier() {";
+  const start = source.indexOf(startAnchor);
+  const eol = source.slice(start + startAnchor.length).startsWith("\r\n") ? "\r\n" : "\n";
+  const endAnchor = `${eol}async function startNotifier() {`;
   if (source.split(startAnchor).length !== 2 || source.split(endAnchor).length !== 2) {
     throw new Error("registration_poll_anchor_invalid");
   }
-  const start = source.indexOf(startAnchor);
   const end = source.indexOf(endAnchor, start);
   if (end < start) throw new Error("registration_poll_anchor_invalid");
   const originalPoll = source.slice(start, end);
-  if (sha(originalPoll.trimEnd()) !== AUDITED_POLL_SHA256) throw new Error("registration_poll_body_changed");
+  if (sha(originalPoll.replaceAll("\r\n", "\n").trimEnd()) !== AUDITED_POLL_SHA256) throw new Error("registration_poll_body_changed");
   const legacyQuery = "      listAllPendingUsers(),";
-  const prelude = "  notifierTickInFlight = true;\n\n  try {";
+  const prelude = ["  notifierTickInFlight = true;", "", "  try {"].join(eol);
   if (originalPoll.split(legacyQuery).length !== 2 || originalPoll.split(prelude).length !== 2) {
     throw new Error("registration_poll_anchor_invalid");
   }
   const nextPoll = originalPoll.replace(legacyQuery, "      Promise.resolve([]),").replace(prelude,
-    "  notifierTickInFlight = true;\n\n  try {\n    await registrationNotifier.poll();\n  } catch {\n" +
-    '    console.error("telegram-panel-bot registration notifier poll failed; retry scheduled");\n' +
-    "  }\n\n  try {");
-  const injected = `${MARKER}\n${createRegistrationNotifier.toString()}\n\n${createRegistrationNotifierForBot.toString()}\n\nconst registrationNotifier = createRegistrationNotifierForBot();\n\n`;
+    ["  notifierTickInFlight = true;", "", "  try {", "    await registrationNotifier.poll();", "  } catch {",
+      '    console.error("telegram-panel-bot registration notifier poll failed; retry scheduled");',
+      "  }", "", "  try {"].join(eol));
+  const injected = `${MARKER}\n${createRegistrationNotifier.toString()}\n\n${createRegistrationNotifierForBot.toString()}\n\nconst registrationNotifier = createRegistrationNotifierForBot();\n\n`
+    .replaceAll("\r\n", "\n").replaceAll("\n", eol);
   return source.slice(0, start) + injected + nextPoll + source.slice(end);
 }
 

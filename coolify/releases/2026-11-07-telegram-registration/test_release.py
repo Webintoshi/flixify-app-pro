@@ -59,6 +59,9 @@ class DeploymentTests(unittest.TestCase):
         self.syntax_failure = False
         self.after_probe = None
         self.journal_seed_seen = None
+        self.live_node_version = b'v22.23.2\n'
+        self.probe_node_version = b'v22.23.2\n'
+        self.probe_image_missing = False
         for name, value in {'SCRIPT': self.script, 'DATA': self.data, 'LOGS': self.logs, 'SOURCE_SHA': self.old_sha, 'HEALTH_SECONDS': 0}.items():
             p = patch.object(r, name, value)
             p.start()
@@ -76,7 +79,15 @@ class DeploymentTests(unittest.TestCase):
                 return json.dumps([self.bot]).encode()
             known = {row['Id']: row for row in [self.bot] + self.other}
             return json.dumps([known[value] for value in args[2:]]).encode()
+        if args[:3] == ('docker', 'image', 'inspect'):
+            if self.probe_image_missing:
+                raise r.GateError('synthetic-image-missing')
+            return json.dumps([{'Id': args[3]}]).encode()
+        if args[:3] == ('docker', 'exec', r.BOT) and args[3:] == ('node', '--version'):
+            return self.live_node_version
         if args[:2] == ('docker', 'run'):
+            if args[-1] == '--version':
+                return self.probe_node_version
             if '--check' in args:
                 if self.syntax_failure:
                     raise r.GateError('synthetic-syntax-failure')
@@ -103,9 +114,10 @@ class DeploymentTests(unittest.TestCase):
             return r.BOT.encode()
         raise AssertionError('Unexpected Docker operation: ' + repr(args))
 
-    def call(self, apply=False):
+    def call(self, apply=False, probe_image=None):
         with contextlib.redirect_stdout(io.StringIO()) as output:
-            r.deploy(self.candidate, self.new_sha, self.probe, self.probe_sha, apply, self.old_sha)
+            r.deploy(self.candidate, self.new_sha, self.probe, self.probe_sha, apply, self.old_sha,
+                     probe_image_id=probe_image)
         return output.getvalue()
 
     def test_default_preflight_never_writes_script_or_journal_or_restarts(self):
@@ -186,6 +198,38 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(args[args.index('--cap-drop')+1], 'ALL')
             self.assertTrue(all('readonly' in args[i+1] for i, value in enumerate(args) if value == '--mount'))
         self.assertFalse(any(args[:3] == ('docker', 'exec', r.BOT) for args, _ in self.calls))
+
+    def test_provided_probe_image_is_immutable_version_matched_and_used_only_for_offline_checks(self):
+        selected = 'sha256:' + 'b' * 64
+        before = copy.deepcopy(self.other)
+        self.call(probe_image=selected)
+        sandboxes = [args for args, _ in self.calls if args[:2] == ('docker', 'run')]
+        self.assertEqual(len(sandboxes), 3)
+        self.assertTrue(all(selected in args and '--pull' in args and args[args.index('--pull')+1] == 'never' for args in sandboxes))
+        self.assertEqual(self.other, before)
+        self.assertEqual(self.bot['Image'], 'sha256:' + 'a' * 64)
+        self.assertEqual(self.restarts, 0)
+        self.assertEqual(self.script.read_bytes(), self.original)
+
+    def test_missing_probe_image_is_rejected_before_script_mutation(self):
+        self.probe_image_missing = True
+        with self.assertRaisesRegex(r.GateError, 'image-missing'):
+            self.call(True, probe_image='sha256:' + 'b' * 64)
+        self.assertEqual(self.restarts, 0)
+        self.assertEqual(self.script.read_bytes(), self.original)
+        self.assertFalse(self.journal.exists())
+
+    def test_node_version_mismatch_in_probe_image_is_rejected(self):
+        self.probe_node_version = b'v22.23.1\n'
+        with self.assertRaisesRegex(r.GateError, 'node_version'):
+            self.call(True, probe_image='sha256:' + 'b' * 64)
+        self.assertEqual(self.restarts, 0)
+        self.assertFalse(self.journal.exists())
+
+    def test_probe_image_tag_is_not_an_immutable_id(self):
+        with self.assertRaisesRegex(r.GateError, 'immutable_probe_image'):
+            self.call(True, probe_image='node:22')
+        self.assertEqual(self.restarts, 0)
 
     def test_candidate_changed_during_probe_prevents_apply(self):
         self.after_probe = lambda: self.candidate.write_bytes(b'changed')

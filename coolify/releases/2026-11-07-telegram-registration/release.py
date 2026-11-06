@@ -196,12 +196,41 @@ def wait_healthy(*args):
         time.sleep(1.5)
 
 
+def choose_probe_image(bot, explicit_image):
+    if explicit_image is None:
+        return bot['Image']
+    if not isinstance(explicit_image, str) or not re.fullmatch('sha256:[a-f0-9]{64}', explicit_image):
+        raise GateError('immutable_probe_image_id_required')
+    images = json.loads(run('docker', 'image', 'inspect', explicit_image))
+    if (not isinstance(images, list) or len(images) != 1 or not isinstance(images[0], dict)
+            or images[0].get('Id') != explicit_image):
+        raise GateError('immutable_probe_image_not_present')
+    live_version = run('docker', 'exec', BOT, 'node', '--version').strip()
+    if not re.fullmatch(rb'v[0-9]+\.[0-9]+\.[0-9]+', live_version):
+        raise GateError('live_bot_node_version_invalid')
+    name = 'flixify-telegram-registration-version-' + uuid.uuid4().hex[:12]
+    try:
+        probe_version = run('docker', 'run', '--rm', '--name', name, '--pull', 'never',
+                            '--network', 'none', '--read-only', '--user', '0:0', '--cap-drop', 'ALL',
+                            '--security-opt', 'no-new-privileges', '--cpus', '0.5', '--memory', '128m',
+                            '--memory-swap', '128m', '--pids-limit', '32', '--entrypoint', 'node',
+                            explicit_image, '--version').strip()
+    finally:
+        try:
+            run('docker', 'rm', '--force', name)
+        except GateError:
+            pass
+    if probe_version != live_version:
+        raise GateError('probe_image_node_version_differs')
+    return explicit_image
+
+
 def offline_checks(candidate, candidate_sha, probe, probe_sha, image):
     if sha(regular_bytes(probe, 1024 * 1024)[0]) != probe_sha:
         raise GateError('offline_probe_hash_changed')
     if any(any(char in str(path.resolve()) for char in (',', '\n', '\r')) for path in (candidate, probe)):
         raise GateError('mount_path_contains_separator')
-    sandbox = ['docker', 'run', '--rm', '--network', 'none', '--read-only', '--user', '0:0',
+    sandbox = ['docker', 'run', '--rm', '--pull', 'never', '--network', 'none', '--read-only', '--user', '0:0',
                '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--cpus', '0.5',
                '--memory', '256m', '--memory-swap', '256m', '--pids-limit', '64',
                '--mount', 'type=bind,src=' + str(candidate.resolve()) + ',dst=/run/candidate.mjs,readonly',
@@ -289,7 +318,8 @@ def initialize_journal(path, owner):
         os.close(directory)
 
 
-def deploy(candidate, candidate_sha, probe, probe_sha, apply=False, source_sha=SOURCE_SHA):
+def deploy(candidate, candidate_sha, probe, probe_sha, apply=False, source_sha=SOURCE_SHA,
+           probe_image_id=None):
     if source_sha != SOURCE_SHA or any(not re.fullmatch('[a-f0-9]{64}', x) for x in (candidate_sha, probe_sha)):
         raise GateError('explicit_reviewed_hashes_required')
     if candidate.resolve() == SCRIPT.resolve():
@@ -303,7 +333,8 @@ def deploy(candidate, candidate_sha, probe, probe_sha, apply=False, source_sha=S
     before = protected_snapshot()
     paths = state_paths(bot)
     state_admins, heartbeat_admins = admin_ids(read_json(paths[0])), admin_ids(read_json(paths[1]))
-    offline_checks(candidate, candidate_sha, probe, probe_sha, bot['Image'])
+    probe_image = choose_probe_image(bot, probe_image_id)
+    offline_checks(candidate, candidate_sha, probe, probe_sha, probe_image)
     if (protected_snapshot() != before or stable_identity(bot_snapshot()) != stable_identity(bot)
             or regular_bytes(SCRIPT, 2 * 1024 * 1024)[0] != original
             or file_identity(SCRIPT.lstat()) != identity
@@ -355,6 +386,7 @@ def parse_arguments(argv=None):
     parser.add_argument('--probe', type=Path, default=HERE / 'offline-probe.mjs')
     parser.add_argument('--probe-sha256', required=True)
     parser.add_argument('--source-sha256', default=SOURCE_SHA)
+    parser.add_argument('--probe-image-id', help='Existing immutable image ID for an exact Node-version-matched offline probe')
     parser.add_argument('--apply', action='store_true')
     return parser.parse_args(argv)
 
@@ -369,7 +401,7 @@ def main():
             except BlockingIOError:
                 raise GateError('telegram_registration_release_already_running') from None
         deploy(args.candidate, args.candidate_sha256, args.probe, args.probe_sha256,
-               args.apply, args.source_sha256)
+               args.apply, args.source_sha256, args.probe_image_id)
 
 
 if __name__ == '__main__':

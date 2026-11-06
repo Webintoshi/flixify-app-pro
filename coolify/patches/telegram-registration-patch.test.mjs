@@ -33,6 +33,19 @@ test("source hash, audited poll hash, duplicate anchors and repeat patching fail
   assert.throws(() => transformTelegramRegistrationSource(patched, sha(patched)), /already_patched/);
 });
 
+test("real CRLF source retains all unrelated raw bytes and uses CRLF in injected code", () => {
+  const crlf = fixture.replaceAll("\n", "\r\n");
+  const patched = transformTelegramRegistrationSource(crlf, sha(crlf));
+  assert.ok(patched.startsWith("// Unrelated management handlers remain byte-identical.\r\n"));
+  assert.ok(patched.endsWith('\r\n\r\nasync function startNotifier() { return "unchanged-startup"; }\r\n'));
+  assert.equal(patched.replaceAll("\r\n", "").includes("\n"), false);
+  assert.ok(patched.includes("      Promise.resolve([]),\r\n      listPendingPaymentRequests(),"));
+  assert.equal(spawnSync(process.execPath, ["--check", "--input-type=module"], { input: patched }).status, 0);
+  const foreign = crlf.replace('status: "running", seedOnly: true', 'status: "changed", seedOnly: true');
+  assert.throws(() => transformTelegramRegistrationSource(foreign, sha(foreign)), /poll_body_changed/);
+  assert.throws(() => transformTelegramRegistrationSource(crlf, sha(fixture)), /source_hash_mismatch/);
+});
+
 test("patch output is exclusive0600 and cannot overwrite the source or an existing candidate", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "flixify-registration-patch-"));
   try {
@@ -47,7 +60,7 @@ test("patch output is exclusive0600 and cannot overwrite the source or an existi
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
 
-async function integration(run, overrides = {}) {
+async function integration(run, overrides = {}, eol = "\n") {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "flixify-registration-integration-"));
   const counters = { pending: 0, payment: 0, trial: 0, legacySave: 0, detail: 0, sends: [], errors: [] };
   let clock = Date.parse("2026-11-07T09:00:00.000Z"); let users = [];
@@ -75,7 +88,8 @@ async function integration(run, overrides = {}) {
     writeHeartbeat: async () => {}, notifyPaymentRequest: async () => {}, notifyTrialRequest: async () => {},
     ...overrides
   });
-  vm.runInContext(transformTelegramRegistrationSource(fixture, sha(fixture)), context);
+  const source = fixture.replaceAll("\n", eol);
+  vm.runInContext(transformTelegramRegistrationSource(source, sha(source)), context);
   try { await run({ context, counters, dir, setClock: value => { clock = value; }, setUsers: value => { users = value; } }); }
   finally { await fs.rm(dir, { recursive: true, force: true }); }
 }
@@ -103,6 +117,18 @@ test("registration errors are generic and cannot stop existing payment and trial
   assert.ok(counters.errors.some(value => value.includes("registration notifier poll failed")));
   assert.ok(counters.errors.every(value => !value.includes("synthetic-private-upstream")));
 }, { flixifyRequest: async () => { throw new Error("synthetic-private-upstream"); } }));
+
+test("actual CRLF patched poll delivers active assigned registrations with durable acknowledgement", () => integration(async ({ context, counters, dir, setClock, setUsers }) => {
+  await vm.runInContext("pollNewUsers()", context);
+  const journalPath = path.join(dir, "legacy.json.registrations.json");
+  const cutoff = JSON.parse(await fs.readFile(journalPath, "utf8")).cutoffAt;
+  setClock(Date.parse(cutoff) + 20_000);
+  setUsers([{ id: "crlf-active", createdAt: new Date(Date.parse(cutoff) + 1000).toISOString(), status: "active", m3uAssigned: true }]);
+  await vm.runInContext("pollNewUsers()", context);
+  assert.equal(counters.sends.length, 1); assert.equal(counters.pending, 0);
+  assert.equal(counters.payment, 2); assert.equal(counters.trial, 2);
+  assert.deepEqual(JSON.parse(await fs.readFile(journalPath, "utf8")).entries[0].acknowledgedAdminIds, ["1"]);
+}, {}, "\r\n"));
 
 test("oversized or nonregular journals fail without parsing or sending and preserve old workflows", () => integration(async ({ context, counters, dir }) => {
   const journal = path.join(dir, "legacy.json.registrations.json");
