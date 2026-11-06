@@ -85,4 +85,4 @@ python3 -m unittest discover \
   -p test_release.py -v
 ```
 
-The 15 focused tests cover exact scope, native and manifest pins, public asset preservation, Mac withdrawal, regular file modes, disk admission and reserve failure, bounded compiler cleanup, generated JavaScript syntax, Compose-only persistence, protected service pins, failed-cutover recovery and rollback without candidate or disk dependencies. They do not constitute a live publication or a physical TV performance result.
+The 20 focused tests cover exact scope, native and manifest pins, public asset preservation, Mac withdrawal, regular file modes, disk admission and reserve failure, bounded compiler cleanup, generated JavaScript syntax, Compose-only persistence, protected service pins, failed-cutover recovery and rollback without candidate or disk dependencies. They also exercise the complete current host inventory: all currently existing containers remain protected, while retired containers from unrelated projects are not required to exist. Configuration, lifecycle, network and inventory drift still fails verification. They do not constitute a live publication or a physical TV performance result.

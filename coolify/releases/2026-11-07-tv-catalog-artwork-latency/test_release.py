@@ -179,6 +179,121 @@ class PublicationTests(unittest.TestCase):
         command.assert_called_once_with('docker', 'kill', 'a' * 64, timeout=10)
         self.assertEqual(watch.failure, 'host_disk_reserve_breached')
 
+    def host_rows(self):
+        return [{'Id': identity * 64, 'Name': '/' + name, 'Image': 'sha256:' + image * 64,
+            'Config': {'Image': 'retained:tag', 'Env': ['PRIVATE=must-never-appear-in-report']},
+            'HostConfig': {'Memory': 1024}, 'Mounts': [{'Source': '/retained', 'Destination': '/data'}],
+            'NetworkSettings': {'Networks': {'retained': {'IPAddress': '10.1.2.3', 'EndpointID': 'endpoint'}}},
+            'State': {'Running': True, 'StartedAt': '2026-11-07T00:00:00Z',
+                      'Paused': False, 'Restarting': False, 'Dead': False, 'OOMKilled': False}, 'RestartCount': 0}
+            for identity, name, image in [('a', 'flixify-current', 'b'), ('c', 'unrelated-current-project', 'd')]]
+
+    def snapshot(self, rows, ids=None):
+        ids = [row['Id'] for row in rows] if ids is None else ids
+        def command(*args, **kwargs):
+            if args[:2] == ('docker', 'ps'):
+                self.assertEqual(args, ('docker', 'ps', '--all', '--quiet', '--no-trunc'))
+                return ('\n'.join(ids)).encode()
+            self.assertEqual(args, ('docker', 'inspect', *ids))
+            return json.dumps(rows).encode()
+        def read_bytes(path):
+            self.assertEqual(path.parent, Path('/data/coolify/services') / self.c.builder.UUID)
+            self.assertIn(path.name, ('.env', '.live-registration-rollout.json'))
+            return path.name.encode()
+        with patch.object(self.c, 'command', command), patch.object(self.c.Path, 'read_bytes', read_bytes):
+            return self.c.current_host_snapshot()
+
+    def test_current_inventory_does_not_require_retired_foreign_container_and_hashes_private_data(self):
+        rows = self.host_rows()
+        with patch.object(self.c.backend, 'host_snapshot', side_effect=AssertionError('Historical presence rule cannot run')):
+            result = self.snapshot(rows)
+        self.assertEqual(set(result), {row['Id'] for row in rows} | {'environment', 'registrationFence'})
+        self.assertEqual(result[rows[1]['Id']]['name'], rows[1]['Name'])
+        self.assertEqual(result['environment'], self.c.sha(b'.env'))
+        self.assertEqual(result['registrationFence'], self.c.sha(b'.live-registration-rollout.json'))
+        self.assertNotIn('PRIVATE', json.dumps(result))
+        self.assertNotIn('10.1.2.3', json.dumps(result))
+
+    def test_current_external_configuration_lifecycle_network_and_inventory_drift_are_all_visible(self):
+        original = self.host_rows()
+        baseline = self.snapshot(original)
+        for field in ('Config', 'HostConfig', 'Mounts', 'Networks', 'Image', 'Name', 'StartedAt', 'Running',
+                      'Paused', 'Restarting', 'Dead', 'OOMKilled', 'RestartCount', 'add', 'remove'):
+            rows = copy.deepcopy(original)
+            external = rows[1]
+            if field in ('Config', 'HostConfig'):
+                external[field]['changed'] = True
+            elif field == 'Mounts':
+                external['Mounts'][0]['Source'] = '/other-project-changed'
+            elif field == 'Networks':
+                external['NetworkSettings']['Networks']['retained']['IPAddress'] = '10.1.2.4'
+            elif field in ('Image', 'Name'):
+                external[field] = 'sha256:' + 'e' * 64 if field == 'Image' else '/renamed-current-project'
+            elif field in ('StartedAt', 'Running'):
+                external['State'][field] = '2026-11-07T00:00:01Z' if field == 'StartedAt' else False
+            elif field in ('Paused', 'Restarting', 'Dead', 'OOMKilled'):
+                external['State'][field] = True
+            elif field == 'RestartCount':
+                external['RestartCount'] = 1
+            elif field == 'add':
+                extra = copy.deepcopy(external)
+                extra.update(Id='f' * 64, Name='/new-current-project')
+                rows.append(extra)
+            else:
+                rows.pop()
+            with self.subTest(field=field):
+                self.assertNotEqual(self.snapshot(rows), baseline)
+
+    def test_current_inventory_rejects_duplicate_missing_and_malformed_inspections(self):
+        original = self.host_rows()
+        cases = [(original, [original[0]['Id']] * 2), (original[:1], [row['Id'] for row in original]),
+                 (original, ['short']), (original + original[:1], [row['Id'] for row in original])]
+        for rows, ids in cases:
+            with self.subTest(ids=ids), self.assertRaises(self.c.GateError):
+                self.snapshot(rows, ids)
+        for field, value in [('Config', None), ('HostConfig', []), ('Mounts', {}),
+                             ('NetworkSettings', {'Networks': {'invalid': None}}), ('RestartCount', True),
+                             ('State', {'Running': 1, 'StartedAt': 'date'}), ('Name', None), ('Image', 'tag')]:
+            rows = copy.deepcopy(original)
+            rows[1][field] = value
+            with self.subTest(field=field), self.assertRaises(self.c.GateError):
+                self.snapshot(rows)
+
+    def test_measurement_rejects_changed_current_external_container(self):
+        baseline = self.snapshot(self.host_rows())
+        changed = copy.deepcopy(baseline)
+        changed['c' * 64]['restarts'] = 1
+        with patch.object(self.build.c, 'protected_host', side_effect=[baseline, changed]), \
+                patch.object(self.build, 'source_runtime', return_value=({}, self.source_pin()['publicBuildEnv'])), \
+                patch.object(self.build.c.web, 'public_manifest', return_value=b'[]'), \
+                patch.object(self.build.c.web, 'untouched', return_value=self.source_pin()['measurement']), \
+                patch.object(self.build, 'next_footprint', return_value=10 * 1024**2), \
+                self.assertRaisesRegex(self.c.GateError, 'host_changed_during_independent_measurement'):
+            self.build.measure()
+
+    def test_protected_services_and_environment_pins_survive_current_inventory_adapter(self):
+        rows = []
+        for index, (name, pin) in enumerate({'api': self.c.API, 'worker': self.c.WORKER, 'db': ('postgres:16-alpine', self.c.DB)}.items()):
+            rows.append({'Name': '/' + name + '-' + self.c.builder.UUID, 'Image': pin[1],
+                'Config': {'Image': pin[0], 'Labels': {'com.docker.compose.project': self.c.builder.UUID}},
+                'State': {'Running': True}})
+        current = {'environment': self.c.ENV_SHA, 'registrationFence': self.c.FENCE_SHA,
+            'web-current': {'name': '/ops-web-' + self.c.builder.UUID, 'config': 'web'},
+            'other-current': {'name': '/unrelated-current-project', 'config': 'retained'}}
+        with patch.object(self.c, 'command', return_value=json.dumps(rows).encode()), \
+                patch.object(self.c, 'current_host_snapshot', return_value=current):
+            self.assertEqual(self.c.protected_host(include_web=True), current)
+            self.assertEqual(set(self.c.protected_host()), {'environment', 'registrationFence', 'other-current'})
+        for case in ('api-image', 'env', 'fence'):
+            damaged_rows, damaged_current = copy.deepcopy(rows), copy.deepcopy(current)
+            if case == 'api-image':
+                damaged_rows[0]['Image'] = 'sha256:' + 'a' * 64
+            else:
+                damaged_current['environment' if case == 'env' else 'registrationFence'] = 'a' * 64
+            with self.subTest(case=case), patch.object(self.c, 'command', return_value=json.dumps(damaged_rows).encode()), \
+                    patch.object(self.c, 'current_host_snapshot', return_value=damaged_current), self.assertRaises(self.c.GateError):
+                self.c.protected_host()
+
     @unittest.skipUnless(shutil.which('node'), 'Node is unavailable')
     def test_real_download_and_compiler_scripts_have_valid_javascript_syntax(self):
         calls, command = self.compiler_fixture()

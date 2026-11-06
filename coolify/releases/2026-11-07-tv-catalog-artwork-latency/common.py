@@ -132,6 +132,46 @@ def expected_public(original, native, manifest):
     return public_rows(json.dumps(rows).encode())
 
 
+def current_host_snapshot():
+    ids = command('docker', 'ps', '--all', '--quiet', '--no-trunc').decode().splitlines()
+    if len(ids) != len(set(ids)) or any(not re.fullmatch('[a-f0-9]{64}', value) for value in ids):
+        raise GateError('current_host_inventory_invalid')
+    rows = unique_json(command('docker', 'inspect', *ids)) if ids else []
+    if not isinstance(rows, list) or len(rows) != len(ids):
+        raise GateError('current_host_inspection_set_differs')
+    result, names = {}, set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise GateError('current_host_container_shape_invalid')
+        identity, name, image = row.get('Id'), row.get('Name'), row.get('Image')
+        state, config, host_config, mounts = row.get('State'), row.get('Config'), row.get('HostConfig'), row.get('Mounts')
+        network_settings = row.get('NetworkSettings')
+        networks = network_settings.get('Networks') if isinstance(network_settings, dict) else None
+        if (identity not in ids or identity in result or not isinstance(name, str) or not name.startswith('/')
+                or len(name) < 2 or name in names or not isinstance(image, str) or not re.fullmatch('sha256:[a-f0-9]{64}', image)
+                or not isinstance(state, dict) or type(state.get('Running')) is not bool
+                or any(type(state.get(key)) is not bool for key in ('Paused', 'Restarting', 'Dead', 'OOMKilled'))
+                or not isinstance(state.get('StartedAt'), str) or not 1 <= len(state['StartedAt']) <= 100
+                or type(row.get('RestartCount')) is not int or row['RestartCount'] < 0
+                or not isinstance(config, dict) or not isinstance(host_config, dict)
+                or not isinstance(mounts, list) or any(not isinstance(value, dict) for value in mounts)
+                or not isinstance(networks, dict)
+                or any(not isinstance(key, str) or not isinstance(value, dict) for key, value in networks.items())):
+            raise GateError('current_host_container_shape_invalid')
+        private_configuration = {'Config': config, 'HostConfig': host_config, 'Mounts': mounts, 'Networks': networks}
+        result[identity] = {'name': name, 'image': image, 'startedAt': state['StartedAt'],
+            'running': state['Running'], 'restarts': row['RestartCount'],
+            'lifecycle': {key: state[key] for key in ('Paused', 'Restarting', 'Dead', 'OOMKilled')},
+            'config': sha(json.dumps(private_configuration, sort_keys=True, separators=(',', ':')).encode())}
+        names.add(name)
+    if set(result) != set(ids):
+        raise GateError('current_host_inspection_set_differs')
+    service = Path('/data/coolify/services') / builder.UUID
+    result['environment'] = sha((service / '.env').read_bytes())
+    result['registrationFence'] = sha((service / '.live-registration-rollout.json').read_bytes())
+    return result
+
+
 def protected_host(include_web=False):
     pins = {'api': API, 'worker': WORKER, 'db': ('postgres:16-alpine', DB)}
     rows = unique_json(command('docker', 'inspect', *(name + '-' + builder.UUID for name in pins)))
@@ -145,7 +185,7 @@ def protected_host(include_web=False):
         seen.add(name)
     if seen != set(pins):
         raise GateError('protected_service_set_differs')
-    state = backend.host_snapshot()
+    state = current_host_snapshot()
     if state['environment'] != ENV_SHA or state['registrationFence'] != FENCE_SHA:
         raise GateError('environment_or_registration_fence_drift')
     return state if include_web else {key: value for key, value in state.items()
