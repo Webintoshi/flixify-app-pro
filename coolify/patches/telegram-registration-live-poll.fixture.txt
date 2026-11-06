@@ -1,0 +1,144 @@
+async function pollNewUsers({ seedOnly = false } = {}) {
+  if (notifierTickInFlight) {
+    return;
+  }
+
+  notifierTickInFlight = true;
+
+  try {
+    const [items, paymentRequests, trialRequests] = await Promise.all([
+      listAllPendingUsers(),
+      listPendingPaymentRequests(),
+      listPendingTrialRequests().catch((err) => {
+        console.error("telegram-panel-bot listPendingTrialRequests error:", normalizeErrorMessage(err));
+        return [];
+      })
+    ]);
+    const knownIds = new Set(notifierState.knownPendingUserIds);
+    const knownPaymentRequestIds = new Set(notifierState.knownPendingPaymentRequestIds);
+    const knownTrialRequestIds = new Set(notifierState.knownPendingTrialRequestIds || []);
+    const currentIds = dedupeIds(items.map((item) => item?.id));
+    const currentPaymentRequestIds = dedupeIds(paymentRequests.map((item) => item?.id));
+    const currentTrialRequestIds = dedupeIds(trialRequests.map((item) => item?.id));
+
+    if (seedOnly || !notifierState.bootstrapped) {
+      notifierState = {
+        ...notifierState,
+        bootstrapped: true,
+        knownPendingUserIds: dedupeIds([...notifierState.knownPendingUserIds, ...currentIds]),
+        knownPendingPaymentRequestIds: dedupeIds([
+          ...notifierState.knownPendingPaymentRequestIds,
+          ...currentPaymentRequestIds
+        ]),
+        knownPendingTrialRequestIds: dedupeIds([
+          ...(notifierState.knownPendingTrialRequestIds || []),
+          ...currentTrialRequestIds
+        ]),
+        lastSyncAt: new Date().toISOString()
+      };
+      await saveNotifierState();
+      await writeHeartbeat({ status: "running", seedOnly: true });
+      return;
+    }
+
+    const freshItems = items
+      .filter((item) => {
+        const pendingUserId = String(item?.id ?? "").trim();
+        return pendingUserId.length > 0 && !knownIds.has(pendingUserId);
+      })
+      .sort((left, right) => {
+        const leftTime = new Date(left?.createdAt ?? 0).getTime();
+        const rightTime = new Date(right?.createdAt ?? 0).getTime();
+        return leftTime - rightTime;
+      });
+
+    const freshPaymentRequests = paymentRequests
+      .filter((item) => {
+        const paymentRequestId = String(item?.id ?? "").trim();
+        return paymentRequestId.length > 0 && !knownPaymentRequestIds.has(paymentRequestId);
+      })
+      .sort((left, right) => {
+        const leftTime = new Date(left?.createdAt ?? 0).getTime();
+        const rightTime = new Date(right?.createdAt ?? 0).getTime();
+        return leftTime - rightTime;
+      });
+
+    const freshTrialRequests = trialRequests
+      .filter((item) => {
+        const trialId = String(item?.id ?? "").trim();
+        return trialId.length > 0 && !knownTrialRequestIds.has(trialId);
+      })
+      .sort((left, right) => {
+        const leftTime = new Date(left?.createdAt ?? 0).getTime();
+        const rightTime = new Date(right?.createdAt ?? 0).getTime();
+        return leftTime - rightTime;
+      });
+
+    for (const item of freshItems) {
+      const pendingUserId = String(item?.id ?? "").trim();
+      if (!pendingUserId) {
+        continue;
+      }
+
+      try {
+        await notifyNewUser(pendingUserId);
+        knownIds.add(pendingUserId);
+      } catch (error) {
+        console.error(`telegram-panel-bot notifier failed for user ${pendingUserId}:`, normalizeErrorMessage(error));
+      }
+    }
+
+    for (const item of freshPaymentRequests) {
+      const paymentRequestId = String(item?.id ?? "").trim();
+      if (!paymentRequestId) {
+        continue;
+      }
+
+      try {
+        await notifyPaymentRequest(item);
+        knownPaymentRequestIds.add(paymentRequestId);
+      } catch (error) {
+        console.error(
+          `telegram-panel-bot notifier failed for payment request ${paymentRequestId}:`,
+          normalizeErrorMessage(error)
+        );
+      }
+    }
+
+    for (const item of freshTrialRequests) {
+      const trialId = String(item?.id ?? "").trim();
+      if (!trialId) {
+        continue;
+      }
+
+      try {
+        await notifyTrialRequest(item);
+        knownTrialRequestIds.add(trialId);
+      } catch (error) {
+        console.error(
+          `telegram-panel-bot notifier failed for trial request ${trialId}:`,
+          normalizeErrorMessage(error)
+        );
+      }
+    }
+
+    notifierState = {
+      ...notifierState,
+      bootstrapped: true,
+      knownPendingUserIds: dedupeIds([...knownIds, ...currentIds]),
+      knownPendingPaymentRequestIds: dedupeIds([...knownPaymentRequestIds, ...currentPaymentRequestIds]),
+      knownPendingTrialRequestIds: dedupeIds([...knownTrialRequestIds, ...currentTrialRequestIds]),
+      lastSyncAt: new Date().toISOString()
+    };
+    await saveNotifierState();
+    await writeHeartbeat({ status: "running" });
+  } catch (error) {
+    console.error("telegram-panel-bot notifier poll failed:", normalizeErrorMessage(error));
+    await writeHeartbeat({
+      status: "poll-failed",
+      pollError: normalizeErrorMessage(error)
+    });
+  } finally {
+    notifierTickInFlight = false;
+  }
+}
