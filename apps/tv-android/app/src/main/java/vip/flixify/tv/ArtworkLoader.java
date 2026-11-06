@@ -40,6 +40,7 @@ final class ArtworkLoader implements AutoCloseable {
         Cached(Bitmap bitmap,long expiresAt){this.bitmap=bitmap;this.expiresAt=expiresAt;}
     }
     private final Handler main=new Handler(Looper.getMainLooper());
+    private final ThreadPoolExecutor cacheReads=new ThreadPoolExecutor(1,1,15,TimeUnit.SECONDS,new ArrayBlockingQueue<>(32));
     private final ThreadPoolExecutor pool=new ThreadPoolExecutor(2,2,15,TimeUnit.SECONDS,new ArrayBlockingQueue<>(32));
     private final ThreadPoolExecutor cleanup=new ThreadPoolExecutor(1,1,15,TimeUnit.SECONDS,new ArrayBlockingQueue<>(1));
     private final LruCache<String,Cached> cache;
@@ -64,7 +65,7 @@ final class ArtworkLoader implements AutoCloseable {
         memoryBudget=(int)Math.min(8L*1024*1024,Math.max(2L*1024*1024,heap*1024L*1024/(low?32:16)));
         imageWidth=low || heap<128?256:512;imageHeight=low || heap<128?384:768;
         cache=new LruCache<String,Cached>(memoryBudget) {@Override protected int sizeOf(String key,Cached value){return value.bitmap.getAllocationByteCount();}};
-        pool.allowCoreThreadTimeOut(true);cleanup.allowCoreThreadTimeOut(true);
+        cacheReads.allowCoreThreadTimeOut(true);pool.allowCoreThreadTimeOut(true);cleanup.allowCoreThreadTimeOut(true);
     }
     void load(ImageView view,String address,String scope) {
         retire(view);view.setImageDrawable(null);Ticket ticket=new Ticket(generation,view);view.setTag(ticket);
@@ -78,22 +79,35 @@ final class ArtworkLoader implements AutoCloseable {
             if(!valid(ticket))return;
             Job pending=jobs.get(key);
             if(pending!=null && valid(pending)){ticket.job=pending;pending.tickets.add(ticket);return;}
+            if(jobs.size()>=34)return;
             job=new Job(key,address,scope,ticket.generation);ticket.job=job;job.tickets.add(ticket);jobs.put(key,job);
         }
-        try {pool.execute(job.task);}
+        try {cacheReads.execute(job.probe);}
         catch(RejectedExecutionException ignored){cancel(job);}
     }
     private final class Job implements Runnable {
         final String key,address,scope;final long generation;final List<Ticket> tickets=new ArrayList<>();
-        final FutureTask<Void> task;volatile boolean cancelled;volatile HttpURLConnection connection;
-        Job(String key,String address,String scope,long generation){this.key=key;this.address=address;this.scope=scope;this.generation=generation;task=new FutureTask<>(this,null);}
-        public void run() {
+        final FutureTask<Void> task,probe;volatile boolean cancelled;volatile HttpURLConnection connection;
+        private Bitmap cachedImage;private long cachedExpiry;
+        Job(String key,String address,String scope,long generation){this.key=key;this.address=address;this.scope=scope;this.generation=generation;task=new FutureTask<>(this,null);probe=new FutureTask<>(this::readCache,null);}
+        private void readCache() {
+            boolean dispatched=false;
             try {
                 if(!valid(this))return;
                 ArtworkDiskCache.Entry stored=disk.readEntry(scope,address);
                 if(!valid(this))return;
-                Bitmap image=stored==null?null:decode(stored.bytes);long expiresAt=stored==null?0:stored.expiresAt;byte[] persistence=null;
-                if(stored!=null && image==null)disk.remove(scope,address);
+                cachedImage=stored==null?null:decode(stored.bytes);cachedExpiry=stored==null?0:stored.expiresAt;
+                if(stored!=null && cachedImage==null)disk.remove(scope,address);
+                if(!valid(this))return;
+                if(cachedImage!=null)task.run();else pool.execute(task);
+                dispatched=true;
+            } catch(RejectedExecutionException ignored){cancel(this);}
+            finally {if(!dispatched)finish();}
+        }
+        public void run() {
+            try {
+                if(!valid(this))return;
+                Bitmap image=cachedImage;long expiresAt=cachedExpiry;byte[] persistence=null;
                 if(image==null) {
                     ArtworkDiskCache.Allowed allowed=()->valid(this) && !BackgroundWorkGate.isPlaybackActive();
                     if(!allowed.getAsBoolean())return;
@@ -110,10 +124,9 @@ final class ArtworkLoader implements AutoCloseable {
                 }
                 main.post(()->{for(Ticket ticket:recipients){ImageView view=ticket.view.get();if(valid(ticket) && view!=null && view.getTag()==ticket)view.setImageBitmap(result);}});
                 if(persistence!=null)disk.writeLater(scope,address,persistence,()->valid(this) && hasSubscribers(recipients) && !BackgroundWorkGate.isPlaybackActive() && !diskClearPending);
-            } finally {
-                synchronized(lifecycle){if(jobs.get(key)==this)jobs.remove(key);for(Ticket ticket:tickets)ticket.job=null;tickets.clear();}
-            }
+            } finally {finish();}
         }
+        private void finish(){synchronized(lifecycle){if(jobs.get(key)==this)jobs.remove(key);for(Ticket ticket:tickets)ticket.job=null;tickets.clear();}}
     }
     void unbind(ImageView view){retire(view);view.setTag(null);view.setImageDrawable(null);}
     private void retire(ImageView view) {
@@ -130,7 +143,7 @@ final class ArtworkLoader implements AutoCloseable {
     }
     private void cancel(Job job) {
         synchronized(lifecycle){job.cancelled=true;if(jobs.get(job.key)==job)jobs.remove(job.key);for(Ticket ticket:job.tickets){ticket.cancelled=true;ticket.job=null;}job.tickets.clear();}
-        job.task.cancel(true);pool.remove(job.task);requestCleanup(job.connection,false,false);
+        job.probe.cancel(true);cacheReads.remove(job.probe);job.task.cancel(true);pool.remove(job.task);requestCleanup(job.connection,false,false);
     }
     void retireScreen() {
         final List<Job> retired;
@@ -199,5 +212,5 @@ final class ArtworkLoader implements AutoCloseable {
         }
     }
     void clear(){retireScreen();cache.evictAll();requestCleanup(null,true,false);}
-    @Override public void close(){closed=true;retireScreen();cache.evictAll();pool.shutdownNow();requestCleanup(null,false,true);}
+    @Override public void close(){closed=true;retireScreen();cache.evictAll();cacheReads.shutdownNow();pool.shutdownNow();requestCleanup(null,false,true);}
 }

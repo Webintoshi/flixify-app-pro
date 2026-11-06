@@ -160,7 +160,7 @@ public class NetworkHomeCatalogTest {
             Item movie=h.home(Kind.MOVIE).items.get(0);h.settleMetadata();assertEquals(1,h.fixture.reads("/me/personal-library"));h.fixture.apiThreads.clear();h.fixture.blockedAction="get_series";Result<Catalog> series=new Result<>(),live=new Result<>();h.repository.homeCatalog(Kind.SERIES,false,series);h.repository.homeCatalog(Kind.LIVE,false,live);assertTrue(h.fixture.started.await(1,TimeUnit.SECONDS));
             BackgroundWorkGate.beginPlayback(player);Result<Playback> playback=new Result<>();h.repository.playback(movie,playback);assertEquals("12",h.value(playback,1200).item.id);assertTrue(h.fixture.disconnected.await(1,TimeUnit.SECONDS));
             h.await(series,1200);h.await(live,1200);assertNotNull(series.error);assertNotNull(live.error);assertEquals(0,h.fixture.reads("get_live_categories"));assertTrue(h.repository.hasSession());
-            assertEquals("Verified fresh library must not be fetched during blocked-provider navigation",1,h.fixture.reads("/me/personal-library"));for(String thread:h.fixture.apiThreads)assertEquals("flixify-personal-data",thread);for(String thread:h.fixture.providerThreads)assertEquals("flixify-catalog-primary",thread);
+            assertEquals("Verified fresh library must not be fetched during blocked-provider navigation",1,h.fixture.reads("/me/personal-library"));for(String thread:h.fixture.apiThreads)assertEquals("flixify-personal-data",thread);for(String thread:h.fixture.providerThreads)assertEquals("flixify-catalog-refresh",thread);
         }finally{BackgroundWorkGate.endPlayback(player);}
     }
     @Test public void cachedHomeHitDoesNotQueueBehindAnotherKindsSlowProviderBody()throws Exception{

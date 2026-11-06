@@ -77,7 +77,7 @@ public class ArtworkFirstBitmapLatencyTest {
         Bitmap result;
         do {result=bitmap(target);if(result!=null){assertTrue("First bitmap exceeded 500 ms",SystemClock.uptimeMillis()-started<=FIRST_BITMAP_BUDGET_MS);return result;}SystemClock.sleep(5);}
         while(SystemClock.uptimeMillis()-started<FIRST_BITMAP_BUDGET_MS);
-        fail("First bitmap exceeded 500 ms while an optional disk write was held for up to 5000 ms");return null;
+        fail("First bitmap exceeded 500 ms while optional work was held for up to 5000 ms");return null;
     }
 
     @Test public void decodedBitmapIsVisibleWithin500msWhileItsDiskWriteIsHeld() throws Exception {
@@ -99,6 +99,33 @@ public class ArtworkFirstBitmapLatencyTest {
         assertEquals(Color.BLUE,awaitBitmap(cached[0],started).getPixel(0,0));
         assertEquals("Unrelated disk read must finish before the write is released",1,slowWrite.release.getCount());
         assertEquals(1,requests.get());assertNull(unexpectedRequest.get());
+    }
+
+    @Test public void cachedArtworkIsVisibleWithin500msWhileBothNetworkReadsAreHeld() throws Exception {
+        assertTrue(disk.write(SCOPE,CACHED,blue,()->true));
+        HeldHttpsImage first=new HeldHttpsImage(red),second=new HeldHttpsImage(red);
+        ImageView[] waiting=new ImageView[2];
+        main(()->loader=new ArtworkLoader(context,disk,address->{
+            requests.incrementAndGet();
+            if(address.endsWith("first.png"))return first;
+            if(address.endsWith("second.png"))return second;
+            unexpectedRequest.set(address);throw new IllegalArgumentException("Cached artwork must not use the network");
+        }));
+        try {
+            main(()->{
+                waiting[0]=new ImageView(context);waiting[1]=new ImageView(context);
+                loader.load(waiting[0],"https://art.invalid/first.png",SCOPE);
+                loader.load(waiting[1],"https://art.invalid/second.png",SCOPE);
+            });
+            assertTrue("First optional download reached its held read",first.entered.await(3,TimeUnit.SECONDS));
+            assertTrue("Second optional download reached its held read",second.entered.await(3,TimeUnit.SECONDS));
+            long started=SystemClock.uptimeMillis();main(()->loader.load(image,CACHED,SCOPE));
+            assertEquals(Color.BLUE,awaitBitmap(image,started).getPixel(0,0));
+            android.util.Log.i("FlixifyArtworkLatency","cache_hit_two_held_downloads_ms="+(SystemClock.uptimeMillis()-started));
+            assertEquals("First network read stays held while the disk hit appears",1,first.release.getCount());
+            assertEquals("Second network read stays held while the disk hit appears",1,second.release.getCount());
+            assertEquals(2,requests.get());assertNull(unexpectedRequest.get());
+        } finally {first.release.countDown();second.release.countDown();}
     }
 
     @Test public void unbindBeforeDecodedPublicationRejectsTheLateBitmap() throws Exception {rejectLateBitmap(0);}
@@ -174,6 +201,24 @@ public class ArtworkFirstBitmapLatencyTest {
         @Override public String getContentType(){return "image/png";}
         @Override public InputStream getInputStream(){return new ByteArrayInputStream(bytes);}
         @Override public void disconnect(){}
+        @Override public boolean usingProxy(){return false;}
+        @Override public void connect(){}
+    }
+    private static final class HeldHttpsImage extends HttpURLConnection {
+        final byte[] bytes;
+        final CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1);
+        HeldHttpsImage(byte[] bytes) throws Exception {super(new URL(FETCHED));this.bytes=bytes;}
+        @Override public int getResponseCode(){return 200;}
+        @Override public int getContentLength(){return bytes.length;}
+        @Override public String getContentType(){return "image/png";}
+        @Override public InputStream getInputStream(){return new ByteArrayInputStream(bytes){
+            boolean held;
+            @Override public synchronized int read(byte[] target,int offset,int length){
+                if(!held){held=true;entered.countDown();try{release.await(5,TimeUnit.SECONDS);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}}
+                return super.read(target,offset,length);
+            }
+        };}
+        @Override public void disconnect(){release.countDown();}
         @Override public boolean usingProxy(){return false;}
         @Override public void connect(){}
     }

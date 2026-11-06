@@ -76,8 +76,8 @@ public class CatalogFirstContentLatencyTest {
     }
 
     private static final class Fixture implements NetworkTvRepository.ConnectionFactory,AutoCloseable {
-        final Hold packages=new Hold(),library=new Hold();
-        final AtomicInteger libraryReads=new AtomicInteger(),movieReads=new AtomicInteger(),liveReads=new AtomicInteger();
+        final Hold packages=new Hold(),library=new Hold(),movieCatalog=new Hold();
+        final AtomicInteger libraryReads=new AtomicInteger(),movieReads=new AtomicInteger(),liveReads=new AtomicInteger(),seriesReads=new AtomicInteger();
         volatile String source="latency-source-a";
         volatile boolean includeMovieFavorite;
         volatile long liveCategoriesAt,liveStreamsAt;
@@ -129,11 +129,14 @@ public class CatalogFirstContentLatencyTest {
                             assertNotNull(query);
                             if(query.endsWith("&action=get_vod_categories"))raw=categories("9","Filmler");
                             else if(query.endsWith("&action=get_vod_streams")){
-                                movieReads.incrementAndGet();raw=streams("12","Fixture Film","9","mp4");
+                                movieReads.incrementAndGet();movieCatalog.block();raw=streams("12","Fixture Film","9","mp4");
                             }else if(query.endsWith("&action=get_live_categories")){
                                 liveCategoriesAt=System.nanoTime();raw=categories("7","Canlı");
                             }else if(query.endsWith("&action=get_live_streams")){
                                 liveStreamsAt=System.nanoTime();liveReads.incrementAndGet();raw=streams("34","Fixture Kanal","7","ts");
+                            }else if(query.endsWith("&action=get_series_categories"))raw=categories("8","Diziler");
+                            else if(query.endsWith("&action=get_series")){
+                                seriesReads.incrementAndGet();raw=new JSONArray().put(new JSONObject().put("series_id","56").put("name","Fixture Dizi").put("category_id","8"));
                             }else throw new AssertionError("Unexpected provider fixture action");
                         }
                         response=raw.toString().getBytes(StandardCharsets.UTF_8);
@@ -155,7 +158,7 @@ public class CatalogFirstContentLatencyTest {
         private JSONArray streams(String id,String title,String category,String extension) throws Exception {
             return new JSONArray().put(new JSONObject().put("stream_id",id).put("name",title).put("category_id",category).put("container_extension",extension));
         }
-        @Override public void close(){packages.close();library.close();}
+        @Override public void close(){packages.close();library.close();movieCatalog.close();}
     }
 
     private static final class Harness implements AutoCloseable {
@@ -251,6 +254,59 @@ public class CatalogFirstContentLatencyTest {
 
             android.util.Log.i("CatalogFirstContentLatency",new JSONObject().put("kind","LIVE").put("stage","cold-held-library").put("callbackMs",callbackMs).put("categoriesMs",categoriesMs).put("streamsMs",streamsMs).put("heldRequestMs",HELD_REQUEST_MS).toString());
             assertTrue("Cold LIVE first callback="+callbackMs+" ms, categories="+categoriesMs+" ms, streams="+streamsMs+" ms while personal-library held="+HELD_REQUEST_MS+" ms; budget="+FIRST_CONTENT_MS+" ms",withinBudget && callbackMs<=FIRST_CONTENT_MS);
+        }
+    }
+
+    @Test public void coldForegroundLiveDoesNotWaitForHeldHomeMovieCatalog() throws Exception {
+        assertForegroundCatalogDoesNotWaitForHomeMovie(Kind.LIVE,false);
+    }
+
+    @Test public void coldForegroundSeriesDoesNotWaitForHeldHomeMovieCatalog() throws Exception {
+        assertForegroundCatalogDoesNotWaitForHomeMovie(Kind.SERIES,false);
+    }
+
+    @Test public void queuedHomeLiveIsPromotedWhenItsPageBecomesForeground() throws Exception {
+        assertForegroundCatalogDoesNotWaitForHomeMovie(Kind.LIVE,true);
+    }
+
+    @Test public void runningHomeMovieIsSharedWhenItsPageBecomesForeground() throws Exception {
+        try(Harness h=new Harness()){
+            h.fixture.movieCatalog.enabled=true;
+            Result<Catalog> home=new Result<>();h.repository.homeCatalog(Kind.MOVIE,false,home);
+            assertTrue(h.fixture.movieCatalog.started.await(2,TimeUnit.SECONDS));
+            Result<Catalog> foreground=new Result<>();h.repository.catalog(Kind.MOVIE,false,foreground);
+            h.fixture.movieCatalog.release.countDown();
+            assertTrue(h.dispatchUntil(foreground,3000));h.assertCatalog(foreground,Kind.MOVIE);
+            assertTrue(h.dispatchUntil(home,3000));h.assertCatalog(home,Kind.MOVIE);
+            assertSame("Foreground must join the already running home request",home.value,foreground.value);
+            assertEquals("Promoting a running home request must not start another provider read",1,h.fixture.movieReads.get());
+        }
+    }
+
+    private void assertForegroundCatalogDoesNotWaitForHomeMovie(Kind kind,boolean queuedHome) throws Exception {
+        try(Harness h=new Harness()){
+            h.fixture.movieCatalog.enabled=true;
+            Result<Catalog> homeMovie=new Result<>();h.repository.homeCatalog(Kind.MOVIE,false,homeMovie);
+            assertTrue("Home movie catalog did not reach the held provider response",h.fixture.movieCatalog.started.await(2,TimeUnit.SECONDS));
+            Result<Catalog> queued=new Result<>();
+            if(queuedHome){
+                h.repository.homeCatalog(kind,false,queued);
+                for(String name:new String[]{"cacheWorker","worker"}){
+                    Field field=NetworkTvRepository.class.getDeclaredField(name);field.setAccessible(true);
+                    ((ExecutorService)field.get(h.repository)).submit(()->{}).get(2,TimeUnit.SECONDS);
+                }
+            }
+
+            Result<Catalog> foreground=new Result<>();long requestedAt=System.nanoTime();h.repository.catalog(kind,false,foreground);
+            boolean withinBudget=h.dispatchUntil(foreground,FIRST_CONTENT_MS);
+            assertTrue("Foreground catalog did not finish after the held movie response released",h.dispatchUntil(foreground,8000));
+            h.assertCatalog(foreground,kind);assertTrue(h.dispatchUntil(homeMovie,8000));h.assertCatalog(homeMovie,Kind.MOVIE);
+            if(queuedHome){assertTrue(h.dispatchUntil(queued,3000));h.assertCatalog(queued,kind);assertSame(queued.value,foreground.value);}
+            long callbackMs=elapsed(requestedAt,foreground.deliveredAt);
+            assertEquals("Home movie catalog must not be fetched twice",1,h.fixture.movieReads.get());
+            assertEquals("Foreground catalog must be fetched once",1,kind==Kind.LIVE?h.fixture.liveReads.get():h.fixture.seriesReads.get());
+            android.util.Log.i("CatalogFirstContentLatency",new JSONObject().put("kind",kind.name()).put("stage",queuedHome?"promoted-home-held-home-movie":"cold-foreground-held-home-movie").put("callbackMs",callbackMs).put("heldRequestMs",HELD_REQUEST_MS).toString());
+            assertTrue("Cold foreground "+kind+" callback took "+callbackMs+" ms behind a home movie response held for "+HELD_REQUEST_MS+" ms; budget="+FIRST_CONTENT_MS+" ms",withinBudget && callbackMs<=FIRST_CONTENT_MS);
         }
     }
 

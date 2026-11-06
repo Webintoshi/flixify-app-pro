@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -188,6 +189,7 @@ public final class NetworkTvRepository implements TvRepository {
     private static final class Pending<T> {
         final long auth; final String scope; final boolean sourceBound; final List<Callback<T>> callbacks=new ArrayList<>();
         CatalogDemand catalogDemand;long preparedSource=-1;String preparedScope;
+        FutureTask<Void> catalogTask;ThreadPoolExecutor catalogExecutor;Runnable catalogRejected;
         Pending(long auth,String scope,boolean sourceBound) {this.auth=auth;this.scope=scope;this.sourceBound=sourceBound;}
     }
     private static final class Prepared<T> {
@@ -219,7 +221,8 @@ public final class NetworkTvRepository implements TvRepository {
             if(demand!=null && existing!=null && existing.preparedScope!=null && !guard.active(existing.preparedSource,existing.preparedScope,clock.now()))existing=null;
             if(existing!=null) {
                 if(demand!=null && demand.foreground && existing.catalogDemand!=null)existing.catalogDemand.foreground=true;
-                if(callback!=null) { if(existing.callbacks.size()>=64) { callbacks.execute(()->callback.onError(failure(new Problem(Failure.Code.LIMIT))));return; } existing.callbacks.add(callback); } return;
+                if(callback!=null) { if(existing.callbacks.size()>=64) { callbacks.execute(()->callback.onError(failure(new Problem(Failure.Code.LIMIT))));return; } existing.callbacks.add(callback); }
+                if(demand!=null && demand.foreground)promoteCatalog(existing);return;
             }
             operation=new Pending<>(authGeneration,scope,sourceBound);operation.catalogDemand=demand; if(callback!=null) operation.callbacks.add(callback); pending.put(key,operation);
         }
@@ -249,7 +252,22 @@ public final class NetworkTvRepository implements TvRepository {
     private <T> void dispatchPrepared(String key,Pending<T> operation,Prepared<T> prepared,boolean optional,boolean memoryOnly){
         synchronized(lock){operation.preparedSource=prepared.source;operation.preparedScope=prepared.scope;}
         Runnable request=()->runPrepared(key,operation,prepared,memoryOnly);
-        if(prepared.background!=null)prepared.background.execute(request);else if(optional)epgWorker.execute(request);else request.run();
+        if(prepared.background==primaryCatalogWorker && operation.catalogDemand!=null){
+            synchronized(lock){
+                operation.catalogTask=new FutureTask<>(request,null);
+                operation.catalogRejected=()->complete(key,operation,null,failure(new Problem(Failure.Code.LIMIT)),prepared.source,prepared.scope);
+                operation.catalogExecutor=operation.catalogDemand.foreground?primaryCatalogWorker:metadataWorker;
+                operation.catalogExecutor.execute(operation.catalogTask);
+            }
+        }else if(prepared.background!=null)prepared.background.execute(request);else if(optional)epgWorker.execute(request);else request.run();
+    }
+    private void promoteCatalog(Pending<?> operation){
+        if(operation.catalogTask==null || operation.catalogExecutor!=metadataWorker || !metadataWorker.remove(operation.catalogTask))return;
+        try{primaryCatalogWorker.execute(operation.catalogTask);operation.catalogExecutor=primaryCatalogWorker;}
+        catch(RejectedExecutionException full){
+            try{metadataWorker.execute(operation.catalogTask);}
+            catch(RejectedExecutionException unavailable){operation.catalogTask.cancel(false);operation.catalogRejected.run();}
+        }
     }
     private ProviderParser.Bootstrap freshMemoryBootstrap(long auth)throws Problem{
         requireTokens(auth);ProviderParser.Bootstrap b=guard.current();long now=clock.now();
