@@ -304,6 +304,103 @@ class PublicationTests(unittest.TestCase):
         for script in (calls[0][-1], self.build.download_script(self.native, self.manifest())):
             subprocess.run(['node', '--check'], input=script.encode(), check=True, capture_output=True)
 
+    def run_download_contract(self, case):
+        native = self.native | {'apkBytes': 2048}
+        apk = b'PK\x03\x04' + b'\x00' * (native['apkBytes'] - 4)
+        native['apkSha256'] = self.c.sha(apk)
+        manifest = json.dumps({'packageName': 'vip.flixify.tv', 'versionName': '1.4.14', 'versionCode': 22,
+            'minSdk': 23, 'apkUrl': self.c.APK_URL, 'sha256': native['apkSha256'],
+            'sizeBytes': native['apkBytes'], 'notes': 'Fixture release'}).encode()
+        fixture = json.dumps({'case': case, 'apkHex': apk.hex(), 'manifestHex': manifest.hex()})
+        harness = r'''
+const fixture = FIXTURE;
+const apk = Buffer.from(fixture.apkHex, "hex"), manifest = Buffer.from(fixture.manifestHex, "hex");
+let href = "/downloads/flixify-pro-1.4.14.apk", filename = "flixify-pro-1.4.14.apk", version = "1.4.14";
+if (fixture.case === "old") { href = "/downloads/flixify-pro-1.4.13.apk"; filename = "flixify-pro-1.4.13.apk"; version = "1.4.13"; }
+if (fixture.case === "wrong-href") href = "/downloads/wrong.apk";
+if (fixture.case === "wrong-filename") filename = "wrong.apk";
+if (fixture.case === "wrong-version") version = "1.4.13";
+const descriptor = "let r=" + JSON.stringify({href, filename, version, minimumAndroid: "Android 6"}) + ";";
+const scriptPath = fixture.case === "external" ? "https://unexpected.invalid/evil.js"
+    : fixture.case === "traversal" ? "/_next/static/chunks/../evil.js" : "/_next/static/chunks/app/indir/page-fixture.js";
+const html = '<!doctype html><main>Flixify hazırlanıyor…</main>' + (fixture.case === "aggregate"
+    ? [0, 1, 2, 3, 4].map(i => '<script src="/_next/static/chunks/part-' + i + '.js"></script>').join("")
+    : '<script src="' + scriptPath + '"></script>');
+global.fetch = async (raw, options = {}) => {
+    const url = new URL(raw);
+    if (url.origin !== "http://127.0.0.1:3000") throw Error("fixture_external_fetch_forbidden");
+    const path = url.pathname;
+    if (path.startsWith("/_next/static/")) {
+        if (fixture.case === "asset-redirect") return new Response(null, {status: 302});
+        const headers = {"content-type": fixture.case === "asset-mime" ? "text/html" : "application/javascript; charset=utf-8"};
+        if (fixture.case === "aggregate") {
+            const index = Number(path.match(/part-(\d+)\.js$/)[1]);
+            const length = [8, 8, 8, 7, 2][index] * 1024 * 1024;
+            headers["content-length"] = String(length);
+            if (index === 4) return {status: 200, headers: new Headers(headers), body: (async function*() {
+                process.stdout.write("AGGREGATE_OVERRUN_BODY_READ"); yield Buffer.alloc(length);
+            })()};
+            return new Response(descriptor + " ".repeat(length - Buffer.byteLength(descriptor)), {headers});
+        }
+        if (fixture.case === "oversized-declared") headers["content-length"] = String(8 * 1024 * 1024 + 1);
+        const source = fixture.case === "oversized-stream" ? "x".repeat(8 * 1024 * 1024 + 1) : descriptor;
+        return new Response(source, {headers});
+    }
+    if (path === "/downloads/flixify-pro-1.4.14.apk" || path === "/downloads/flixify-tv-update.json") {
+        const isApk = path.endsWith(".apk"), body = isApk ? apk : manifest;
+        const headers = {"content-type": isApk ? "application/vnd.android.package-archive" : "application/json", "content-length": String(body.length)};
+        if (options.method === "HEAD") return new Response(null, {headers});
+        if (options.headers?.Range) return new Response(body.subarray(0, 32), {status: 206,
+            headers: {"content-range": "bytes 0-31/" + (fixture.case === "bad-range" ? body.length + 1 : body.length)}});
+        const value = (isApk && fixture.case === "bad-apk") || (!isApk && fixture.case === "bad-manifest") ? Buffer.alloc(body.length) : body;
+        return new Response(value, {headers});
+    }
+    if (["/", "/indir", "/paketler", "/cihaz", "/giris-yap"].includes(path)) {
+        return new Response(path === "/indir" ? html : "Fixture page", {status: fixture.case === "bad-page" && path === "/paketler" ? 500 : 200});
+    }
+    throw Error("fixture_unexpected_request");
+};
+'''.replace('FIXTURE', fixture)
+        return subprocess.run(['node', '-'], input=(harness + self.build.download_script(native, manifest)).encode(),
+            capture_output=True, timeout=15)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is unavailable')
+    def test_csr_loading_html_with_current_served_bundle_passes_without_server_rendered_link(self):
+        result = self.run_download_contract('current')
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertIn(b'tv1414_download_and_pages_verified', result.stdout)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is unavailable')
+    def test_served_bundle_requires_matching_href_filename_and_separate_displayed_version(self):
+        for case in ('old', 'wrong-href', 'wrong-filename', 'wrong-version'):
+            with self.subTest(case=case):
+                result = self.run_download_contract(case)
+                self.assertEqual(result.returncode, 1)
+                self.assertNotIn(b'tv1414_download_and_pages_verified', result.stdout)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is unavailable')
+    def test_client_asset_checks_reject_external_traversal_oversize_redirect_and_wrong_mime(self):
+        for case in ('external', 'traversal', 'oversized-declared', 'oversized-stream', 'asset-redirect', 'asset-mime'):
+            with self.subTest(case=case):
+                result = self.run_download_contract(case)
+                self.assertEqual(result.returncode, 1)
+                self.assertNotIn(b'tv1414_download_and_pages_verified', result.stdout)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is unavailable')
+    def test_client_bundle_fix_retains_apk_manifest_range_and_page_failure_checks(self):
+        for case in ('bad-apk', 'bad-manifest', 'bad-range', 'bad-page'):
+            with self.subTest(case=case):
+                result = self.run_download_contract(case)
+                self.assertEqual(result.returncode, 1)
+                self.assertNotIn(b'tv1414_download_and_pages_verified', result.stdout)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is unavailable')
+    def test_aggregate_script_budget_rejects_next_declared_body_before_reading_beyond_remaining(self):
+        result = self.run_download_contract('aggregate')
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn(b'AGGREGATE_OVERRUN_BODY_READ', result.stdout)
+        self.assertNotIn(b'tv1414_download_and_pages_verified', result.stdout)
+
     def release(self):
         with patch.dict(sys.modules, {'yaml': ModuleType('yaml')}):
             return load('tv1414_test_release', 'release.py')

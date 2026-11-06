@@ -248,9 +248,64 @@ def compile_candidate(revision, base, updates, env, budget):
             command('docker', 'rm', '--force', name)
 
 
+def client_download_verification():
+    return r'''
+async function boundedText(response, maximum) {
+    const declared = response.headers.get("content-length");
+    if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > maximum)) throw Error("client_asset_size");
+    let total = 0; const chunks = [];
+    for await (const chunk of response.body) {
+        total += chunk.length;
+        if (total > maximum) throw Error("client_asset_size");
+        chunks.push(chunk);
+    }
+    return Buffer.concat(chunks, total).toString("utf8");
+}
+function currentDownloadDescriptor(source) {
+    for (const object of source.matchAll(/\{[^{}]{1,2048}\}/g)) {
+        const fields = new Map(); let duplicate = false;
+        for (const field of object[0].matchAll(/[,{]\s*["']?(href|filename|version)["']?\s*:\s*["']([^"'\\]*)["']\s*(?=,|})/g)) {
+            if (fields.has(field[1])) duplicate = true;
+            fields.set(field[1], field[2]);
+        }
+        if (!duplicate && fields.get("href") === "/downloads/flixify-pro-1.4.14.apk"
+            && fields.get("filename") === "flixify-pro-1.4.14.apk" && fields.get("version") === "1.4.14") return true;
+    }
+    return false;
+}
+async function verifyClientDownload(pageResponse) {
+    const html = await boundedText(pageResponse, 1024 * 1024);
+    const scripts = [...html.matchAll(/<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi)].map(match => match[1]);
+    const paths = [...new Set(scripts)];
+    if (paths.length < 1 || paths.length > 64) throw Error("client_script_count");
+    for (const path of paths) {
+        const url = new URL(path, root);
+        if (url.origin !== root || url.username || url.password) throw Error("client_script_origin");
+        if (!/^\/_next\/static\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.js$/.test(path)
+            || url.search || url.hash) throw Error("client_script_path");
+    }
+    const deadline = Date.now() + 20000; let total = 0, matched = false;
+    for (const path of paths) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw Error("client_asset_deadline");
+        const response = await fetch(root + path, {redirect: "manual", signal: AbortSignal.timeout(Math.min(8000, remaining))});
+        if (response.status !== 200 || !["application/javascript", "text/javascript"].includes(response.headers.get("content-type")?.split(";")[0].trim())) throw Error("client_asset_status");
+        const maximum = Math.min(8 * 1024 * 1024, 32 * 1024 * 1024 - total);
+        if (maximum <= 0) throw Error("client_asset_size");
+        const source = await boundedText(response, maximum);
+        total += Buffer.byteLength(source, "utf8");
+        if (total > 32 * 1024 * 1024) throw Error("client_asset_size");
+        if (currentDownloadDescriptor(source)) matched = true;
+    }
+    if (!matched) throw Error("download_page_version");
+}
+'''
+
+
 def download_script(native, manifest):
     c.parse_manifest(manifest, native)
     return ('const crypto=require("node:crypto");(async()=>{const root="http://127.0.0.1:3000";'
+        + client_download_verification() +
         'async function bytes(r,n){let size=0;const chunks=[];for await(const x of r.body){size+=x.length;if(size>n)throw Error("oversize");chunks.push(x)}if(size!==n)throw Error("size");return Buffer.concat(chunks,size)}'
         'const pins=' + json.dumps([{'path': c.APK.removeprefix('apps/ops-web/public'), 'size': native['apkBytes'], 'sha': native['apkSha256'], 'kind': 'apk'},
                                    {'path': c.UPDATE_MANIFEST.removeprefix('apps/ops-web/public'), 'size': len(manifest), 'sha': c.sha(manifest), 'kind': 'json'}]) + ';'
@@ -258,7 +313,7 @@ def download_script(native, manifest):
         'if(!h||h.status!==200||Number(h.headers.get("content-length"))!==p.size)throw Error("head");const mime=h.headers.get("content-type")?.split(";")[0];if(p.kind==="apk"?!["application/vnd.android.package-archive","application/octet-stream"].includes(mime):mime!=="application/json")throw Error("mime");'
         'if(p.kind==="apk"){const r=await fetch(root+p.path,{headers:{Range:"bytes=0-31"},signal:AbortSignal.timeout(10000)});if(r.status!==206||r.headers.get("content-range")!=="bytes 0-31/"+p.size)throw Error("range");await bytes(r,32)}'
         'const r=await fetch(root+p.path,{signal:AbortSignal.timeout(15000)});if(r.status!==200)throw Error("get");const b=await bytes(r,p.size);if(crypto.createHash("sha256").update(b).digest("hex")!==p.sha)throw Error("digest");if(p.kind==="apk"&&!b.subarray(0,4).equals(Buffer.from([80,75,3,4])))throw Error("apk");}'
-        'for(const p of ["/","/indir","/paketler","/cihaz","/giris-yap"]){const r=await fetch(root+p,{redirect:"manual",signal:AbortSignal.timeout(8000)});if(r.status!==200)throw Error("page");if(p==="/indir"){const text=await r.text();if(!text.includes("/downloads/flixify-pro-1.4.14.apk")||!text.includes("1.4.14"))throw Error("download_page_version")}}'
+        'for(const p of ["/","/indir","/paketler","/cihaz","/giris-yap"]){const r=await fetch(root+p,{redirect:"manual",signal:AbortSignal.timeout(8000)});if(r.status!==200)throw Error("page");if(p==="/indir")await verifyClientDownload(r)}'
         'console.log("tv1414_download_and_pages_verified")})().catch(()=>{console.error("tv1414_download_contract_failed");process.exit(1)})')
 
 
