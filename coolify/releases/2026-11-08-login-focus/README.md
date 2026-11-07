@@ -4,6 +4,8 @@ This profile starts from the published phone-login WEB70af image and protects th
 
 The exact reviewed builder and reader from Git commit `88f27a175567e5be7295763f8a74044da55b2caa` are loaded from verified blobs in a private temporary directory. They are not imported from the mutable phone-release working files. Keep that commit reachable in the server checkout. Their existing1CPU/1280MiB/1536MiB including swap/128PID/480s limits and one-worker Next flags remain. This profile skips contracts compilation and does not exclude dependencies or contracts output from its untouched-tree proof. The original public tree and all prior `.next/static` files are preserved.
 
+After a successful WEB compile, only the disposable `/app/apps/ops-web/.next/cache` directory is removed inside the owned compiler container before static-file merge and image commit. All parent directories and the cache target must be actual directories, with symlinks refused. Source, dependencies, public files and runtime `.next/static`/server output are retained. No running container or existing image is modified.
+
 Wait for UI freeze and local QA before creating a candidate. Commit `manifest.json` at this profile path together with its exact source files. Manifest entries contain `path`, `beforeSha256` (null only for new segmented OTP files), `sha256` and `bytes`; top level contains `schemaVersion:1`, the pinned `sourceImageId`, and `files`. The commands consume exact committed blobs, not working files.
 
 ```sh

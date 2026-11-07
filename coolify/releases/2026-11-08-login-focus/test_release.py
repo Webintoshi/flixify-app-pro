@@ -1,4 +1,4 @@
-import copy, importlib.util, json, types, unittest
+import copy, importlib.util, json, types, unittest, subprocess, tempfile
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch, Mock
@@ -48,6 +48,26 @@ class RuntimeProtection(unittest.TestCase):
    if field=='stopped':row['State']['Running']=False
    else:row['Image']='sha256:foreign'
    with self.assertRaises(c.GateError):c.protected_snapshot(self.reader(row))
+
+class BuildCacheCleanup(unittest.TestCase):
+ def execute(self,root):
+  script=r'''const fs=require('node:fs'),vm=require('node:vm'),root=process.argv[1],code=JSON.parse(process.argv[2]);const map=p=>{if(!p.startsWith('/app'))throw Error('unexpected_path');return root+p;};const guarded={lstatSync:p=>fs.lstatSync(map(p)),rmSync:(p,o)=>{if(p!=='/app/apps/ops-web/.next/cache')throw Error('wrong_removal_target');fs.rmSync(map(p),o);}};vm.runInNewContext(code,{require:n=>{if(n!=='node:fs')throw Error('unexpected_module');return guarded;}});'''
+  return subprocess.run(['node','-e',script,str(root),json.dumps(c.CACHE_CLEANUP)],capture_output=True)
+ def fixture(self,root):
+  app=root/'app/apps/ops-web';(app/'.next/static').mkdir(parents=True);(app/'public/downloads').mkdir(parents=True);(app/'.next/static/keep.js').write_text('runtime');(app/'public/downloads/keep.apk').write_text('published');return app
+ def test_removes_only_cache_after_successful_compiler(self):
+  with c.helpers(HERE.parents[2]) as old:
+   code=old.b.compiler_script('ops-web',{});self.assertTrue(code.endswith(c.CACHE_CLEANUP));self.assertLess(code.index('"@flixify/ops-web"'),code.index(c.CACHE_CLEANUP))
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);app=self.fixture(root);(app/'.next/cache/webpack').mkdir(parents=True);(app/'.next/cache/webpack/disposable').write_bytes(b'x'*1024)
+   result=self.execute(root);self.assertEqual(result.returncode,0,result.stderr.decode());self.assertFalse((app/'.next/cache').exists());self.assertEqual((app/'.next/static/keep.js').read_text(),'runtime');self.assertEqual((app/'public/downloads/keep.apk').read_text(),'published')
+ def test_refuses_symlink_or_non_directory_cache(self):
+  for kind in ('symlink','file'):
+   with self.subTest(kind=kind),tempfile.TemporaryDirectory() as d:
+    root=Path(d);app=self.fixture(root);outside=root/'outside';outside.mkdir();(outside/'keep').write_text('protected');cache=app/'.next/cache'
+    if kind=='symlink':cache.symlink_to(outside,target_is_directory=True)
+    else:cache.write_text('not a directory')
+    self.assertNotEqual(self.execute(root).returncode,0);self.assertEqual((outside/'keep').read_text(),'protected');self.assertTrue(cache.exists())
 
 class Metadata(unittest.TestCase):
  def setUp(self):

@@ -12,6 +12,7 @@ API=('flixify-api:phone-login-4e538f819b10-20261107','sha256:44ff390928223184820
 WEB=('flixify-ops-web:phone-login-4e538f819b10-20261107','sha256:70af89614cf16ea1076fe0d8065f2f3e2947a0a8255d541719786737445080d9')
 PREFIX='apps/ops-web/app/giris-onizleme/'
 ALLOWED=frozenset(PREFIX+n for n in ('phone-login-preview.tsx','segmented-otp-input.tsx','segmented-otp-input.module.css','phone-login-cinematic.module.css','phone-country-select.module.css'))
+CACHE_CLEANUP=r'''{const fs=require('node:fs');for(const dir of ['/app','/app/apps','/app/apps/ops-web','/app/apps/ops-web/.next']){const s=fs.lstatSync(dir);if(!s.isDirectory()||s.isSymbolicLink())throw Error('compiler_cache_parent_not_regular_directory');}const cache='/app/apps/ops-web/.next/cache';let s;try{s=fs.lstatSync(cache);}catch(e){if(e.code!=='ENOENT')throw e;}if(s){if(!s.isDirectory()||s.isSymbolicLink())throw Error('compiler_cache_not_regular_directory');fs.rmSync(cache,{recursive:true,force:false});}}'''
 class GateError(Exception):pass
 def sha(data):return hashlib.sha256(data).hexdigest()
 def revision(value):
@@ -43,7 +44,7 @@ def helpers(repo):
    if service!='ops-web':raise GateError('only_web_compiler_allowed')
    code=compiler(service,public);contracts='cp.execFileSync("npm",["run","build","-w","@flixify/contracts"],{stdio:"inherit",env});'
    if code.count(contracts)!=1:raise GateError('frozen_contract_build_anchor_differs')
-   return code.replace(contracts,'')
+   return code.replace(contracts,'')+CACHE_CLEANUP
   b.excluded_paths=excluded;b.compiler_script=web_compiler
   try:yield r
   except b.GateError as e:raise GateError(str(e)) from None
