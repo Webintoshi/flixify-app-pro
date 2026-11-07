@@ -73,6 +73,28 @@ class ReleaseGuards(unittest.TestCase):
         self.assertEqual(len(b.MIGRATIONS),2)
 
 class BoundedProofs(unittest.TestCase):
+    def test_login_smoke_accepts_loading_phone_shell_without_whatsapp_text(self):
+        import subprocess
+        for attribute in ('autoComplete','autocomplete'):
+            with self.subTest(attribute=attribute):
+                html='<section aria-label="Flixify hesabına giriş"><input id="phone-number" '+attribute+'="tel-national"><button disabled>Hazırlanıyor</button></section>'
+                result=subprocess.run(['node','-e',b.LOGIN_SSR_CHECK+'verifyLoginMarkup(require("node:fs").readFileSync(0,"utf8"));'],input=html.encode(),capture_output=True)
+                self.assertEqual(result.returncode,0,result.stderr.decode())
+    def test_login_smoke_rejects_old_code_only_shell(self):
+        import subprocess
+        html='<section aria-label="Flixify hesabına giriş"><input id="account-code"><button>Giriş yap</button><p>WhatsApp desteği</p></section>'
+        result=subprocess.run(['node','-e',b.LOGIN_SSR_CHECK+'verifyLoginMarkup(require("node:fs").readFileSync(0,"utf8"));'],input=html.encode(),capture_output=True)
+        self.assertNotEqual(result.returncode,0)
+    def test_known_actual_web_contract_gets_only_reviewed_fields(self):
+        import subprocess
+        api_original=subprocess.run(['git','show','2522149cfda9dae514fc81d9820cbbfb70c57ea6:packages/contracts/src/domain.ts'],cwd=HERE.parents[2],capture_output=True,check=True).stdout
+        field=b'  trialProvisionStatus: z.enum(["pending", "review"]).nullable().optional(),\n'
+        self.assertEqual(api_original.count(field),1);web_original=api_original.replace(field,b'');self.assertEqual(b.sha(web_original),'973aa039be6ef0b71a6518648b113bcfce7b3e26dc685cb25b97dc7701f7047a')
+        old=b'  platform: z.string().nullable(),\n  expiresAt: z.string(),\n  lastSeenAt: z.string(),';new=old.replace(b'expiresAt: z.string(),',b'expiresAt: z.string().nullable(),');self.assertEqual(api_original.count(old),1);api_updated=api_original.replace(old,new)
+        self.assertEqual(b.web_contract_overlay(web_original,api_original,api_updated),api_updated)
+        for label,values in [('foreign_web',(web_original+b'\n',api_original,api_updated)),('foreign_api',(web_original,api_original+b'\n',api_updated)),('unreviewed_api_delta',(web_original,api_original,api_updated+b'\n')),('different_nullable_delta',(web_original,api_original,api_updated.replace(b'expiresAt: z.string().nullable(),',b'expiresAt: z.unknown(),',1)))]:
+            with self.subTest(label=label):
+                with self.assertRaises(b.GateError):b.web_contract_overlay(*values)
     def test_snapshot_executes_real_node_files_and_streams_chunks(self):
         import hashlib,subprocess
         with tempfile.TemporaryDirectory() as d:

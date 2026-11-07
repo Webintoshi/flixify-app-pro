@@ -214,6 +214,18 @@ def excluded_paths(service,paths):
  else:result+=['apps/ops-web/.next','node_modules/libphonenumber-js','node_modules/country-flag-icons']
  return sorted(set(result))
 
+def web_contract_overlay(web_original,api_original,api_updated):
+ if sha(web_original)!='973aa039be6ef0b71a6518648b113bcfce7b3e26dc685cb25b97dc7701f7047a' or sha(api_original)!='f8b3958ad86e0bd0868127d1271f68992b44efab25ca3a849b83776d316b76fa':raise GateError('web_api_contract_source_pins_differ')
+ anchor=b'  hasActiveSubscription: z.boolean(),\n';field=b'  trialProvisionStatus: z.enum(["pending", "review"]).nullable().optional(),\n'
+ if web_original.count(anchor)!=1:raise GateError('web_contract_trial_anchor_differs')
+ aligned=web_original.replace(anchor,anchor+field)
+ if aligned!=api_original:raise GateError('web_contract_difference_outside_reviewed_optional_trial_field')
+ old=b'  platform: z.string().nullable(),\n  expiresAt: z.string(),\n  lastSeenAt: z.string(),';new=old.replace(b'expiresAt: z.string(),',b'expiresAt: z.string().nullable(),')
+ if aligned.count(old)!=1:raise GateError('web_contract_session_anchor_differs')
+ updated=aligned.replace(old,new)
+ if updated!=api_updated:raise GateError('api_contract_delta_outside_reviewed_nullable_session_expiry')
+ return updated
+
 def candidate(service,ref,updates,work,public):
  if command('docker','image','ls','-q',target(service,ref)).strip():raise GateError('candidate_tag_already_exists')
  source=SOURCES[service][1];dist='apps/api/dist' if service=='api' else 'apps/ops-web/.next'
@@ -264,6 +276,8 @@ def verify_candidate(proof):
  command('docker','run','-i','--rm','--network','none','--read-only','--memory','256m','--memory-swap','320m','--pids-limit','128','--entrypoint','node',actual['Id'],'-e',check,input_data=bdata,timeout=120)
  return actual['Id']
 
+LOGIN_SSR_CHECK=r'''function verifyLoginMarkup(text){if(!text.includes('id="phone-number"')||!(/\bautocomplete="tel-national"/i).test(text)||!text.includes('aria-label="Flixify hesabına giriş"'))throw Error('new_login_missing');}'''
+
 def smoke(proof):
  service=proof['service'];name='flixify-phone-login-smoke-'+service+'-'+uuid.uuid4().hex[:12]
  args=['docker','create','--name',name,'--network','none','--memory','512m','--memory-swap','640m','--cpus','1','--pids-limit','128']
@@ -275,7 +289,7 @@ def smoke(proof):
   command(*args,proof['candidateId']);created=True;command('docker','start',name)
   paths=['/health','/auth/phone/status'] if service=='api' else ['/giris-yap','/kayit-ol','/indir','/paketler','/']
   port=4000 if service=='api' else 3000
-  script="(async()=>{const paths=PATHS;for(let attempt=0;attempt<30;attempt++){try{for(const path of paths){const r=await fetch('http://127.0.0.1:PORT'+path,{redirect:'manual',signal:AbortSignal.timeout(5000)});if(r.status!==200)throw Error('status');const text=await r.text();if(text.length>4*1024*1024)throw Error('body');if(path==='/health'&&JSON.parse(text).ok!==true)throw Error('health');if(path==='/auth/phone/status'){const x=JSON.parse(text);if(x.nativePhoneLogin!==true||x.enabled!==false)throw Error('phone_status')}if(path==='/giris-yap'&&!text.includes('WhatsApp'))throw Error('new_login_missing')}return}catch(e){if(attempt===29)throw e;await new Promise(r=>setTimeout(r,250))}}})().catch(()=>process.exit(1))".replace('PATHS',json.dumps(paths)).replace('PORT',str(port))
+  script=LOGIN_SSR_CHECK+"(async()=>{const paths=PATHS;for(let attempt=0;attempt<30;attempt++){try{for(const path of paths){const r=await fetch('http://127.0.0.1:PORT'+path,{redirect:'manual',signal:AbortSignal.timeout(5000)});if(r.status!==200)throw Error('status');const text=await r.text();if(text.length>4*1024*1024)throw Error('body');if(path==='/health'&&JSON.parse(text).ok!==true)throw Error('health');if(path==='/auth/phone/status'){const x=JSON.parse(text);if(x.nativePhoneLogin!==true||x.enabled!==false)throw Error('phone_status')}if(path==='/giris-yap')verifyLoginMarkup(text)}return}catch(e){if(attempt===29)throw e;await new Promise(r=>setTimeout(r,250))}}})().catch(()=>process.exit(1))".replace('PATHS',json.dumps(paths)).replace('PORT',str(port))
   command('docker','exec',name,'node','-e',script,timeout=190)
  finally:
   if created:command('docker','rm','--force',name)
@@ -303,8 +317,8 @@ def main():
   if args.service in ('ops-web','both'):
    domain='packages/contracts/src/domain.ts'
    web_contract=args.work_dir/'web-contract-original';extract_sources(SOURCES['ops-web'][1],web_contract,[domain])
-   if regular(web_contract,domain).read_bytes()!=regular(stage,domain).read_bytes():raise GateError('web_api_contract_source_baselines_differ')
-   web_updates[domain]=api_updates[domain]
+   web_updates[domain]=web_contract_overlay(regular(web_contract,domain).read_bytes(),regular(stage,domain).read_bytes(),api_updates[domain])
+   (args.work_dir/'web-contract-overlay-proof.json').write_text(json.dumps({'sourceImageId':SOURCES['ops-web'][1],'apiSourceImageId':SOURCES['api'][1],'webBefore':sha(regular(web_contract,domain).read_bytes()),'apiBefore':sha(regular(stage,domain).read_bytes()),'after':sha(web_updates[domain]),'reviewedChanges':['optional_trial_provision_status','nullable_device_session_expiry']},indent=2))
    web_updates.update(dependency_payload(payload,ref,deps,args.work_dir))
    public={k:v for k,v in (entry.split('=',1) for entry in current['ops-web']['Config'].get('Env',[])) if k.startswith('NEXT_PUBLIC_') or k in ('PUBLIC_API_BASE_URL','NODE_ENV')}
    proofs['ops-web']=candidate('ops-web',ref,web_updates,args.work_dir,public)
