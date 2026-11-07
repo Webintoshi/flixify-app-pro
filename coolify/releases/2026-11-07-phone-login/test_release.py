@@ -73,6 +73,18 @@ class ReleaseGuards(unittest.TestCase):
         self.assertEqual(len(b.MIGRATIONS),2)
 
 class BoundedProofs(unittest.TestCase):
+    def test_thread_caps_apply_only_to_web_build_and_preserve_public_values(self):
+        self.assertEqual(b.build_overrides('api',{}),{'NODE_OPTIONS':'--max-old-space-size=1024'})
+        web=b.build_overrides('ops-web',{'NEXT_PUBLIC_API_BASE_URL':'https://api.flixify.vip','CIRCLE_NODE_TOTAL':'100'})
+        self.assertEqual(web['NEXT_PUBLIC_API_BASE_URL'],'https://api.flixify.vip');self.assertEqual(web['CIRCLE_NODE_TOTAL'],'2');self.assertEqual(web['NODE_OPTIONS'],'--max-old-space-size=1024 --v8-pool-size=1')
+    def test_web_build_uses_one_worker_in_actual_next_config(self):
+        import os,subprocess
+        env=dict(os.environ)
+        for key in ('CIRCLE_NODE_TOTAL','UV_THREADPOOL_SIZE','RAYON_NUM_THREADS','NODE_OPTIONS'):env.pop(key,None)
+        env.update(b.build_overrides('ops-web',{}))
+        script=r'''const fs=require('node:fs'),vm=require('node:vm'),os=require('node:os'),config=require('next/dist/server/config-shared').defaultConfig,source=fs.readFileSync(require.resolve('next/dist/build'),'utf8'),selector=source.match(/function getNumberOfWorkers\(config\) \{[\s\S]*?\n\}/)[0],workers=vm.runInNewContext(selector+';getNumberOfWorkers(config)',{config,_configshared:{defaultConfig:config},_os:{default:os}});console.log(JSON.stringify({version:require('next/package.json').version,workers,cpus:config.experimental.cpus,v8Accepted:process.allowedNodeEnvironmentFlags.has('--v8-pool-size'),uv:process.env.UV_THREADPOOL_SIZE,rayon:process.env.RAYON_NUM_THREADS}));'''
+        result=subprocess.run(['node','-e',script],cwd=HERE.parents[2],env=env,capture_output=True,check=True)
+        value=json.loads(result.stdout);self.assertEqual(value['version'],'15.5.14');self.assertEqual(value['workers'],1);self.assertEqual(value['cpus'],1);self.assertTrue(value['v8Accepted']);self.assertEqual(value['uv'],'1');self.assertEqual(value['rayon'],'1')
     def test_reused_snapshot_buffer_matches_frozen_per_file_output(self):
         import subprocess
         shared='const rows=[],buffer=Buffer.alloc(1024**2);let total=0;'

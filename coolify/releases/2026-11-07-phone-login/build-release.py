@@ -200,9 +200,14 @@ def extract_sources(image,stage,paths):
    command('docker','cp',name+':/app/'+path,str(dest))
  finally:command('docker','rm',name)
 
+def build_overrides(service,public):
+ result={**public,'NODE_OPTIONS':'--max-old-space-size=1024'}
+ if service=='ops-web':result.update({'CIRCLE_NODE_TOTAL':'2','UV_THREADPOOL_SIZE':'1','RAYON_NUM_THREADS':'1','NODE_OPTIONS':'--max-old-space-size=1024 --v8-pool-size=1'})
+ return result
+
 def compiler_script(service,public):
  caps=r'''const fs=require('node:fs'),cp=require('node:child_process');const mem=BigInt(fs.readFileSync('/sys/fs/cgroup/memory.max','utf8').trim()),swap=BigInt(fs.readFileSync('/sys/fs/cgroup/memory.swap.max','utf8').trim()),cpu=fs.readFileSync('/sys/fs/cgroup/cpu.max','utf8').trim().split(/\s+/).map(BigInt),pids=BigInt(fs.readFileSync('/sys/fs/cgroup/pids.max','utf8').trim());if(mem>1342177280n||mem+swap>1610612736n||cpu[0]<=0n||cpu[0]>cpu[1]||pids>128n)throw Error('compiler_caps');'''
- script=caps+'const env={...process.env,...'+json.dumps(public)+',NODE_OPTIONS:"--max-old-space-size=1024"};'
+ script=caps+'const env={...process.env,...'+json.dumps(build_overrides(service,public))+'};'
  if service in ('api','ops-web'):script+='cp.execFileSync("npm",["run","build","-w","@flixify/contracts"],{stdio:"inherit",env});'
  script+='cp.execFileSync("npm",["run","build","-w",'+json.dumps('@flixify/'+service)+'],{stdio:"inherit",env});'
  return script
