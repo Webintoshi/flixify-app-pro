@@ -1,10 +1,10 @@
 {
   "packageName": "vip.flixify.tv",
-  "versionName": "1.4.14",
-  "versionCode": 22,
+  "versionName": "1.4.15",
+  "versionCode": 23,
   "minSdk": 23,
-  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.14.apk",
-  "sha256": "d824c3456cfdb54dae1dd7803df9b1517f56facd1540cd2aefb3cd3582e7808d",
-  "sizeBytes": 2164465,
-  "notes": "Film, dizi ve kanal listelerinde seçtiğin sayfa öncelikle yüklenir. Cihazda kayıtlı afişler yavaş indirmeleri beklemeden gösterilir. QR ve kullanıcı koduyla giriş korunur."
+  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.15.apk",
+  "sha256": "bf7fd529be59a84622b66beb01bebeb850437641246593c30c5162f16c081111",
+  "sizeBytes": 2165988,
+  "notes": "Android boxlarda kullanıcı kodu ve QR ile giriş için güvenli oturum kaydı iyileştirildi. Uyumsuz eski anahtarlar güvenle yenilenir; cihaz kayıt hataları bağlantı hatalarından ayrı gösterilir."
 }
