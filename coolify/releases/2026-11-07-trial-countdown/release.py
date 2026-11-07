@@ -81,6 +81,7 @@ def main():
     with reviewed.release_lock():
         if action!='rollback':
             c.require_disk(0);before=c.protected(('api','ops-web'))
+            api.c.configure_api()
             api_pin=api.checked_pin(c.previous.unique_json(args.api_source_pin.read_bytes()))
             if api.verify(args.repo,args.revision,api_pin,proof)!=candidates['api']:raise c.GateError('api_verification_pin_differs')
             web.c.configure_web();web_pin=web.measured_pin(c.previous.unique_json(args.web_source_pin.read_bytes()))

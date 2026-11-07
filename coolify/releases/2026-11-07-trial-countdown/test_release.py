@@ -6,6 +6,8 @@ import copy
 import json
 import sys
 import tempfile
+import contextlib
+import io
 from types import ModuleType
 from types import SimpleNamespace
 
@@ -180,6 +182,19 @@ class ReleaseSafetyTests(unittest.TestCase):
         replacement="instant_remote_write_file($service->server, $service->workdir().'/docker-compose.yml', $service->docker_compose);"
         self.assertEqual(release.guard.PHP_APPLY,before+replacement+after)
         self.assertEqual(release.guard.CHANGED,('api','ops-web'));self.assertEqual(release.guard.SOURCE_IDS,{k:v[1] for k,v in c.SOURCES.items()})
+    def test_release_initializes_api_profile_before_actual_source_pin_validation(self):
+        release=self.module('release_api_initialization','release.py');native=self.native();api_id='sha256:'+'4'*64;web_id='sha256:'+'6'*64
+        pin={'sourceHashes':{release.c.SERVER:release.c.API_SERVER_SHA,release.c.HELPER:None},'distEntries':{'server.js':{'bytes':123,'sha256':'7'*64}},'dist':{'files':1,'sha256':'8'*64},'untouched':{'files':1,'sha256':'9'*64}}
+        with self.assertRaisesRegex(release.api.backend.GateError,'backend_source_hash_scope_differs'):release.api.checked_pin(pin)
+        manifest=json.dumps({'packageName':'vip.flixify.tv','versionName':'1.4.16','versionCode':24,'minSdk':23,'apkUrl':'https://flixify.vip/downloads/flixify-pro-1.4.16.apk','sha256':native['apkSha256'],'sizeBytes':native['apkBytes'],'notes':'Geri sayım'}).encode()
+        with tempfile.TemporaryDirectory() as directory:
+            folder=Path(directory);fixtures={'api-proof':{'candidateId':api_id},'api-pin':pin,'web-pin':{},'native':native,'windows-proof':self.windows()}
+            for name,value in fixtures.items():(folder/name).write_text(json.dumps(value))
+            argv=['release.py','/fixture-repo','--revision','5'*40,'--api-proof',str(folder/'api-proof'),'--api-source-pin',str(folder/'api-pin'),'--web-source-pin',str(folder/'web-pin'),'--native-proof',str(folder/'native'),'--web-candidate-id',web_id,'--windows-installer',str(folder/'external.exe'),'--windows-proof',str(folder/'windows-proof')]
+            with patch.object(sys,'argv',argv),patch.object(release.c,'blob',return_value=manifest),patch.object(release.reviewed,'release_lock',return_value=contextlib.nullcontext()),patch.object(release.c,'require_disk'),patch.object(release.c,'protected',return_value={}),patch.object(release.api,'verify',return_value=api_id) as api_verify,patch.object(release.web,'measured_pin',return_value={}),patch.object(release.web,'verify',return_value=web_id),patch.object(release,'invoke') as invoke,contextlib.redirect_stdout(io.StringIO()):
+                release.main()
+            self.assertEqual(api_verify.call_args.args[2],pin);invoke.assert_called_once_with(None)
+            self.assertEqual(release.api.backend.configuration('api')['paths'],release.c.API_PATHS)
     def test_rollback_calls_only_the_existing_image_rollback_and_no_session_sql(self):
         release=self.module('rollback','release.py');calls=[]
         with patch.object(release.c,'protected',return_value={}),patch.object(release.guard,'rollback',side_effect=lambda:calls.append('images')),patch.object(release.guard,'command',side_effect=AssertionError('No SQL or other commands belong in wrapper rollback')):
