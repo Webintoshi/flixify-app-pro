@@ -168,6 +168,7 @@ struct AccountView: View {
                         VStack(alignment: .leading, spacing: 12) {
                             Text(account.packageTitle.isEmpty ? (account.canPlay ? "Aktif paket" : "İzleme erişimi") : account.packageTitle).font(.title2.bold())
                             Text("Kullanıcı kodu: •••• \(account.codeSuffix)").foregroundStyle(FlixTheme.muted)
+                            TrialCountdownLabel(countdown: account.trialCountdown).font(.title2.weight(.semibold))
                             Label(account.canPlay ? (account.trial ? "Deneme süren aktif" : "Paketin aktif") : "Aktif paketin bulunmuyor", systemImage: account.canPlay ? "checkmark.circle" : "clock")
                             if let end = account.expiresAt { Text("Bitiş: \(end.formatted(date: .abbreviated, time: .shortened))").foregroundStyle(FlixTheme.muted) }
                             if !account.message.isEmpty { Text(account.message).foregroundStyle(FlixTheme.muted) }

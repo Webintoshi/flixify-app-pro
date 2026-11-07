@@ -8,8 +8,9 @@ import { hydrateLegacyLiveFavorites, legacyFavoriteMutationIds } from "./live-fa
 import { createDirectPlaybackDeadline } from "./direct-playback-deadline";
 import { itemKey, sessionKey, type MediaItem, type Session } from "./types";
 import { analyticsContent, trackAnalytics } from "./analytics";
+import { useSharedAccountResource, type SharedAccountResource } from "./account-resource";
 
-type Value = { livePolicyRevision: string; providerExpiresAt: string | null | undefined; providerRevision: number; personalProvider: ReturnType<typeof createPersonalProviderClient> | null; providerMode: "loading" | "personal" | "legacy"; providerError: string; providerScope: string; session: Session | null; ready: boolean; favorites: MediaItem[]; favoritesReady: boolean; favoritesLoading: boolean; favoritesError: string; error: string; pending: Set<string>; toggle: (item: MediaItem) => Promise<void>; reload: () => void; refreshProvider: () => void; invalidateFavorites: () => void; dismissError: () => void; saveSession: (s: Session) => void; logout: () => void };
+type Value = { accountResource?: SharedAccountResource; livePolicyRevision: string; providerExpiresAt: string | null | undefined; providerRevision: number; personalProvider: ReturnType<typeof createPersonalProviderClient> | null; providerMode: "loading" | "personal" | "legacy"; providerError: string; providerScope: string; session: Session | null; ready: boolean; favorites: MediaItem[]; favoritesReady: boolean; favoritesLoading: boolean; favoritesError: string; error: string; pending: Set<string>; toggle: (item: MediaItem) => Promise<void>; reload: () => void; refreshProvider: () => void; invalidateFavorites: () => void; dismissError: () => void; saveSession: (s: Session) => void; logout: () => void };
 type BootstrapRequest = { identity: string; controller?: AbortController; retryRequested: boolean };
 const Context = createContext<Value | null>(null);
 export function readSession(): Session | null {
@@ -83,6 +84,10 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     };
   }, []);
   const identity = sessionIdentity(session);
+  const accountResource = useSharedAccountResource(session);
+  useEffect(() => {
+    if (providerExpiresAt && accountResource.data?.user.trialProvisionStatus === "pending") void accountResource.refresh();
+  }, [providerExpiresAt, accountResource.data?.user.trialProvisionStatus, accountResource.refresh]);
   useEffect(() => {
     if (!identity) return;
     const controller = new AbortController(); let disposed = false; let deadline: ReturnType<typeof createDirectPlaybackDeadline> | undefined;
@@ -184,7 +189,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     });
   }, [identity, personalProvider, providerMode, providerScope, livePolicyRevision, session?.accessToken]);
   reloadFavoritesRef.current=reloadFavorites;
-  const reload = useCallback(() => { refreshProvider(); reloadFavorites(); }, [refreshProvider, reloadFavorites]);
+  const reload = useCallback(() => { refreshProvider(); reloadFavorites(); void accountResource.refresh(); }, [refreshProvider, reloadFavorites, accountResource.refresh]);
   const invalidateFavorites = useCallback(() => {
     generation.current++;
     loadingGeneration.current = null;
@@ -221,7 +226,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     catch { if (g === generation.current) { setFavorites(list => existing ? [existing, ...list.filter(f => itemKey(f) !== key)] : list.filter(f => itemKey(f) !== key)); setError("Favori değişikliği kaydedilemedi. Lütfen tekrar dene."); } }
     finally { if(g === generation.current) {pendingRef.current.delete(key); setPending(new Set(pendingRef.current));if(favoritesPolicyDirty.current)reloadFavoritesRef.current();} }
   };
-  return <Context.Provider value={{ livePolicyRevision, providerExpiresAt, providerRevision, personalProvider, providerMode, providerError, providerScope, session, ready, favorites:personalProvider ? personalProvider.filterLiveItems(favorites) : favorites, favoritesReady, favoritesLoading, favoritesError, error, pending, toggle, reload, refreshProvider, invalidateFavorites, dismissError: () => setError(""), saveSession, logout }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ accountResource, livePolicyRevision, providerExpiresAt, providerRevision, personalProvider, providerMode, providerError, providerScope, session, ready, favorites:personalProvider ? personalProvider.filterLiveItems(favorites) : favorites, favoritesReady, favoritesLoading, favoritesError, error, pending, toggle, reload, refreshProvider, invalidateFavorites, dismissError: () => setError(""), saveSession, logout }}>{children}</Context.Provider>;
 }
 export function usePlatform() { const value = useContext(Context); if (!value) throw new Error("PlatformProvider missing"); return value; }
 

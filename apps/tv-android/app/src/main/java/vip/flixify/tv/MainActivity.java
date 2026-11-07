@@ -73,6 +73,10 @@ public final class MainActivity extends Activity {
     private long generation;
     private long accessSerial,packagesSerial;
     private Account verifiedAccount;
+    private TextView trialNavigationClock,trialAccountClock;
+    private final android.os.Handler trialHandler=new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable trialTick=new Runnable(){public void run(){renderTrialClocks();if(trialIsVisible()&&"active".equals(verifiedAccount.trialCountdown.status)&&verifiedAccount.trialCountdown.remainingMillis(android.os.SystemClock.elapsedRealtime())>0)trialHandler.postDelayed(this,1000);}};
+    private final Runnable trialRefresh=new Runnable(){public void run(){if(!trialIsVisible())return;trialHandler.postDelayed(this,60000);resolveVerifiedAccess(false,false,false);}};
     private String verifiedOwner="",accessError="",packagesError="";
     private boolean accessBusy,packagesVisible,packagesBusy,recoveringCatalog;
     private int packageUsers=1;
@@ -153,11 +157,12 @@ public final class MainActivity extends Activity {
         boolean returning=resumeReload || searchPlayerReturn; resumeReload=false;if(searchPlayerReturn)resizeAfterCatalog=false;searchPlayerReturn=false;
         if(!repository.hasSession()) { if(returning)showLogin("",false); return; }
         if(welcomeBlocked()){loadWelcome();return;}
-        refreshVerifiedAccess(returning);
+        refreshVerifiedAccess(returning);bindTrialClocks();
 
     }
     @Override protected void onPause() {if(deviceLogin!=null)deviceLogin.pause();posterSound.pause();super.onPause();}
     @Override protected void onStop() {
+        stopTrialClocks();
         if(deviceLogin!=null)deviceLogin.pause();
         startup.cancelPendingFrame();
         presentations.cancel();
@@ -170,7 +175,7 @@ public final class MainActivity extends Activity {
         if(catalogObservation!=null){try{catalogObservation.close();}catch(Exception ignored){}catalogObservation=null;}
         updatePanel.cancel();if(dialog!=null)dialog.dismiss();super.onStop();
     }
-    @Override protected void onDestroy() { if(deviceLogin!=null)deviceLogin.cancel();clearPairingBitmap();destroyed=true; generation++;if(presentations!=null)presentations.close();if(startup!=null)startup.close();if(posterSound!=null)posterSound.close();if(artwork!=null)artwork.close();if(updatePanel!=null)updatePanel.close();super.onDestroy(); }
+    @Override protected void onDestroy() { stopTrialClocks();if(deviceLogin!=null)deviceLogin.cancel();clearPairingBitmap();destroyed=true; generation++;if(presentations!=null)presentations.close();if(startup!=null)startup.close();if(posterSound!=null)posterSound.close();if(artwork!=null)artwork.close();if(updatePanel!=null)updatePanel.close();super.onDestroy(); }
     @Override public void onTrimMemory(int level){super.onTrimMemory(level);if(artwork!=null)artwork.trimMemory(level);trimMetadataMemory(level);}
     @Override public void onLowMemory(){super.onLowMemory();if(artwork!=null)artwork.trimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE);trimMetadataMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE);}
     private void trimMetadataMemory(int level){
@@ -309,6 +314,9 @@ public final class MainActivity extends Activity {
     private boolean accessCurrent(long serial,String owner){return !destroyed&&!stopped&&!isFinishing()&&serial==accessSerial&&repository.hasSession()&&owner.equals(repository.currentAccountId());}
     private void refreshVerifiedAccess(boolean redraw){recoveringCatalog=false;resolveVerifiedAccess(redraw,false);}
     private void resolveVerifiedAccess(boolean redraw,boolean accountScreen){
+        resolveVerifiedAccess(redraw,accountScreen,true);
+    }
+    private void resolveVerifiedAccess(boolean redraw,boolean accountScreen,boolean force){
         String owner=repository.currentAccountId();
         if(!owner.equals(verifiedOwner)){accessBusy=false;accessSerial++;verifiedAccount=null;verifiedOwner=owner;packagePlans=null;packagesSerial++;}
         if(accessBusy)return;
@@ -317,10 +325,10 @@ public final class MainActivity extends Activity {
         if(verifiedAccount==null&&!accountScreen){shell("Hesabın kontrol ediliyor…","");LinearLayout inner=scrollContent();inner.addView(TvUi.text(this,"İzleme erişimin doğrulanıyor…",20,TvUi.MUTED));startup.ready();}
         TvRepository.Callback<Account> authority=new TvRepository.Callback<Account>(){
             public void onResult(Account account){
-                if(!accessCurrent(serial,owner))return;accessBusy=false;verifiedAccount=account;verifiedOwner=owner;accessError="";
+                if(!accessCurrent(serial,owner))return;boolean displayChanged=!sameAccountDisplay(verifiedAccount,account);accessBusy=false;verifiedAccount=account;verifiedOwner=owner;accessError="";bindTrialClocks();
                 boolean recovery=recoveringCatalog;recoveringCatalog=false;
                 if(!account.canPlay)invalidateScopedCatalogs();
-                if(page.section==Section.ACCOUNT&&!packagesVisible){renderAccount(account);return;}
+                if(page.section==Section.ACCOUNT&&!packagesVisible){if(force||displayChanged||body==null)renderAccount(account);return;}
                 if(!account.canPlay){if(account.access==Account.Access.EXPIRED)showPackages();else showAccessStatus();}
                 else if(recovery){showCatalogUnavailable();}
                 else {
@@ -337,7 +345,12 @@ public final class MainActivity extends Activity {
                 else if(recoveringCatalog||verifiedAccount==null||!verifiedAccount.canPlay)showAccessStatus();
             }
         };
-        if(accountScreen)repository.account(true,authority);else repository.refreshAccess(authority);
+        if(!force)repository.account(false,authority);else if(accountScreen)repository.account(true,authority);else repository.refreshAccess(authority);
+    }
+    private static boolean sameAccountDisplay(Account previous,Account current){
+        return previous!=null&&current!=null&&previous.id.equals(current.id)&&previous.codeSuffix.equals(current.codeSuffix)
+                &&previous.packageTitle.equals(current.packageTitle)&&previous.expiresAtMs==current.expiresAtMs
+                &&previous.canPlay==current.canPlay&&previous.trial==current.trial&&previous.message.equals(current.message)&&previous.access==current.access;
     }
     private boolean accessGate(){
         if(!repository.currentAccountId().equals(verifiedOwner)){verifiedAccount=null;accessBusy=false;accessSerial++;}
@@ -540,6 +553,7 @@ public final class MainActivity extends Activity {
     }
     private void showLogin(String message){showLogin(message,true);}
     private void showLogin(String message,boolean beginPairing) {
+        stopTrialClocks();trialNavigationClock=null;trialAccountClock=null;
         if(deviceLogin!=null)deviceLogin.cancel();clearPairingBitmap();
         presentations.clear();
         visibleAnalyticsScreen="login";analytics.screen(visibleAnalyticsScreen);
@@ -653,6 +667,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void shell(String title,String subtitle) {
+        stopTrialClocks();trialNavigationClock=null;trialAccountClock=null;
         presentations.cancel();
         artwork.retireScreen();
         if(catalogDialog!=null && catalogDialog.isShowing())catalogDialog.dismiss();
@@ -671,6 +686,8 @@ public final class MainActivity extends Activity {
             markFocus(b,"rail:"+n);navigation.addView(b,TvUi.space(this,-1,44));rail[n]=b;
         }
         for(int n=0;n<rail.length;n++){if(n>0)rail[n].setNextFocusUpId(rail[n-1].getId());if(n<rail.length-1)rail[n].setNextFocusDownId(rail[n+1].getId());rail[n].setNextFocusLeftId(rail[n].getId());}
+        trialNavigationClock=TvUi.text(this,"",sizing.compact?12:14,TvUi.WHITE);trialNavigationClock.setTag("tv-trial-countdown");
+        trialNavigationClock.setPadding(TvUi.dp(this,10),TvUi.dp(this,12),TvUi.dp(this,4),0);navigation.addView(trialNavigationClock,TvUi.space(this,-1,-2));bindTrialClocks();
         body=TvUi.column(this);body.setPadding(TvUi.dp(this,sizing.gap),0,0,0);root.addView(body,new LinearLayout.LayoutParams(0,-1,1));
         if(page.section!=Section.HOME){
             TextView heading=TvUi.text(this,title,sizing.shortScreen?22:28,TvUi.WHITE);TvUi.heading(heading);heading.setSingleLine(true);heading.setEllipsize(TextUtils.TruncateAt.END);body.addView(heading,TvUi.space(this,-1,sizing.heading));
@@ -1001,8 +1018,22 @@ public final class MainActivity extends Activity {
             inner.addView(TvUi.text(this,"Hesap kodu: •••• "+account.codeSuffix,18,TvUi.MUTED),TvUi.space(this,-1,-2));
             String expiry=account.expiresAtMs>0?DateFormat.getDateTimeInstance(DateFormat.MEDIUM,DateFormat.SHORT).format(new Date(account.expiresAtMs)):"Belirtilmedi";
             inner.addView(TvUi.text(this,"Bitiş: "+expiry,18,TvUi.MUTED),TvUi.space(this,-1,-2));
+            trialAccountClock=TvUi.text(this,"",26,TvUi.WHITE);trialAccountClock.setTag("tv-account-trial-countdown");inner.addView(trialAccountClock,TvUi.space(this,-1,-2));bindTrialClocks();
             TextView message=TvUi.text(this,account.message.isEmpty()?(account.canPlay?"Hesabınız aktif":"İzleme erişimi bulunmuyor."):account.message,18,account.canPlay?TvUi.MUTED:TvUi.ACCENT);inner.addView(message,TvUi.space(this,-1,-2));
             addAccountActions(inner);if(resizeFocus==null)resizeFocus=accountFocus;restoreResizeFocus(true);startup.ready();
+    }
+
+    private boolean trialIsVisible(){return !stopped&&!destroyed&&repository!=null&&repository.hasSession()&&verifiedAccount!=null&&verifiedOwner.equals(repository.currentAccountId())&&verifiedAccount.trialCountdown.visible();}
+    private void stopTrialClocks(){trialHandler.removeCallbacks(trialTick);trialHandler.removeCallbacks(trialRefresh);}
+    private void renderTrialClocks(){
+        boolean visible=trialIsVisible();String label=visible?verifiedAccount.trialCountdown.label(android.os.SystemClock.elapsedRealtime()):"";
+        for(TextView clock:new TextView[]{trialNavigationClock,trialAccountClock})if(clock!=null){clock.setVisibility(visible?View.VISIBLE:View.GONE);if(visible&&!label.contentEquals(clock.getText()))clock.setText(label);}
+    }
+    private void bindTrialClocks(){
+        stopTrialClocks();renderTrialClocks();
+        if(!trialIsVisible())return;
+        if("active".equals(verifiedAccount.trialCountdown.status)&&verifiedAccount.trialCountdown.remainingMillis(android.os.SystemClock.elapsedRealtime())>0)trialHandler.postDelayed(trialTick,1000);
+        trialHandler.postDelayed(trialRefresh,60000);
     }
 
     private void addAccountActions(LinearLayout parent) {

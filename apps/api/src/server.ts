@@ -30,6 +30,7 @@ import {
 import { canUseClientIpPlayback } from "./client-playback-access.js";
 import { registerPersonalLibrary } from "./personal-library.js";
 import { derivePersonalProviderSession } from "./personal-provider-session.js";
+import { withTrialCountdown } from "./trial-countdown.js";
 import { loadLiveChannelPolicy } from "./live-channel-policy.js";
 import type {
   LiveChannel,
@@ -1659,6 +1660,7 @@ export function buildServer() {
   });
 
   app.get("/me", async (request, reply) => {
+    reply.header("cache-control", "private, no-store, max-age=0");
     try {
       const auth = await authenticateUser(request.headers.authorization, request);
 
@@ -1667,19 +1669,24 @@ export function buildServer() {
         if (!me) {
           return reply.status(404).send({ message: "Kullanici bulunamadi." });
         }
-        return me;
+        return withTrialCountdown(me, {
+          summary: me.user,
+          isThreeHourTrial: me.user.activePackage?.title === "3 Saat Deneme",
+          accessUntil: me.user.activePackage?.endsAt ?? null,
+          trialProviderExpiresAt: null
+        });
       }
 
       const userContext = await getUserContext(auth.userId);
       const settings = await getAppSettings();
 
-      return {
+      return withTrialCountdown({
         user: userContext.summary,
         contact: {
           whatsapp: settings.supportWhatsappUrl,
           telegram: settings.supportTelegramUrl
         }
-      };
+      }, userContext);
     } catch (error) {
       return sendUserRouteError(request, reply, error);
     }

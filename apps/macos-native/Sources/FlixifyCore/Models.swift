@@ -64,9 +64,11 @@ public struct Account: Equatable, Sendable {
     public let canPlay: Bool
     public let trial: Bool
     public let message: String
-    public init(id: String, codeSuffix: String = "", packageTitle: String = "", expiresAt: Date? = nil, canPlay: Bool = false, trial: Bool = false, message: String = "") {
+    public let trialCountdown: TrialCountdown
+    public init(id: String, codeSuffix: String = "", packageTitle: String = "", expiresAt: Date? = nil, canPlay: Bool = false, trial: Bool = false, message: String = "", trialCountdown: TrialCountdown = TrialCountdown()) {
         self.id = id; self.codeSuffix = codeSuffix; self.packageTitle = packageTitle; self.expiresAt = expiresAt
         self.canPlay = canPlay; self.trial = trial; self.message = message
+        self.trialCountdown = trialCountdown
     }
 }
 

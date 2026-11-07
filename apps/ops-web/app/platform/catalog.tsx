@@ -150,7 +150,7 @@ function MediaRail({ label, row, href, open, className, landscape = false, empty
   </section>;
 }
 export default function CatalogPage({ kind, overview = false, favoritesOnly = false }: { kind: Kind; overview?: boolean; favoritesOnly?: boolean }) {
-  const { session, personalProvider, providerMode, providerError, providerScope, livePolicyRevision, favorites, favoritesReady, favoritesLoading, favoritesError, invalidateFavorites, reload: reloadFavorites } = usePlatform();
+  const { accountResource, session, personalProvider, providerMode, providerError, providerScope, livePolicyRevision, favorites, favoritesReady, favoritesLoading, favoritesError, invalidateFavorites, reload: reloadFavorites } = usePlatform();
   const params = useSearchParams();
   const router = useRouter();
   const [query, setQuery] = useState(params.get("q") ?? "");
@@ -271,6 +271,10 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
   useEffect(() => { const q = params.get("q"); if (q !== null) setQuery(q); }, [params]);
   useEffect(() => {
     if (!hasSession) { setAccessAccount(null); return; }
+    if (accountResource) {
+      setAccessAccount(accountResource.data ? { account, user: accountResource.data.user } : null);
+      return;
+    }
     let cancelled = false;
     const refresh = () => { if (running) return; running = true; void apiRequest<{ user: AccountUser }>("/me").then(data => {
       if (!cancelled && data.user && typeof data.user.hasAssignedLink === "boolean") {
@@ -280,7 +284,10 @@ export default function CatalogPage({ kind, overview = false, favoritesOnly = fa
     let running = false; refresh();
     const timer = window.setInterval(refresh, 60_000); window.addEventListener("focus", refresh);
     return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("focus", refresh); };
-  }, [account, hasSession, reload]);
+  }, [account, hasSession, reload, Boolean(accountResource), accountResource?.data]);
+  useEffect(() => {
+    if (hasSession && accountResource && reload > 0) void accountResource.refresh();
+  }, [account, hasSession, reload, accountResource?.refresh]);
   useEffect(() => {
     if (accessAccount?.account !== account) return;
     const endsAt = Date.parse(accessAccount.user.activePackage?.endsAt ?? "");

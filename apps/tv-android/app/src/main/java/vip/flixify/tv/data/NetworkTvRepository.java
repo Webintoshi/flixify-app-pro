@@ -561,15 +561,17 @@ public final class NetworkTvRepository implements TvRepository {
         Account.Access reason=AccountAccessParser.reason(user,now);
         if(reason==Account.Access.EXPIRED)message="Aktif paketin bulunmuyor veya paketinin süresi doldu.";
         if(reason==Account.Access.TRIAL_PENDING)message="review".equals(user.optString("trialProvisionStatus"))?"Deneme erişimin inceleniyor. Destek ekibimizle iletişime geç.":"Deneme erişimin hazırlanıyor. Lütfen tekrar kontrol et.";
-        Account account=new Account(id,suffix,title,appExpiry,false,trial,message,reason);
+        JSONObject timer=response.optJSONObject("trialCountdown");
+        vip.flixify.tv.TrialCountdown countdown=timer==null?vip.flixify.tv.TrialCountdown.none():vip.flixify.tv.TrialCountdown.fromServer(timer.optString("status"),ProviderParser.date(timer.opt("serverNow")),ProviderParser.date(timer.opt("endsAt")),android.os.SystemClock.elapsedRealtime());
+        Account account=new Account(id,suffix,title,appExpiry,false,trial,message,reason,countdown);
         if(eligible) {
             try {
                 ProviderParser.Bootstrap b=bootstrap(auth,force);
                 if(!b.accountId.equals(id)) { clearProvider();throw new Problem(Failure.Code.STALE); }
-                account=new Account(id,suffix,title,b.expiresAtMs,true,trial,message);
+                account=new Account(id,suffix,title,b.expiresAtMs,true,trial,message,Account.Access.ACTIVE,countdown);
             } catch(Problem issue) {
-                if(issue.code==Failure.Code.INELIGIBLE) account=new Account(id,suffix,title,appExpiry,false,trial,"Paketin aktif. İçerik hizmetine şu anda ulaşılamıyor.",Account.Access.SERVICE_UNAVAILABLE);
-                else if(issue.code==Failure.Code.NETWORK && cached!=null && cached.canPlay && guard.current()!=null && guard.current().expiresAtMs>clock.now()) account=new Account(id,suffix,title,guard.current().expiresAtMs,true,trial,"Son doğrulanan erişim bilgisi gösteriliyor.");
+                if(issue.code==Failure.Code.INELIGIBLE) account=new Account(id,suffix,title,appExpiry,false,trial,"Paketin aktif. İçerik hizmetine şu anda ulaşılamıyor.",Account.Access.SERVICE_UNAVAILABLE,countdown);
+                else if(issue.code==Failure.Code.NETWORK && cached!=null && cached.canPlay && guard.current()!=null && guard.current().expiresAtMs>clock.now()) account=new Account(id,suffix,title,guard.current().expiresAtMs,true,trial,"Son doğrulanan erişim bilgisi gösteriliyor.",Account.Access.ACTIVE,countdown);
                 else throw issue;
             }
         } else clearProvider();
@@ -656,7 +658,7 @@ public final class NetworkTvRepository implements TvRepository {
                 if(expiredOnly?current.expiresAtMs>clock.now():!guard.active(source,scope,clock.now()))return;
             }
             guard.clear();verifiedLivePolicy=new PolicyIdentity(null);bootstrapCheckedAt=0;clearMetadataLocked();
-            Account previous=currentAccount;if(previous!=null && previous.canPlay)currentAccount=new Account(previous.id,previous.codeSuffix,previous.packageTitle,previous.expiresAtMs,false,previous.trial,"İçerik hizmetine şu anda ulaşılamıyor.",Account.Access.SERVICE_UNAVAILABLE);
+            Account previous=currentAccount;if(previous!=null && previous.canPlay)currentAccount=new Account(previous.id,previous.codeSuffix,previous.packageTitle,previous.expiresAtMs,false,previous.trial,"İçerik hizmetine şu anda ulaşılamıyor.",Account.Access.SERVICE_UNAVAILABLE,previous.trialCountdown);
             accountCheckedAt=0;
             if(refreshTimer!=null)main.removeCallbacks(refreshTimer);if(expiryTimer!=null)main.removeCallbacks(expiryTimer);
             refreshTimer=null;expiryTimer=null;cancel=new ArrayList<>(connections);

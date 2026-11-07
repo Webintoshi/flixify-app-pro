@@ -52,6 +52,8 @@ private final class FixtureRouter: @unchecked Sendable {
     private var watchedEpisodeIDs = Set(["301"])
     private var watchedWriteDelay: TimeInterval = 0
     private var watchedWriteStatus = 200
+    private var trialCountdownPayload: [String: Any]?
+    private var accountPackageTitle = "1 Ay"
     let expires = "2026-12-01T00:00:00.000Z"
     func changeSource() { lock.lock(); sourceVersion = "fixture-source-v2"; lock.unlock() }
     func requireRefresh() { lock.lock(); forceRefresh = true; lock.unlock() }
@@ -66,6 +68,7 @@ private final class FixtureRouter: @unchecked Sendable {
     func count(_ path: String) -> Int { lock.lock(); defer { lock.unlock() }; return requests.filter { $0.url?.path == path }.count }
     func allRequests() -> [URLRequest] { lock.lock(); defer { lock.unlock() }; return requests }
     func choices() -> [String] { lock.lock(); defer { lock.unlock() }; return welcomeChoices }
+    func configureTrialCountdown(_ value: [String: Any]?, title: String = "1 Ay") { lock.lock(); trialCountdownPayload = value; accountPackageTitle = title; lock.unlock() }
     func response(_ incoming: URLRequest) -> FixtureReply {
         var request = incoming
         if request.httpBody == nil, let stream = request.httpBodyStream {
@@ -73,9 +76,9 @@ private final class FixtureRouter: @unchecked Sendable {
             while stream.hasBytesAvailable && body.count < 65536 { let count = stream.read(&bytes, maxLength: bytes.count); if count <= 0 { break }; body.append(contentsOf: bytes.prefix(count)) }
             request.httpBody = body
         }
-        lock.lock(); requests.append(request); let source = sourceVersion, expired = forceRefresh, delay = movieDelay, denied = unauthorizedProvider, syntheticCount = liveCount, liveID = preferredLiveID, excluded = excludedLiveIDs, watchedIDs = watchedEpisodeIDs, watchedDelay = watchedWriteDelay, watchedStatus = watchedWriteStatus; lock.unlock()
+        lock.lock(); requests.append(request); let source = sourceVersion, expired = forceRefresh, delay = movieDelay, denied = unauthorizedProvider, syntheticCount = liveCount, liveID = preferredLiveID, excluded = excludedLiveIDs, watchedIDs = watchedEpisodeIDs, watchedDelay = watchedWriteDelay, watchedStatus = watchedWriteStatus, countdown = trialCountdownPayload, packageTitle = accountPackageTitle; lock.unlock()
         let path = request.url!.path
-        let user: [String: Any] = ["id": "fixture-account", "codeSuffix": "TEST", "status": "active", "hasAssignedLink": true, "hasActiveSubscription": true, "activePackage": ["title": "1 Ay", "endsAt": expires]]
+        let user: [String: Any] = ["id": "fixture-account", "codeSuffix": "TEST", "status": "active", "hasAssignedLink": true, "hasActiveSubscription": true, "activePackage": ["title": packageTitle, "endsAt": expires]]
         switch path {
         case "/auth/device/start": return FixtureReply(["requestId": "00000000-0000-0000-0000-000000000002", "deviceSecret": String(repeating: "a", count: 43), "userCode": "BCDF-GHJK", "verificationUri": "https://flixify.vip/cihaz", "verificationUriComplete": foreignPairingURL ? "https://evil.invalid/cihaz?code=BCDF-GHJK" : "https://flixify.vip/cihaz?code=BCDF-GHJK", "qrPngBase64": oversizedPairingPNG ? "iVBORw0KGgoAAAANSUhEUgAABAEAAAQBCAIAAADU4QRPAAAUn0lEQVR4nO3XMQEAMAyAsPo33brYDhIFvMwCAAAl8zsAAAB4ygMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANDiAQAAoMUDAABAiwcAAIAWDwAAAC0eAAAAWjwAAAC0eAAAAGjxAAAA0OIBAACgxQMAAECLBwAAgBYPAAAALR4AAABaPAAAALR4AAAAaPEAAADQ4gEAAKDFAwAAQIsHAACAFg8AAAAtHgAAAFo8AAAAtHgAAABo8QAAANByJ7O5tEyOvVQAAAAASUVORK5CYII=" : "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAABKklEQVR4nO3RMQ0AAAjAMPybBhk9WBUs2Wyo0QHfNQBrANYArAFYA7AGYA3AGoA1AGsA1gCsAVgDsAZgDcAagDUAawDWAKwBWAOwBmANwBqANQBrANYArAFYA7AGYA3AGoA1AGsA1gCsAVgDsAZgDcAagDUAawDWAKwBWAOwBmANwBqANQBrANYArAFYA7AGYA3AGoA1AGsA1gCsAVgDsAZgDcAagDUAawDWAKwBWAOwBmANwBqANQBrANYArAFYA7AGYA3AGoA1AGsA1gCsAVgDsAZgDcAagDUAawDWAKwBWAOwBmANwBqANQBrANYArAFYA7AGYA3AGoA1AGsA1gCsAVgDsAZgDcAagDUAawDWAKwBWAOwBmANwBqANQBrANYArAFYA7AGYAeU6UsysMvN4wAAAABJRU5ErkJggg==", "expiresAt": expires, "expiresInSeconds": 180, "intervalSeconds": 2])
         case "/auth/device/token":
@@ -92,7 +95,9 @@ private final class FixtureRouter: @unchecked Sendable {
             if accountAuthFailure { return FixtureReply(["reason": "unauthorized"], status: 401) }
             if accountFailure { return FixtureReply(["reason": "unavailable"], status: 503) }
             if expired && request.value(forHTTPHeaderField: "Authorization") != "Bearer fixture-access-new" { return FixtureReply(["reason": "expired"], status: 401) }
-            return FixtureReply(["user": user])
+            var payload: [String: Any] = ["user": user]
+            if let countdown { payload["trialCountdown"] = countdown }
+            return FixtureReply(payload)
         case "/me/provider-session":
             lock.lock(); providerSessionResponses += 1; let bootstrapDelay = providerSessionResponses == 1 ? providerFirstDelay : 0; lock.unlock()
             var payload: [String: Any] = ["accountId": "fixture-account", "sourceVersion": source, "providerOrigin": "https://provider.example", "username": "fixture-user", "password": "fixture-password", "expiresAt": expires, "moviePolicy": "general-audience-only"]
@@ -153,6 +158,31 @@ private final class RoutingURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 final class RepositoryNetworkTests: XCTestCase {
+    func testTrialCountdownKeepsTheServerTrialEndSeparateFromProviderAccess() async throws {
+        RoutingURLProtocol.router.configureTrialCountdown(["status": "active", "serverNow": "2026-11-07T11:00:00.000Z", "endsAt": "2026-11-07T14:00:00.000Z"], title: "3 Saat Deneme")
+        let repo = repository()
+        let session = try await repo.login(code: "ABCDEFGHIJKLMNOP")
+        XCTAssertTrue(session.account.canPlay)
+        XCTAssertTrue(session.account.trial)
+        XCTAssertEqual(session.account.expiresAt, ProviderParser.date(RoutingURLProtocol.router.expires))
+        XCTAssertEqual(session.account.trialCountdown.status(), .active)
+        XCTAssertGreaterThan(session.account.trialCountdown.remainingSeconds(), 10790)
+        XCTAssertLessThanOrEqual(session.account.trialCountdown.remainingSeconds(), 10800)
+        RoutingURLProtocol.router.configureTrialCountdown(["status": "none", "serverNow": "2026-11-07T11:01:00.000Z", "endsAt": NSNull()])
+        let paid = try await repo.refreshSession()
+        XCTAssertTrue(paid.account.canPlay)
+        XCTAssertFalse(paid.account.trial)
+        XCTAssertEqual(paid.account.trialCountdown.status(), .none)
+        XCTAssertEqual(paid.account.trialCountdown.remainingSeconds(), 0)
+    }
+    func testOlderApiDoesNotCreateANewTrialCountdown() async throws {
+        RoutingURLProtocol.router.configureTrialCountdown(nil, title: "3 Saat Deneme")
+        let session = try await repository().login(code: "ABCDEFGHIJKLMNOP")
+        XCTAssertTrue(session.account.canPlay)
+        XCTAssertTrue(session.account.trial)
+        XCTAssertEqual(session.account.trialCountdown.status(), .none)
+        XCTAssertEqual(session.account.trialCountdown.remainingSeconds(), 0)
+    }
     func testAuthorizationDeliveredAtFinalDeadlineNeverReachesVault() async throws {
         let clock = FixtureClock(), vault = MemoryVault()
         let repo = repository(vault: vault, pairingClock: { clock.now().timeIntervalSince1970 })

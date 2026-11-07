@@ -32,11 +32,12 @@ export function AccountFrame({ children, className = '' }: { children: ReactNode
 export function AccountPage({ title, subtitle, children }: { title:string; subtitle:string; children:ReactNode }) {
   return <AccountFrame><header className={s.heading}><h1>{title}</h1><p>{subtitle}</p></header>{children}</AccountFrame>;
 }
-export function useAccountResource<T>(path:string) {
+export function useAccountResource<T>(path:string, enabled=true) {
   const [state,setState]=useState<{data:T|null;loading:boolean;error:boolean}>({data:null,loading:true,error:false});
   const [version,setVersion]=useState(0);
   const reload=useCallback(()=>setVersion(v=>v+1),[]);
   const refresh=useCallback(async(signal?:AbortSignal)=>{
+    if(!enabled)return;
     const token=readSession()?.accessToken;
     try {
       const data=await apiRequest<T>(path,{signal});
@@ -45,8 +46,9 @@ export function useAccountResource<T>(path:string) {
     } catch {
       // Keep the last confirmed account state during background refresh failures.
     }
-  },[path]);
+  },[path,enabled]);
   useEffect(()=>{
+    if(!enabled){setState({data:null,loading:false,error:false});return;}
     const token=readSession()?.accessToken;
     const valid=()=>current && token===readSession()?.accessToken;
     let current=true;
@@ -71,7 +73,7 @@ export function useAccountResource<T>(path:string) {
     const background=()=>{void load();};
     const interval=window.setInterval(background,60000);window.addEventListener('focus',background);window.addEventListener('flixify-session',reload);
     return ()=>{current=false;window.clearInterval(interval);window.removeEventListener('focus',background);window.removeEventListener('flixify-session',reload);for(const controller of controllers)controller.abort();};
-  },[path,version]);
+  },[path,version,enabled]);
   return {...state,reload,refresh};
 }
 export function Loading(){return <div className={s.loading} role="status" aria-busy="true"><span/><span/><span/><p>Bilgiler yükleniyor…</p></div>;}

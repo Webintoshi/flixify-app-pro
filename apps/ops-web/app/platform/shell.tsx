@@ -10,10 +10,11 @@ import s from "./platform.module.css";
 import { tvDownload } from "./tv-download";
 import { windowsDownload } from "./windows-download";
 import { trackAnalyticsDownload } from "./analytics";
+import { TrialCountdown } from "./trial-countdown";
 
 const links = [{ href: "/", label: "Ana Sayfa", icon: "home" }, { href: "/canli-tv", label: "Canlı TV", icon: "live" }, { href: "/filmler", label: "Filmler", icon: "movie" }, { href: "/diziler", label: "Diziler", icon: "series" }, { href: "/favoriler", label: "Favoriler", icon: "heart" }];
 export function AppShell({ children, publicAccess = false }: { children: ReactNode; publicAccess?: boolean }) {
-  const { session, ready, error, dismissError, reload, logout } = usePlatform();
+  const { accountResource, session, ready, error, dismissError, reload, logout } = usePlatform();
   const pathname = usePathname();
   const router = useRouter();
   const [revealed, setRevealed] = useState(false);
@@ -44,9 +45,10 @@ export function AppShell({ children, publicAccess = false }: { children: ReactNo
   </div>;
   if (!ready) return <div className={s.loading} aria-busy="true">Flixify hazırlanıyor…</div>;
   if (!session && !publicAccess) return <div className={s.app}><Link href="/" className={s.brand}><img src="/logo/flixify-logo.png" alt="Flixify" width="142" height="37" /></Link><div className={s.loading}>İçeriklerin. Tek yerde.</div><LoginDialog onClose={() => router.push("/")} onSuccess={() => setRevealed(false)} /></div>;
+  const trialClock = session ? accountResource?.trialClock ?? null : null;
   const accountRoute = ["/ayarlar", "/paketler", "/davet", "/odeme-bildirimi", "/iletisim"].includes(pathname);
-  return <div className={`${s.app} ${s.tvShell}${pathname === "/" ? ` ${s.homeApp}` : ""}${pathname === "/canli-tv" ? ` ${s.liveTvApp}` : ""}${catalogRoute ? ` ${s.catalogApp}` : ""}`}>
-    <header className={s.header}>
+  return <div className={`${s.app} ${s.tvShell}${trialClock ? ` ${s.trialShell}` : ""}${pathname === "/" ? ` ${s.homeApp}` : ""}${pathname === "/canli-tv" ? ` ${s.liveTvApp}` : ""}${catalogRoute ? ` ${s.catalogApp}` : ""}`}>
+    <header className={`${s.header}${trialClock ? ` ${s.headerTrial}` : ""}`}>
       <Link href="/" className={s.brand} aria-label="Flixify ana sayfa"><img src="/logo/flixify-logo.png" alt="Flixify" width="142" height="37" /></Link>
       <nav className={s.nav} aria-label="Ana menü">{navigation.map(link => <Link key={link.href} href={link.href} className={pathname === link.href ? s.active : ""} aria-current={pathname === link.href ? "page" : undefined}>{link.label}</Link>)}</nav>
       <div className={s.catalogHeaderActions}>
@@ -55,6 +57,7 @@ export function AppShell({ children, publicAccess = false }: { children: ReactNo
         <a className={s.headerDownload} href={tvDownload.href} download={tvDownload.filename} aria-label="Android TV APK indir" onClick={() => trackAnalyticsDownload("android_tv", tvDownload)}><Icon name="device"/><span>Android TV APK indir</span></a>
         <Link className={`${s.headerDownload} ${s.headerDesktopDownload}`} href={windowsDownload.pageHref} aria-label="Windows test sürümünü indir"><Icon name="windows"/><span>Windows indir</span><small>Test</small></Link>
       </div>
+      {trialClock && <div className={s.trialHeaderSlot}><TrialCountdown clock={trialClock} onExpired={accountResource?.refresh}/></div>}
     </header>
     <div className={s.appBody}>
       <nav className={s.rail} aria-label="Hızlı menü">{links.map(link => <Link key={link.href} href={link.href} aria-label={link.label} className={pathname === link.href ? s.active : ""} aria-current={pathname === link.href ? "page" : undefined}><Icon name={link.icon} /><span className={s.railLabel}>{link.label}</span></Link>)}<Link className={`${s.settings}${accountRoute ? ` ${s.active}` : ""}`} href="/ayarlar" aria-label="Hesap ayarları" aria-current={accountRoute ? "page" : undefined}><Icon name="settings" /><span className={s.railLabel}>Hesabım</span></Link></nav>

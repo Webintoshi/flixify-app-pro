@@ -78,7 +78,12 @@ struct RootView: View {
     private var topBar: some View {
         HStack {
             if let account = store.account {
-                Text(account.trial ? "Deneme hesabı" : "Flixify Pro").font(.system(size: 12, weight: .medium)).foregroundStyle(FlixTheme.muted)
+                if account.trialCountdown.status() == .none {
+                    Text(account.trial ? "Deneme hesabı" : "Flixify Pro").font(.system(size: 12, weight: .medium)).foregroundStyle(FlixTheme.muted)
+                } else {
+                    TrialCountdownLabel(countdown: account.trialCountdown).font(.system(size: 12, weight: .medium)).foregroundStyle(FlixTheme.muted)
+                    Button("Paketleri gör") { store.openWebsite("https://flixify.vip/paketler") }.buttonStyle(PrimaryActionStyle(prominent: false))
+                }
             }
             Spacer()
             Button { store.showSearch = true } label: { Label("Ara", systemImage: "magnifyingglass").font(.system(size: 14)).padding(.horizontal, 16).padding(.vertical, 9).background(FlixTheme.panel, in: Capsule()) }

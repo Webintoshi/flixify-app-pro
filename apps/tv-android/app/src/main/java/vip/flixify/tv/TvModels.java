@@ -65,12 +65,17 @@ public final class TvModels {
         public final String id, codeSuffix, packageTitle, message;
         public final long expiresAtMs;
         public final boolean canPlay, trial;
+        public final TrialCountdown trialCountdown;
         public Account(String id,String codeSuffix,String packageTitle,long expiresAtMs,boolean canPlay,boolean trial,String message) {
             this(id,codeSuffix,packageTitle,expiresAtMs,canPlay,trial,message,canPlay?Access.ACTIVE:Access.EXPIRED);
         }
         public Account(String id,String codeSuffix,String packageTitle,long expiresAtMs,boolean canPlay,boolean trial,String message,Access access) {
+            this(id,codeSuffix,packageTitle,expiresAtMs,canPlay,trial,message,access,TrialCountdown.none());
+        }
+        public Account(String id,String codeSuffix,String packageTitle,long expiresAtMs,boolean canPlay,boolean trial,String message,Access access,TrialCountdown trialCountdown) {
             this.access=access;this.id=text(id);this.codeSuffix=text(codeSuffix);this.packageTitle=text(packageTitle);this.expiresAtMs=expiresAtMs;
             this.canPlay=canPlay;this.trial=trial;this.message=text(message);
+            this.trialCountdown=trialCountdown==null?TrialCountdown.none():trialCountdown;
         }
     }
     public static final class Playback {

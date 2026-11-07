@@ -291,6 +291,7 @@ public actor FlixifyRepository: FlixifyRepositoryProtocol {
         guard let user = raw["user"] as? [String: Any], let assigned = ProviderParser.bool(user["hasAssignedLink"]), let subscribed = ProviderParser.bool(user["hasActiveSubscription"]) else { throw FlixifyError.invalidData }
         let id = try ProviderParser.secret(user["id"], max: 256)
         guard id == session?.accountID else { clearProvider(); throw FlixifyError.staleSource }
+        let trialCountdown = TrialCountdown.parse(raw["trialCountdown"])
         let package = user["activePackage"] as? [String: Any] ?? [:], title = Text.clean(package["title"], max: 256), expiry = ProviderParser.date(package["endsAt"])
         let blocked = user["status"] as? String == "blocked", eligible = !blocked && assigned && subscribed && (expiry ?? .distantPast) > now()
         var canPlay = false, deadline = expiry
@@ -300,7 +301,7 @@ public actor FlixifyRepository: FlixifyRepositoryProtocol {
         } else { clearProvider() }
         try checkAuth(auth)
         let suffix = Text.clean(user["codeSuffix"], max: 16)
-        let account = Account(id: id, codeSuffix: String((suffix.isEmpty ? session?.codeSuffix ?? "" : suffix).suffix(4)), packageTitle: title, expiresAt: deadline, canPlay: canPlay, trial: title == "3 Saat Deneme" || title == "24 Saat Test", message: canPlay ? "İzleme erişimin açık." : blocked ? "Hesabın için destek ekibimizle iletişime geç." : !assigned ? "İçerik bağlantın henüz hazır değil." : "Aktif izleme erişimin bulunmuyor.")
+        let account = Account(id: id, codeSuffix: String((suffix.isEmpty ? session?.codeSuffix ?? "" : suffix).suffix(4)), packageTitle: title, expiresAt: deadline, canPlay: canPlay, trial: title == "3 Saat Deneme" || title == "24 Saat Test", message: canPlay ? "İzleme erişimin açık." : blocked ? "Hesabın için destek ekibimizle iletişime geç." : !assigned ? "İçerik bağlantın henüz hazır değil." : "Aktif izleme erişimin bulunmuyor.", trialCountdown: trialCountdown)
         currentAccount = account; accountCheckedAt = now(); return account
     }
     public func refreshSession() async throws -> SessionState {

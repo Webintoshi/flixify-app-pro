@@ -18,8 +18,8 @@ android {
         applicationId 'vip.flixify.tv'
         minSdk 23
         targetSdk 35
-        versionCode 23
-        versionName '1.4.15'
+        versionCode 24
+        versionName '1.4.16'
         buildConfigField 'boolean', 'FLIXIFY_ANALYTICS_CONFIGURED', analyticsClient != null ? 'true' : 'false'
         buildConfigField 'String', 'FIREBASE_APP_ID', groovy.json.JsonOutput.toJson(analyticsClient?.client_info?.mobilesdk_app_id ?: '')
         buildConfigField 'String', 'FIREBASE_API_KEY', groovy.json.JsonOutput.toJson(analyticsClient?.api_key?.getAt(0)?.current_key ?: '')
