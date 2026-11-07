@@ -139,21 +139,24 @@
     ]
   },
   "new": {
-    "apps/api/src/phone-auth.ts": "3e98e3d8c67aceabef380629347b77643165d454565ae2390d45b5f8a28cc2c7",
-    "apps/api/src/phone-auth-accounts.ts": "e26b9e342926e17a4f7044723069bed61dd753b57f8fa8d0e3c896828b5ad478",
+    "apps/api/src/phone-auth.ts": "59d83760ee4f7f64870a875fcc96625117f511478ac7ac3c081f0bab8b04488c",
+    "apps/api/src/phone-auth-accounts.ts": "0c1768ed50de3f7c2b44003d1bb2ce8dfaa18b94cef26697266655b5f9079f6a",
     "apps/api/src/phone-auth-config.ts": "da3a6004d3b630a41e119545231a66fffdc346246270d3bde6047f95aa4cac2e",
-    "apps/api/src/phone-auth-routes.ts": "08a9f05e180b7ac0cc0615308e462b06650302ee07e8cc59b713f0c38933cd66",
+    "apps/api/src/phone-auth-routes.ts": "39c278652e7296d09e5ea05802a94fe03e55e653a3ee1f5e0130174bfbe0297d",
     "apps/api/src/phone-auth-store.ts": "a183d15bf7ba0858d56edcef55502c3a39a3d99d3c5a3fec09daf7de7d39dff5",
     "apps/api/src/phone-auth-vatansms.ts": "19ae3327a98d8e4f3f24c2e5301b59952554b9f7f69ca86694707ab718837658",
     "apps/api/src/remembered-session.ts": "00eb910a8817df977d70d9b55f2662624314919881ccb1776327f8063490ba6c"
   },
   "createUser": {
-    "header": "export async function createUser(\n  codeLookup: string,\n  codeHash: string,\n  codeSuffix: string | null,\n  kryptoniteCode: string | null,\n  registrationInstallationId: string | null,\n  requestIp: string\n) {\n",
-    "wrapper": "  await ensureUserInstallationGuardSchema();\n  return withTransaction(async (client) => {\n",
+    "header": "export async function createUser(\n  codeLookup: string,\n  codeHash: string,\n  codeSuffix: string | null,\n  kryptoniteCode: string | null,\n  registrationInstallationId: string | null,\n  referralCode: string | null,\n  requestIp: string\n) {\n",
+    "wrapper": "  await ensureUserInstallationGuardSchema();\n  if (referralCode) await referralStore.migrate();\n  return withTransaction(async client => {\n",
     "suffix": "  });\n}",
     "helperSignature": "export async function createUserInTransaction(client:PoolClient,codeLookup:string,codeHash:string,codeSuffix:string|null,kryptoniteCode:string|null,registrationInstallationId:string|null,requestIp:string,referralCode?:string){",
-    "referral": "    if(referralCode&&/^[A-Z2-9]{12}$/.test(referralCode)){\n      await client.query(`insert into public.referral_attributions(invitee_user_id,referrer_user_id)\n        select $1,rc.user_id from public.referral_codes rc join public.users u on u.id=rc.user_id\n        where rc.code=$2 and u.status<>'blocked' and u.deleted_at is null and rc.user_id<>$1\n        on conflict(invitee_user_id) do nothing`,[userId,referralCode]);\n    }\n",
-    "welcomeAnchor": "insert into public.welcome_offer_accounts(user_id,campaign) values($1,'welcome-monthly-50-v1')"
+    "wrapperCall": "  return withTransaction(client => createUserInTransaction(client,codeLookup,codeHash,codeSuffix,kryptoniteCode,registrationInstallationId,requestIp,referralCode ?? undefined));\n",
+    "prepareFunction": "export async function preparePhoneRegistration(){\n  await ensureUserInstallationGuardSchema();\n  await referralStore.migrate();\n}",
+    "nextFunction": "getReferralSummary",
+    "welcomeAnchor": "insert into public.welcome_offer_accounts(user_id,campaign) values($1,'welcome-monthly-50-v1')",
+    "referralGuard": "    if (referralCode && !await referralStore.attribute(userId, referralCode, client)) {\n      throw new Error('invalid_referral_code');\n    }\n"
   },
   "unchanged": {
     "apps/api/src/cors-config.ts": "f7460199743264186b4eba5413174209ea31e46bc5150811f48095f4fc2cbaf9"

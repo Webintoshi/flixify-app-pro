@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { createCodeLookup,generateKryptoniteCode,generateRefreshToken,hashSecret,signAccessToken,verifySecret } from './security.js';
-import { createUserInTransaction,findUserByCodeLookup } from './repository.js';
+import { createUserInTransaction,findUserByCodeLookup,preparePhoneRegistration } from './repository.js';
 import { AutoTrialRegistrationRateLimitError,RegistrationInstallationLimitError } from './registration-limits.js';
 import { PhoneAuthError,type PhoneAuthOwner,type PhoneContext,type PhoneSession,type PhoneTransaction } from './phone-auth.js';
 
 export const phoneAuthAccounts={
+  prepare:preparePhoneRegistration,
   async existingAccount(code:string|undefined,owner:PhoneAuthOwner|undefined){
     if(code){
       const user=await findUserByCodeLookup(createCodeLookup(code));
@@ -31,7 +32,7 @@ export const phoneAuthAccounts={
       for(let attempt=0;attempt<5;attempt++){const candidate=generateKryptoniteCode();const existing=await client.query('select id from public.users where code_lookup=$1',[createCodeLookup(candidate)]);if(!existing.rowCount){code=candidate;break;}}
       if(!code)throw new PhoneAuthError(503,'temporarily_unavailable');
       try{userId=await createUserInTransaction(client,createCodeLookup(code),await hashSecret(code),code.slice(-4),code,context.installationId,context.requestIp,context.referralCode);}
-      catch(error){if(error instanceof RegistrationInstallationLimitError)throw new PhoneAuthError(409,'installation_limit');if(error instanceof AutoTrialRegistrationRateLimitError)throw new PhoneAuthError(429,'registration_ip_limit');throw error;}
+      catch(error){if(error instanceof RegistrationInstallationLimitError)throw new PhoneAuthError(409,'installation_limit');if(error instanceof AutoTrialRegistrationRateLimitError)throw new PhoneAuthError(429,'registration_ip_limit');if(error instanceof Error&&error.message==='invalid_referral_code')throw new PhoneAuthError(400,'invalid_referral_code');throw error;}
     }
     if(!userId)throw new PhoneAuthError(503,'temporarily_unavailable');
     const users=await client.query(`select id,code_suffix from public.users where id=$1 and status<>'blocked' and deleted_at is null for update`,[userId]);

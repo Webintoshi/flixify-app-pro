@@ -32,10 +32,10 @@ class ApiOverlayTest(unittest.TestCase):
         value=value.replace('  app.addHook("onRequest", async (request) => {','  registerExistingAccountLibrary(app);\n  app.addHook("onRequest", async (request) => {',1)
         value+='\nexport const productionStripeAndNotificationsSentinel="preserved";\n';server.write_text(value)
         cors=self.stage/'apps/api/src/cors-config.ts';cors.write_bytes(cors.read_bytes().replace(b'\n',b'\r\n').replace(b'  "authorization",\r\n',b'  "authorization",\n  "x-flixify-client-runtime",\n'))
-        repository=self.stage/'apps/api/src/repository.ts';value=repository.read_text();needle='    return userId;\n  });\n}\n\nexport async function storePlainKryptoniteCode('
+        repository=self.stage/'apps/api/src/repository.ts';value=repository.read_text();a=value.index('export async function createUser(');b=value.index('    await claimRegistrationSlots(client, {',a);value=value[:a]+recipe['createUser']['header']+recipe['createUser']['wrapper']+value[b:];value=value.replace('    if (!userId) throw new Error("User insert did not return an ID.");\n','    if (!userId) throw new Error("User insert did not return an ID.");\n'+recipe['createUser']['referralGuard']);needle='    return userId;\n  });\n}\n\nexport async function storePlainKryptoniteCode('
         self.extra='    await client.query("existing-production-registration-notification",[userId]);\n'
         welcome='    await client.query(\n      "'+recipe['createUser']['welcomeAnchor']+'",\n      [userId]\n    );\n'
-        assert value.count(needle)==1;value=value.replace(needle,welcome+self.extra+needle);repository.write_text(value)
+        assert value.count(needle)==1;value=value.replace(needle,welcome+self.extra+needle);value=value.replace('\nexport async function storePlainKryptoniteCode(', '\nexport async function getReferralSummary(userId: string) {\n  return referralStore.summary(userId);\n}\n\nexport async function storePlainKryptoniteCode(',1);repository.write_text(value)
         self.before=self.snapshot()
     def snapshot(self):return {str(x.relative_to(self.stage)):digest(x.read_bytes()) for x in self.stage.rglob('*') if x.is_file()}
     def run_apply(self,**kwargs):return p.apply(self.payload,self.stage,source_image_id=kwargs.get('source_image_id',p.EXPECTED_SOURCE_ID))
@@ -44,8 +44,8 @@ class ApiOverlayTest(unittest.TestCase):
         proof=self.run_apply();server=(self.stage/'apps/api/src/server.ts').read_text();repo=(self.stage/'apps/api/src/repository.ts').read_text()
         self.assertEqual(server[server.index('  app.get("/me",'):],me)
         self.assertIn('productionStripeAndNotificationsSentinel',server);self.assertIn('createUserInTransaction',repo);self.assertIn(self.extra,repo)
-        self.assertEqual(repo.count(self.recipe['createUser']['welcomeAnchor']),1);self.assertEqual(repo.count('insert into public.referral_attributions'),1)
-        self.assertIn("rc.user_id<>$1",repo);self.assertIn("u.status<>'blocked'",repo);self.assertIn('u.deleted_at is null',repo)
+        self.assertEqual(repo.count(self.recipe['createUser']['welcomeAnchor']),1);self.assertEqual(repo.count('insert into public.referral_attributions'),0)
+        self.assertEqual(repo.count(self.recipe['createUser']['referralGuard']),1);self.assertIn(self.recipe['createUser']['wrapperCall'],repo);self.assertIn(self.recipe['createUser']['prepareFunction'],repo);self.assertIn('getReferralSummarySha256',proof['preserved'])
         self.assertEqual(set(proof['changedPaths']),set(p.EXISTING_FILES+p.NEW_FILES));self.assertEqual(proof['before'],{x:self.before[x] for x in p.EXISTING_FILES})
         self.assertEqual(proof['after'],{x:digest((self.stage/x).read_bytes()) for x in p.EXISTING_FILES+p.NEW_FILES})
         self.assertIn('createUserOriginalBodySha256',proof['preserved'])
@@ -106,7 +106,7 @@ class ApiOverlayTest(unittest.TestCase):
         target=self.stage/'apps/api/src/repository.ts';target.write_text(target.read_text().replace(self.recipe['createUser']['welcomeAnchor'],'unknown-campaign'))
         with self.assertRaisesRegex(p.PatchError,'welcome'):self.run_apply()
     def test_rejects_changed_transaction_wrapper(self):
-        target=self.stage/'apps/api/src/repository.ts';target.write_text(target.read_text().replace('return withTransaction(async (client) => {','return otherTransaction(async (client) => {',1))
+        target=self.stage/'apps/api/src/repository.ts';target.write_text(target.read_text().replace('return withTransaction(async client => {','return otherTransaction(async client => {',1))
         with self.assertRaisesRegex(p.PatchError,'transaction'):self.run_apply()
     def test_rejects_reapplying_overlay(self):
         self.run_apply();before=self.snapshot()

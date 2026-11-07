@@ -36,6 +36,7 @@ export class PhoneAuthCrypto {
 export function phoneHashesMatch(a:string,b:string){const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);}
 export class PhoneAuthService {
   constructor(private store:PhoneAuthStore,private crypto:PhoneAuthCrypto,private sender:{send(phone:string,code:string):Promise<void>},private accounts:{
+    prepare?():Promise<void>;
     existingAccount(code:string|undefined,owner:PhoneAuthOwner|undefined):Promise<{userId:string;sessionId?:string}|null>;
     resolve(client:PhoneTransaction,context:PhoneContext,phoneHash:string,maskedPhone:string,existingUserId:string|null):Promise<PhoneSession>;
   }){}
@@ -60,6 +61,7 @@ export class PhoneAuthService {
   }
   async verify(input:{challengeId:string;challengeSecret:string;code:string;installationId:string},requestIp:string){
     await this.store.rateVerify(this.crypto.hash('verify-ip',requestIp));
+    await this.accounts.prepare?.();
     const result=await this.store.consume({id:input.challengeId,otpHash:this.crypto.hash('otp',`${input.challengeId}:${input.code}`),secretHash:this.crypto.hash('challenge-secret',input.challengeSecret),installationHash:this.crypto.hash('installation',input.installationId),ipHash:this.crypto.hash('ip',requestIp)},
       (client,sealed,phoneHash,maskedPhone,existingUserId)=>this.accounts.resolve(client,this.crypto.open(input.challengeId,sealed) as PhoneContext,phoneHash,maskedPhone,existingUserId));
     if('reason' in result)throw new PhoneAuthError(result.statusCode,result.reason);

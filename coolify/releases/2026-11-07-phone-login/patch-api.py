@@ -19,7 +19,7 @@ class PatchError(RuntimeError):pass
 EXPECTED_SOURCE_ID='sha256:66805232ca883cbd6385c38341d21b4be0b9fc436b5718cc2b8e20d4398de4fb'
 BASE_REVISION='2522149cfda9dae514fc81d9820cbbfb70c57ea6'
 RECIPE='coolify/releases/2026-11-07-phone-login/api-edits.json'
-RECIPE_SHA256='96ce85079315c9af460674284e407932c99663f66aa41d09cd80e9962a962243'
+RECIPE_SHA256='ca485847b178d3503810d2ce4e3372f3e3e258f0ad7d275b209f64466a5452ff'
 EXISTING_FILES=tuple('apps/api/src/'+x+'.ts' for x in ('server','repository','env','device-login-store','device-login','demo-store'))+('packages/contracts/src/domain.ts',)
 NEW_FILES=tuple('apps/api/src/'+x+'.ts' for x in ('phone-auth','phone-auth-accounts','phone-auth-config','phone-auth-routes','phone-auth-store','phone-auth-vatansms','remembered-session'))
 UNCHANGED_FILES=('apps/api/src/cors-config.ts',)
@@ -104,11 +104,11 @@ def exact_edits(source,rows,path):
 
 def create_user_from_actual(source,description):
     text=logical_source(source)
-    if 'export async function createUserInTransaction(' in text:raise PatchError('create_user_helper_already_exists')
-    if not isinstance(description,dict) or set(description)!={'header','wrapper','suffix','helperSignature','referral','welcomeAnchor'}:raise PatchError('create_user_recipe_invalid')
+    if 'export async function createUserInTransaction(' in text or 'export async function preparePhoneRegistration(' in text:raise PatchError('create_user_helper_already_exists')
+    if not isinstance(description,dict) or set(description)!={'header','wrapper','suffix','helperSignature','wrapperCall','prepareFunction','nextFunction','welcomeAnchor','referralGuard'}:raise PatchError('create_user_recipe_invalid')
     header,wrapper,suffix=(description[x] for x in ('header','wrapper','suffix'))
     if text.count(header)!=1:raise PatchError('create_user_transaction_header_changed')
-    boundary='\nexport async function storePlainKryptoniteCode('
+    boundary='\nexport async function '+description['nextFunction']+'('
     if text.count(boundary)!=1:raise PatchError('create_user_transaction_boundary_changed')
     start=text.index(header);end=text.index(boundary,start)
     whole=text[start:end];block=whole.rstrip('\n');trailing=whole[len(block):]
@@ -122,18 +122,26 @@ def create_user_from_actual(source,description):
         or 'guardSecret: env.REGISTRATION_GUARD_SECRET' not in body or 'ipLimit: env.AUTO_TRIAL_DAILY_IP_LIMIT' not in body):
         raise PatchError('create_user_transaction_shape_changed')
     if body.count(description['welcomeAnchor'])!=1:raise PatchError('actual_production_welcome_insert_required')
-    if 'insert into public.referral_attributions' in body:raise PatchError('create_user_transaction_referral_already_exists')
+    if body.count(description['referralGuard'])!=1 or 'insert into public.referral_attributions' in body:raise PatchError('actual_referral_store_guard_required')
     preserved=body[:-len(final_return)]
-    updated=(header+'  await ensureUserInstallationGuardSchema();\n'
-        '  return withTransaction((client) => createUserInTransaction(client,codeLookup,codeHash,codeSuffix,kryptoniteCode,registrationInstallationId,requestIp));\n}'
-        '\n\n'+description['helperSignature']+'\n'+preserved+description['referral']+final_return+'}'+trailing)
+    transaction='  return withTransaction(async client => {\n'
+    if not wrapper.endswith(transaction):raise PatchError('actual_transaction_entry_changed')
+    prelude=wrapper[:-len(transaction)]
+    updated=(header+prelude+description['wrapperCall']+'}\n\n'+description['prepareFunction']+'\n\n'
+        +description['helperSignature']+'\n'+body+'}'+trailing)
     body_line=text[:start+len(header+wrapper)].count('\n')
     raw_lines=source.decode('utf8').splitlines(keepends=True)
     raw_body=''.join(raw_lines[body_line:body_line+body.count('\n')])
     raw_preserved=''.join(raw_body.splitlines(keepends=True)[:-1]).encode('utf8')
     result=restore_equal_lines(source,text[:start]+updated+text[end:])
-    if raw_preserved not in result:raise PatchError('actual_create_user_body_not_preserved')
-    proof={'createUserOriginalBodySha256':sha(raw_body.encode()),'createUserPreservedPrefixSha256':sha(raw_preserved),'createUserOriginalBodyBytes':len(raw_body.encode())}
+    if raw_body.encode() not in result:raise PatchError('actual_create_user_body_not_preserved')
+    summary='export async function getReferralSummary(';following='export async function storePlainKryptoniteCode('
+    original_raw=source.decode();updated_raw=result.decode()
+    if original_raw.count(summary)!=1 or updated_raw.count(summary)!=1 or original_raw.count(following)!=1 or updated_raw.count(following)!=1:raise PatchError('referral_summary_boundary_changed')
+    summary_before=original_raw[original_raw.index(summary):original_raw.index(following)]
+    summary_after=updated_raw[updated_raw.index(summary):updated_raw.index(following)]
+    if summary_before!=summary_after:raise PatchError('existing_referral_summary_changed')
+    proof={'createUserOriginalBodySha256':sha(raw_body.encode()),'createUserPreservedPrefixSha256':sha(raw_preserved),'createUserOriginalBodyBytes':len(raw_body.encode()),'getReferralSummarySha256':sha(summary_before.encode())}
     return result,proof
 
 def protected_server(original,updated):
