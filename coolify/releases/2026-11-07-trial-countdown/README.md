@@ -8,6 +8,8 @@ The API build first recompiles unmodified actual source and requires the origina
 
 Use full immutable Git revisions and independently captured pin files outside the checkout. All build/release commands are preflight-only unless an action flag is supplied.
 
+The inherited Web compiler and verifier share the same target resolver: `flixify-ops-web:trial-countdown-<revision12>-20261107`. Candidate acceptance always checks the immutable image ID, exact application revision label and current-base ancestry; an operator tag alias must not alter the image, revision label or accepted source proof.
+
 ```sh
 python3 build-api.py --measure > /outside/repo/api-source-pin.json
 python3 build-web.py --measure > /outside/repo/web-source-pin.json

@@ -249,12 +249,13 @@ def configure_api():
 
 def configure_web():
     previous.SOURCE_TAG,previous.SOURCE_ID,previous.BASE=SOURCES['ops-web'][0],SOURCES['ops-web'][1],BASE
+    previous.target=lambda ref:target('ops-web',ref)
     previous.DESCRIPTOR,previous.APK,previous.UPDATE_MANIFEST=DESCRIPTOR,APK,UPDATE
     previous.APK_URL='https://flixify.vip/downloads/flixify-pro-1.4.16.apk'
     previous.OVERLAY=WEB_PATHS;previous.parse_manifest=manifest;previous.expected_public=expected_public
     previous.mac.SOURCE_ID,previous.mac.SOURCE_TAG=SOURCES['ops-web'][1],SOURCES['ops-web'][0]
     builder.SOURCE_ID,builder.SOURCE_TAG,builder.BASE_REVISION=SOURCES['ops-web'][1],SOURCES['ops-web'][0],BASE
-    builder.PATHS,builder.NEW_PATHS,builder.target=(*WEB_MODIFIED,*WEB_NEW,DESCRIPTOR,WINDOWS_DESCRIPTOR),WEB_NEW,lambda ref:target('ops-web',ref)
+    builder.PATHS,builder.NEW_PATHS,builder.target=(*WEB_MODIFIED,*WEB_NEW,DESCRIPTOR,WINDOWS_DESCRIPTOR),WEB_NEW,previous.target
     previous.web.EXCLUDED=(*WEB_PATHS,'apps/ops-web/.next')
     prior.command=bounded_command
     prior.client_download_verification=client_download_verification;prior.download_script=download_script
