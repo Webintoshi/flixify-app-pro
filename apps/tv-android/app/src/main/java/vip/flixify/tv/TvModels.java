@@ -89,9 +89,11 @@ public final class TvModels {
         public Programme(String title,long startsAtMs,long endsAtMs) {this.title=text(title);this.startsAtMs=startsAtMs;this.endsAtMs=endsAtMs;}
     }
     public static final class Failure {
-        public enum Code { AUTH, INELIGIBLE, NETWORK, INVALID, STALE, LIMIT }
+        public enum Code { AUTH, INELIGIBLE, NETWORK, INVALID, STALE, LIMIT, STORAGE }
         public final Code code;
         public final String message;
-        public Failure(Code code,String message) {this.code=code;this.message=message;}
+        public final String storageCode;
+        public Failure(Code code,String message) {this(code,message,"");}
+        public Failure(Code code,String message,String storageCode) {this.code=code;this.message=message;this.storageCode=code==Code.STORAGE && storageCode!=null && storageCode.matches("G0[1-4]")?storageCode:"";}
     }
 }

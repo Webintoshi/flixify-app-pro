@@ -24,7 +24,8 @@ public final class DeviceLogin {
         public Poll(String status,int interval){this.status=status;intervalSeconds=interval;}
     }
     public static final class ViewState {
-        public final Display display;public final String status;public final int remainingSeconds;
-        public ViewState(Display display,String status,int remaining){this.display=display;this.status=status;remainingSeconds=remaining;}
+        public final Display display;public final String status,storageCode;public final int remainingSeconds;
+        public ViewState(Display display,String status,int remaining){this(display,status,remaining,"");}
+        public ViewState(Display display,String status,int remaining,String storageCode){this.display=display;this.status=status;remainingSeconds=remaining;this.storageCode=storageCode!=null && storageCode.matches("G0[1-4]")?storageCode:"";}
     }
 }

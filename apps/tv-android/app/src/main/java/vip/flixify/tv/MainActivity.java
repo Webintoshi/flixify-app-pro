@@ -626,6 +626,7 @@ public final class MainActivity extends Activity {
             case "expired":message="QR kodunun süresi doldu. Yenile düğmesini kullanın.";break;
             case "paused":case "cancelled":message="Telefonla giriş durduruldu. Yenileyerek tekrar başlayın.";break;
             case "complete":message="Giriş tamamlandı.";break;
+            case "storage":message="Bu cihazda giriş güvenle kaydedilemedi"+(state.storageCode.isEmpty()?"":" ("+state.storageCode+")")+". Tekrar deneyin.";break;
             default:message="Telefonla giriş şu anda kullanılamıyor. Kodunuzla giriş yapabilir veya QR kodunu yenileyebilirsiniz.";
         }
         pairingStatus.setText(message);

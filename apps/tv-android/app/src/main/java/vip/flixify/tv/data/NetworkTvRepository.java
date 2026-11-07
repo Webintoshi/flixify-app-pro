@@ -169,7 +169,9 @@ public final class NetworkTvRepository implements TvRepository {
         Problem(Failure.Code code) { super("Personal operation unavailable");this.code=code; }
     }
     private static Failure failure(Exception error) {
-        Failure.Code code=error instanceof Problem?((Problem)error).code:error instanceof ProviderParser.Invalid?Failure.Code.INVALID:Failure.Code.NETWORK;
+        Failure.Code code=error instanceof TokenStore.StorageException?Failure.Code.STORAGE:error instanceof Problem?((Problem)error).code:error instanceof ProviderParser.Invalid?Failure.Code.INVALID:Failure.Code.NETWORK;
+        String storageCode=error instanceof TokenStore.StorageException?((TokenStore.StorageException)error).code:"";
+        if(storageCode==null || !storageCode.matches("G0[1-4]"))storageCode="";
         String message;
         switch(code) {
             case AUTH: message="Oturumun yenilenemedi. Kodunla tekrar giriş yap."; break;
@@ -177,9 +179,10 @@ public final class NetworkTvRepository implements TvRepository {
             case STALE: message="Hesap veya içerik kaynağı değişti. İçeriği yeniden aç."; break;
             case LIMIT: message="İşlem sınırına ulaşıldı. Biraz sonra tekrar dene."; break;
             case INVALID: message="Kişisel içerik bilgisi doğrulanamadı."; break;
+            case STORAGE: message="Bu cihazda giriş güvenle kaydedilemedi"+(storageCode.isEmpty()?"":" ("+storageCode+")")+". Tekrar deneyin."; break;
             default: message="Bağlantı kurulamadı. Tekrar deneyebilirsin.";
         }
-        return new Failure(code,message);
+        return new Failure(code,message,storageCode);
     }
     private interface Work<T> { T run(long auth) throws Exception; }
     private static final class CatalogDemand {
