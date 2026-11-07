@@ -17,7 +17,7 @@ def digest(value):return hashlib.sha256(value).hexdigest()
 class ApiOverlayTest(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name);self.payload=self.root/'payload';self.stage=self.root/'stage'
-        for path in p.EXISTING_FILES:
+        for path in p.EXISTING_FILES+p.UNCHANGED_FILES:
             target=self.stage/path;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(subprocess.check_output(['git','-C',str(ROOT),'show',BASE+':'+path]))
         for path in p.NEW_FILES:
             target=self.payload/path;target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(ROOT/path,target)
@@ -27,7 +27,11 @@ class ApiOverlayTest(unittest.TestCase):
         trial=json.loads((ROOT/'coolify/releases/2026-11-07-trial-countdown/api-patches.json').read_bytes())['replacements'][1]['new']
         a=value.index('  app.get("/me",');b=value.index('\n\n  app.',a);value=value[:a]+trial+value[b:]
         value=value.replace('  app.get("/me/sessions",',"  app.get('/me/referrals',async()=>({existingReferral:true}));\n  app.get(\"/me/sessions\",")
+        value=value.replace('createRateLimitKey("refresh", requestIp), 120, 60_000','createRateLimitKey("refresh", requestIp), 20, 60_000')
+        value=value.replace('import { registerDeviceLoginRoutes } from "./device-login-routes.js";','import { registerDeviceLoginRoutes } from "./device-login-routes.js";\nimport crypto from "node:crypto";')
+        value=value.replace('  app.addHook("onRequest", async (request) => {','  registerExistingAccountLibrary(app);\n  app.addHook("onRequest", async (request) => {',1)
         value+='\nexport const productionStripeAndNotificationsSentinel="preserved";\n';server.write_text(value)
+        cors=self.stage/'apps/api/src/cors-config.ts';cors.write_text(cors.read_text().replace('  "authorization",\n  "content-type"','  "authorization",\n  "x-flixify-client-runtime",\n  "content-type"'))
         repository=self.stage/'apps/api/src/repository.ts';value=repository.read_text();needle='    return userId;\n  });\n}\n\nexport async function storePlainKryptoniteCode('
         self.extra='    await client.query("existing-production-registration-notification",[userId]);\n'
         welcome='    await client.query(\n      "'+recipe['createUser']['welcomeAnchor']+'",\n      [userId]\n    );\n'
@@ -48,6 +52,12 @@ class ApiOverlayTest(unittest.TestCase):
     def test_plan_is_read_only_and_matches_apply(self):
         planned,proof=p.plan(self.payload,self.stage,source_image_id=p.EXPECTED_SOURCE_ID);self.assertEqual(self.snapshot(),self.before)
         self.assertEqual(set(planned),set(p.EXISTING_FILES+p.NEW_FILES));self.assertEqual(self.run_apply(),proof)
+    def test_accepts_observed_runtime_context_and_retains_existing_refresh_budget(self):
+        server=self.stage/'apps/api/src/server.ts';value=server.read_text().replace('createRateLimitKey("refresh", requestIp), 120, 60_000','createRateLimitKey("refresh", requestIp), 20, 60_000')
+        server.write_text(value)
+        cors=self.stage/'apps/api/src/cors-config.ts';cors.write_text(cors.read_text().replace('  "authorization",\n  "content-type"','  "authorization",\n  "x-flixify-client-runtime",\n  "content-type"'))
+        self.run_apply();value=server.read_text();self.assertIn('createRateLimitKey("refresh", requestIp), 20, 60_000',value)
+        self.assertIn('registerExistingAccountLibrary(app);',value)
     def test_rejects_wrong_image_before_any_write(self):
         with self.assertRaisesRegex(p.PatchError,'source_image'):self.run_apply(source_image_id='sha256:'+'0'*64)
         self.assertEqual(self.snapshot(),self.before)
@@ -57,8 +67,14 @@ class ApiOverlayTest(unittest.TestCase):
         with self.assertRaisesRegex(p.PatchError,'anchor'):self.run_apply()
         self.assertEqual(self.snapshot(),before)
     def test_rejects_duplicate_anchors(self):
-        target=self.stage/'apps/api/src/cors-config.ts';target.write_text(target.read_text()+self.recipe['existing']['apps/api/src/cors-config.ts'][0]['old'])
+        target=self.stage/'apps/api/src/env.ts';target.write_text(target.read_text()+self.recipe['existing']['apps/api/src/env.ts'][0]['old'])
         with self.assertRaisesRegex(p.PatchError,'anchor'):self.run_apply()
+    def test_keeps_existing_native_cors_config_byte_identical(self):
+        path='apps/api/src/cors-config.ts';before=(self.stage/path).read_bytes();proof=self.run_apply();self.assertEqual((self.stage/path).read_bytes(),before);self.assertNotIn(path,proof['changedPaths']);self.assertEqual(proof['preserved']['unchangedSources'][path],digest(before))
+    def test_rejects_unexpected_existing_cors_config(self):
+        target=self.stage/'apps/api/src/cors-config.ts';target.write_text(target.read_text()+'\n//drift\n');before=self.snapshot()
+        with self.assertRaisesRegex(p.PatchError,'unchanged_source_hash'):self.run_apply()
+        self.assertEqual(self.snapshot(),before)
     def test_rejects_preexisting_new_module(self):
         target=self.stage/p.NEW_FILES[0];target.write_text('existing source')
         before=self.snapshot()

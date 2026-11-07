@@ -18,9 +18,10 @@ class PatchError(RuntimeError):pass
 EXPECTED_SOURCE_ID='sha256:66805232ca883cbd6385c38341d21b4be0b9fc436b5718cc2b8e20d4398de4fb'
 BASE_REVISION='2522149cfda9dae514fc81d9820cbbfb70c57ea6'
 RECIPE='coolify/releases/2026-11-07-phone-login/api-edits.json'
-RECIPE_SHA256='462db9d41e499840a79a5183d2ae1dd0e57f5317a1dfe60b50fc8ff8cb75f0fe'
-EXISTING_FILES=tuple('apps/api/src/'+x+'.ts' for x in ('server','repository','env','cors-config','device-login-store','device-login','demo-store'))+('packages/contracts/src/domain.ts',)
+RECIPE_SHA256='d095773db658e5e6146e24add4821c627753e49344b35a0731f44de321acb37f'
+EXISTING_FILES=tuple('apps/api/src/'+x+'.ts' for x in ('server','repository','env','device-login-store','device-login','demo-store'))+('packages/contracts/src/domain.ts',)
 NEW_FILES=tuple('apps/api/src/'+x+'.ts' for x in ('phone-auth','phone-auth-accounts','phone-auth-config','phone-auth-routes','phone-auth-store','phone-auth-vatansms','remembered-session'))
+UNCHANGED_FILES=('apps/api/src/cors-config.ts',)
 PATCHED_PATHS=EXISTING_FILES+NEW_FILES
 PAYLOAD_PATHS=(RECIPE,*NEW_FILES)
 MAX_SOURCE_BYTES=2*1024*1024
@@ -72,9 +73,9 @@ def recipe(repo):
     data=read_source(repo,RECIPE)
     if sha(data)!=RECIPE_SHA256:raise PatchError('reviewed_recipe_hash_differs')
     value=unique_json(data)
-    if (not isinstance(value,dict) or set(value)!={'schemaVersion','sourceImageId','canonicalBaseRevision','existing','new','createUser'}
+    if (not isinstance(value,dict) or set(value)!={'schemaVersion','sourceImageId','canonicalBaseRevision','existing','new','createUser','unchanged'}
         or value['schemaVersion']!=1 or value['sourceImageId']!=EXPECTED_SOURCE_ID or value['canonicalBaseRevision']!=BASE_REVISION
-        or set(value['existing'])!=set(EXISTING_FILES) or set(value['new'])!=set(NEW_FILES)):
+        or set(value['existing'])!=set(EXISTING_FILES) or set(value['new'])!=set(NEW_FILES) or set(value['unchanged'])!=set(UNCHANGED_FILES)):
         raise PatchError('reviewed_recipe_scope_differs')
     return value
 
@@ -135,6 +136,8 @@ def plan(repo_payload_root,extracted_app_root,*,source_image_id):
     if repo==stage:raise PatchError('separate_extracted_staging_tree_required')
     description=recipe(repo)
     originals={path:read_source(stage,path) for path in EXISTING_FILES}
+    unchanged={path:sha(read_source(stage,path)) for path in UNCHANGED_FILES}
+    if unchanged!=description['unchanged']:raise PatchError('unchanged_source_hash_differs')
     for path in NEW_FILES:selected_path(stage,path,absent=True)
     additions={}
     for path in NEW_FILES:
@@ -145,6 +148,7 @@ def plan(repo_payload_root,extracted_app_root,*,source_image_id):
     repository='apps/api/src/repository.ts'
     updates[repository],preserved=create_user_from_actual(updates[repository],description['createUser'])
     preserved.update(protected_server(originals['apps/api/src/server.ts'],updates['apps/api/src/server.ts']))
+    preserved['unchangedSources']=unchanged
     updates.update(additions)
     if any(updates[path]==originals[path] for path in EXISTING_FILES):raise PatchError('expected_source_update_missing')
     proof={'sourceImageId':EXPECTED_SOURCE_ID,'recipeSha256':RECIPE_SHA256,'changedPaths':list(EXISTING_FILES+NEW_FILES),
@@ -156,6 +160,8 @@ def apply(repo_payload_root,extracted_app_root,*,source_image_id):
     stage=root_path(extracted_app_root)
     for path in EXISTING_FILES:
         if sha(read_source(stage,path))!=proof['before'][path]:raise PatchError('staging_source_changed_before_write:'+path)
+    for path,expected in proof['preserved']['unchangedSources'].items():
+        if sha(read_source(stage,path))!=expected:raise PatchError('unchanged_source_hash_differs_before_write')
     for path in NEW_FILES:selected_path(stage,path,absent=True)
     for path,data in updates.items():
         target=selected_path(stage,path,absent=path in NEW_FILES)
@@ -165,6 +171,8 @@ def apply(repo_payload_root,extracted_app_root,*,source_image_id):
         else:target.write_bytes(data)
     for path,expected in proof['after'].items():
         if sha(read_source(stage,path))!=expected:raise PatchError('staging_source_write_verification_failed:'+path)
+    for path,expected in proof['preserved']['unchangedSources'].items():
+        if sha(read_source(stage,path))!=expected:raise PatchError('unchanged_source_hash_differs_after_write')
     return proof
 
 def main():

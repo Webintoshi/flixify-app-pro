@@ -3,7 +3,7 @@ import { PhoneAuthError,normalizePhone } from './phone-auth.js';
 export const VATANSMS_WHATSAPP_ORIGIN='https://api.toplusmspaketleri.com';
 export type VatanSmsDiagnostic={
   phase:'accepted'|'http_rejected'|'unacknowledged'|'invalid_response'|'transport_failed';httpStatus:number|null;
-  shape?:{success:'true'|'false'|'other'|'missing';status:'success'|'200'|'other'|'missing';code:'200'|'other'|'missing';data:'array'|'object'|'other'|'missing';error:boolean};
+  shape?:{success:'true'|'false'|'other'|'missing';status:'success'|'OK'|'200'|'other'|'missing';code:'200'|'other'|'missing';data:'array'|'object'|'other'|'missing';error:boolean};
 };
 export function verificationMessage(code:string){if(!/^[0-9]{6}$/.test(code))throw new Error('Invalid verification code');return `Doğrulama kodunuz: ${code}. Sorun yaşarsanız lütfen bu mesaja cevap veriniz.`;}
 export class VatanSmsWhatsAppSender {
@@ -23,8 +23,12 @@ export class VatanSmsWhatsAppSender {
       try{while(true){const value=await reader.read();if(value.done)break;size+=value.value.byteLength;if(size>16384)throw new Error('Provider response exceeds limit');chunks.push(value.value);}}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
       const payload=JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new Error('Invalid provider response');
-      diagnostic.shape={success:payload.success===true?'true':payload.success===false?'false':payload.success===undefined?'missing':'other',status:payload.status==='success'?'success':payload.status===200?'200':payload.status===undefined?'missing':'other',code:payload.code===200?'200':payload.code===undefined?'missing':'other',data:payload.data===undefined?'missing':Array.isArray(payload.data)?'array':payload.data!==null&&typeof payload.data==='object'?'object':'other',error:Boolean(payload.error)};
-      if(payload.error||!((payload.success===true&&(payload.code===undefined||payload.code===200))||(payload.code===200&&payload.status==='success'))){diagnostic.phase='unacknowledged';throw new Error('Provider did not acknowledge request');}
+      diagnostic.shape={success:payload.success===true?'true':payload.success===false?'false':payload.success===undefined?'missing':'other',status:payload.status==='success'?'success':payload.status==='OK'?'OK':payload.status===200?'200':payload.status===undefined?'missing':'other',code:payload.code===200?'200':payload.code===undefined?'missing':'other',data:payload.data===undefined?'missing':Array.isArray(payload.data)?'array':payload.data!==null&&typeof payload.data==='object'?'object':'other',error:Boolean(payload.error)};
+      const statusAccepted=payload.status===undefined||payload.status==='success'||payload.status==='OK';
+      const codeAccepted=payload.code===undefined||payload.code===200;
+      const successAccepted=payload.success===undefined||payload.success===true;
+      const acknowledged=payload.success===true||payload.code===200&&(payload.status==='success'||payload.status==='OK');
+      if(payload.error||!statusAccepted||!codeAccepted||!successAccepted||!acknowledged){diagnostic.phase='unacknowledged';throw new Error('Provider did not acknowledge request');}
       diagnostic.phase='accepted';this.report(diagnostic);
     }catch{this.report(diagnostic);throw new PhoneAuthError(503,'delivery_unavailable');}
   }
