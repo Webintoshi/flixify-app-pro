@@ -76,9 +76,25 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assertIn('user: { ...userContext.summary, accessHistory: await getAccessHistory(auth.userId) }',route['new'])
     def test_other_emitted_api_modules_cannot_change(self):
         api=self.module('api','build-api.py');old={'untouched':{'sha256':'a'},'distEntries':{'server.js':{'sha256':'server'},'billing.js':{'sha256':'billing'}}}
-        new=copy.deepcopy(old);new['distEntries']['server.js']={'sha256':'updated'};new['distEntries']['trial-countdown.js']={'sha256':'helper'};api.dist_delta(old,new)
+        new=copy.deepcopy(old);new['distEntries']['server.js']={'sha256':'updated'};api.dist_delta(old,new)
         new['distEntries']['billing.js']={'sha256':'changed'}
         with self.assertRaises(api.GateError):api.dist_delta(old,new)
+    def test_bundled_api_cannot_add_or_remove_dist_files(self):
+        api=self.module('api_bundle_scope','build-api.py');old={'untouched':{'sha256':'a'},'distEntries':{'server.js':{'sha256':'server'},'billing.js':{'sha256':'billing'}}}
+        with self.assertRaises(api.GateError):api.dist_delta(old,copy.deepcopy(old))
+        for filename in ('trial-countdown.js','server.js.map','unexpected.js'):
+            new=copy.deepcopy(old);new['distEntries'][filename]={'sha256':'extra'}
+            with self.assertRaises(api.GateError):api.dist_delta(old,new)
+        new=copy.deepcopy(old);del new['distEntries']['billing.js']
+        with self.assertRaises(api.GateError):api.dist_delta(old,new)
+    def test_candidate_helper_check_uses_actual_source_without_assuming_separate_tsup_output(self):
+        api=self.module('api_helper_source','build-api.py');calls=[]
+        with patch.object(api,'command',side_effect=lambda *args,**kw:calls.append(args) or b''):api.helper_check('sha256:'+'4'*64)
+        self.assertEqual(len(calls),1);call=calls[0]
+        self.assertIn('--import',call);self.assertEqual(call[call.index('--import')+1],'tsx')
+        self.assertIn('/app/apps/api/src/trial-countdown.ts',call[-1]);self.assertNotIn('/app/apps/api/dist/trial-countdown.js',call[-1])
+        self.assertEqual(call[call.index('--network')+1],'none');self.assertIn('--read-only',call)
+        self.assertEqual(call[call.index('--env')+1],'TSX_DISABLE_CACHE=1')
     def test_current_web_and_new_download_check_stay_pinned(self):
         local=self.module('web','build-web.py').c;local.configure_web()
         self.assertEqual(local.builder.SOURCE_ID,c.SOURCES['ops-web'][1])

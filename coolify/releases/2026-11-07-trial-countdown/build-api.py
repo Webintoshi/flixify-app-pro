@@ -32,12 +32,12 @@ def sources(repo,ref,pin):
 def dist_delta(before,after):
     if after['untouched']!=before['untouched']:raise GateError('api_untouched_runtime_changed')
     old,new=before['distEntries'],after['distEntries']
-    if set(new)!=set(old)|{'trial-countdown.js'} or 'trial-countdown.js' in old:raise GateError('api_dist_scope_changed')
+    if set(new)!=set(old) or 'server.js' not in old or new['server.js']==old['server.js']:raise GateError('api_dist_scope_changed')
     if any(new[k]!=v for k,v in old.items() if k!='server.js'):raise GateError('api_unrelated_emitted_module_changed')
 
 def helper_check(candidate):
     script='''import assert from "node:assert/strict";
-import {deriveTrialCountdown,withTrialCountdown} from "/app/apps/api/dist/trial-countdown.js";
+import {deriveTrialCountdown,withTrialCountdown} from "/app/apps/api/src/trial-countdown.ts";
 const now=Date.parse("2026-11-07T12:00:00Z"),end="2026-11-07T15:00:00.000Z";
 const active={isThreeHourTrial:true,accessUntil:end,trialProviderExpiresAt:end,summary:{status:"active",hasAssignedLink:true,hasActiveSubscription:true}};
 assert.equal(deriveTrialCountdown(active,now).status,"active");
@@ -48,7 +48,7 @@ assert.equal(deriveTrialCountdown({...active,trialProviderExpiresAt:null},now).s
 const payload={user:{accessHistory:{preserved:true}},contact:{telegram:"fixture"}};
 const output=withTrialCountdown(payload,active,now);assert.deepEqual(output.user,payload.user);assert.deepEqual(output.contact,payload.contact);assert.equal(output.trialCountdown.endsAt,end);assert.equal("trialCountdown" in payload,false);
 '''
-    command('docker','run','--rm','--network','none','--read-only','--cpus','1','--memory','128m','--memory-swap','192m','--pids-limit','64','--entrypoint','node',candidate,'--input-type=module','-e',script,timeout=30)
+    command('docker','run','--rm','--network','none','--read-only','--cpus','1','--memory','128m','--memory-swap','192m','--pids-limit','64','--env','TSX_DISABLE_CACHE=1','--entrypoint','node',candidate,'--import','tsx','--input-type=module','-e',script,timeout=30)
 
 def verify(repo,ref,pin,proof):
     c.configure_api();base,_=c.current_source('api');updates=sources(repo,ref,pin)
