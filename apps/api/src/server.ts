@@ -1,11 +1,32 @@
+import { withTrialCountdown } from "./trial-countdown.js";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DeviceLoginCrypto, DeviceLoginService, redactDeviceLinkedPayload } from "./device-login.js";
 import { DeviceLoginStore } from "./device-login-store.js";
 import { registerDeviceLoginRoutes } from "./device-login-routes.js";
+import { PhoneAuthCrypto,PhoneAuthService } from './phone-auth.js';
+import { PostgresPhoneAuthStore } from './phone-auth-store.js';
+import { phoneAuthAccounts } from './phone-auth-accounts.js';
+import { VatanSmsWhatsAppSender } from './phone-auth-vatansms.js';
+import { registerPhoneAuthRoutes } from './phone-auth-routes.js';
+import {RememberedRefreshCrypto,RememberedSessionError,RememberedSessionStore,sessionHasExpired} from './remembered-session.js';
+import crypto from "node:crypto";
+import { TrialUnavailableError } from "./access-history.js";
+import { buildBrowserDirectOnlyPlayback, buildBrowserDirectPlayback } from "./browser-direct-playback.js";
+import {
+  buildBrowserDirectVodPlayback,
+  buildOptimisticBrowserDirectVodPlayback
+} from "./browser-direct-vod.js";
+import { registerAccountLibrary } from "./account-library.js";
+import { AccountVodCatalog, useAccountVod } from "./account-vod.js";
+import { shouldUseAccountMovieCatalog } from "./vod-catalog-filter.js";
+import { AdultMoviePreferenceStore, deriveMoviePolicy } from "./adult-movie-preferences.js";
+import { createAdultMovieActivator, createPostgresUserLock, registerAdultMovieRoutes } from "./adult-movie-routes.js";
+import { ResellerProvider } from "./entitlement-provider.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import Stripe from "stripe";
 import cors from "@fastify/cors";
 import {
   adminAssignM3USourceInputSchema,
@@ -29,8 +50,10 @@ import {
 } from "@flixify/contracts";
 import { canUseClientIpPlayback } from "./client-playback-access.js";
 import { registerPersonalLibrary } from "./personal-library.js";
+import { WelcomeOfferStore } from "./welcome-offer-store.js";
+import { registerWelcomeOfferRoutes } from "./welcome-offer-routes.js";
+import { registerAnalyticsRuntime } from "./analytics-runtime.js";
 import { derivePersonalProviderSession } from "./personal-provider-session.js";
-import { withTrialCountdown } from "./trial-countdown.js";
 import { loadLiveChannelPolicy } from "./live-channel-policy.js";
 import type {
   LiveChannel,
@@ -56,9 +79,11 @@ import {
   getAdminDashboard,
   getAdminUserDetail,
   getAppSettings,
+  getAccessHistory,
   getLiveChannelForPlayback,
   getMovieForPlayback,
   getPaymentMethodSettings,
+  getReferralSummary,
   getSessionById,
   getUserContext,
   getUserStatus,
@@ -132,8 +157,11 @@ import {
   updateDemoUser,
   updateDemoUserStatus
 } from "./demo-store.js";
-import { sendTelegramTrialRequestNotification } from "./telegram-notifier.js";
 import { env } from "./env.js";
+import { apiCache, closeCacheRuntime } from "./cache-runtime.js";
+const accountVodCatalog = new AccountVodCatalog({ cache: apiCache });
+import { liveCatalogPageKey } from "./cache-policy.js";
+import { getCachedLiveCatalog, personalizeLiveCatalog, sanitizeLiveCatalogForCache } from "./catalog-cache.js";
 import {
   createCodeLookup,
   generateKryptoniteCode,
@@ -147,9 +175,12 @@ import {
 } from "./security.js";
 import { pool } from "./db.js";
 import { buildStreamUrl } from "./iptv.js";
+import { buildBrowserMediaGatewayUrl, isBrowserMediaGatewayUrl, shouldPreferSharedCredentialsForBrowserGateway } from "./browser-media-gateway.js";
 import { detectLiveTransport, probeLiveStream } from "./live.js";
 import { createLivePlaybackManager } from "./live-playback.js";
 import { canUseAppDirectPlaybackFallback } from "./app-direct-fallback.js";
+import { resolveAccountDirectPrivateCdnUrl } from "./private-cdn-direct.js";
+import { selectVodProxy, vodFetch } from "./vod-proxy.js";
 import {
   samePlaybackCredentials,
   shouldHonorSharedLive404Cooldown,
@@ -176,15 +207,25 @@ import {
   UnauthorizedUserRouteError
 } from "./user-route-error.js";
 import { buildNativePlaybackSource, buildNativeVodPlaybackSource } from "./native-playback.js";
+import { createStripeBillingApi, createStripeInvoiceReader } from "./stripe-billing-api.js";
+import { registerStripeBillingRoutes, type StripeBillingRouteApi } from "./stripe-billing-routes.js";
+import { stripeBillingRuntime } from "./stripe-billing-runtime.js";
+import { StripeBillingStore } from "./stripe-billing-store.js";
+import { fulfillPaidInvoice } from "./stripe-entitlement.js";
+import { registerStripeWebhook, type StripeWebhookEvent } from "./stripe-webhook.js";
+import { StripePaymentStore } from "./stripe-payment-store.js";
+import { fulfillPaidCheckout } from "./stripe-payment.js";
+import { createStripePaymentReader } from "./stripe-payment-api.js";
 
 type UserRequest = {
   userId: string;
   sessionId: string;
-  authMethod?: "account_code" | "device_link";
+  authMethod?: "account_code" | "device_link" | "phone_otp";
 };
 
 const linkedViewerRequests = new WeakSet<FastifyRequest>();
 const deviceLoginStore = new DeviceLoginStore(pool);
+const rememberedSessionStore=new RememberedSessionStore(pool,new RememberedRefreshCrypto(env.APP_JWT_SECRET));
 async function prepareDeviceLoginSession(userId: string) {
   const id = randomUUID();
   const secret = generateRefreshToken();
@@ -192,7 +233,10 @@ async function prepareDeviceLoginSession(userId: string) {
   const accessToken = await signAccessToken({ userId, sessionId: id });
   return { id, refreshHash, accessToken, refreshToken: `${id}.${secret}` };
 }
-const deviceLoginService = new DeviceLoginService(deviceLoginStore, new DeviceLoginCrypto(env.APP_JWT_SECRET), prepareDeviceLoginSession);
+const deviceLoginService = new DeviceLoginService(deviceLoginStore, new DeviceLoginCrypto(env.APP_JWT_SECRET), prepareDeviceLoginSession,{localVerificationOrigin:env.DEVICE_LOGIN_LOCAL_WEB_ORIGIN});
+const phoneAuthStore=new PostgresPhoneAuthStore(pool);
+const phoneAuthService=!env.APP_DEMO_MODE&&env.PHONE_AUTH_ENABLED&&env.PHONE_AUTH_SECRET&&env.VATANSMS_WHATSAPP_API_KEY&&env.VATANSMS_WHATSAPP_REG_ID
+  ?new PhoneAuthService(phoneAuthStore,new PhoneAuthCrypto(env.PHONE_AUTH_SECRET),new VatanSmsWhatsAppSender({apiKey:env.VATANSMS_WHATSAPP_API_KEY,regId:env.VATANSMS_WHATSAPP_REG_ID,baseUrl:env.VATANSMS_WHATSAPP_BASE_URL},fetch,env.PHONE_AUTH_PROVIDER_DIAGNOSTICS?value=>console.warn(JSON.stringify({operation:'phone-auth-provider',...value})):undefined),phoneAuthAccounts):null;
 
 type AdminRequest = {
   adminId: string;
@@ -214,6 +258,29 @@ type AppUpdateManifest = {
 
 const LOCAL_APP_UPDATE_MANIFEST_PATH = new URL("../../../data/app-update-manifest.json", import.meta.url);
 const isDemoMode = env.APP_DEMO_MODE;
+const adultMovieStore = new AdultMoviePreferenceStore(pool);
+const adultMovieCanaryIds = new Set(env.ADULT_MOVIES_CANARY_USER_IDS.split(",").map(id=>id.trim()).filter(Boolean));
+const knownAdultCategoryIds = env.ADULT_MOVIES_CATEGORY_IDS.split(",").filter(Boolean);
+const adultMovieProvider = env.XM_RESELLER_API_URL && env.XM_RESELLER_API_KEY
+  ? new ResellerProvider({baseUrl:env.XM_RESELLER_API_URL,apiKey:env.XM_RESELLER_API_KEY})
+  : null;
+const stripeRuntime = stripeBillingRuntime(env);
+const stripeClient = stripeRuntime ? new Stripe(stripeRuntime.secretKey) : null;
+const stripeBillingStore = new StripeBillingStore(pool);
+const stripePaymentStore = new StripePaymentStore(pool);
+const adultMovieEnabled = Boolean(env.ADULT_MOVIES_ENABLED && !isDemoMode && adultMovieProvider);
+const accountVodProxyConfigured = Boolean((process.env.VOD_PROXY_URLS ?? "").trim());
+const useAdultSafeMovieCatalog = (runtime:unknown,userId:string,policy:{visible:boolean;reconcileRequired?:boolean}) =>
+ (runtime==="browser" && shouldUseAccountMovieCatalog(accountVodProxyConfigured,policy)) || useAccountVod(runtime,userId);
+const canUseAdultMovies = (userId:string) =>
+  adultMovieEnabled && (adultMovieCanaryIds.has(userId) || adultMovieCanaryIds.has("*"));
+const hiddenMoviePolicy = {visible:false,revision:0,adultCategoryIds:[]};
+const getAdultMoviePolicy = async (userId:string) =>
+  deriveMoviePolicy(await adultMovieStore.get(userId),canUseAdultMovies(userId));
+const adultMovieActivator = adultMovieProvider ? createAdultMovieActivator({
+  withUserLock:createPostgresUserLock(pool),
+  store:adultMovieStore,provider:adultMovieProvider,catalog:accountVodCatalog,knownAdultCategoryIds
+}) : null;
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 const MULTI_ACCOUNT_BLOCK_MESSAGE =
   "Bu cihaz veya tarayıcıda yalnızca bir kez hesap oluşturabilirsiniz. Mevcut hesabınızla giriş yapın veya destekle iletişime geçin.";
@@ -591,13 +658,28 @@ async function resolveLiveSourceUrl(input: {
   primaryCredentials: PlaybackCredentials | null;
   fallbackCredentials: PlaybackCredentials | null;
   fallbackTransport: LiveTransport;
+  clientRuntime?: ClientRuntime;
+  gatewayBaseUrl?: string | null;
+  preferRelay?: boolean;
 }) {
+  const preferSharedCredentials = shouldPreferSharedCredentialsForBrowserGateway({
+    clientRuntime: input.clientRuntime ?? "app",
+    gatewayBaseUrl: input.gatewayBaseUrl,
+    preferRelay: input.preferRelay
+  });
   const candidates = buildStreamCandidates(
     input.baseUrl,
     input.streamPath,
-    input.primaryCredentials,
-    input.fallbackCredentials
-  );
+    preferSharedCredentials ? input.fallbackCredentials : input.primaryCredentials,
+    preferSharedCredentials ? input.primaryCredentials : input.fallbackCredentials
+  ).map((candidate) => ({
+    ...candidate,
+    url: buildBrowserMediaGatewayUrl({
+      clientRuntime: input.clientRuntime ?? "app",
+      sourceUrl: candidate.url,
+      gatewayBaseUrl: input.gatewayBaseUrl
+    })
+  }));
 
   if (candidates.length === 0) {
     return {
@@ -1290,7 +1372,7 @@ async function authenticateUser(authorization?: string, request?: FastifyRequest
   }
 
   const session = await getSessionById(payload.sid);
-  if (!session || session.revoked_at || session.user_id !== payload.sub || new Date(session.expires_at).getTime() <= Date.now()) {
+  if (!session || session.revoked_at || session.user_id !== payload.sub || sessionHasExpired(session.expires_at)) {
     throw new UnauthorizedUserRouteError();
   }
 
@@ -1298,6 +1380,7 @@ async function authenticateUser(authorization?: string, request?: FastifyRequest
     if (!session.family_id || !await deviceLoginStore.activate(payload.sub, session.id, session.family_id)) throw new UnauthorizedUserRouteError();
     if (request) linkedViewerRequests.add(request);
   }
+  if(session.auth_method==='phone_otp'&&request)linkedViewerRequests.add(request);
   await touchDeviceSession(session.id);
 
   return {
@@ -1332,20 +1415,139 @@ export function buildServer() {
   app.register(cors, API_CORS_CONFIG);
   app.addHook("preSerialization", async (request, _reply, payload) =>
     linkedViewerRequests.has(request) ? redactDeviceLinkedPayload(payload) : payload);
-  registerDeviceLoginRoutes(app, { service: deviceLoginService, authenticate: authenticateUser, enabled: !isDemoMode });
+  registerDeviceLoginRoutes(app, { service: deviceLoginService, authenticate: authenticateUser, enabled: !isDemoMode,...(env.DEVICE_LOGIN_LOCAL_WEB_ORIGIN?{allowedOrigins:[env.DEVICE_LOGIN_LOCAL_WEB_ORIGIN]}:{}) });
+  registerPhoneAuthRoutes(app,{service:phoneAuthService,enabled:env.PHONE_AUTH_ENABLED&&!isDemoMode,localOnly:env.PHONE_AUTH_LOCAL_ONLY,allowedOrigins:env.PHONE_AUTH_ALLOWED_ORIGINS,authenticate:authenticateUser});
   const deviceLoginCleanup = isDemoMode ? null : setInterval(() => {
     deviceLoginStore.cleanup().catch(() => app.log.warn({ operation: "device-login-cleanup" }, "Cihaz baglama temizligi kullanilamiyor."));
   }, 60_000);
   deviceLoginCleanup?.unref();
+  const phoneAuthCleanup=phoneAuthService?setInterval(()=>{phoneAuthStore.cleanup().catch(()=>app.log.warn({operation:'phone-auth-cleanup'},'Dogrulama temizligi tamamlanamadi.'));},60_000):null;
+  phoneAuthCleanup?.unref();
+  const rememberedSessionCleanup=isDemoMode?null:setInterval(()=>{rememberedSessionStore.cleanup().catch(()=>app.log.warn({operation:'remembered-session-cleanup'},'Oturum yenileme temizligi tamamlanamadi.'));},60_000);
+  rememberedSessionCleanup?.unref();
+  app.addHook('onClose',async()=>{if(rememberedSessionCleanup)clearInterval(rememberedSessionCleanup);});
+  app.addHook('onClose',async()=>{if(phoneAuthCleanup)clearInterval(phoneAuthCleanup);});
   app.addHook("onClose", async () => { if (deviceLoginCleanup) clearInterval(deviceLoginCleanup); });
+  registerAccountLibrary(app, { vod: accountVodCatalog, moviePolicy:getAdultMoviePolicy,
+    forceAccountMovieVod:policy=>shouldUseAccountMovieCatalog(accountVodProxyConfigured,policy),
+    authenticate: authenticateUser, sendError: sendUserRouteError, origin: getRequestBaseOrigin });
+  registerAdultMovieRoutes(app,{
+    authenticate:authenticateUser,context:getUserContext,get:adultMovieStore.get.bind(adultMovieStore),
+    set:(userId,visible,context)=>{
+      if(!adultMovieActivator)throw Error("adult_provider_unavailable");
+      return adultMovieActivator.set(userId,visible,context);
+    },
+    available:canUseAdultMovies,sendError:sendUserRouteError
+  });
+
+  const disabledStripeApi: StripeBillingRouteApi = {
+    createCustomer: async () => { throw new Error('checkout_unavailable'); },
+    createCheckoutSession: async () => { throw new Error('checkout_unavailable'); },
+    createPortalSession: async () => { throw new Error('billing_unavailable'); }
+  };
+  const stripeBillingApi = stripeClient && stripeRuntime ? createStripeBillingApi(stripeClient, stripeRuntime) : disabledStripeApi;
+  const processStripePayment = async (sessionId: string) => {
+    if (!stripeClient || !stripeRuntime || !adultMovieProvider) return;
+    await fulfillPaidCheckout(sessionId, {
+      liveMode: stripeRuntime.liveMode,
+      allowedTestUserIds: stripeRuntime.allowedTestUserIds,
+      billing: createStripePaymentReader(stripeClient),
+      store: stripePaymentStore,
+      customerStore: stripePaymentStore,
+      provider: adultMovieProvider
+    });
+  };
+  const wakeStripePayment = (sessionId: string) => {
+    setImmediate(() => { void processStripePayment(sessionId).catch(() => app.log.error('Stripe payment requires operator review')); });
+  };
+  registerStripeBillingRoutes(app, {
+    enabled: Boolean(stripeRuntime?.checkoutEnabled && stripeClient && adultMovieProvider && !isDemoMode),
+    portalEnabled: Boolean(stripeRuntime && stripeClient && !isDemoMode),
+    liveMode: stripeRuntime?.liveMode ?? false,
+    allowedTestUserIds: stripeRuntime?.allowedTestUserIds,
+    priceIds: stripeRuntime?.priceIds ?? { '1-ay': '', '3-ay': '', '6-ay': '', '12-ay': '' },
+    authenticate: authenticateUser,
+    store: stripeBillingStore,
+    stripe: stripeBillingApi,
+    paymentStatus: async (userId, sessionId) => {
+      const liveMode = stripeRuntime?.liveMode ?? false;
+      const local = await stripePaymentStore.status(sessionId, userId, liveMode);
+      if (!local) return null;
+      if (local.status === 'active' || local.status === 'review_required' || local.status === 'expired') return local;
+      if (!stripeBillingApi.retrieveCheckoutSession) throw new Error('billing_unavailable');
+      const session = await stripeBillingApi.retrieveCheckoutSession(sessionId);
+      const customerId = await stripeBillingStore.customerFor(userId, liveMode);
+      if (session.id !== sessionId || session.userId !== userId || session.liveMode !== liveMode ||
+          session.customerId !== customerId || session.mode !== 'payment') return {status:'review_required'};
+      if (session.status === 'expired' && session.paymentStatus === 'unpaid') {
+        await stripePaymentStore.expire(sessionId, userId, liveMode);
+        return {status:'expired',packageSlug:local.packageSlug};
+      }
+      if (session.status === 'complete' && session.paymentStatus === 'paid') {
+        await stripePaymentStore.enqueue(sessionId, liveMode);
+        wakeStripePayment(sessionId);
+        return {status:'processing',packageSlug:local.packageSlug};
+      }
+      return {status:'awaiting_payment',packageSlug:local.packageSlug};
+    },
+    verifyProviderPackage: async (providerPackageId, months, users) => {
+      if (!adultMovieProvider) return false;
+      try {
+        const selected = (await adultMovieProvider.listPackages()).find(pkg => pkg.id === providerPackageId);
+        return Boolean(selected && !selected.isTrial && (selected.unit === 'months' ? selected.duration : selected.unit === 'years' ? selected.duration * 12 : 0) === months && selected.maxConnections === users);
+      } catch {
+        return false;
+      }
+    }
+  });
+  let stripePollTimer: ReturnType<typeof setInterval> | null = null;
+  if (stripeClient && stripeRuntime) {
+    const invoiceReader = createStripeInvoiceReader(stripeClient);
+    const processStripeInvoice = async (invoiceId: string) => {
+      if (!adultMovieProvider) {
+        if (await stripeBillingStore.claim(invoiceId)) await stripeBillingStore.review(invoiceId, 'provider_not_configured');
+        return;
+      }
+      await fulfillPaidInvoice(invoiceId, {
+        store: stripeBillingStore,
+        provider: adultMovieProvider,
+        billing: invoiceReader,
+        priceIds: stripeRuntime.priceIds,
+        liveMode: stripeRuntime.liveMode,
+        allowedTestUserIds: stripeRuntime.allowedTestUserIds
+      });
+    };
+    const wake = (invoiceId: string) => {
+      setImmediate(() => { void processStripeInvoice(invoiceId).catch(() => app.log.error('Stripe invoice requires operator review')); });
+    };
+    registerStripeWebhook(app, {
+      liveMode: stripeRuntime.liveMode,
+      verify: (rawBody, signature) => stripeClient.webhooks.constructEvent(rawBody, signature, stripeRuntime.webhookSecret) as unknown as StripeWebhookEvent,
+      store: stripeBillingStore,
+      wake,
+      paymentStore: stripePaymentStore,
+      wakePayment: wakeStripePayment
+    });
+    stripePollTimer = setInterval(() => {
+      void (async () => {
+        await stripePaymentStore.markStaleClaimsForReview();
+        for (const sessionId of await stripePaymentStore.pendingSessionIds()) await processStripePayment(sessionId);
+        await stripeBillingStore.markStaleClaimsForReview();
+        for (const invoiceId of await stripeBillingStore.pendingInvoiceIds()) await processStripeInvoice(invoiceId);
+      })().catch(() => app.log.error('Stripe invoice queue check failed'));
+    }, 60000);
+    stripePollTimer.unref();
+  }
 
   app.addHook("onRequest", async (request) => {
     stripEmptyJsonContentType(request.raw.method, request.raw.headers);
   });
 
   app.addHook("onClose", async () => {
+    if (stripePollTimer) clearInterval(stripePollTimer);
     await livePlaybackManager.dispose();
     await vodPlaybackManager.dispose();
+    await closeCacheRuntime();
   });
 
   app.get(LIVE_LOGO_PROXY_PATH, async (request, reply) => {
@@ -1370,6 +1572,9 @@ export function buildServer() {
     } catch (error) {
       const resolvedError =
         error instanceof LiveLogoProxyError ? error : new LiveLogoProxyError("Logo servisi hatasi.", 502);
+      if (resolvedError.statusCode === 404) {
+        reply.header("cache-control", "public, max-age=3600");
+      }
       return reply.status(resolvedError.statusCode).send({ message: resolvedError.message });
     }
   });
@@ -1443,78 +1648,15 @@ export function buildServer() {
     }
   });
 
-  app.post("/auth/register-anon", async (request, reply) => {
-    const payload = registerAnonInputSchema.parse(request.body);
-    const requestIp = request.ip || "unknown";
-
-    if (!checkRateLimit(createRateLimitKey("register", requestIp), 10, 60_000)) {
-      return reply.status(429).send({ message: "Cok fazla kayit denemesi. Lutfen biraz sonra tekrar deneyin." });
-    }
-
-    if (isDemoMode) {
-      const existingUser = await findActiveUserByInstallationId(payload.installationId).catch(() => null);
-      if (existingUser) {
-        return reply.status(409).send({ message: MULTI_ACCOUNT_BLOCK_MESSAGE });
-      }
-      return registerDemoUser(payload);
-    }
-
-    const existingUser = await findActiveUserByInstallationId(payload.installationId);
-    if (existingUser) {
-      return reply.status(409).send({ message: MULTI_ACCOUNT_BLOCK_MESSAGE });
-    }
-
-    let rawCode = "";
-    let userId = "";
-
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const candidate = generateKryptoniteCode();
-      const codeLookup = createCodeLookup(candidate);
-      const collision = await findUserByCodeLookup(codeLookup);
-      if (!collision) {
-        rawCode = candidate;
-        try {
-          userId = await createUser(
-            codeLookup,
-            await hashSecret(candidate),
-            candidate.slice(-4),
-            candidate,
-            payload.installationId,
-            requestIp
-          );
-        } catch (error) {
-          if (error instanceof RegistrationInstallationLimitError) {
-            return reply.status(409).send({ message: MULTI_ACCOUNT_BLOCK_MESSAGE });
-          }
-          if (error instanceof AutoTrialRegistrationRateLimitError) {
-            return reply.status(429).send({ message: "Bu internet bağlantısı üzerinden en fazla 2 hesap oluşturulabilir." });
-          }
-          const databaseCode = getDatabaseErrorCode(error);
-          const constraint = getDatabaseConstraint(error);
-          if (
-            databaseCode === "23505" &&
-            constraint === "idx_users_registration_installation_active_unique"
-          ) {
-            return reply.status(409).send({ message: MULTI_ACCOUNT_BLOCK_MESSAGE });
-          }
-          throw error;
-        }
-        break;
-      }
-    }
-
-    if (!rawCode || !userId) {
-      return reply.status(500).send({ message: "Kullanici olusturulamadi." });
-    }
-
-    await updateUserLogin(userId);
-    const session = await issueSession(userId, payload);
-
-    return {
-      ...session,
-      kryptoniteCode: rawCode
-    };
-  });
+  const rejectUnverifiedRegistration = async (_request: FastifyRequest, reply: FastifyReply) => {
+    return reply.header("cache-control", "no-store").status(410).send({
+      reason: "phone_verification_required",
+      message: "Yeni hesap oluşturmak için WhatsApp doğrulamasını kullanın."
+    });
+  };
+  app.post("/auth/register-anon", {
+    onRequest: rejectUnverifiedRegistration
+  }, rejectUnverifiedRegistration);
 
   app.post("/auth/login-by-code", async (request, reply) => {
     const payload = loginByCodeInputSchema.parse(request.body);
@@ -1562,7 +1704,7 @@ export function buildServer() {
     const payload = refreshInputSchema.parse(request.body);
     const requestIp = request.ip || "unknown";
 
-    if (!checkRateLimit(createRateLimitKey("refresh", requestIp), 120, 60_000)) {
+    if (!checkRateLimit(createRateLimitKey("refresh", requestIp), 20, 60_000)) {
       return reply.status(429).send({ message: "Cok fazla oturum yenileme denemesi. Lutfen tekrar deneyin." });
     }
 
@@ -1577,86 +1719,26 @@ export function buildServer() {
       return session;
     }
 
-    let sessionId = "";
-
-    const token = payload.refreshToken;
-    const [encodedSessionId] = token.split(".");
-    sessionId = encodedSessionId || "";
-    if (!sessionId) {
-      return reply.status(401).send({
-        message: "Refresh token gecersiz.",
-        reason: "invalid-refresh"
-      });
+    try {
+      const token=payload.refreshToken;
+      const [sessionId,rawSecret,...extra]=token.split('.');
+      if(!sessionId||!rawSecret||extra.length||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(sessionId))return reply.status(401).send({reason:'invalid-refresh',message:'Oturum yenilenemedi.'});
+      const session=await getSessionById(sessionId);
+      if(!session)return reply.status(401).send({reason:'invalid-refresh',message:'Oturum yenilenemedi.'});
+      const userStatus=await getUserStatus(session.user_id);
+      if(!userStatus)return reply.status(403).send({reason:'account-deleted',message:'Bu hesaba şu anda giriş yapılamıyor.'});
+      if(userStatus==='blocked')return reply.status(403).send({reason:'account-blocked',message:'Bu hesaba şu anda giriş yapılamıyor.'});
+      if(!await verifySecret(rawSecret,session.refresh_token_hash))return reply.status(401).send({reason:'invalid-refresh',message:'Oturum yenilenemedi.'});
+      const prepared=await prepareDeviceLoginSession(session.user_id);
+      const rotated=await rememberedSessionStore.rotate({id:session.id,userId:session.user_id,refreshHash:session.refresh_token_hash},prepared);
+      if(rotated.authMethod!=='account_code')linkedViewerRequests.add(request);
+      const context=await getUserContext(session.user_id);
+      return {accessToken:rotated.accessToken,refreshToken:rotated.refreshToken,user:context.summary,kryptoniteCode:rotated.authMethod==='account_code'?(context.summary.kryptoniteCode??null):null};
+    } catch(error) {
+      if(error instanceof RememberedSessionError)return reply.status(error.statusCode).send({reason:error.reason,message:'Oturum yenilenemedi.'});
+      request.log.warn({operation:'session-refresh',statusClass:'transient'},'Oturum yenileme geçici olarak tamamlanamadı.');
+      return reply.status(503).send({reason:'temporarily-unavailable',message:'Bağlantı şu anda yenilenemiyor. Lütfen tekrar deneyin.'});
     }
-
-    const session = await getSessionById(sessionId);
-    if (!session) {
-      return reply.status(401).send({
-        message: "Oturum yenilenemedi.",
-        reason: "invalid-refresh"
-      });
-    }
-    if (session.revoked_at) {
-      return reply.status(401).send({
-        message: "Oturum yenilenemedi.",
-        reason: "revoked"
-      });
-    }
-    if (new Date(session.expires_at).getTime() <= Date.now()) {
-      return reply.status(401).send({
-        message: "Oturum suresi doldu.",
-        reason: "expired"
-      });
-    }
-
-    const userStatus = await getUserStatus(session.user_id);
-    if (!userStatus || userStatus === "blocked") {
-      return reply.status(403).send({ message: "Kullanici engellendi. Destek ile iletisime gecin." });
-    }
-
-    const rawSecret = token.slice(sessionId.length + 1);
-    const matches = await verifySecret(rawSecret, session.refresh_token_hash);
-    if (!matches) {
-      return reply.status(401).send({
-        message: "Oturum yenilenemedi.",
-        reason: "invalid-refresh"
-      });
-    }
-
-    if (session.auth_method === "device_link") {
-      if (!session.family_id) return reply.status(401).send({ reason: "invalid-refresh", message: "Oturum yenilenemedi." });
-      const prepared = await prepareDeviceLoginSession(session.user_id);
-      if (!await deviceLoginStore.refresh(session.user_id, session.id, session.family_id, prepared)) {
-        return reply.status(401).send({ reason: "revoked", message: "Oturum yenilenemedi." });
-      }
-      linkedViewerRequests.add(request);
-      const context = await getUserContext(session.user_id);
-      return { accessToken: prepared.accessToken, refreshToken: prepared.refreshToken,
-        user: context.summary, kryptoniteCode: null };
-    }
-
-    await revokeSession(session.id);
-    const refreshToken = generateRefreshToken();
-    const refreshTokenHash = await hashSecret(refreshToken);
-    const newSessionId = await createDeviceSession(
-      session.user_id,
-      refreshTokenHash,
-      session.device_name ?? undefined,
-      session.platform ?? undefined
-    );
-    if (!newSessionId) {
-      return reply.status(500).send({ message: "Yeni oturum acilamadi." });
-    }
-
-    const accessToken = await signAccessToken({ userId: session.user_id, sessionId: newSessionId });
-    const userContext = await getUserContext(session.user_id);
-
-    return {
-      accessToken,
-      refreshToken: `${newSessionId}.${refreshToken}`,
-      user: userContext.summary,
-      kryptoniteCode: userContext.summary.kryptoniteCode ?? null
-    };
   });
 
   app.get("/me", async (request, reply) => {
@@ -1681,7 +1763,7 @@ export function buildServer() {
       const settings = await getAppSettings();
 
       return withTrialCountdown({
-        user: userContext.summary,
+        user: { ...userContext.summary, accessHistory: await getAccessHistory(auth.userId) },
         contact: {
           whatsapp: settings.supportWhatsappUrl,
           telegram: settings.supportTelegramUrl
@@ -1692,7 +1774,20 @@ export function buildServer() {
     }
   });
 
+  app.get('/me/referrals', async (request, reply) => {
+    try {
+      reply.header('cache-control', 'private, no-store');
+      const auth = await authenticateUser(request.headers.authorization, request);
+      if (isDemoMode) return { code: null, qualified: 0, towardNext: 0, earnedMonths: 0, pendingRewards: 0 };
+      return await getReferralSummary(auth.userId);
+    } catch (error) {
+      return sendUserRouteError(request, reply, error);
+    }
+  });
+
   registerPersonalLibrary(app, { authenticate: authenticateUser, context: (id) => getUserContext(id), secret: env.APP_JWT_SECRET, demo: isDemoMode, classify: classifyUserRouteError });
+  if (!isDemoMode) registerWelcomeOfferRoutes(app, { authenticate: authenticateUser, store: new WelcomeOfferStore(pool) });
+  if (!isDemoMode) registerAnalyticsRuntime(app, { authenticate: authenticateUser, pool });
 
   app.get("/me/provider-session", async (request, reply) => {
     reply.header("cache-control", "private, no-store, max-age=0");
@@ -1799,13 +1894,26 @@ export function buildServer() {
       }
 
       const playbackCredentials = getScopedPlaybackCredentials(userContext);
-
+      const cacheKey = liveCatalogPageKey({
+        snapshotVersion: userContext.snapshotVersion,
+        page: query.page,
+        pageSize: query.pageSize,
+        search: query.search,
+        group: query.group
+      });
+      const cachedCatalog = await getCachedLiveCatalog(apiCache, cacheKey, async () =>
+        sanitizeLiveCatalogForCache(
+          await listLiveCatalog(
+            userContext.snapshotVersion,
+            query.page,
+            query.pageSize,
+            query.search,
+            query.group
+          )
+        )
+      );
       return signLiveCatalogResponse(
-        await listLiveCatalog(userContext.snapshotVersion, query.page, query.pageSize, query.search, query.group, {
-          baseUrl: userContext.playbackBaseUrl,
-          credentials: userContext.isThreeHourTrial ? null : playbackCredentials.primary,
-          canPlay: userContext.canPlay && Boolean(playbackCredentials.primary || playbackCredentials.fallback)
-        }),
+        personalizeLiveCatalog(cachedCatalog, userContext.canPlay && Boolean(playbackCredentials.primary || playbackCredentials.fallback)),
         request,
         userContext.isThreeHourTrial
       );
@@ -1838,6 +1946,10 @@ export function buildServer() {
         rawQuery?.preferTranscode === true ||
         rawQuery?.preferTranscode === "true" ||
         rawQuery?.preferTranscode === "1";
+      const preferVideoTranscode =
+        rawQuery?.preferVideoTranscode === true ||
+        rawQuery?.preferVideoTranscode === "true" ||
+        rawQuery?.preferVideoTranscode === "1";
       const cacheProfile = normalizeLiveCacheProfile(rawQuery?.cacheProfile);
       const audioTrackId =
         typeof rawQuery?.audioTrackId === "string" && rawQuery.audioTrackId.trim().length > 0
@@ -1870,6 +1982,7 @@ export function buildServer() {
             allowFileProxyFallback: debugFileProxy,
             preferDirectProxy: !preferRelay,
             preferTranscode,
+            preferVideoTranscode,
             cacheProfile
           });
 
@@ -1993,6 +2106,30 @@ export function buildServer() {
         });
       }
 
+      const directOnlyPlayback = buildBrowserDirectOnlyPlayback({
+        userId: auth.userId,
+        canPlay: userContext.canPlay,
+        preferRelay,
+        mode: env.BROWSER_DIRECT_PROVIDER_MODE,
+        percentage: env.BROWSER_DIRECT_PROVIDER_PERCENT,
+        canaryUserIds: env.BROWSER_DIRECT_PROVIDER_USER_IDS,
+        canaryLineUsername: env.BROWSER_DIRECT_PROVIDER_LINE_USERNAME,
+        allowedSourceHosts: env.BROWSER_DIRECT_PROVIDER_SOURCE_HOSTS,
+        allowHls: env.BROWSER_DIRECT_PROVIDER_HLS_ENABLED,
+        playbackBaseUrl: userContext.playbackBaseUrl ?? "",
+        channelId,
+        clientRuntime,
+        transport: channel.transport,
+        credentials: userContext.iptvCredentials,
+        streamPath: channel.stream_path,
+        healthStatus: channel.health_status,
+        lastCheckedAt: channel.last_checked_at
+      });
+      if (directOnlyPlayback) {
+        reply.header("cache-control", "private, no-store");
+        return directOnlyPlayback;
+      }
+
       if (
         !userContext.playbackBaseUrl ||
         (!playbackCredentials.primary && !playbackCredentials.fallback)
@@ -2013,13 +2150,85 @@ export function buildServer() {
         };
       }
 
+      if (!preferRelay && userContext.canPlay && userContext.iptvCredentials) {
+        const browserDirectPlayback = buildBrowserDirectPlayback({
+          userId: auth.userId,
+          canPlay: userContext.canPlay,
+          preferRelay,
+          mode: env.BROWSER_DIRECT_PROVIDER_MODE,
+          percentage: env.BROWSER_DIRECT_PROVIDER_PERCENT,
+          canaryUserIds: env.BROWSER_DIRECT_PROVIDER_USER_IDS,
+          canaryLineUsername: env.BROWSER_DIRECT_PROVIDER_LINE_USERNAME,
+          allowedSourceHosts: env.BROWSER_DIRECT_PROVIDER_SOURCE_HOSTS,
+          allowHls: env.BROWSER_DIRECT_PROVIDER_HLS_ENABLED,
+          playbackBaseUrl: userContext.playbackBaseUrl,
+          channelId,
+          clientRuntime,
+          transport: channel.transport,
+          credentials: userContext.iptvCredentials,
+          streamPath: channel.stream_path,
+          healthStatus: channel.health_status,
+          lastCheckedAt: channel.last_checked_at
+        });
+        if (browserDirectPlayback) {
+          reply.header("cache-control", "private, no-store");
+          return browserDirectPlayback;
+        }
+
+        let directSourceUrl: string | null = null;
+        try {
+          directSourceUrl = buildStreamUrl(
+            userContext.playbackBaseUrl,
+            userContext.iptvCredentials.username,
+            userContext.iptvCredentials.password,
+            channel.stream_path
+          );
+        } catch {
+          // The normal playback path below owns malformed source errors.
+        }
+
+        if (directSourceUrl) {
+          const directPrivateCdnUrl = await resolveAccountDirectPrivateCdnUrl({
+            userId: auth.userId,
+            configuredUserIds: env.PRIVATE_CDN_DIRECT_USER_IDS,
+            clientRuntime,
+            candidates: [
+              {
+                sourceUrl: directSourceUrl,
+                forbiddenValues: [
+                  userContext.iptvCredentials.username,
+                  userContext.iptvCredentials.password
+                ]
+              }
+            ],
+            proxyUrl: selectVodProxy(auth.userId),
+            allowedHosts: env.PRIVATE_CDN_DIRECT_HOSTS,
+            fetchThroughProxy: vodFetch
+          });
+
+          if (directPrivateCdnUrl) {
+            return buildDirectLivePlaybackFallback({
+              channelId,
+              sourceUrl: directPrivateCdnUrl,
+              transport: channel.transport,
+              healthStatus: channel.health_status,
+              lastCheckedAt: new Date().toISOString(),
+              isVerified: true
+            });
+          }
+        }
+      }
+
       const resolved = userContext.canPlay
         ? await resolveLiveSourceUrl({
             baseUrl: userContext.playbackBaseUrl,
             streamPath: channel.stream_path,
             primaryCredentials: playbackCredentials.primary,
             fallbackCredentials: playbackCredentials.fallback,
-            fallbackTransport: channel.transport
+            fallbackTransport: channel.transport,
+            clientRuntime,
+            gatewayBaseUrl: env.PUBLIC_MEDIA_GATEWAY_URL,
+            preferRelay
           })
         : {
             ok: false,
@@ -2067,6 +2276,22 @@ export function buildServer() {
 
       const canPlay = hasCurrentPlaybackAccess(userContext) && (resolved.ok || optimisticProbeFallback);
 
+      if (
+        !preferRelay &&
+        canPlay &&
+        clientRuntime === "browser" &&
+        isBrowserMediaGatewayUrl(resolved.sourceUrl, env.PUBLIC_MEDIA_GATEWAY_URL)
+      ) {
+        return buildDirectLivePlaybackFallback({
+          channelId,
+          sourceUrl: resolved.sourceUrl!,
+          transport,
+          healthStatus,
+          lastCheckedAt: checkedAt,
+          isVerified: resolved.isVerified
+        });
+      }
+
       let playback: LivePlaybackRecord;
       try {
         playback = await livePlaybackManager.createPlayback({
@@ -2086,6 +2311,7 @@ export function buildServer() {
           allowFileProxyFallback: debugFileProxy || optimisticProbeFallback,
           preferDirectProxy: !preferRelay,
           preferTranscode,
+          preferVideoTranscode,
           cacheProfile
         });
       } catch (error) {
@@ -2109,6 +2335,7 @@ export function buildServer() {
       }
 
       if (
+        !preferRelay &&
         !playback.canPlay &&
         !userContext.isThreeHourTrial &&
         hasCurrentPlaybackAccess(userContext) &&
@@ -2177,6 +2404,10 @@ export function buildServer() {
         rawQuery?.preferTranscode === true ||
         rawQuery?.preferTranscode === "true" ||
         rawQuery?.preferTranscode === "1";
+      const preferVideoTranscode =
+        rawQuery?.preferVideoTranscode === true ||
+        rawQuery?.preferVideoTranscode === "true" ||
+        rawQuery?.preferVideoTranscode === "1";
       const cacheProfile = normalizeLiveCacheProfile(rawQuery?.cacheProfile);
 
       if (isDemoMode) {
@@ -2213,6 +2444,7 @@ export function buildServer() {
             allowFileProxyFallback: debugFileProxy,
             preferDirectProxy: !preferRelay,
             preferTranscode,
+            preferVideoTranscode,
             cacheProfile
           });
 
@@ -2349,6 +2581,7 @@ export function buildServer() {
           allowFileProxyFallback: true,
           preferDirectProxy: !preferRelay,
           preferTranscode,
+          preferVideoTranscode,
           cacheProfile
         });
 
@@ -2443,6 +2676,11 @@ export function buildServer() {
         return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
       }
 
+      const moviePolicy=await getAdultMoviePolicy(auth.userId);
+      if(useAdultSafeMovieCatalog(request.headers["x-flixify-client-runtime"],auth.userId,moviePolicy)) {
+        reply.header("cache-control","private, no-store");
+        return signMovieCatalogResponse(await accountVodCatalog.list(auth.userId,userContext,"movie",query,moviePolicy),request);
+      }
       return signMovieCatalogResponse(
         await listMoviesCatalog(
           userContext.snapshotVersion,
@@ -2484,6 +2722,10 @@ export function buildServer() {
         return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
       }
 
+      if(useAccountVod(request.headers["x-flixify-client-runtime"],auth.userId)) {
+        reply.header("cache-control","private, no-store");
+        return signSeriesCatalogResponse(await accountVodCatalog.list(auth.userId,userContext,"series",query),request);
+      }
       return signSeriesCatalogResponse(
         await listSeriesCatalog(
           userContext.snapshotVersion,
@@ -2540,7 +2782,6 @@ export function buildServer() {
 
         return resolveDemoVodPlayback(auth.userId, kind, itemId, baseOrigin);
       }
-
       const userContext = await getUserContext(auth.userId);
       if (!userContext.canViewCatalog) {
         return reply.status(403).send({ message: "Icerik baglantisi atanmadi." });
@@ -2550,6 +2791,40 @@ export function buildServer() {
         return reply.status(403).send({ message: "Deneme hatti hazir degil." });
       }
 
+      const moviePolicy=kind==="movie"?await getAdultMoviePolicy(auth.userId):hiddenMoviePolicy;
+      if((kind==="movie"?useAdultSafeMovieCatalog(request.headers["x-flixify-client-runtime"],auth.userId,moviePolicy):useAccountVod(request.headers["x-flixify-client-runtime"],auth.userId))) {
+        if(!hasCurrentPlaybackAccess(userContext))return buildDisabledVodPlaybackRecord({itemId,kind,transport:"unknown",errorMessage:"Bu içerik için aktif paket gerekir."});
+        const source=await accountVodCatalog.source(auth.userId,userContext,kind,itemId,moviePolicy);
+        if(!source)return reply.code(404).send({message:"İçerik güncel hesabınızda bulunamadı. İçerik detayını yeniden açın."});
+        if(!hasCurrentPlaybackAccess(userContext))return buildDisabledVodPlaybackRecord({itemId,kind,transport:"unknown",errorMessage:"Bu içerik için aktif paket gerekir."});
+        reply.header("cache-control","private, no-store");
+        if(!userContext.isThreeHourTrial && (rawQuery?.compatibilityProbe === "1" || rawQuery?.compatibilityProbe === true)) {
+          return vodPlaybackManager.inspectBrowserCompatibility({
+            sourceUrl: source.url,
+            proxyUrl: source.proxyUrl
+          });
+        }
+        if (
+          !userContext.isThreeHourTrial &&
+          rawQuery?.vodDirect === "1" && rawQuery?.direct !== "0" && rawQuery?.direct !== false &&
+          !audioTrackId && !(preferTranscode && rawQuery?.preferTranscode !== undefined)
+        ) {
+          const directPlayback = buildOptimisticBrowserDirectVodPlayback({
+            itemId,
+            kind,
+            sourceUrl: source.url,
+            credentials: userContext.iptvCredentials!
+          });
+          if (directPlayback) return directPlayback;
+        }
+        const playback=await vodPlaybackManager.createPlayback({userId:auth.userId,itemId,kind,sourceUrl:source.url,proxyUrl:source.proxyUrl,baseOrigin,clientRuntime:"browser",platform,preferTranscode:rawQuery?.preferTranscode!==undefined && preferTranscode,allowBrowserFileProxy:true,selectedAudioTrackId:audioTrackId,accessUntil:userContext.isThreeHourTrial?userContext.accessUntil:null});
+        if(!hasCurrentPlaybackAccess(userContext))return buildDisabledVodPlaybackRecord({itemId,kind,transport:"unknown",errorMessage:"Bu içerik için aktif paket gerekir."});
+        if(userContext.isThreeHourTrial)return playback;
+        // Only the updated web player advertises automatic direct-to-proxy fallback.
+        // Cached older web bundles continue receiving the working proxy URL.
+        if(rawQuery?.vodDirect !== "1" || rawQuery?.direct === "0" || rawQuery?.direct === false || audioTrackId || (preferTranscode && rawQuery?.preferTranscode !== undefined)) return playback;
+        return buildBrowserDirectVodPlayback({kind,sourceUrl:source.url,credentials:userContext.iptvCredentials!,playback}) ?? playback;
+      }
       const record =
         kind === "movie"
           ? await getMovieForPlayback(userContext.snapshotVersion, itemId)
@@ -3082,6 +3357,13 @@ export function buildServer() {
     return livePlaybackManager.sendFile(reply, sessionId, token, rangeHeader);
   });
 
+  app.post("/live/playback/:sessionId/release", async (request, reply) => {
+    const { sessionId } = request.params as { sessionId: string };
+    const { token } = (request.query as { token?: string } | undefined) ?? {};
+    const released = await livePlaybackManager.releaseViewer(sessionId, token);
+    return released ? reply.status(204).send() : reply.status(404).send({ message: "Canli oturum bulunamadi." });
+  });
+
   app.post("/me/payment-requests", async (request, reply) => {
     try {
       const auth = await authenticateUser(request.headers.authorization, request);
@@ -3124,26 +3406,17 @@ export function buildServer() {
       const auth = await authenticateUser(request.headers.authorization, request);
       const payload = trialRequestInputSchema.parse(request.body);
 
-      let trialInfo: { id?: string; createdAt?: string; userId?: string; userCode?: string | null; note?: string | null } | undefined;
-
       if (isDemoMode) {
-        trialInfo = createDemoTrialRequest(auth.userId, payload.note);
-      } else {
-        trialInfo = await createTrialRequest(auth.userId, payload.note);
+        createDemoTrialRequest(auth.userId, payload.note);
+        return { ok: true };
       }
 
-      // Dispatch Telegram alert with user code immediately in the background
-      sendTelegramTrialRequestNotification({
-        userId: auth.userId,
-        userCode: trialInfo?.userCode || null,
-        note: payload.note,
-        createdAt: trialInfo?.createdAt || null
-      }).catch((notifyError) => {
-        request.log.error(notifyError, "Failed to send Telegram trial notification");
-      });
-
+      await createTrialRequest(auth.userId, payload.note);
       return { ok: true };
     } catch (error) {
+      if (error instanceof TrialUnavailableError) {
+        return reply.status(409).send({ code: "TRIAL_UNAVAILABLE", message: "Deneme hakkı bu hesap için daha önce kullanılmış veya talep edilmiş. Paketleri inceleyebilirsin." });
+      }
       if (isUserRouteAuthError(error)) {
         return sendUserRouteError(request, reply, error);
       }
@@ -3155,18 +3428,30 @@ export function buildServer() {
   app.post("/admin/login", async (request, reply) => {
     const body = request.body as { email?: string; password?: string } | undefined;
     const email = body?.email?.trim().toLowerCase();
-    const password = body?.password?.trim();
+    const password = body?.password;
+
+    const configuredPassword = process.env.ADMIN_PASSWORD;
+    if (!configuredPassword) {
+      return reply.status(503).send({ message: "Yönetici girişi yapılandırılmadı." });
+    }
 
     if (!email || !password) {
       return reply.status(400).send({ message: "E-posta ve şifre zorunludur." });
     }
 
     if (!env.adminEmails.includes(email)) {
+      if (!checkRateLimit(createRateLimitKey("admin-login", request.ip || "unknown"), 5, 60_000)) {
+        return reply.status(429).send({ message: "Çok fazla giriş denemesi. Bir dakika sonra tekrar deneyin." });
+      }
       return reply.status(401).send({ message: "Yetkisiz e-posta adresi." });
     }
 
-    const expectedPassword = process.env.ADMIN_PASSWORD || "06122021Kam.";
-    if (password !== expectedPassword && password !== `**${expectedPassword}**`) {
+    const enteredDigest = crypto.createHash("sha256").update(password).digest();
+    const expectedDigest = crypto.createHash("sha256").update(configuredPassword).digest();
+    if (!crypto.timingSafeEqual(enteredDigest, expectedDigest)) {
+      if (!checkRateLimit(createRateLimitKey("admin-login", request.ip || "unknown"), 5, 60_000)) {
+        return reply.status(429).send({ message: "Çok fazla giriş denemesi. Bir dakika sonra tekrar deneyin." });
+      }
       return reply.status(401).send({ message: "Hatalı şifre." });
     }
 

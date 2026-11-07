@@ -1,5 +1,6 @@
 import type { QueryResultRow } from "pg";
 import type { PoolClient } from "pg";
+import {RememberedRefreshCrypto,RememberedSessionStore} from './remembered-session.js';
 import { createHmac, randomInt } from "node:crypto";
 import type {
   AdminAuditLogRecord,
@@ -30,7 +31,11 @@ import { DeviceLoginStore } from "./device-login-store.js";
 import { env } from "./env.js";
 import { claimRegistrationSlots } from "./registration-limits.js";
 export { AutoTrialRegistrationRateLimitError, RegistrationInstallationLimitError } from "./registration-limits.js";
+import { readAccessHistory, requestTrialOnce } from "./access-history.js";
 import { addPackageDuration, calculateRemainingDays } from "./time.js";
+import { ReferralStore } from "./referral-store.js";
+
+const referralStore = new ReferralStore(pool);
 
 type UserContextRow = QueryResultRow & {
   id: string;
@@ -61,15 +66,13 @@ type UserContextRow = QueryResultRow & {
   ends_at: string | Date | null;
   subscription_end_reason: string | null;
   trial_provision_status?: "queued" | "reconcile" | "verified" | "completed" | "review" | null;
-  has_used_trial?: boolean | null;
-  has_expired_subscription?: boolean | null;
 };
 
 type DeviceSessionRow = QueryResultRow & {
   id: string;
   device_name: string | null;
   platform: string | null;
-  expires_at: string;
+  expires_at: string | null;
   last_seen_at: string;
   revoked_at: string | null;
   created_at: string;
@@ -210,7 +213,7 @@ const LIVE_PLAYBACK_DIAGNOSTICS_TABLE_SQL = `
     snapshot_version integer not null,
     diagnostics_session_id uuid,
     event text not null,
-    delivery_mode text check (delivery_mode in ('hls_proxy', 'hls_transmuxed', 'hls_transcoded', 'file_proxy')),
+    delivery_mode text check (delivery_mode in ('hls_proxy', 'hls_transmuxed', 'hls_transcoded', 'file_proxy', 'direct_provider')),
     source_transport text check (source_transport in ('ts', 'hls', 'mp4', 'mkv', 'avi', 'unknown')),
     player_engine text,
     uptime_ms integer,
@@ -286,6 +289,24 @@ const NATIVE_PLAYBACK_DIAGNOSTIC_COLUMNS_SQL = `
   add column if not exists decoder_mode text,
   add column if not exists open_error_code text,
   add column if not exists native_state text;
+
+  do $migration$
+  begin
+    if not exists (
+      select 1 from pg_constraint
+      where conrelid = 'public.live_playback_diagnostics'::regclass
+        and conname = 'live_playback_diagnostics_delivery_mode_check'
+        and pg_get_constraintdef(oid) like '%direct_provider%'
+    ) then
+      alter table public.live_playback_diagnostics
+        drop constraint if exists live_playback_diagnostics_delivery_mode_check;
+      alter table public.live_playback_diagnostics
+        add constraint live_playback_diagnostics_delivery_mode_check
+        check (delivery_mode in ('hls_proxy', 'hls_transmuxed', 'hls_transcoded', 'file_proxy', 'direct_provider'))
+        not valid;
+    end if;
+  end
+  $migration$;
 `;
 
 let ensuredNativePlaybackSchemaPromise: Promise<void> | null = null;
@@ -584,8 +605,6 @@ function mapUserSummary(row: UserContextRow): UserSummary {
     : row.trial_provision_status === "queued" || row.trial_provision_status === "reconcile" || row.trial_provision_status === "verified"
       ? "pending"
       : null;
-  const hasUsedTrial = Boolean(row.has_used_trial || (hasAssignedLink && !hasActiveSubscription));
-  const hasExpiredSubscription = Boolean(row.has_expired_subscription);
 
   return {
     id: row.id,
@@ -597,8 +616,6 @@ function mapUserSummary(row: UserContextRow): UserSummary {
     hasAssignedLink,
     hasActiveSubscription,
     trialProvisionStatus,
-    hasUsedTrial,
-    hasExpiredSubscription,
     activePackage:
       row.package_id && row.package_title && row.package_duration && endsAt
         ? {
@@ -613,7 +630,7 @@ function mapUserSummary(row: UserContextRow): UserSummary {
       !hasAssignedLink && row.status !== "blocked" && trialProvisionStatus === null
         ? {
             required: true,
-            actions: hasUsedTrial ? ["buy-package", "contact"] : ["free-trial", "contact", "buy-package"]
+            actions: ["free-trial", "contact", "buy-package"]
           }
         : null
   };
@@ -731,10 +748,20 @@ export async function createUser(
   codeSuffix: string | null,
   kryptoniteCode: string | null,
   registrationInstallationId: string | null,
+  referralCode: string | null,
   requestIp: string
 ) {
   await ensureUserInstallationGuardSchema();
-  return withTransaction(async (client) => {
+  if (referralCode) await referralStore.migrate();
+  return withTransaction(client => createUserInTransaction(client,codeLookup,codeHash,codeSuffix,kryptoniteCode,registrationInstallationId,requestIp,referralCode ?? undefined));
+}
+
+export async function preparePhoneRegistration(){
+  await ensureUserInstallationGuardSchema();
+  await referralStore.migrate();
+}
+
+export async function createUserInTransaction(client:PoolClient,codeLookup:string,codeHash:string,codeSuffix:string|null,kryptoniteCode:string|null,registrationInstallationId:string|null,requestIp:string,referralCode?:string){
     await claimRegistrationSlots(client, {
       installationId: registrationInstallationId,
       requestIp,
@@ -766,13 +793,23 @@ export async function createUser(
     );
     const userId = result.rows[0]?.id;
     if (!userId) throw new Error("User insert did not return an ID.");
+    if (referralCode && !await referralStore.attribute(userId, referralCode, client)) {
+      throw new Error('invalid_referral_code');
+    }
     await client.query(
       `insert into public.auto_trial_provision_jobs (user_id, provider_username, provider_password, status)
        values ($1, $2, $3, 'queued')`,
       [userId, providerUsername, providerPassword]
     );
+    await client.query(
+      "insert into public.welcome_offer_accounts(user_id,campaign) values($1,'welcome-monthly-50-v1')",
+      [userId]
+    );
     return userId;
-  });
+}
+
+export async function getReferralSummary(userId: string) {
+  return referralStore.summary(userId);
 }
 
 export async function storePlainKryptoniteCode(userId: string, kryptoniteCode: string) {
@@ -798,7 +835,8 @@ export async function createDeviceSession(
   userId: string,
   refreshTokenHash: string,
   deviceName?: string,
-  platform?: string
+  platform?: string,
+  authMethod: 'account_code'|'phone_otp' = 'account_code'
 ) {
   const result = await query<{ id: string }>(
     `
@@ -807,11 +845,12 @@ export async function createDeviceSession(
         device_name,
         platform,
         refresh_token_hash,
-        expires_at
-      ) values ($1, $2, $3, $4, timezone('utc', now()) + interval '10 years')
+        expires_at,
+        auth_method
+      ) values ($1, $2, $3, $4, null, $5)
       returning id
     `,
-    [userId, deviceName ?? null, platform ?? null, refreshTokenHash]
+    [userId, deviceName ?? null, platform ?? null, refreshTokenHash,authMethod]
   );
 
   return result.rows[0]?.id;
@@ -822,9 +861,9 @@ export async function getSessionById(sessionId: string) {
     id: string;
     user_id: string;
     refresh_token_hash: string;
-    auth_method: "account_code" | "device_link";
+    auth_method: "account_code" | "device_link" | "phone_otp";
     family_id: string | null;
-    expires_at: string;
+    expires_at: string | null;
     device_name: string | null;
     platform: string | null;
     revoked_at: string | null;
@@ -841,10 +880,8 @@ export async function getSessionById(sessionId: string) {
 }
 
 export async function revokeSession(sessionId: string) {
-  await query(
-    "update public.device_sessions set revoked_at = timezone('utc', now()) where id = $1",
-    [sessionId]
-  );
+  const session=await getSessionById(sessionId);
+  if(session)await revokeDeviceSessionForUser(session.user_id,session.id);
 }
 
 async function getUserContextRow(userId: string, includeDeleted = false): Promise<UserContextRow> {
@@ -861,6 +898,8 @@ async function getUserContextRow(userId: string, includeDeleted = false): Promis
         u.deleted_at,
         settings.shared_source_status as source_status,
         settings.shared_source_snapshot_version as current_snapshot_version,
+        sub.end_reason as subscription_end_reason,
+        trial_job.status as trial_provision_status,
         settings.shared_source_base_url as source_base_url,
         settings.shared_source_playlist_path as source_playlist_path,
         settings.shared_source_playlist_suffix as source_playlist_suffix,
@@ -876,28 +915,7 @@ async function getUserContextRow(userId: string, includeDeleted = false): Promis
         sub.package_id,
         sub.package_title,
         sub.package_duration,
-        sub.ends_at,
-        sub.end_reason as subscription_end_reason,
-        trial_job.status as trial_provision_status,
-        coalesce(
-          exists(
-            select 1 from public.subscriptions s_tr
-            where s_tr.user_id = u.id
-              and (s_tr.end_reason = 'trial-24h' or s_tr.end_reason like '%trial%')
-          ) or exists(
-            select 1 from public.trial_requests tr
-            where tr.user_id = u.id
-          ),
-          false
-        ) as has_used_trial,
-        coalesce(
-          exists(
-            select 1 from public.subscriptions s_exp
-            where s_exp.user_id = u.id
-              and s_exp.ends_at <= timezone('utc', now())
-          ),
-          false
-        ) as has_expired_subscription
+        sub.ends_at
       from public.users u
       left join public.auto_trial_provision_jobs trial_job on trial_job.user_id = u.id
       left join public.app_settings settings on settings.id = true
@@ -944,7 +962,6 @@ export async function getUserContext(userId: string): Promise<UserContext> {
     hasSnapshot &&
     (row.source_status === "ready" ||
       row.source_status === "syncing" ||
-      row.source_status === "pending" ||
       row.source_status === "error");
   const playbackBaseUrl = row.source_base_url ?? null;
 
@@ -997,7 +1014,9 @@ export async function getUserStatus(userId: string) {
 
 export async function touchDeviceSession(sessionId: string) {
   await query(
-    "update public.device_sessions set last_seen_at = timezone('utc', now()), expires_at = timezone('utc', now()) + interval '10 years' where id = $1",
+    `with touched as(update public.device_sessions set last_seen_at=clock_timestamp() where id=$1 and revoked_at is null returning id)
+     update public.session_refresh_rotations r set adopted_at=clock_timestamp(),expires_at=clock_timestamp()+interval '60 seconds'
+     from touched t where r.successor_id=t.id and r.adopted_at is null and r.response_ciphertext is not null and r.revoked_at is null`,
     [sessionId]
   );
 }
@@ -2566,23 +2585,11 @@ export async function createPaymentRequest(
 }
 
 export async function createTrialRequest(userId: string, note?: string) {
-  const insertResult = await query<{ id: string; created_at: string }>(
-    "insert into public.trial_requests (user_id, note) values ($1, $2) returning id, created_at",
-    [userId, note ?? null]
-  );
-  const userRow = await query<{ kryptonite_code: string | null; code_suffix: string | null }>(
-    "select kryptonite_code, code_suffix from public.users where id = $1",
-    [userId]
-  );
-  const userCode = userRow.rows[0]?.kryptonite_code || userRow.rows[0]?.code_suffix || null;
+  await requestTrialOnce(pool, userId, note);
+}
 
-  return {
-    id: insertResult.rows[0]?.id,
-    createdAt: insertResult.rows[0]?.created_at,
-    userId,
-    userCode,
-    note: note ?? null
-  };
+export async function getAccessHistory(userId: string) {
+  return readAccessHistory(pool, userId);
 }
 
 export async function listAdminUsers(
@@ -2638,26 +2645,9 @@ export async function listAdminUsers(
           sub.package_duration,
           sub.ends_at,
           sub.end_reason as subscription_end_reason,
-          coalesce(
-            exists(
-              select 1 from public.subscriptions s_tr
-              where s_tr.user_id = u.id
-                and (s_tr.end_reason = 'trial-24h' or s_tr.end_reason like '%trial%')
-            ) or exists(
-              select 1 from public.trial_requests tr
-              where tr.user_id = u.id
-            ),
-            false
-          ) as has_used_trial,
-          coalesce(
-            exists(
-              select 1 from public.subscriptions s_exp
-              where s_exp.user_id = u.id
-                and s_exp.ends_at <= timezone('utc', now())
-            ),
-            false
-          ) as has_expired_subscription
+          trial_job.status as trial_provision_status
         from public.users u
+        left join public.auto_trial_provision_jobs trial_job on trial_job.user_id = u.id
         left join public.app_settings settings on settings.id = true
         left join public.user_iptv_credentials cred on cred.user_id = u.id
         left join lateral (
@@ -2719,20 +2709,7 @@ export async function revokeDeviceSessionForUser(userId: string, sessionId: stri
     await new DeviceLoginStore(pool).revokeLinkedSession(userId, sessionId, session.family_id);
     return;
   }
-  const result = await query(
-    `
-      update public.device_sessions
-      set revoked_at = timezone('utc', now())
-      where id = $1
-        and user_id = $2
-        and revoked_at is null
-    `,
-    [sessionId, userId]
-  );
-
-  if (result.rowCount === 0) {
-    throw new Error("Session not found");
-  }
+  await new RememberedSessionStore(pool,new RememberedRefreshCrypto(env.APP_JWT_SECRET)).revoke(userId,sessionId);
 }
 
 export async function listAdminAuditLogsByEntity(entityId: string, limit = 20) {
@@ -2827,17 +2804,25 @@ export async function getAdminDashboard() {
 
 export async function getAdminUserDetail(userId: string) {
   const row = await getUserContextRow(userId, true);
-  const [deviceSessions, paymentRequests, trialRequests, subscriptions, auditLogs] =
+  const [deviceSessions, paymentRequests, trialRequests, subscriptions, auditLogs, registration] =
     await Promise.all([
       listDeviceSessionsForUser(userId),
       listPaymentRequests(userId),
       listTrialRequests(userId),
       listSubscriptions(userId),
-      listAdminAuditLogsByEntity(userId)
+      listAdminAuditLogsByEntity(userId),
+      query<{registration_method:'phone_otp'|'account_code'|null;registration_platform:'web'|'android_tv'|'android_phone'|'macos'|'windows'|null}>(
+        "select registration_method,registration_platform from public.users where id=$1", [userId]
+      )
     ]);
 
   return {
     summary: mapAdminUserListItem(row),
+    registration: {
+      method: registration.rows[0]?.registration_method ?? null,
+      platform: registration.rows[0]?.registration_platform ?? null,
+      createdAt: row.created_at
+    },
     currentSourceStatus: row.source_status,
     currentSourceUrl: getCurrentSourceUrl(row),
     iptvUsername: row.iptv_username ?? null,
@@ -2988,7 +2973,7 @@ export async function assignM3USource(
   },
   adminId: string
 ) {
-  return withTransaction(async (client) => {
+  await withTransaction(async (client) => {
     await client.query(
       "update public.users set status = 'active' where id = $1 and status <> 'blocked' and deleted_at is null",
       [userId]
@@ -3126,6 +3111,11 @@ export async function assignM3USource(
       [adminId, userId, username, Boolean(input.sourceUrl)]
     );
   });
+  try {
+    await referralStore.applyPendingRewards(userId);
+  } catch {
+    console.warn('[referrals] reward activation deferred after source assignment');
+  }
 }
 
 export async function activateSubscription(userId: string, packageSlug: string, adminId: string) {
@@ -3333,7 +3323,7 @@ export async function listMyPaymentRequests(userId: string) {
 }
 
 export async function approvePaymentRequest(paymentRequestId: string, adminId: string) {
-  return withTransaction(async (client) => {
+  const approvedUserId = await withTransaction(async (client) => {
     const paymentRequest = await client.query<{
       user_id: string;
       slug: string;
@@ -3406,7 +3396,16 @@ export async function approvePaymentRequest(paymentRequestId: string, adminId: s
       `,
       [adminId, paymentRequestId, row.slug]
     );
+    return row.user_id;
   });
+  try {
+    await referralStore.qualifyApprovedPayment(approvedUserId, paymentRequestId);
+    await referralStore.applyPendingRewardsForInvitee(approvedUserId);
+  } catch {
+    // Payment approval must not fail because the optional referral ledger is temporarily unavailable.
+    // The inviter's next summary request reconciles approved purchases idempotently.
+    console.warn('[referrals] payment qualification deferred');
+  }
 }
 
 export async function rejectPaymentRequest(paymentRequestId: string, adminId: string, note?: string) {
@@ -3440,15 +3439,12 @@ export async function listTrialRequests(userId?: string) {
     created_at: string;
     user_id: string;
     note: string | null;
-    user_code: string | null;
   }>(
     `
-      select tr.id, tr.status, tr.created_at, tr.user_id, tr.note,
-             coalesce(u.kryptonite_code, u.code_suffix, '') as user_code
-      from public.trial_requests tr
-      left join public.users u on u.id = tr.user_id
-      where ($1::uuid is null or tr.user_id = $1)
-      order by tr.created_at desc
+      select id, status, created_at, user_id, note
+      from public.trial_requests
+      where ($1::uuid is null or user_id = $1)
+      order by created_at desc
     `,
     [userId ?? null]
   );
@@ -3458,8 +3454,7 @@ export async function listTrialRequests(userId?: string) {
     status: row.status,
     createdAt: row.created_at,
     userId: row.user_id,
-    note: row.note,
-    userCode: row.user_code || null
+    note: row.note
   }));
 }
 
@@ -3999,13 +3994,9 @@ export async function updateAppSettings(
           shared_source_reference_password = excluded.shared_source_reference_password,
           shared_source_status = case
             when excluded.shared_source_base_url is null then public.app_settings.shared_source_status
-            when excluded.shared_source_base_url is not distinct from public.app_settings.shared_source_base_url then public.app_settings.shared_source_status
             else 'pending'
           end,
-          shared_source_last_error = case
-            when excluded.shared_source_base_url is not distinct from public.app_settings.shared_source_base_url then public.app_settings.shared_source_last_error
-            else null
-          end
+          shared_source_last_error = null
       `,
       [
         input.supportWhatsappUrl,

@@ -33,6 +33,8 @@ export const phoneAuthAccounts={
       if(!code)throw new PhoneAuthError(503,'temporarily_unavailable');
       try{userId=await createUserInTransaction(client,createCodeLookup(code),await hashSecret(code),code.slice(-4),code,context.installationId,context.requestIp,context.referralCode);}
       catch(error){if(error instanceof RegistrationInstallationLimitError)throw new PhoneAuthError(409,'installation_limit');if(error instanceof AutoTrialRegistrationRateLimitError)throw new PhoneAuthError(429,'registration_ip_limit');if(error instanceof Error&&error.message==='invalid_referral_code')throw new PhoneAuthError(400,'invalid_referral_code');throw error;}
+      const registration=await client.query("update public.users set registration_method='phone_otp',registration_platform=$2 where id=$1 and registration_method is null and registration_platform is null returning id",[userId,context.platform]);
+      if(registration.rowCount!==1)throw new Error('registration_provenance_conflict');
     }
     if(!userId)throw new PhoneAuthError(503,'temporarily_unavailable');
     const users=await client.query(`select id,code_suffix from public.users where id=$1 and status<>'blocked' and deleted_at is null for update`,[userId]);

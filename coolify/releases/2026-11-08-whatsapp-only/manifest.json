@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "sourceImageIds": {
+    "api": "sha256:44ff3909282231848200aab83adad8ce8e9ad2da76ed28e16deb417efe609442",
+    "ops-web": "sha256:6e444af5198da9a8bba9d9925b3882d44d5510ba25de4ddefb7cd7d41b2be01f"
+  },
+  "webFiles": [
+    {
+      "path": "apps/ops-web/app/giris-onizleme/phone-login-preview.tsx",
+      "beforeSha256": "3b3eeecad38851accaa185515ba2ce8b0ec2e6ba4bc353f8773817d2bcf3f088",
+      "sha256": "bca03ce931cae946c2db81a92fe208e892ec07255e67ac78993ce6ec8041e41d",
+      "bytes": 18887
+    },
+    {
+      "path": "apps/ops-web/app/giris-onizleme/account-code-client.ts",
+      "beforeSha256": "73ff127168ca842e3db18c4de274a6cc5c69f8ff3582d094a5d5399a1f11e343",
+      "sha256": "42eb13d3a56ef3a4406079af9ce8ab9593806969570fba5ce5041f42feb12562",
+      "bytes": 2267
+    }
+  ],
+  "migration": {
+    "path": "supabase/migrations/202611080001_registration_provenance.sql",
+    "sha256": "0ec2f07fc5630dbeee0eb543abc7ae340cebf445101e3eb7bee24880f9f9fd4c"
+  }
+}

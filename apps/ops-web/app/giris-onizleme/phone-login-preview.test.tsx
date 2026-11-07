@@ -4,7 +4,7 @@ import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import PhoneLoginPreview from "./phone-login-preview";
 import type { PhoneAuthClient, PhoneIntent } from "./phone-auth-client";
-import type { AccountCodeClient, AnonymousRegistrationClient } from "./account-code-client";
+import type { AccountCodeClient } from "./account-code-client";
 
 const state = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn(), save: vi.fn(), analytics: vi.fn(), session: null as unknown }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: state.replace, push: state.push }) }));
@@ -23,7 +23,7 @@ function findButton(text: string) { const found = Array.from(container.querySele
 function props(element: Element) { const key = Object.keys(element).find(key => key.startsWith("__reactProps")); if (!key) throw new Error("React input props absent"); return (element as any)[key]; }
 async function type(id: string, value: string) { await settle(() => { const element = container.querySelector<HTMLInputElement>(id)!; element.value = value; element.setSelectionRange?.(value.length, value.length); props(element).onChange({ target: element, currentTarget: element }); }); }
 async function submit() { await settle(() => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }))); }
-async function render(transport: PhoneAuthClient, codeClient?: AccountCodeClient, options: { initialIntent?: PhoneIntent; onAuthenticated?: () => void; registrationClient?: AnonymousRegistrationClient } = {}) { await settle(() => root.render(<PhoneLoginPreview client={transport} codeClient={codeClient} {...options}/>)); }
+async function render(transport: PhoneAuthClient, codeClient?: AccountCodeClient, options: { initialIntent?: PhoneIntent; onAuthenticated?: () => void } = {}) { await settle(() => root.render(<PhoneLoginPreview client={transport} codeClient={codeClient} {...options}/>)); }
 beforeEach(() => {
   const dom = parseHTML('<html><body><div id="root"></div></body></html>');
   vi.stubGlobal("window", dom.window); vi.stubGlobal("document", dom.window.document); vi.stubGlobal("Event", dom.window.Event); vi.stubGlobal("React", React); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -46,70 +46,37 @@ it("does not claim OTP was sent or enable sending when the channel is unavailabl
   await submit(); expect(transport.request).not.toHaveBeenCalled(); expect(container.querySelector("#phone-otp")).toBeNull();
 });
 
-it("keeps registration available inline only when the server explicitly disables phone authentication", async () => {
+it("never offers code signup or creates a trial when WhatsApp registration is explicitly disabled", async () => {
   const transport = client(); transport.status.mockResolvedValue({ enabled: false, deliveryChannel: "whatsapp" });
-  const registration = vi.fn().mockResolvedValue({ ...paidSession, kryptoniteCode: "AB12CD34EF56GH78" });
-  Object.defineProperty(window, "location", { configurable: true, value: { search: "?ref=ABCDEFGHJKLM" } });
-  await render(transport, undefined, { initialIntent: "register", registrationClient: registration });
-  expect(container.querySelector("#phone-number")).toBeNull();
-  expect(findButton("Hesap numarası oluştur").disabled).toBe(false);
-  await submit();
-  expect(registration).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ platform: "web", installationId: "installation-fixture", referralCode: "ABCDEFGHJKLM" }), expect.any(AbortSignal));
-  expect(transport.request).not.toHaveBeenCalled(); expect(state.save).not.toHaveBeenCalled();
-  expect(container.querySelector<HTMLInputElement>("#issued-account-code")?.value).toBe("AB12CD34EF56GH78");
-  expect(findButton("Devam et").disabled).toBe(true);
-  await settle(() => props(container.querySelector("#account-code-saved")!).onChange({ target: { checked: true } }));
-  await submit(); expect(state.save).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ kryptoniteCode: "AB12CD34EF56GH78" }));
-  expect(state.replace).toHaveBeenCalledWith("/");
-  expect(state.analytics).toHaveBeenCalledWith("sign_up", { method: "account_code" });
+  await render(transport, undefined, { initialIntent: "register" });
+  expect(container.textContent).not.toContain("Hesap numarası oluştur");
+  expect(container.querySelector("#issued-account-code")).toBeNull();
+  expect(container.textContent).toContain("WhatsApp doğrulaması şu an kullanılamıyor. Biraz sonra tekrar dene.");
+  await type("#phone-number", "5551231234"); expect(findButton("WhatsApp ile hesap oluştur").disabled).toBe(true);
+  await submit(); expect(transport.request).not.toHaveBeenCalled(); expect(transport.verify).not.toHaveBeenCalled();
+  expect(state.save).not.toHaveBeenCalled(); expect(state.analytics).not.toHaveBeenCalled();
 });
 
-it.each([new Error("network failed"), Object.assign(new Error("offline"), { status: 503 })])("does not offer anonymous registration during a phone status outage", async cause => {
-  const transport = client(); transport.status.mockRejectedValue(cause); const registration = vi.fn();
-  await render(transport, undefined, { initialIntent: "register", registrationClient: registration });
+it.each([new Error("network failed"), Object.assign(new Error("offline"), { status: 503 })])("does not create a trial during a WhatsApp status outage", async cause => {
+  const transport = client(); transport.status.mockRejectedValue(cause);
+  await render(transport, undefined, { initialIntent: "register" });
   expect(container.textContent).not.toContain("Hesap numarası oluştur");
+  expect(container.textContent).toContain("WhatsApp doğrulaması şu an kullanılamıyor. Biraz sonra tekrar dene.");
+  await type("#phone-number", "5551231234");
   expect(findButton("WhatsApp ile hesap oluştur").disabled).toBe(true); await submit();
-  expect(registration).not.toHaveBeenCalled();
+  expect(transport.request).not.toHaveBeenCalled(); expect(transport.verify).not.toHaveBeenCalled(); expect(state.save).not.toHaveBeenCalled();
 });
 
-it("prefers phone registration while enabled and never creates another account for a signed-in user", async () => {
-  const registration = vi.fn(); await render(client(), undefined, { initialIntent: "register", registrationClient: registration });
-  expect(container.textContent).not.toContain("Hesap numarası oluştur");
-  await settle(() => root.unmount()); root = createRoot(container); state.session = paidSession;
-  const disabled = client(); disabled.status.mockResolvedValue({ enabled: false, deliveryChannel: "whatsapp" });
-  await render(disabled, undefined, { initialIntent: "register", registrationClient: registration });
-  expect(container.textContent).not.toContain("Hesap numarası oluştur"); expect(registration).not.toHaveBeenCalled();
-});
-
-it("submits anonymous registration once and ignores a cancelled response after switching to login", async () => {
+it("preserves existing-code login when WhatsApp registration is disabled without making a new account", async () => {
   const transport = client(); transport.status.mockResolvedValue({ enabled: false, deliveryChannel: "whatsapp" });
-  let resolve!: (value: Awaited<ReturnType<AnonymousRegistrationClient>>) => void;
-  const registration = vi.fn<AnonymousRegistrationClient>((_input, _signal) => new Promise(value => { resolve = value; }));
-  await render(transport, undefined, { initialIntent: "register", registrationClient: registration });
-  await submit(); await submit(); expect(registration).toHaveBeenCalledTimes(1);
-  await settle(() => findButton("Giriş yap").click());
-  await settle(() => resolve({ ...paidSession, kryptoniteCode: "AB12CD34EF56GH78" }));
-  expect(registration.mock.calls[0][1].aborted).toBe(true);
-  expect(container.querySelector("#issued-account-code")).toBeNull(); expect(state.save).not.toHaveBeenCalled();
-});
-
-it("does not replace an account opened elsewhere while the new account code awaits acknowledgement", async () => {
-  const transport = client(); transport.status.mockResolvedValue({ enabled: false, deliveryChannel: "whatsapp" });
-  const registration = vi.fn().mockResolvedValue({ ...paidSession, kryptoniteCode: "AB12CD34EF56GH78" });
-  await render(transport, undefined, { initialIntent: "register", registrationClient: registration }); await submit();
-  localStorage.setItem("flixify-public-session", JSON.stringify({ accessToken: "another-session", user: { id: "another-account" } }));
-  await settle(() => props(container.querySelector("#account-code-saved")!).onChange({ target: { checked: true } }));
-  await submit(); expect(state.save).not.toHaveBeenCalled(); expect(state.replace).not.toHaveBeenCalled();
-  expect(container.textContent).toContain("Başka bir oturum açıldı.");
-});
-
-it("returns an acknowledged anonymous account to the pending TV approval without another registration", async () => {
-  const transport = client(); transport.status.mockResolvedValue({ enabled: false, deliveryChannel: "whatsapp" });
-  const registration = vi.fn().mockResolvedValue({ ...paidSession, kryptoniteCode: "AB12CD34EF56GH78" });
-  Object.defineProperty(window, "location", { configurable: true, value: { search: "?device_code=ABCD-EFGH" } });
-  await render(transport, undefined, { initialIntent: "register", registrationClient: registration }); await submit();
-  await settle(() => props(container.querySelector("#account-code-saved")!).onChange({ target: { checked: true } })); await submit();
-  expect(state.replace).toHaveBeenCalledExactlyOnceWith("/cihaz?code=ABCD-EFGH"); expect(registration).toHaveBeenCalledTimes(1);
+  const codeClient = { login: vi.fn().mockResolvedValue(paidSession) };
+  await render(transport, codeClient, { initialIntent: "register" });
+  await settle(() => findButton("Kullanıcı koduyla giriş").click());
+  await type("#login-account-code", "AB12CD34EF56GH78"); await submit();
+  expect(codeClient.login).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ code: "AB12CD34EF56GH78", installationId: "installation-fixture" }), expect.any(AbortSignal));
+  expect(state.save).toHaveBeenCalledExactlyOnceWith(paidSession); expect(state.replace).toHaveBeenCalledWith("/");
+  expect(transport.request).not.toHaveBeenCalled(); expect(transport.verify).not.toHaveBeenCalled();
+  expect(state.analytics).toHaveBeenCalledExactlyOnceWith("login", { method: "account_code" });
 });
 
 it("labels the review wall as design examples without an extra visible motion control", async () => {

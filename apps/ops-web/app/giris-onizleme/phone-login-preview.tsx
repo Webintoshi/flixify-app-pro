@@ -14,7 +14,7 @@ import { trackAnalytics } from "../platform/analytics";
 import { createPhoneAuthClient, hasTurkishTrunkPrefix, normalizePhone, phoneAuthError, type PhoneAuthClient, type PhoneChallenge, type PhoneIntent } from "./phone-auth-client";
 import { PhoneCountrySelect } from "./phone-country-select";
 import { SegmentedOtpInput } from "./segmented-otp-input";
-import { accountCodeError, createAccountCodeClient, createAnonymousRegistrationClient, normalizeAccountCode, registrationError, type AccountCodeClient, type AnonymousRegistrationClient, type AnonymousRegistrationSession } from "./account-code-client";
+import { accountCodeError, createAccountCodeClient, normalizeAccountCode, type AccountCodeClient } from "./account-code-client";
 import s from "./phone-login-cinematic.module.css";
 
 const exampleReviews = [
@@ -45,7 +45,6 @@ const ReviewBackdrop = memo(function ReviewBackdrop() {
 
 const defaultClient = createPhoneAuthClient();
 const defaultCodeClient = createAccountCodeClient();
-const defaultRegistrationClient = createAnonymousRegistrationClient();
 type AnchoredChallenge = PhoneChallenge & { receivedAt: number };
 const duration = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
@@ -67,13 +66,12 @@ function QrIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M3 3h6v6H3zM15 3h6v6h-6zM3 15h6v6H3zM15 15h2v2h-2zM21 14v3h-2M14 20h3v1M20 20h1v1"/></svg>;
 }
 
-type PhoneLoginProps = { client?: PhoneAuthClient; codeClient?: AccountCodeClient; registrationClient?: AnonymousRegistrationClient; initialIntent?: PhoneIntent; onAuthenticated?: () => void };
+type PhoneLoginProps = { client?: PhoneAuthClient; codeClient?: AccountCodeClient; initialIntent?: PhoneIntent; onAuthenticated?: () => void };
 
-export default function PhoneLoginPreview({ client = defaultClient, codeClient = defaultCodeClient, registrationClient = defaultRegistrationClient, initialIntent = "login", onAuthenticated }: PhoneLoginProps) {
+export default function PhoneLoginPreview({ client = defaultClient, codeClient = defaultCodeClient, initialIntent = "login", onAuthenticated }: PhoneLoginProps) {
   const router = useRouter(), { saveSession, session } = usePlatform();
   const [intent, setIntent] = useState<PhoneIntent>(initialIntent), [mode, setMode] = useState<"phone" | "account_code" | "qr">("phone");
   const [accountCode, setAccountCode] = useState("");
-  const [issuedAccount, setIssuedAccount] = useState<{ session: AnonymousRegistrationSession; priorSession: string | null } | null>(null), [codeSaved, setCodeSaved] = useState(false);
   const [phone, setPhone] = useState(""), [country, setCountry] = useState<CountryCode>("TR"), [code, setCode] = useState("");
   const [phoneInputError, setPhoneInputError] = useState("");
   const [bindExisting, setBindExisting] = useState(false), [existingCode, setExistingCode] = useState("");
@@ -107,15 +105,14 @@ export default function PhoneLoginPreview({ client = defaultClient, codeClient =
   const resend = challenge ? Math.max(0, Math.ceil(challenge.resendAfterSeconds - elapsed)) : 0;
   const expired = Boolean(challenge && expires === 0);
   const trustedBinding = intent === "register" && Boolean(session);
-  const anonymousRegistration = availability === "disabled" && intent === "register" && mode === "phone" && !session && !bindExisting;
   const normalizedPhone = normalizePhone(phone, country);
   const ready = Boolean(availability === "ready" && normalizedPhone && !phoneInputError && (!bindExisting || existingCode.length === 16));
   function chooseIntent(next: PhoneIntent) {
-    generation.current++; request.current?.abort(); pendingCode.current = null; pendingPhone.current = null; setBusy(false); setIntent(next); setMode("phone"); setChallenge(null); setCode(""); setError(""); setPhoneInputError(""); setBindExisting(false); setExistingCode(""); setAccountCode(""); setIssuedAccount(null); setCodeSaved(false);
+    generation.current++; request.current?.abort(); pendingCode.current = null; pendingPhone.current = null; setBusy(false); setIntent(next); setMode("phone"); setChallenge(null); setCode(""); setError(""); setPhoneInputError(""); setBindExisting(false); setExistingCode(""); setAccountCode("");
   }
 
   function chooseMode(next: "phone" | "account_code" | "qr") {
-    generation.current++; request.current?.abort(); pendingCode.current = null; pendingPhone.current = null; setBusy(false); setIntent("login"); setMode(next); setChallenge(null); setCode(""); setError(""); setPhoneInputError(""); setBindExisting(false); setExistingCode(""); setAccountCode(""); setIssuedAccount(null); setCodeSaved(false);
+    generation.current++; request.current?.abort(); pendingCode.current = null; pendingPhone.current = null; setBusy(false); setIntent("login"); setMode(next); setChallenge(null); setCode(""); setError(""); setPhoneInputError(""); setBindExisting(false); setExistingCode(""); setAccountCode("");
   }
 
   function changePhone(value: string, selectedCountry = country) {
@@ -180,24 +177,6 @@ export default function PhoneLoginPreview({ client = defaultClient, codeClient =
     finally { if (pendingCode.current === serial) pendingCode.current = null; if (serial === generation.current) setBusy(false); }
   }
 
-  async function registerByCode(event: FormEvent) {
-    event.preventDefault(); if (busy || pendingCode.current !== null || !anonymousRegistration || issuedAccount) return;
-    const serial = ++generation.current, controller = new AbortController(); request.current?.abort(); request.current = controller; pendingCode.current = serial; setBusy(true); setError("");
-    try {
-      const priorSession = localStorage.getItem("flixify-public-session");
-      const response = await registrationClient({ deviceName: "Flixify Public Web", platform: "web", installationId: installationId(), ...(referralCode ? { referralCode } : {}) }, controller.signal);
-      if (controller.signal.aborted || serial !== generation.current || localStorage.getItem("flixify-public-session") !== priorSession) return;
-      setIssuedAccount({ session: response, priorSession }); setCodeSaved(false); trackAnalytics("sign_up", { method: "account_code" });
-    } catch (cause) { if (!controller.signal.aborted && serial === generation.current) setError(registrationError(cause)); }
-    finally { if (pendingCode.current === serial) pendingCode.current = null; if (serial === generation.current) setBusy(false); }
-  }
-
-  function useCreatedAccount(event: FormEvent) {
-    event.preventDefault(); if (!issuedAccount || !codeSaved || !anonymousRegistration) return;
-    if (localStorage.getItem("flixify-public-session") !== issuedAccount.priorSession) { setError("Başka bir oturum açıldı. Mevcut hesabınla devam edebilirsin."); return; }
-    saveSession(issuedAccount.session); trackAnalytics("login", { method: "account_code" }); finishAuthentication();
-  }
-
   return <main className={s.scene}>
     <ReviewBackdrop/>
     <header className={s.topbar}><Link href="/" aria-label="Flixify ana sayfa"><Image src="/logo/flixify-logo.png" alt="Flixify Pro" width={156} height={41} priority/></Link></header>
@@ -205,17 +184,8 @@ export default function PhoneLoginPreview({ client = defaultClient, codeClient =
       <div className={s.tabs} role="group" aria-label="Giriş veya kayıt seçimi"><button type="button" aria-pressed={intent === "login" && mode !== "qr"} onClick={() => chooseIntent("login")}>Giriş yap</button><button type="button" aria-pressed={intent === "register" && mode !== "qr"} onClick={() => chooseIntent("register")}>Hesap oluştur</button></div>
       {mode === "qr" ? <div className={s.qrPane}><button type="button" className={s.backButton} onClick={() => chooseMode("phone")}>Telefonla girişe dön</button><DeviceLoginQr save={saveSession} onSuccess={finishAuthentication} onManual={() => chooseMode("account_code")}/></div> : <>
         {(challenge || intent === "register") && <div className={s.intro}><h1>{challenge ? "Telefonunu doğrula" : trustedBinding || bindExisting ? "Telefonunu bağla" : "Hesap oluştur"}</h1>{challenge && <p><strong>{challenge.maskedPhone}</strong></p>}</div>}
-        {!challenge && !issuedAccount && returnReady && !deviceReturn && <div className={s.fieldTools}><button type="button" className={s.qrButton} disabled={busy} onClick={() => chooseMode("qr")}><QrIcon/>QR ile giriş</button></div>}
-        {anonymousRegistration ? issuedAccount ? <form onSubmit={useCreatedAccount} className={s.form}>
-          <label htmlFor="issued-account-code">Kullanıcı kodun</label><input id="issued-account-code" className={s.codeField} readOnly value={issuedAccount.session.kryptoniteCode} onFocus={event => event.target.select()}/>
-          <div className={s.existingAccount}><label><input id="account-code-saved" type="checkbox" checked={codeSaved} onChange={event => setCodeSaved(event.target.checked)}/><span>Kullanıcı kodumu kaydettim.</span></label></div>
-          {error && <p className={s.error} role="alert">{error}</p>}
-          <button className={s.primary} type="submit" disabled={!codeSaved}><span>Devam et</span><ArrowIcon/></button>
-        </form> : <form onSubmit={registerByCode} className={s.form}>
-          {error && <p className={s.error} role="alert">{error}</p>}
-          <button className={s.primary} type="submit" disabled={busy}><span>{busy ? "Hesap oluşturuluyor…" : "Hesap numarası oluştur"}</span><ArrowIcon/></button>
-          <p className={s.accountRule}>Ücretsiz deneme: yalnız ilk üyelikte 3 saat.</p>
-        </form> : mode === "account_code" ? <form onSubmit={loginByCode} className={s.form}>
+        {!challenge && returnReady && !deviceReturn && <div className={s.fieldTools}><button type="button" className={s.qrButton} disabled={busy} onClick={() => chooseMode("qr")}><QrIcon/>QR ile giriş</button></div>}
+        {mode === "account_code" ? <form onSubmit={loginByCode} className={s.form}>
           <input ref={accountInput} id="login-account-code" className={s.codeField} aria-label="Kullanıcı kodun" type="password" autoComplete="current-password" autoCapitalize="characters" spellCheck={false} placeholder="16 haneli kullanıcı kodun" value={accountCode} onChange={event => setAccountCode(normalizeAccountCode(event.target.value))} required minLength={16} maxLength={24} disabled={busy} aria-invalid={Boolean(error)}/>
           {error && <p className={s.error} role="alert">{error}</p>}
           <button className={s.primary} type="submit" disabled={busy || accountCode.length !== 16}><span>{busy ? "Giriş yapılıyor…" : "Giriş yap"}</span><ArrowIcon/></button>
@@ -231,7 +201,7 @@ export default function PhoneLoginPreview({ client = defaultClient, codeClient =
           {intent === "register" && !trustedBinding && <div className={s.existingAccount}><label><input type="checkbox" checked={bindExisting} onChange={event => setBindExisting(event.target.checked)} disabled={busy}/><span>Mevcut hesabımı telefonuma bağlayacağım</span></label>{bindExisting && <><label htmlFor="existing-account-code">Mevcut kullanıcı kodun</label><input id="existing-account-code" className={s.oldCodeInput} type="password" autoComplete="current-password" placeholder="16 haneli kullanıcı kodun" value={existingCode} onChange={event => setExistingCode(event.target.value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 16))} maxLength={16} minLength={16} required disabled={busy}/></>}</div>}
           {error && <p className={s.error} role="alert">{error}</p>}
           <button className={s.primary} disabled={busy || !ready} type="submit"><WhatsAppIcon/><span>{busy ? "Kod gönderiliyor…" : availability === "loading" ? "Hazırlanıyor…" : trustedBinding || bindExisting ? "Telefonumu doğrula" : intent === "login" ? "WhatsApp ile giriş yap" : "WhatsApp ile hesap oluştur"}</span><ArrowIcon/></button>
-          {(availability === "unavailable" || availability === "disabled") && <p className={s.availability} role="status">WhatsApp girişi şu an kullanılamıyor.</p>}
+          {(availability === "unavailable" || availability === "disabled") && <p className={s.availability} role="status">{intent === "register" ? "WhatsApp doğrulaması şu an kullanılamıyor. Biraz sonra tekrar dene." : "WhatsApp girişi şu an kullanılamıyor."}</p>}
           {intent === "register" && !trustedBinding && !bindExisting && <p className={s.accountRule}>Ücretsiz deneme: yalnız ilk üyelikte 3 saat.</p>}
         </form>}
         <div className={s.alternatives}><button type="button" className={s.legacyLink} onClick={() => chooseMode(mode === "account_code" ? "phone" : "account_code")}>{mode === "account_code" ? "Telefonla giriş" : "Kullanıcı koduyla giriş"}</button></div>

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "sourceImageId": "sha256:44ff3909282231848200aab83adad8ce8e9ad2da76ed28e16deb417efe609442",
+  "existing": {
+    "apps/api/src/server.ts": {
+      "before": "af5181d92296998460415bfa214461cb074a2242aca4b2146e8758beeb4c2968",
+      "after": "a246ae1f89765f36fc69433bc986bd1440e7746c89dc8c0243a2fd1158885605",
+      "edits": [
+        {
+          "old": "  app.post(\"/auth/register-anon\", async (request, reply) => {\n    const payload = registerAnonInputSchema.parse(request.body);\n    const requestIp = request.ip || \"unknown\";\n\n    if (!checkRateLimit(createRateLimitKey(\"register\", requestIp), 10, 60_000)) {\n      return reply.status(429).send({ message: \"Cok fazla kayit denemesi. Lutfen biraz sonra tekrar deneyin.\" });\n    }\n\n    if (isDemoMode) {\n      const existingUser = await findActiveUserByInstallationId(payload.installationId).catch(() => null);\n      if (existingUser) {\n        return reply.status(409).send({ message: MULTI_ACCOUNT_BLOCK_MESSAGE });\n      }\n      return registerDemoUser(payload);\n    }\n\n    const existingUser = await findActiveUserByInstallationId(payload.installationId);\n    if (existingUser) {\n      return reply.status(409).send({ message: MULTI_ACCOUNT_BLOCK_MESSAGE });\n    }\n\n    let rawCode = \"\";\n    let userId = \"\";\n\n    for (let attempt = 0; attempt < 5; attempt += 1) {\n      const candidate = generateKryptoniteCode();\n      const codeLookup = createCodeLookup(candidate);\n      const collision = await findUserByCodeLookup(codeLookup);\n      if (!collision) {\n        rawCode = candidate;\n        try {\n          userId = await createUser(\n            codeLookup,\n            await hashSecret(candidate),\n            candidate.slice(-4),\n            candidate,\n            payload.installationId,\n            payload.referralCode ?? null,\n            requestIp\n          );\n        } catch (error) {\n          if (error instanceof RegistrationInstallationLimitError) {\n            return reply.status(409).send({ message: MULTI_ACCOUNT_BLOCK_MESSAGE });\n          }\n          if (error instanceof AutoTrialRegistrationRateLimitError) {\n            return reply.status(429).send({ message: \"Bu internet bağlantısı üzerinden en fazla 2 hesap oluşturulabilir.\" });\n          }\n          if (error instanceof Error && error.message === 'invalid_referral_code') {\n            return reply.status(400).send({ message: 'Davet bağlantısı geçersiz veya süresi dolmuş.' });\n          }\n          const databaseCode = getDatabaseErrorCode(error);\n          const constraint = getDatabaseConstraint(error);\n          if (\n            databaseCode === \"23505\" &&\n            constraint === \"idx_users_registration_installation_active_unique\"\n          ) {\n            return reply.status(409).send({ message: MULTI_ACCOUNT_BLOCK_MESSAGE });\n          }\n          throw error;\n        }\n        break;\n      }\n    }\n\n    if (!rawCode || !userId) {\n      return reply.status(500).send({ message: \"Kullanici olusturulamadi.\" });\n    }\n\n    await updateUserLogin(userId);\n    const session = await issueSession(userId, payload);\n\n    return {\n      ...session,\n      kryptoniteCode: rawCode\n    };\n  });\n\n",
+          "new": "  const rejectUnverifiedRegistration = async (_request: FastifyRequest, reply: FastifyReply) => {\n    return reply.header(\"cache-control\", \"no-store\").status(410).send({\n      reason: \"phone_verification_required\",\n      message: \"Yeni hesap oluşturmak için WhatsApp doğrulamasını kullanın.\"\n    });\n  };\n  app.post(\"/auth/register-anon\", {\n    onRequest: rejectUnverifiedRegistration\n  }, rejectUnverifiedRegistration);\n\n"
+        }
+      ]
+    },
+    "apps/api/src/repository.ts": {
+      "before": "cdde5fd35c8230015ea4744893828f42fc60805ae6a5a43809e6e9f8ca432a1b",
+      "after": "5407ae017603c896f843b536182e4a8c134587c9b94e7aa73e2b5e2d9abea3f3",
+      "edits": [
+        {
+          "old": "  const [deviceSessions, paymentRequests, trialRequests, subscriptions, auditLogs] =",
+          "new": "  const [deviceSessions, paymentRequests, trialRequests, subscriptions, auditLogs, registration] ="
+        },
+        {
+          "old": "      listAdminAuditLogsByEntity(userId)\n    ]);",
+          "new": "      listAdminAuditLogsByEntity(userId),\n      query<{registration_method:'phone_otp'|'account_code'|null;registration_platform:'web'|'android_tv'|'android_phone'|'macos'|'windows'|null}>(\n        \"select registration_method,registration_platform from public.users where id=$1\", [userId]\n      )\n    ]);"
+        },
+        {
+          "old": "    summary: mapAdminUserListItem(row),\n",
+          "new": "    summary: mapAdminUserListItem(row),\n    registration: {\n      method: registration.rows[0]?.registration_method ?? null,\n      platform: registration.rows[0]?.registration_platform ?? null,\n      createdAt: row.created_at\n    },\n"
+        }
+      ]
+    },
+    "apps/api/src/phone-auth-accounts.ts": {
+      "before": "0c1768ed50de3f7c2b44003d1bb2ce8dfaa18b94cef26697266655b5f9079f6a",
+      "after": "5cf62b93250455176a12739affd679fa45b73dc7c0ece552339d305a8252c7a0",
+      "edits": [
+        {
+          "old": "      catch(error){if(error instanceof RegistrationInstallationLimitError)throw new PhoneAuthError(409,'installation_limit');if(error instanceof AutoTrialRegistrationRateLimitError)throw new PhoneAuthError(429,'registration_ip_limit');if(error instanceof Error&&error.message==='invalid_referral_code')throw new PhoneAuthError(400,'invalid_referral_code');throw error;}\n",
+          "new": "      catch(error){if(error instanceof RegistrationInstallationLimitError)throw new PhoneAuthError(409,'installation_limit');if(error instanceof AutoTrialRegistrationRateLimitError)throw new PhoneAuthError(429,'registration_ip_limit');if(error instanceof Error&&error.message==='invalid_referral_code')throw new PhoneAuthError(400,'invalid_referral_code');throw error;}\n      const registration=await client.query(\"update public.users set registration_method='phone_otp',registration_platform=$2 where id=$1 and registration_method is null and registration_platform is null returning id\",[userId,context.platform]);\n      if(registration.rowCount!==1)throw new Error('registration_provenance_conflict');\n"
+        }
+      ]
+    }
+  }
+}
