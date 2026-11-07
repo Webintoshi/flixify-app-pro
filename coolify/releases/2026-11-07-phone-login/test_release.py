@@ -73,6 +73,14 @@ class ReleaseGuards(unittest.TestCase):
         self.assertEqual(len(b.MIGRATIONS),2)
 
 class BoundedProofs(unittest.TestCase):
+    def test_snapshot_executes_real_node_files_and_streams_chunks(self):
+        import hashlib,subprocess
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);(root/'nested').mkdir();(root/'ignored').mkdir();small=b'hello';large=b'x'*(1024*1024+7);(root/'a.txt').write_bytes(small);(root/'nested/b.bin').write_bytes(large);(root/'nested/link').symlink_to('../a.txt');(root/'ignored/skip').write_text('excluded')
+            result=subprocess.run(['node','-e',b.SNAPSHOT,json.dumps({'root':str(root),'excluded':['ignored'],'rows':True})],capture_output=True)
+            self.assertEqual(result.returncode,0,result.stderr.decode())
+            value=json.loads(result.stdout);self.assertEqual(value['files'],3);self.assertEqual(value['bytes'],len(small)+len(large));rows={r[1]:r for r in value['rows']}
+            self.assertEqual(rows['a.txt'][-1],hashlib.sha256(small).hexdigest());self.assertEqual(rows['nested/b.bin'][-1],hashlib.sha256(large).hexdigest());self.assertEqual(rows['nested/link'][0],'link');self.assertNotIn('ignored/skip',rows)
     def test_dependency_paths_do_not_expand_exec_argv(self):
         paths=['node_modules/libphonenumber-js/'+str(n)+'.js' for n in range(5000)]+list(b.WEB_RUNTIME)
         result=b.excluded_paths('ops-web',paths)
