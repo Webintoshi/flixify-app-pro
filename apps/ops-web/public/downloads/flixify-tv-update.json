@@ -1,10 +1,10 @@
 {
   "packageName": "vip.flixify.tv",
-  "versionName": "1.4.15",
-  "versionCode": 23,
+  "versionName": "1.4.16",
+  "versionCode": 24,
   "minSdk": 23,
-  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.15.apk",
-  "sha256": "bf7fd529be59a84622b66beb01bebeb850437641246593c30c5162f16c081111",
-  "sizeBytes": 2165988,
-  "notes": "Android boxlarda kullanıcı kodu ve QR ile giriş için güvenli oturum kaydı iyileştirildi. Uyumsuz eski anahtarlar güvenle yenilenir; cihaz kayıt hataları bağlantı hatalarından ayrı gösterilir."
+  "apkUrl": "https://flixify.vip/downloads/flixify-pro-1.4.16.apk",
+  "sha256": "d84490ca71f6c220a0246426ea639b34d3a13668c46669379bb7c44f63f9d54e",
+  "sizeBytes": 2167237,
+  "notes": "Deneme hesabında gerçek kalan süre ana gezinme ve Hesabım ekranında gösterilir. Sayaç cihazda çalışır; içerik listelerini yeniden yüklemez. Paket ve giriş kuralları korunur."
 }
