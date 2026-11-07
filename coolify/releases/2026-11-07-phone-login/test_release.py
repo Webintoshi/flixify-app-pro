@@ -146,6 +146,21 @@ class CutoverBoundary(unittest.TestCase):
     def test_schema_checks_protected_containers_after_transaction(self):
         with self.patch.object(self.r.b,'assert_source'),self.patch.object(self.r,'migrate',return_value={'schemaApplied':True}),self.patch.object(self.r.b,'outside_snapshot',return_value={'protected':'changed'}):
             with self.assertRaises(self.r.GateError):self.r.guarded_schema('repo','a'*40,{'protected':'same'})
+    def test_private_metadata_payload_preserves_original_disk_bytes(self):
+        import base64
+        with tempfile.TemporaryDirectory() as d:
+            env=Path(d)/'.env';compose=Path(d)/'docker-compose.yml';original_env=b"KEY='original'\nOTHER=unchanged";original_compose=b'# retained disk formatting\nservices: {}\n';env.write_bytes(original_env);compose.write_bytes(original_compose)
+            state={**self.state,'envSha':b.sha(original_env),'generatedSha':b.sha(original_compose)}
+            with self.patch.object(self.r,'ENV',env),self.patch.object(self.r,'COMPOSE',compose):
+                payload=self.r.metadata_payload('preview',state,{}, {},self.settings)
+            self.assertEqual(base64.b64decode(payload['envBytes']),original_env)
+            self.assertEqual(base64.b64decode(payload['generatedBytes']),original_compose)
+    def test_private_metadata_payload_rejects_disk_drift(self):
+        with tempfile.TemporaryDirectory() as d:
+            env=Path(d)/'.env';compose=Path(d)/'docker-compose.yml';env.write_bytes(b'KEY=changed');compose.write_bytes(b'services: {}')
+            state={**self.state,'envSha':b.sha(b'KEY=original'),'generatedSha':b.sha(compose.read_bytes())}
+            with self.patch.object(self.r,'ENV',env),self.patch.object(self.r,'COMPOSE',compose):
+                with self.assertRaises(self.r.GateError):self.r.metadata_payload('apply',state,{}, {},self.settings)
 
 class ProtectedContainerSnapshot(unittest.TestCase):
     def row(self):

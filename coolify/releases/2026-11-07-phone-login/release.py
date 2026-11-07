@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Phone/login rollout. Default validates only; explicit phases never restart worker/DB."""
 from __future__ import annotations
-import argparse,fcntl,hashlib,importlib.util,json,os,sys,time
+import argparse,base64,fcntl,hashlib,importlib.util,json,os,sys,time
 from pathlib import Path
 
 HERE=Path(__file__).resolve().parent
@@ -13,12 +13,13 @@ PHP_BOOT=r'''require '/var/www/html/vendor/autoload.php';$app=require '/var/www/
 PHP_ENV=r'''
 function envMap($a){if(!is_array($a))throw new RuntimeException('env_shape');if(!array_is_list($a))return $a;$r=[];foreach($a as $e){[$k,$v]=array_pad(explode('=',$e,2),2,null);if(array_key_exists($k,$r))throw new RuntimeException('env_duplicate');$r[$k]=$v;}return $r;}
 function canonical($a){if(is_array($a)){if(!array_is_list($a))ksort($a);foreach($a as $k=>$v)$a[$k]=canonical($v);}return $a;}
+function environmentCompatible($actual,$generated,$compose){if(!is_string($actual)||!is_string($generated)||strlen($actual)>262144||strlen($generated)>262144)return false;if($actual===$generated)return true;if(hash('sha256',$actual)!=='c64b280b5c24f67964259a5de5e8aa883bd9d925ec1336614cd23e8fb5f46a42'||hash('sha256',$generated)!=='c33f7498c6e1325a4496eee439502803d6fe7afcf8f8b41907d70f6200cbb6cb'||($compose['services']['api']['image']??null)!=='flixify-api:trial-countdown-2522149cfda9-20261107'||($compose['services']['ops-web']['image']??null)!=='flixify-ops-web:trial-countdown-2522149cfda9-20261107'||str_contains($actual,"\r")||str_contains($generated,"\r")||str_contains($actual,"\0")||str_contains($generated,"\0")||!method_exists(Dotenv\Dotenv::class,'parse'))return false;foreach([$actual,$generated] as $text){$lines=explode("\n",str_ends_with($text,"\n")?substr($text,0,-1):$text);$keys=[];foreach($lines as $line){if(!preg_match('/^([A-Z_][A-Z0-9_]*)=/D',$line,$m)||isset($keys[$m[1]]))return false;$keys[$m[1]]=true;}if(count($keys)!==24)return false;}try{$a=Dotenv\Dotenv::parse($actual);$b=Dotenv\Dotenv::parse($generated);return count($a)===24&&count($b)===24&&canonical($a)===canonical($b);}catch(Throwable $e){return false;}}
 function unrelatedRows($rows,$keys){$out=[];foreach($rows as $row){if(!in_array($row->key,$keys,true))$out[$row->id]=$row->getAttributes();}ksort($out);return hash('sha256',json_encode($out));}
 function generatedEnvironment($s,$compose,$rows){$lines=[];foreach(array_keys($compose['services']) as $n)$lines[]='SERVICE_NAME_'.strtoupper(str_replace(['-','.'],'_',$n)).'='.$n;$sorted=$rows->sortBy(function($e){if(str($e->key)->startsWith('SERVICE_'))return 1;if(str($e->value)->startsWith('$SERVICE_')||str($e->value)->startsWith('${SERVICE_'))return 2;return 3;});foreach($sorted as $e){if(!$e->preservesLegacyComposeNull()&&dockerComposeEnvironmentVariableShouldBeUnset($s->docker_compose_raw??$s->docker_compose,$e->key,$e->value))continue;$lines[]=$s->composeEnvironmentFileLine($e);}return implode("\n",$lines);}
 function bindSettings(&$doc,$settings){$a=&$doc['services']['api']['environment'];$map=envMap($a);foreach($settings as $key=>$value){$ref='${'.$key.'}';if(isset($map[$key])&&$map[$key]!==$ref)throw new RuntimeException('existing_phone_binding');if(array_is_list($a)){if(!array_key_exists($key,$map))$a[]=$key.'='.$ref;}else{$a[$key]=$ref;}}}
 '''
 PHP_READ=PHP_BOOT+PHP_ENV+r'''
-try{$p=json_decode(stream_get_contents(STDIN),true,512,JSON_THROW_ON_ERROR);$s=App\Models\Service::where('uuid',$p['uuid'])->firstOrFail();if($s->id!==1)throw new RuntimeException('identity');$raw=Symfony\Component\Yaml\Yaml::parse($s->docker_compose_raw);$rendered=Symfony\Component\Yaml\Yaml::parse($s->docker_compose);$rows=$s->environment_variables()->get();$apps=[];foreach(['api','ops-web','worker'] as $n)$apps[$n]=$s->applications()->where('name',$n)->firstOrFail()->image;$file=Symfony\Component\Yaml\Yaml::parse(base64_decode($p['generated']));echo json_encode(['raw'=>$raw,'rendered'=>$rendered,'generated'=>$file,'rawSha'=>hash('sha256',$s->docker_compose_raw),'renderedSha'=>hash('sha256',$s->docker_compose),'modelEnvSha'=>hash('sha256',generatedEnvironment($s,$rendered,$rows)),'otherModelsSha'=>unrelatedRows($rows,$p['keys']),'applications'=>$apps],JSON_THROW_ON_ERROR);}catch(Throwable $e){fwrite(STDERR,'phone_metadata_read_failed');exit(1);}
+try{$p=json_decode(stream_get_contents(STDIN),true,512,JSON_THROW_ON_ERROR);$s=App\Models\Service::where('uuid',$p['uuid'])->firstOrFail();if($s->id!==1)throw new RuntimeException('identity');$raw=Symfony\Component\Yaml\Yaml::parse($s->docker_compose_raw);$rendered=Symfony\Component\Yaml\Yaml::parse($s->docker_compose);$rows=$s->environment_variables()->get();$apps=[];foreach(['api','ops-web','worker'] as $n)$apps[$n]=$s->applications()->where('name',$n)->firstOrFail()->image;$file=Symfony\Component\Yaml\Yaml::parse(base64_decode($p['generated']));$modelEnv=generatedEnvironment($s,$rendered,$rows);echo json_encode(['raw'=>$raw,'rendered'=>$rendered,'generated'=>$file,'rawSha'=>hash('sha256',$s->docker_compose_raw),'renderedSha'=>hash('sha256',$s->docker_compose),'modelEnvSha'=>hash('sha256',$modelEnv),'envCompatible'=>environmentCompatible(base64_decode($p['envBytes'],true),$modelEnv,$rendered),'otherModelsSha'=>unrelatedRows($rows,$p['keys']),'applications'=>$apps],JSON_THROW_ON_ERROR);}catch(Throwable $e){fwrite(STDERR,'phone_metadata_read_failed');exit(1);}
 '''
 PHP_APPLY=PHP_BOOT+PHP_ENV+r'''
 $p=null;$s=null;$touched=false;$oldCompose=null;$oldEnv=null;
@@ -26,7 +27,7 @@ try{$p=json_decode(stream_get_contents(STDIN),true,512,JSON_THROW_ON_ERROR);$all
 $result=Illuminate\Support\Facades\DB::transaction(function()use($p,$allowed,&$s,&$touched,&$oldCompose,&$oldEnv){
  $s=App\Models\Service::where('uuid',$p['uuid'])->lockForUpdate()->firstOrFail();if($s->id!==1||hash('sha256',$s->docker_compose_raw)!==$p['rawSha']||hash('sha256',$s->docker_compose)!==$p['renderedSha'])throw new RuntimeException('source_drift');
  $raw=Symfony\Component\Yaml\Yaml::parse($s->docker_compose_raw);$rendered=Symfony\Component\Yaml\Yaml::parse($s->docker_compose);$names=array_keys($raw['services']);sort($names);if($names!==['api','db','ops-web','worker']||array_keys($raw['services'])!==array_keys($rendered['services']))throw new RuntimeException('service_scope');
- $rows=$s->environment_variables()->lockForUpdate()->get();$futureRows=$rows->map(fn($e)=>clone $e);if(unrelatedRows($rows,$allowed)!==$p['otherModelsSha'])throw new RuntimeException('other_models_changed');$oldEnv=generatedEnvironment($s,$rendered,$rows);$oldCompose=$s->docker_compose;if(hash('sha256',$oldEnv)!==$p['envSha'])throw new RuntimeException('existing_env_drift');
+ $rows=$s->environment_variables()->lockForUpdate()->get();$futureRows=$rows->map(fn($e)=>clone $e);if(unrelatedRows($rows,$allowed)!==$p['otherModelsSha'])throw new RuntimeException('other_models_changed');$modelEnv=generatedEnvironment($s,$rendered,$rows);$oldEnv=base64_decode($p['envBytes'],true);$oldCompose=base64_decode($p['generatedBytes'],true);if(!is_string($oldEnv)||hash('sha256',$oldEnv)!==$p['envSha']||!environmentCompatible($oldEnv,$modelEnv,$rendered))throw new RuntimeException('existing_env_drift');if(!is_string($oldCompose)||hash('sha256',$oldCompose)!==$p['generatedSha']||Symfony\Component\Yaml\Yaml::parse($oldCompose)!==$rendered)throw new RuntimeException('existing_compose_drift');
  foreach(['api','ops-web'] as $name){if($raw['services'][$name]['image']!==$p['old'][$name]||$rendered['services'][$name]['image']!==$p['old'][$name]||$s->applications()->where('name',$name)->firstOrFail()->image!==$p['old'][$name])throw new RuntimeException('source_image_drift');$raw['services'][$name]['image']=$p['new'][$name];$rendered['services'][$name]['image']=$p['new'][$name];}
  bindSettings($raw,$p['settings']);bindSettings($rendered,$p['settings']);
  foreach($p['settings'] as $key=>$value){if(!is_string($value)||strlen($value)>2048||str_contains($value,"\n")||str_contains($value,"\r"))throw new RuntimeException('setting_value');$match=$futureRows->where('key',$key);if($match->count()>1)throw new RuntimeException('duplicate_phone_model');$e=$match->first()??new App\Models\EnvironmentVariable(['key'=>$key,'is_literal'=>true,'is_runtime'=>true,'is_buildtime'=>false,'is_required'=>true,'is_preview'=>false,'is_shown_once'=>true]);if(in_array($key,['PHONE_AUTH_SECRET','VATANSMS_WHATSAPP_API_KEY','VATANSMS_WHATSAPP_REG_ID'],true)&&$match->count()===1&&$e->value!==$value)throw new RuntimeException('stable_secret_or_sender_changed');$e->value=$value;$e->is_literal=true;$e->is_runtime=true;$e->is_buildtime=false;if($p['action']==='apply')$s->environment_variables()->save($e);if($match->count()===0)$futureRows->push($e);}
@@ -42,11 +43,10 @@ def setting_hashes(settings):return {k:b.sha(v.encode()) for k,v in settings.ite
 def runtime_env(row):return dict(x.split('=',1) for x in row['Config'].get('Env',[]))
 def php(script,payload):return json.loads(b.command('docker','exec','-i','coolify','php','-r',script,input_data=json.dumps(payload,separators=(',',':')).encode(),timeout=90))
 def coolify_state():
- import base64
  if not COMPOSE.is_file() or COMPOSE.is_symlink() or not ENV.is_file() or ENV.is_symlink():raise GateError('regular_service_config_required')
  compose_data=COMPOSE.read_bytes();env_data=ENV.read_bytes()
- result=php(PHP_READ,{'uuid':b.UUID,'keys':sorted(b.SETTINGS),'generated':base64.b64encode(compose_data).decode()})
- if result['rendered']!=result['generated'] or result['modelEnvSha']!=b.sha(env_data):raise GateError('coolify_disk_model_or_environment_drift')
+ result=php(PHP_READ,{'uuid':b.UUID,'keys':sorted(b.SETTINGS),'generated':base64.b64encode(compose_data).decode(),'envBytes':base64.b64encode(env_data).decode()})
+ if result['rendered']!=result['generated'] or result.get('envCompatible') is not True:raise GateError('coolify_disk_model_or_environment_drift')
  result.update({'generatedSha':b.sha(compose_data),'envSha':b.sha(env_data)})
  for doc in (result['raw'],result['rendered'],result['generated']):
   if set(doc.get('services',{}))!=set(('api','ops-web','worker','db')):raise GateError('exact_flixify_service_set_required')
@@ -140,13 +140,18 @@ def guarded_recreate(name,expected_state,targets,settings,outside,*,proofs,prote
   if b.image_info(tag)['Id']!=identity:raise GateError('target_tag_retargeted_before_recreate:'+service)
  recreate(name)
 
+def metadata_payload(action,state,old,new,settings):
+ env_data=ENV.read_bytes();compose_data=COMPOSE.read_bytes()
+ if b.sha(env_data)!=state['envSha'] or b.sha(compose_data)!=state['generatedSha']:raise GateError('service_files_changed_before_metadata')
+ return {'uuid':b.UUID,'action':action,'rawSha':state['rawSha'],'renderedSha':state['renderedSha'],'otherModelsSha':state['otherModelsSha'],'envSha':state['envSha'],'envBytes':base64.b64encode(env_data).decode(),'generatedSha':state['generatedSha'],'generatedBytes':base64.b64encode(compose_data).decode(),'old':old,'new':new,'settings':settings}
+
 def preview_metadata(state,old,new,settings):
- return php(PHP_APPLY,{'uuid':b.UUID,'action':'preview','rawSha':state['rawSha'],'renderedSha':state['renderedSha'],'otherModelsSha':state['otherModelsSha'],'envSha':b.sha(ENV.read_bytes()),'old':old,'new':new,'settings':settings})
+ return php(PHP_APPLY,metadata_payload('preview',state,old,new,settings))
 
 def apply_metadata(state,old,new,settings):
  old_rows=b.services(allow_changed_stopped=True);protected={k:b.protected_environment(runtime_env(v)) for k,v in old_rows.items() if k in ('api','ops-web')}
  planned=preview_metadata(state,old,new,settings)
- result=php(PHP_APPLY,{'uuid':b.UUID,'action':'apply','rawSha':state['rawSha'],'renderedSha':state['renderedSha'],'otherModelsSha':state['otherModelsSha'],'envSha':b.sha(ENV.read_bytes()),'old':old,'new':new,'settings':settings})
+ result=php(PHP_APPLY,metadata_payload('apply',state,old,new,settings))
  after=coolify_state()
  if result!=planned or after['rawSha']!=result['rawSha'] or after['renderedSha']!=result['renderedSha'] or b.sha(ENV.read_bytes())!=result['envSha'] or after['otherModelsSha']!=state['otherModelsSha']:raise GateError('metadata_postcheck_differs')
  return after,protected
