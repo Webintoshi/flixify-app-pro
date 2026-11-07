@@ -6,6 +6,7 @@ validated before staging writes; abandon the staging tree if any write fails.
 """
 from __future__ import annotations
 import argparse
+import difflib
 import hashlib
 import json
 import os
@@ -18,7 +19,7 @@ class PatchError(RuntimeError):pass
 EXPECTED_SOURCE_ID='sha256:66805232ca883cbd6385c38341d21b4be0b9fc436b5718cc2b8e20d4398de4fb'
 BASE_REVISION='2522149cfda9dae514fc81d9820cbbfb70c57ea6'
 RECIPE='coolify/releases/2026-11-07-phone-login/api-edits.json'
-RECIPE_SHA256='d095773db658e5e6146e24add4821c627753e49344b35a0731f44de321acb37f'
+RECIPE_SHA256='96ce85079315c9af460674284e407932c99663f66aa41d09cd80e9962a962243'
 EXISTING_FILES=tuple('apps/api/src/'+x+'.ts' for x in ('server','repository','env','device-login-store','device-login','demo-store'))+('packages/contracts/src/domain.ts',)
 NEW_FILES=tuple('apps/api/src/'+x+'.ts' for x in ('phone-auth','phone-auth-accounts','phone-auth-config','phone-auth-routes','phone-auth-store','phone-auth-vatansms','remembered-session'))
 UNCHANGED_FILES=('apps/api/src/cors-config.ts',)
@@ -27,6 +28,18 @@ PAYLOAD_PATHS=(RECIPE,*NEW_FILES)
 MAX_SOURCE_BYTES=2*1024*1024
 
 def sha(data):return hashlib.sha256(data).hexdigest()
+
+def logical_source(data):return data.decode('utf8').replace('\r\n','\n')
+
+def restore_equal_lines(original,updated):
+    """Keep untouched line bytes, including mixed CRLF/LF, after reviewed logical edits."""
+    raw=original.decode('utf8').splitlines(keepends=True)
+    before=[line.replace('\r\n','\n') for line in raw]
+    after=updated.replace('\r\n','\n').splitlines(keepends=True)
+    parts=[]
+    for operation,a,b,c,d in difflib.SequenceMatcher(None,before,after,autojunk=False).get_opcodes():
+        parts.extend(raw[a:b] if operation=='equal' else after[c:d])
+    return ''.join(parts).encode('utf8')
 
 def root_path(value):
     path=Path(value).absolute()
@@ -81,16 +94,16 @@ def recipe(repo):
 
 def exact_edits(source,rows,path):
     if not isinstance(rows,list) or not rows:raise PatchError('reviewed_edit_list_invalid:'+path)
-    text=source.decode('utf8')
+    text=logical_source(source)
     for number,row in enumerate(rows):
         if not isinstance(row,dict) or set(row)!={'old','new'} or not all(isinstance(v,str) and 1<=len(v.encode())<=256*1024 and '\0' not in v for v in row.values()) or row['old']==row['new']:
             raise PatchError('reviewed_edit_invalid:'+path)
         if text.count(row['old'])!=1:raise PatchError('exact_anchor_not_unique:'+path+':'+str(number))
         text=text.replace(row['old'],row['new'],1)
-    return text.encode('utf8')
+    return restore_equal_lines(source,text)
 
 def create_user_from_actual(source,description):
-    text=source.decode('utf8')
+    text=logical_source(source)
     if 'export async function createUserInTransaction(' in text:raise PatchError('create_user_helper_already_exists')
     if not isinstance(description,dict) or set(description)!={'header','wrapper','suffix','helperSignature','referral','welcomeAnchor'}:raise PatchError('create_user_recipe_invalid')
     header,wrapper,suffix=(description[x] for x in ('header','wrapper','suffix'))
@@ -114,8 +127,14 @@ def create_user_from_actual(source,description):
     updated=(header+'  await ensureUserInstallationGuardSchema();\n'
         '  return withTransaction((client) => createUserInTransaction(client,codeLookup,codeHash,codeSuffix,kryptoniteCode,registrationInstallationId,requestIp));\n}'
         '\n\n'+description['helperSignature']+'\n'+preserved+description['referral']+final_return+'}'+trailing)
-    proof={'createUserOriginalBodySha256':sha(body.encode()),'createUserPreservedPrefixSha256':sha(preserved.encode()),'createUserOriginalBodyBytes':len(body.encode())}
-    return (text[:start]+updated+text[end:]).encode(),proof
+    body_line=text[:start+len(header+wrapper)].count('\n')
+    raw_lines=source.decode('utf8').splitlines(keepends=True)
+    raw_body=''.join(raw_lines[body_line:body_line+body.count('\n')])
+    raw_preserved=''.join(raw_body.splitlines(keepends=True)[:-1]).encode('utf8')
+    result=restore_equal_lines(source,text[:start]+updated+text[end:])
+    if raw_preserved not in result:raise PatchError('actual_create_user_body_not_preserved')
+    proof={'createUserOriginalBodySha256':sha(raw_body.encode()),'createUserPreservedPrefixSha256':sha(raw_preserved),'createUserOriginalBodyBytes':len(raw_body.encode())}
+    return result,proof
 
 def protected_server(original,updated):
     before,after=original.decode(),updated.decode();anchor='  app.get("/me", async (request, reply) => {'

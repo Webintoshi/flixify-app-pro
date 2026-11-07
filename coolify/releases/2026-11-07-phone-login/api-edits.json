@@ -156,6 +156,6 @@
     "welcomeAnchor": "insert into public.welcome_offer_accounts(user_id,campaign) values($1,'welcome-monthly-50-v1')"
   },
   "unchanged": {
-    "apps/api/src/cors-config.ts": "b62bd5a17796e10283b285a253d1d9030713ec5719cdf0fb7dcdbc3958f07ea9"
+    "apps/api/src/cors-config.ts": "f7460199743264186b4eba5413174209ea31e46bc5150811f48095f4fc2cbaf9"
   }
 }

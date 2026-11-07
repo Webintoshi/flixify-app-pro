@@ -31,7 +31,7 @@ class ApiOverlayTest(unittest.TestCase):
         value=value.replace('import { registerDeviceLoginRoutes } from "./device-login-routes.js";','import { registerDeviceLoginRoutes } from "./device-login-routes.js";\nimport crypto from "node:crypto";')
         value=value.replace('  app.addHook("onRequest", async (request) => {','  registerExistingAccountLibrary(app);\n  app.addHook("onRequest", async (request) => {',1)
         value+='\nexport const productionStripeAndNotificationsSentinel="preserved";\n';server.write_text(value)
-        cors=self.stage/'apps/api/src/cors-config.ts';cors.write_text(cors.read_text().replace('  "authorization",\n  "content-type"','  "authorization",\n  "x-flixify-client-runtime",\n  "content-type"'))
+        cors=self.stage/'apps/api/src/cors-config.ts';cors.write_bytes(cors.read_bytes().replace(b'\n',b'\r\n').replace(b'  "authorization",\r\n',b'  "authorization",\n  "x-flixify-client-runtime",\n'))
         repository=self.stage/'apps/api/src/repository.ts';value=repository.read_text();needle='    return userId;\n  });\n}\n\nexport async function storePlainKryptoniteCode('
         self.extra='    await client.query("existing-production-registration-notification",[userId]);\n'
         welcome='    await client.query(\n      "'+recipe['createUser']['welcomeAnchor']+'",\n      [userId]\n    );\n'
@@ -55,9 +55,17 @@ class ApiOverlayTest(unittest.TestCase):
     def test_accepts_observed_runtime_context_and_retains_existing_refresh_budget(self):
         server=self.stage/'apps/api/src/server.ts';value=server.read_text().replace('createRateLimitKey("refresh", requestIp), 120, 60_000','createRateLimitKey("refresh", requestIp), 20, 60_000')
         server.write_text(value)
-        cors=self.stage/'apps/api/src/cors-config.ts';cors.write_text(cors.read_text().replace('  "authorization",\n  "content-type"','  "authorization",\n  "x-flixify-client-runtime",\n  "content-type"'))
         self.run_apply();value=server.read_text();self.assertIn('createRateLimitKey("refresh", requestIp), 20, 60_000',value)
         self.assertIn('registerExistingAccountLibrary(app);',value)
+    def test_mixed_ending_sources_preserve_unedited_routes_and_actual_registration_body_bytes(self):
+        for path in p.EXISTING_FILES:
+            target=self.stage/path;lines=target.read_bytes().replace(b'\r\n',b'\n').splitlines(keepends=True)
+            target.write_bytes(b''.join(line.replace(b'\n',b'\r\n') if n%3 else line for n,line in enumerate(lines)))
+        server_path=self.stage/'apps/api/src/server.ts';server_before=server_path.read_bytes();anchor=b'  app.get("/me", async (request, reply) => {';tail=server_before[server_before.index(anchor):]
+        repo_path=self.stage/'apps/api/src/repository.ts';before=repo_path.read_bytes();a=before.index(b'    await claimRegistrationSlots(client, {');b=before.index(b'    return userId;',a);prefix=before[a:b];end=before.index(b'\n',b)+1;body=before[a:end]
+        proof=self.run_apply()
+        self.assertEqual(server_path.read_bytes()[server_path.read_bytes().index(anchor):],tail)
+        self.assertIn(prefix,repo_path.read_bytes());self.assertEqual(proof['preserved']['createUserOriginalBodySha256'],digest(body))
     def test_rejects_wrong_image_before_any_write(self):
         with self.assertRaisesRegex(p.PatchError,'source_image'):self.run_apply(source_image_id='sha256:'+'0'*64)
         self.assertEqual(self.snapshot(),self.before)
