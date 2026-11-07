@@ -1,0 +1,16 @@
+.root{position:relative;width:100%;margin:2px 0 0;isolation:isolate}
+.visual{display:grid;grid-template-columns:minmax(0,1fr) 18px minmax(0,1fr);align-items:center;gap:10px;pointer-events:none;user-select:none}
+.group{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:hidden;border:1px solid rgba(167,176,190,.3);border-radius:11px;background:#12161c}
+.group:first-child{grid-column:1;grid-row:1}.group:nth-child(2){grid-column:3;grid-row:1}
+.cell{position:relative;display:flex;align-items:center;justify-content:center;min-width:0;height:62px;color:var(--tv-text);font-size:29px;font-weight:550;font-variant-numeric:tabular-nums;line-height:1}
+.cell+.cell{border-left:1px solid rgba(167,176,190,.2)}
+.cell[data-selected="true"]{background:rgba(245,246,248,.1)}
+.cell[data-active="true"]{background:rgba(245,246,248,.055);box-shadow:inset 0 0 0 1px var(--tv-text)}
+.cell[data-active="true"][data-empty="true"]::after{content:"";display:block;width:1px;height:24px;background:var(--tv-text)}
+.separator{grid-column:2;grid-row:1;color:var(--tv-muted);font-size:21px;text-align:center}
+.root>.input{position:absolute;inset:0;z-index:1;display:block;box-sizing:border-box;width:100%;height:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:transparent;-webkit-text-fill-color:transparent;caret-color:transparent;outline:none;box-shadow:none;font:inherit;font-size:16px;cursor:text}
+.root>.input:focus,.root>.input:focus-visible{outline:none;outline-offset:0;box-shadow:none}
+.input::selection{color:transparent;background:transparent}
+.root[data-disabled="true"]{opacity:.56}.root[data-disabled="true"]>.input{cursor:not-allowed}
+@media(max-width:430px){.visual{grid-template-columns:minmax(0,1fr) 14px minmax(0,1fr);gap:8px}.cell{height:55px;font-size:26px}.group{border-radius:10px}}
+@media(forced-colors:active){.group{background:Canvas;border-color:GrayText}.cell{color:CanvasText}.cell+.cell{border-color:GrayText}.cell[data-active="true"]{outline:1px solid CanvasText;outline-offset:-2px}.cell[data-active="true"][data-empty="true"]::after{background:CanvasText}.separator{color:CanvasText}}

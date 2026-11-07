@@ -13,6 +13,7 @@ import { usePlatform } from "../platform/session";
 import { trackAnalytics } from "../platform/analytics";
 import { createPhoneAuthClient, hasTurkishTrunkPrefix, normalizePhone, phoneAuthError, type PhoneAuthClient, type PhoneChallenge, type PhoneIntent } from "./phone-auth-client";
 import { PhoneCountrySelect } from "./phone-country-select";
+import { SegmentedOtpInput } from "./segmented-otp-input";
 import { accountCodeError, createAccountCodeClient, createAnonymousRegistrationClient, normalizeAccountCode, registrationError, type AccountCodeClient, type AnonymousRegistrationClient, type AnonymousRegistrationSession } from "./account-code-client";
 import s from "./phone-login-cinematic.module.css";
 
@@ -219,7 +220,7 @@ export default function PhoneLoginPreview({ client = defaultClient, codeClient =
           {error && <p className={s.error} role="alert">{error}</p>}
           <button className={s.primary} type="submit" disabled={busy || accountCode.length !== 16}><span>{busy ? "Giriş yapılıyor…" : "Giriş yap"}</span><ArrowIcon/></button>
         </form> : challenge ? <form onSubmit={verify} className={s.form}>
-          <label htmlFor="phone-otp">Doğrulama kodu</label><input ref={otpInput} id="phone-otp" className={s.otpInput} inputMode="numeric" autoComplete="one-time-code" type="text" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" maxLength={6} required minLength={6} aria-describedby="otp-time" aria-invalid={Boolean(error)}/>
+          <label htmlFor="phone-otp">Doğrulama kodu</label><SegmentedOtpInput ref={otpInput} id="phone-otp" value={code} onValueChange={setCode} required aria-describedby="otp-time" aria-invalid={Boolean(error)}/>
           <p id="otp-time" className={s.inputHelp}>{expired ? "Kodun süresi doldu. Yeni bir kod isteyebilirsin." : <>Kodun geçerlilik süresi <span role="timer" aria-live="off">{duration(expires)}</span></>}</p>
           {error && <p className={s.error} role="alert">{error}</p>}
           <button className={s.primary} disabled={busy || code.length !== 6 || expired} type="submit"><span>{busy ? "Doğrulanıyor…" : "Doğrula ve devam et"}</span><ArrowIcon/></button>

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "sourceImageId": "sha256:70af89614cf16ea1076fe0d8065f2f3e2947a0a8255d541719786737445080d9",
+  "files": [
+    {
+      "path": "apps/ops-web/app/giris-onizleme/phone-country-select.module.css",
+      "beforeSha256": "3725604b68ab763feb0d7cdd5c429c80fb254a5ec99ead8087c5f063802ffe5a",
+      "sha256": "152317e24e770cf1c40b1301a5ef02cb86842f6308a34899b58dc07263fae53d",
+      "bytes": 2225
+    },
+    {
+      "path": "apps/ops-web/app/giris-onizleme/phone-login-cinematic.module.css",
+      "beforeSha256": "6f703388e418dcecff932156fcbd8dd05ba5054050ae9d7123454364a1d09ce5",
+      "sha256": "baac47af55cf170ce0db5e829c6a3544ed9a66de6ac646f76d91ac527abf4f63",
+      "bytes": 12280
+    },
+    {
+      "path": "apps/ops-web/app/giris-onizleme/phone-login-preview.tsx",
+      "beforeSha256": "45581e36aeabe405b0ee9125e09c959fdccc5c4d346173806b59298d1b65f358",
+      "sha256": "3b3eeecad38851accaa185515ba2ce8b0ec2e6ba4bc353f8773817d2bcf3f088",
+      "bytes": 22295
+    },
+    {
+      "path": "apps/ops-web/app/giris-onizleme/segmented-otp-input.module.css",
+      "beforeSha256": null,
+      "sha256": "d002b9e69660759bef1553b7640e92572f8ef93453aff0d29f3b6727f8076997",
+      "bytes": 2141
+    },
+    {
+      "path": "apps/ops-web/app/giris-onizleme/segmented-otp-input.tsx",
+      "beforeSha256": null,
+      "sha256": "8d4fcb3913fc9fbda79588f4a3fe87b9f2ca6fdafd6a2504ca5ebb7c8dee78ac",
+      "bytes": 4451
+    }
+  ]
+}
