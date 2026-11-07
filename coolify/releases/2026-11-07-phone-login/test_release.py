@@ -73,6 +73,19 @@ class ReleaseGuards(unittest.TestCase):
         self.assertEqual(len(b.MIGRATIONS),2)
 
 class BoundedProofs(unittest.TestCase):
+    def test_reused_snapshot_buffer_matches_frozen_per_file_output(self):
+        import subprocess
+        shared='const rows=[],buffer=Buffer.alloc(1024**2);let total=0;'
+        shared_read="const h=c.createHash('sha256'),fd=fs.openSync(q,'r');let bytesRead;while((bytesRead=fs.readSync(fd,buffer,0,buffer.length,null))>0)h.update(buffer.subarray(0,bytesRead));"
+        self.assertEqual(b.SNAPSHOT.count(shared),1);self.assertEqual(b.SNAPSHOT.count(shared_read),1)
+        legacy=b.SNAPSHOT.replace(shared,'const rows=[];let total=0;').replace(shared_read,"const h=c.createHash('sha256'),fd=fs.openSync(q,'r'),b=Buffer.alloc(1024**2);let bytesRead;while((bytesRead=fs.readSync(fd,b,0,b.length,null))>0)h.update(b.subarray(0,bytesRead));")
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            for i in range(1000):(root/f'file-{i}.txt').write_bytes((f'fixture-{i}\n'*12).encode())
+            config=json.dumps({'root':d,'rows':True})
+            old=subprocess.run(['node','-e',legacy,config],capture_output=True,check=True).stdout
+            new=subprocess.run(['node','-e',b.SNAPSHOT,config],capture_output=True,check=True).stdout
+            self.assertEqual(new,old);self.assertEqual(json.loads(new)['files'],1000)
     def test_login_smoke_accepts_loading_phone_shell_without_whatsapp_text(self):
         import subprocess
         for attribute in ('autoComplete','autocomplete'):
