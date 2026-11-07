@@ -46,6 +46,16 @@ ScrollView {
                     font.pixelSize: 14
                 }
                 Text {
+                    objectName: "accountTrialCountdown"
+                    visible: repository.trialCountdownStatus !== "none"
+                    text: repository.trialCountdownText
+                    color: "#F5F6F8"
+                    font.pixelSize: 24
+                    font.weight: Font.DemiBold
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+                Text {
                     text: accountPage.account.canPlay ? accountPage.account.trial ? "✓  Deneme süren aktif" : "✓  Paketin aktif" : "Aktif paketin bulunmuyor"
                     color: "#F5F6F8"
                     font.pixelSize: 14

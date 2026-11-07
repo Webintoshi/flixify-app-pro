@@ -1,5 +1,6 @@
 #include "repository.h"
 #include "device_login_policy.h"
+#include "trial_countdown_policy.h"
 #include <QGuiApplication>
 #include <QElapsedTimer>
 #include <QImageReader>
@@ -30,6 +31,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 
 namespace {
 using Reply = std::function<void(int,QJsonDocument)>;
@@ -57,7 +59,8 @@ StoredSession tokens(const QJsonObject &r){auto user=r["user"].toObject();Stored
 }
 class DesktopRepository::Private {
 public:
-    DesktopRepository *q;RepositoryOptions options;QNetworkAccessManager network;SessionStore vault;MetadataStore cache;QTimer expiryTimer,refreshTimer;
+    DesktopRepository *q;RepositoryOptions options;QNetworkAccessManager network;SessionStore vault;MetadataStore cache;QTimer expiryTimer,refreshTimer,trialTimer;
+    TrialCountdownClock trialClock;
     std::unique_ptr<DesktopAnalytics> analytics;
     quint64 analyticsEpoch=1;
     bool searchMeasurementPending=false;
@@ -80,6 +83,7 @@ public:
         QSettings preferences((options.storageDirectory.isEmpty()?defaultStorage():options.storageDirectory)+"/preferences.ini",QSettings::IniFormat);sound=preferences.value("posterSoundEnabled",true).toBool();
         if(!options.now)options.now=[] {return QDateTime::currentMSecsSinceEpoch();};
         if(!options.analyticsClock)options.analyticsClock=&PlaybackAnalytics::monotonicNow;
+        if(!options.trialCountdownClock)options.trialCountdownClock=[] {return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();};
         if(!(options.apiBase.scheme()=="https"&&options.apiBase.host()=="api.flixify.vip"&&options.apiBase.userInfo().isEmpty()&&options.apiBase.path().isEmpty()&&!options.apiBase.hasQuery()&&!options.apiBase.hasFragment())&&!(options.allowLoopbackForTests&&loopback(options.apiBase)))options.apiBase=QUrl("https://api.flixify.vip");
         analytics=std::make_unique<DesktopAnalytics>(AnalyticsOptions{options.apiBase,(options.storageDirectory.isEmpty()?defaultStorage():options.storageDirectory)+"/analytics.ini",options.allowLoopbackForTests},owner);
         QObject::connect(analytics.get(),&DesktopAnalytics::stateChanged,q,[this]{const auto ticket=analyticsEpoch;QTimer::singleShot(0,q,[this,ticket]{if(ticket==analyticsEpoch)screen(analyticsPlayerVisible?"player":currentRoute);});emit q->stateChanged();});
@@ -95,10 +99,12 @@ public:
         });
         pairCountdownTimer.setInterval(250);
         if(auto *application=qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
-            QObject::connect(application,&QGuiApplication::applicationStateChanged,q,[this](Qt::ApplicationState state){if(state!=Qt::ApplicationActive&&!pairAdopted){cancelPairing();changed();}});
+            QObject::connect(application,&QGuiApplication::applicationStateChanged,q,[this](Qt::ApplicationState state){if(state!=Qt::ApplicationActive&&!pairAdopted){cancelPairing();changed();}else if(state==Qt::ApplicationActive&&session.valid()&&!refreshing&&!working){refreshAccount(false);}});
         queryTimer.setSingleShot(true);queryTimer.setInterval(90);QObject::connect(&queryTimer,&QTimer::timeout,q,[this]{rebuild();});
         QObject::connect(&expiryTimer,&QTimer::timeout,q,[this]{if(deadline&&deadline<=now())revoke();});expiryTimer.start(250);
         QObject::connect(&refreshTimer,&QTimer::timeout,q,[this]{if(session.valid()&&!refreshing&&!working)refreshAccount(false);});refreshTimer.start(60000);
+        trialTimer.setInterval(1000);
+        QObject::connect(&trialTimer,&QTimer::timeout,q,[this]{if(trialClock.status(trialNow())!=TrialCountdownClock::Status::Active)trialTimer.stop();emit q->trialCountdownChanged();});
     }
     void pairingRequest(QString path,QJsonObject body,quint64 epoch,Reply callback){
         QNetworkRequest request(options.apiBase.resolved(QUrl(path)));
@@ -197,6 +203,18 @@ public:
         });
     }
     qint64 now()const{return options.now();}
+    qint64 trialNow()const{return options.trialCountdownClock();}
+    void clearTrialCountdown(){trialTimer.stop();trialClock.clear();emit q->trialCountdownChanged();}
+    void installTrialCountdown(const QJsonValue &value){
+        if(!value.isObject()){clearTrialCountdown();return;}
+        const auto raw=value.toObject();const auto status=raw["status"].toString();
+        using Status=TrialCountdownClock::Status;
+        Status state=Status::None;
+        if(status=="pending")state=Status::Pending;else if(status=="active")state=Status::Active;else if(status=="expired")state=Status::Expired;else if(status=="unavailable")state=Status::Unavailable;
+        trialClock.install(state,date(raw["serverNow"]),date(raw["endsAt"]),trialNow());
+        if(trialClock.status(trialNow())==Status::Active)trialTimer.start();else trialTimer.stop();
+        emit q->trialCountdownChanged();
+    }
     void analyticsSession(){analytics->setSession(session.accessToken,session.accountID);}
     void screen(QString name){if(!session.valid()||!analytics->available()||analytics->choice()!="accepted"||name==analyticsScreen)return;analyticsScreen=name;analytics->record("app_screen_view",{{"screen_name",name}});}
     void changed(){emit q->stateChanged();}
@@ -256,7 +274,7 @@ public:
     bool installWelcome(const QJsonObject &raw){auto state=raw["state"].toString();if(raw["campaign"].toString()!="welcome-monthly-50-v1"||!raw["eligible"].isBool()||!QStringList{"pending","dismissed","not_eligible","redeemed"}.contains(state))return false;bool eligible=raw["eligible"].toBool();if(eligible!=(state=="pending"||state=="dismissed")||!raw["offers"].isArray()||raw["offers"].toArray().size()!=(eligible?2:0))return false;QSet<int> users;for(const auto&v:raw["offers"].toArray()){auto o=v.toObject();int u=o["users"].toInt();if(!o["users"].isDouble()||!QList<int>{1,2}.contains(u)||users.contains(u)||o["id"].toString()!="welcome-monthly-50-v1"||o["currency"].toString()!="try"||o["durationMonths"].toInt()!=1||o["amountMinor"].toInt()!=(u==1?12500:19950)||o["regularAmountMinor"].toInt()!=(u==1?25000:39900)||o["packageSlug"].toString()!=(u==1?"1-ay":"1-ay-2-kullanici"))return false;users.insert(u);}auto counts=raw["catalogue"].toObject();if(eligible&&counts.isEmpty())return false;QVariantMap next{{"state",state},{"eligible",eligible},{"showPrompt",eligible&&state=="pending"},{"singlePriceMinor",12500},{"dualPriceMinor",19950}};for(auto field:QStringList{"movies","live","series"}){auto v=counts[field];if(eligible&&(!v.isDouble()||v.toDouble()!=std::floor(v.toDouble())||v.toDouble()<0||v.toDouble()>1000000))return false;next[field]=v.toInt();}offer=next;return true;}
     void refreshAccount(bool withWelcome,Done complete={}){
         if(!session.valid()){boot=false;working=false;changed();if(complete)complete(false);return;}refreshing=true;const auto auth=authGeneration;const auto ticket=++accountFlight;
-        api("/me","GET",{},[this,withWelcome,complete,auth,ticket](int status,QJsonDocument doc){if(ticket!=accountFlight||auth!=authGeneration)return;auto user=doc.object()["user"].toObject();if(status!=200||user["id"].toString()!=session.accountID||!user["hasAssignedLink"].isBool()||!user["hasActiveSubscription"].isBool()){refreshing=false;boot=false;working=false;if(status==200)revoke();fail();if(complete)complete(false);return;}auto package=user["activePackage"].toObject();auto title=Catalog::clean(package["title"],256);auto end=date(package["endsAt"]);bool blocked=user["status"].toString()=="blocked",eligible=!blocked&&user["hasAssignedLink"].toBool()&&user["hasActiveSubscription"].toBool()&&end>now();
+        api("/me","GET",{},[this,withWelcome,complete,auth,ticket](int status,QJsonDocument doc){if(ticket!=accountFlight||auth!=authGeneration)return;auto user=doc.object()["user"].toObject();if(status!=200||user["id"].toString()!=session.accountID||!user["hasAssignedLink"].isBool()||!user["hasActiveSubscription"].isBool()){refreshing=false;boot=false;working=false;if(status==200)revoke();fail();if(complete)complete(false);return;}installTrialCountdown(doc.object()["trialCountdown"]);auto package=user["activePackage"].toObject();auto title=Catalog::clean(package["title"],256);auto end=date(package["endsAt"]);bool blocked=user["status"].toString()=="blocked",eligible=!blocked&&user["hasAssignedLink"].toBool()&&user["hasActiveSubscription"].toBool()&&end>now();
             currentAccount={{"packageTitle",title},{"canPlay",false},{"trial",title==QString::fromUtf8("3 Saat Deneme")||title==QString::fromUtf8("24 Saat Test")},{"expiresAt",end},{"message",eligible?QString::fromUtf8("İzleme erişimin açık."):blocked?QString::fromUtf8("Hesabın için destek ekibimizle iletişime geç."):!user["hasAssignedLink"].toBool()?QString::fromUtf8("İçerik bağlantın henüz hazır değil."):QString::fromUtf8("Aktif izleme erişimin bulunmuyor.")}};
             auto finish=[this,withWelcome,complete,auth,ticket](bool access){if(auth!=authGeneration||ticket!=accountFlight)return;currentAccount["canPlay"]=access;if(access)currentAccount["expiresAt"]=deadline;auto done=[this,complete,ticket]{if(ticket!=accountFlight)return;refreshing=false;working=false;boot=false;failure.clear();changed();if(!currentScope.isEmpty()){loadLibrary(false);loadRoute(false);}if(complete)complete(true);};if(withWelcome)api("/me/welcome-offer","GET",{},[this,done,ticket,complete](int status,QJsonDocument doc){if(ticket!=accountFlight)return;if(status!=200||!installWelcome(doc.object())){if(pairAdopted){refreshing=false;working=false;boot=false;fail(QString::fromUtf8("Hesap bilgileri yüklenemedi. Yeniden dene."));if(complete)complete(false);return;}if(status==200)fail(QString::fromUtf8("Karşılama bilgileri doğrulanamadı."));}done();});else done();};
             if(!eligible){revoke();finish(false);return;}api("/me/provider-session","GET",{},[this,finish,ticket,complete](int status,QJsonDocument doc){if(ticket!=accountFlight)return;bool valid=status==200&&installProvider(doc.object());if(pairAdopted&&!valid&&status!=403){refreshing=false;working=false;boot=false;fail(QString::fromUtf8("Hesap bilgileri yüklenemedi. Yeniden dene."));if(complete)complete(false);return;}if(!valid)revoke();finish(valid);});
@@ -406,11 +424,30 @@ QString DesktopRepository::pairingCode()const{return d->pairCode;}
 QString DesktopRepository::pairingQrSource()const{return d->pairQr;}
 QString DesktopRepository::pairingStatus()const{return d->pairState;}
 int DesktopRepository::pairingRemaining()const{return d->pairRemaining;}
+qint64 DesktopRepository::trialRemainingSeconds()const{return d->trialClock.remainingSeconds(d->trialNow());}
+QString DesktopRepository::trialCountdownStatus()const{
+    using Status=TrialCountdownClock::Status;
+    switch(d->trialClock.status(d->trialNow())){
+    case Status::Pending:return QStringLiteral("pending");case Status::Active:return QStringLiteral("active");
+    case Status::Expired:return QStringLiteral("expired");case Status::Unavailable:return QStringLiteral("unavailable");
+    default:return QStringLiteral("none");
+    }
+}
+QString DesktopRepository::trialCountdownText()const{
+    using Status=TrialCountdownClock::Status;
+    switch(d->trialClock.status(d->trialNow())){
+    case Status::Active:{const auto seconds=trialRemainingSeconds();return QString::fromUtf8("Deneme · ")+QStringLiteral("%1:%2:%3").arg(seconds/3600,2,10,QChar('0')).arg((seconds/60)%60,2,10,QChar('0')).arg(seconds%60,2,10,QChar('0'));}
+    case Status::Pending:return QString::fromUtf8("Deneme hazırlanıyor");
+    case Status::Expired:return QString::fromUtf8("Denemen sona erdi");
+    case Status::Unavailable:return QString::fromUtf8("Deneme süresi doğrulanıyor");
+    default:return {};
+    }
+}
 void DesktopRepository::startDeviceLogin(){d->beginPairing();}
 void DesktopRepository::cancelDeviceLogin(){d->cancelPairing();d->changed();}
 void DesktopRepository::retryDeviceBootstrap(){if(d->session.valid()&&!d->refreshing){d->failure.clear();d->pairState="authorized";const auto epoch=d->pairEpoch;d->refreshAccount(true,[this,epoch](bool ok){if(epoch==d->pairEpoch&&d->pairAdopted){d->pairState=ok?"complete":"bootstrap_error";d->changed();}});d->changed();}}
 void DesktopRepository::login(QString code){d->cancelPairing();code=code.trimmed().toUpper();if(!QRegularExpression("^[A-Z0-9]{16}$").match(code).hasMatch()){d->fail(QString::fromUtf8("16 karakterli giriş kodunu kontrol et."));return;}logout();d->boot=false;d->working=true;d->failure.clear();d->changed();auto installation=d->vault.installationID();if(installation.isEmpty()){d->working=false;d->fail(QString::fromUtf8("Güvenli oturum kaydı oluşturulamadı."));return;}const auto analyticsTicket=d->analyticsEpoch;d->request(d->options.apiBase.resolved(QUrl("/auth/login-by-code")),"POST",{{"code",code},{"deviceName","Flixify Windows"},{"platform","windows"},{"installationId",installation}},{},[this,analyticsTicket](int status,QJsonDocument doc){auto session=tokens(doc.object());if(status!=200||!session.valid()){d->working=false;d->fail(status==401?QString::fromUtf8("Giriş kodun doğrulanamadı."):QString::fromUtf8("Giriş tamamlanamadı. Yeniden dene."));return;}if(!d->vault.save(session)){d->working=false;d->fail(QString::fromUtf8("Güvenli oturum kaydı oluşturulamadı."));return;}d->session=session;d->analyticsSession();recordAnalytics("login",{{"method","code"}},analyticsTicket);d->screen("home");d->refreshAccount(true);});}
-void DesktopRepository::logout(){d->cancelPairing(true);d->failPlaybackMeasurement(d->analyticsPendingAttempt,d->analyticsPendingEpoch,"canceled");d->analyticsPlayerVisible=false;if(d->session.valid())d->analytics->recordLogoutAndDetach();d->analyticsEpoch++;d->authGeneration++;d->accountFlight++;d->rotationTicket++;d->rotating=false;d->rotationWaiters.clear();d->abort();d->clearSource();d->vault.clear();d->session={};d->analyticsSession();d->analyticsScreen.clear();d->searchMeasurementPending=false;d->currentAccount.clear();d->offer.clear();d->working=false;d->refreshing=false;d->rotating=false;d->rotationWaiters.clear();d->boot=false;d->failure.clear();d->currentRoute="home";d->searchQuery.clear();d->selectedCategory.clear();d->selectedCountry.clear();emit accessRevoked();d->changed();}
+void DesktopRepository::logout(){d->cancelPairing(true);d->failPlaybackMeasurement(d->analyticsPendingAttempt,d->analyticsPendingEpoch,"canceled");d->analyticsPlayerVisible=false;if(d->session.valid())d->analytics->recordLogoutAndDetach();d->analyticsEpoch++;d->authGeneration++;d->accountFlight++;d->rotationTicket++;d->rotating=false;d->rotationWaiters.clear();d->abort();d->clearSource();d->vault.clear();d->session={};d->analyticsSession();d->analyticsScreen.clear();d->searchMeasurementPending=false;d->clearTrialCountdown();d->currentAccount.clear();d->offer.clear();d->working=false;d->refreshing=false;d->rotating=false;d->rotationWaiters.clear();d->boot=false;d->failure.clear();d->currentRoute="home";d->searchQuery.clear();d->selectedCategory.clear();d->selectedCountry.clear();emit accessRevoked();d->changed();}
 void DesktopRepository::navigate(QString route){if(!QStringList{"home","movies","series","live","favorites","account","search"}.contains(route))return;d->screen(route);d->searchMeasurementPending=false;d->detailSelection++;d->epgSelection++;d->detailLoading=false;d->epgRows.clear();d->currentRoute=route;d->visible=96;d->searchQuery.clear();d->selectedCategory.clear();d->selectedCountry.clear();d->detail.clear();d->failure.clear();d->loadRoute(false);}
 void DesktopRepository::setQuery(QString query){if(query.size()>256)query=query.left(256);if(query==d->searchQuery)return;d->searchAnalyticsEpoch=d->analyticsEpoch;d->searchMeasurementPending=!query.trimmed().isEmpty();d->searchQuery=query;d->visible=96;d->queryTimer.start();d->changed();}
 void DesktopRepository::setCategory(QString c){d->selectedCategory=c=="all"?QString():c;auto ref=DesktopAnalytics::categoryReference(d->selectedCategory);if(!ref.isEmpty()){QVariantMap values{{"category_id",ref}};for(const auto &row:d->currentCategories){const auto category=row.toMap();if(category["id"].toString()==d->selectedCategory){const auto label=DesktopAnalytics::catalogLabel(category["title"].toString(),80);if(!label.isEmpty())values["category_name"]=label;break;}}d->analytics->record("category_select",values);}d->visible=96;d->rebuild();}

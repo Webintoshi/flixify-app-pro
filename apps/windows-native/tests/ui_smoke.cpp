@@ -108,7 +108,7 @@ class FixtureServer final : public QTcpServer {
         const auto expiryText = QDateTime::fromMSecsSinceEpoch(expiry, Qt::UTC).toString(Qt::ISODateWithMs);
         if (url.path() == "/analytics/config") value=QJsonObject{{"schema",1},{"consentVersion",1},{"windows",QJsonObject{{"enabled",true},{"measurementId","G-FIXTURE1"}}}};
         else if (url.path() == "/auth/login-by-code" || url.path() == "/auth/refresh") value = QJsonObject{{"accessToken","fixture-access"},{"refreshToken","fixture-refresh"},{"user",QJsonObject{{"id","fixture-account"},{"codeSuffix","TEST"}}}};
-        else if (url.path() == "/me") { ++accountRequests;value = QJsonObject{{"user",QJsonObject{{"id","fixture-account"},{"codeSuffix","TEST"},{"status","active"},{"hasAssignedLink",accessActive},{"hasActiveSubscription",accessActive},{"activePackage",QJsonObject{{"title","Yerel doğrulama paketi"},{"endsAt",expiryText}}}}}}; }
+        else if (url.path() == "/me") { ++accountRequests;value = QJsonObject{{"user",QJsonObject{{"id","fixture-account"},{"codeSuffix","TEST"},{"status","active"},{"hasAssignedLink",accessActive},{"hasActiveSubscription",accessActive},{"activePackage",QJsonObject{{"title",trialActive?QString::fromUtf8("3 Saat Deneme"):QString::fromUtf8("Yerel doğrulama paketi")},{"endsAt",expiryText}}}}},{"trialCountdown",QJsonObject{{"status",trialActive?"active":"none"},{"serverNow",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},{"endsAt",trialActive?QJsonValue(QDateTime::fromMSecsSinceEpoch(trialEnd,Qt::UTC).toString(Qt::ISODateWithMs)):QJsonValue(QJsonValue::Null)}}}}; }
         else if (url.path() == "/me/provider-session") value = QJsonObject{{"accountId","fixture-account"},{"sourceVersion","fixture-v1"},{"providerOrigin",base().toString()},{"username","fixture-user"},{"password","fixture-secret"},{"expiresAt",expiryText},{"moviePolicy","general-audience-only"}};
         else if (url.path() == "/me/welcome-offer") value = welcome();
         else if (url.path() == "/me/welcome-offer/choice") { welcomePending_=false;value=welcome(); }
@@ -145,6 +145,8 @@ class FixtureServer final : public QTcpServer {
 public:
     bool accessActive = true;
     int accountRequests = 0;
+    bool trialActive = false;
+    qint64 trialEnd = QDateTime::currentMSecsSinceEpoch() + 10800000;
     qint64 expiry = QDateTime::currentMSecsSinceEpoch()+3600000;
     QSet<QString> paths, actions;
     FixtureServer() {
@@ -504,6 +506,15 @@ int main(int argc,char **argv) {
     if(!readableSelectIndicator(root->contentItem()))return finish("Season selector did not provide its readable indicator",55);
     report["comboIndicators"]=true;
     QTest::keyClick(root,Qt::Key_Escape); if(!click(root,"nav-account"))return finish("Account navigation failed",20); QTest::qWait(100);
+    fixture.trialActive=true;repository.refresh();
+    if(!until([&]{return !repository.busy()&&repository.trialCountdownStatus()=="active";}))return finish("Trial countdown did not load",82);
+    auto trialLabel=visual(root->contentItem(),"accountTrialCountdown");
+    const bool trialVisible=trialLabel&&trialLabel->isVisible()&&trialLabel->property("text").toString().startsWith(QString::fromUtf8("Deneme · "))&&repository.trialRemainingSeconds()>10700&&repository.trialRemainingSeconds()<=10800;
+    if(!trialVisible||!capture(root,QDir(output).filePath("account-trial-countdown.png")))return finish("Trial countdown was not rendered",82);
+    fixture.trialActive=false;repository.refresh();
+    if(!until([&]{return !repository.busy()&&repository.trialCountdownStatus()=="none";}))return finish("Paid upgrade did not clear trial countdown",83);
+    if(trialLabel->isVisible())return finish("Paid account retained trial countdown",83);
+    report["trialCountdown"]=QJsonObject{{"rendered",trialVisible},{"paidUpgradeClears",true},{"serverDeadlinePreserved",true}};
     if(!capture(root,QDir(output).filePath("account.png")))return finish("Account screenshot failed",20);
     root->resize(900,620); QTest::qWait(100);
     if(!capture(root,QDir(output).filePath("minimum-size.png")))return finish("Minimum size screenshot failed",21);

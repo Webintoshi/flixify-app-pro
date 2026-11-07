@@ -13,6 +13,7 @@ struct RepositoryOptions {
     std::function<qint64()> now;
     std::function<qint64()> analyticsClock;
     std::function<qint64()> deviceLoginClock;
+    std::function<qint64()> trialCountdownClock;
 };
 
 class DesktopRepository final : public QObject {
@@ -53,6 +54,9 @@ class DesktopRepository final : public QObject {
     REPO_PROPERTY(int, libraryRevision)
     REPO_PROPERTY(qint64, expiresAt)
 #undef REPO_PROPERTY
+    Q_PROPERTY(QString trialCountdownStatus READ trialCountdownStatus NOTIFY trialCountdownChanged)
+    Q_PROPERTY(QString trialCountdownText READ trialCountdownText NOTIFY trialCountdownChanged)
+    Q_PROPERTY(qint64 trialRemainingSeconds READ trialRemainingSeconds NOTIFY trialCountdownChanged)
 public:
     explicit DesktopRepository(QObject *parent = nullptr);
     explicit DesktopRepository(const RepositoryOptions &, QObject *parent = nullptr);
@@ -68,6 +72,9 @@ public:
     REPO_GET(QVariantList, shelves) REPO_GET(QVariantList, items) REPO_GET(QVariantList, categories) REPO_GET(QVariantList, countries)
     REPO_GET(QVariantList, favorites) REPO_GET(QVariantList, programmes) REPO_GET(int, libraryRevision) REPO_GET(qint64, expiresAt)
 #undef REPO_GET
+    QString trialCountdownStatus() const;
+    QString trialCountdownText() const;
+    qint64 trialRemainingSeconds() const;
     Q_INVOKABLE void startDeviceLogin();
     Q_INVOKABLE void cancelDeviceLogin();
     Q_INVOKABLE void retryDeviceBootstrap();
@@ -99,6 +106,7 @@ public:
     void recordAnalytics(QString event, QVariantMap values = {}, quint64 expectedGeneration = 0);
 signals:
     void stateChanged();
+    void trialCountdownChanged();
     void playbackReady(QVariantMap media);
     void analyticsPlaybackRequested(QVariantMap item, quint64 attempt, quint64 epoch, qint64 startedAt);
     void analyticsPlaybackFailed(quint64 attempt, quint64 epoch, QString reason);

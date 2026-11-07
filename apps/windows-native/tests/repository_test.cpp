@@ -80,6 +80,32 @@ private:
         return {{"requestId","00000000-0000-0000-0000-000000000002"},{"deviceSecret",QString(43,'a')},{"userCode","BCDF-GHJK"},{"verificationUri","https://flixify.vip/cihaz"},{"verificationUriComplete","https://flixify.vip/cihaz?code=BCDF-GHJK"},{"qrPngBase64",QString::fromLatin1(png.toBase64())},{"expiresAt","2026-12-01T00:00:00.000Z"},{"expiresInSeconds",180},{"intervalSeconds",2}};
     }
 private slots:
+    void trialCountdownUsesServerDeadlineAndOnlyItsOwnNotification() {
+        FixtureServer server;QTemporaryDir dir;qint64 monotonic=1000;
+        auto user=QJsonObject{{"id","account"},{"codeSuffix","TEST"},{"status","active"},{"hasAssignedLink",true},{"hasActiveSubscription",true},{"activePackage",QJsonObject{{"title",QString::fromUtf8("3 Saat Deneme")},{"endsAt","2033-05-18T03:33:20.000Z"}}}};
+        server.overrides["/me"]=QJsonObject{{"user",user},{"trialCountdown",QJsonObject{{"status","active"},{"serverNow","2026-11-07T11:00:00.000Z"},{"endsAt","2026-11-07T14:00:00.000Z"}}}};
+        RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;
+        options.now=[] {return 1577836800000LL;};options.trialCountdownClock=[&]{return monotonic;};
+        DesktopRepository repo(options);repo.login("ABCDEFGHIJKLMNOP");
+        QTRY_COMPARE(repo.property("trialCountdownStatus").toString(),QString("active"));
+        QCOMPARE(repo.property("trialRemainingSeconds").toLongLong(),qint64(10800));
+        QTRY_VERIFY(repo.account().value("canPlay").toBool());QCOMPARE(repo.expiresAt(),server.expiry);
+        QTRY_VERIFY(!repo.busy());QTRY_COMPARE(repo.findChildren<QNetworkReply *>().size(),0);QTest::qWait(50);
+        QSignalSpy state(&repo,&DesktopRepository::stateChanged),countdown(&repo,SIGNAL(trialCountdownChanged()));
+        monotonic+=1001;
+        QTRY_VERIFY(countdown.count()>0);
+        QCOMPARE(repo.property("trialRemainingSeconds").toLongLong(),qint64(10799));QCOMPARE(state.count(),0);
+        user["activePackage"]=QJsonObject{{"title","Paket"},{"endsAt","2033-05-18T03:33:20.000Z"}};
+        server.overrides["/me"]=QJsonObject{{"user",user},{"trialCountdown",QJsonObject{{"status","none"},{"serverNow","2026-11-07T11:01:00.000Z"},{"endsAt",QJsonValue::Null}}}};
+        repo.refresh();QTRY_COMPARE(repo.property("trialCountdownStatus").toString(),QString("none"));
+        QCOMPARE(repo.property("trialRemainingSeconds").toLongLong(),qint64(0));QVERIFY(repo.property("trialCountdownText").toString().isEmpty());
+        repo.logout();QCOMPARE(repo.property("trialCountdownStatus").toString(),QString("none"));
+    }
+    void missingTrialMetadataNeverInventsThreeHours() {
+        FixtureServer server;QTemporaryDir dir;RepositoryOptions options;options.apiBase=server.base();options.storageDirectory=dir.path();options.allowLoopbackForTests=true;
+        DesktopRepository repo(options);repo.login("ABCDEFGHIJKLMNOP");QTRY_VERIFY(repo.account().value("canPlay").toBool());
+        QCOMPARE(repo.property("trialCountdownStatus").toString(),QString("none"));QCOMPARE(repo.property("trialRemainingSeconds").toLongLong(),qint64(0));
+    }
     void pairingAuthorizationAtFinalDeadlineNeverAdopts() {
         FixtureServer server;QTemporaryDir dir;qint64 monotonic=0;
         server.overrides["/auth/device/start"]=challenge();server.delayedPaths.insert("/auth/device/token");

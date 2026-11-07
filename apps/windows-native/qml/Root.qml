@@ -221,10 +221,17 @@ ApplicationWindow {
                 height: 66
                 spacing: 16
                 Text {
-                    text: repository.account.trial ? "Deneme hesabı" : "Flixify Pro"
+                    objectName: "headerTrialCountdown"
+                    text: repository.trialCountdownText || (repository.account.trial ? "Deneme hesabı" : "Flixify Pro")
                     color: "#A7B0BE"
                     font.pixelSize: 12
                     Layout.fillWidth: true
+                }
+                ActionButton {
+                    text: "Paketleri gör"
+                    quiet: true
+                    visible: repository.trialCountdownStatus === "active" || repository.trialCountdownStatus === "expired"
+                    onClicked: repository.openWebsite("packages")
                 }
                 TextField {
                     id: search
