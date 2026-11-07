@@ -1,11 +1,13 @@
 export type LinkedSession = {accessToken:string;refreshToken:string;user:{id:string;codeSuffix:string}};
-export type DeviceDisplay = {phase:'idle'|'loading'|'pending'|'saving'|'adopted'|'expired'|'denied'|'cancelled'|'complete'|'error';code?:string;qr?:string;remaining?:number;message?:string};
+export type DeviceDisplay = {phase:'idle'|'loading'|'pending'|'saving'|'adopted'|'expired'|'denied'|'cancelled'|'complete'|'error';code?:string;qr?:string;verificationUri?:string;remaining?:number;message?:string};
 type Challenge={requestId:string;deviceSecret:string;userCode:string;verificationUri:string;verificationUriComplete:string;qrPngBase64:string;expiresInSeconds:number;intervalSeconds:number};
 type Call=(path:string,body:unknown,signal?:AbortSignal)=>Promise<any>;
 export function deviceReturnPath(code:string):string|null {return /^[A-HJ-NP-Z]{4}-[A-HJ-NP-Z]{4}$/.test(code)?`/cihaz?code=${code}`:null;}
 function validChallenge(value:Challenge) {
   if(!value || !/^[a-f0-9-]{36}$/i.test(value.requestId) || !/^[A-Za-z0-9_-]{43}$/.test(value.deviceSecret) || !deviceReturnPath(value.userCode))return false;
-  if(value.verificationUri!=='https://flixify.vip/cihaz'||value.verificationUriComplete!==`https://flixify.vip${deviceReturnPath(value.userCode)}`||value.expiresInSeconds!==180||!Number.isInteger(value.intervalSeconds)||value.intervalSeconds<2||value.intervalSeconds>60)return false;
+  const localOrigin=process.env.NODE_ENV==='development'&&typeof window!=='undefined'&&['http://127.0.0.1:3192','http://localhost:3192'].includes(window.location.origin)?window.location.origin:undefined;
+  const origin=localOrigin??'https://flixify.vip';
+  if(value.verificationUri!==`${origin}/cihaz`||value.verificationUriComplete!==`${origin}${deviceReturnPath(value.userCode)}`||value.expiresInSeconds!==180||!Number.isInteger(value.intervalSeconds)||value.intervalSeconds<2||value.intervalSeconds>60)return false;
   if(typeof value.qrPngBase64!=='string'||value.qrPngBase64.length>200000||!/^[A-Za-z0-9+/]+=*$/.test(value.qrPngBase64))return false;
   try{const bytes=Uint8Array.from(atob(value.qrPngBase64),v=>v.charCodeAt(0));const view=new DataView(bytes.buffer);return bytes.length>=24&&view.getUint32(0)===0x89504e47&&view.getUint32(4)===0x0d0a1a0a&&view.getUint32(12)===0x49484452&&view.getUint32(16)>=128&&view.getUint32(16)<=1024&&view.getUint32(20)===view.getUint32(16);}catch{return false;}
 }
@@ -26,7 +28,7 @@ export class DeviceLoginClient {
     try{const c=await this.request('/auth/device/start',{platform:'web',deviceName:'Flixify Web'},this.abort.signal) as Challenge;
       if(epoch!==this.epoch){if(validChallenge(c))this.discard(c);return;}
       if(!validChallenge(c))throw Error('invalid_challenge');this.challenge=c;this.startedAt=this.now();this.interval=c.intervalSeconds;
-      this.emit({phase:'pending',code:c.userCode,qr:`data:image/png;base64,${c.qrPngBase64}`,remaining:180});
+      this.emit({phase:'pending',code:c.userCode,qr:`data:image/png;base64,${c.qrPngBase64}`,verificationUri:c.verificationUri,remaining:180});
       this.countdown=setInterval(()=>{if(epoch!==this.epoch)return;const remaining=Math.max(0,Math.ceil((180000-(this.now()-this.startedAt))/1000));this.emit({...this.display,remaining});if(this.now()-this.startedAt>=240000){this.cancel();this.emit({phase:'expired'});}},1000);this.schedule(epoch);
     }catch{if(epoch===this.epoch)this.emit({phase:'error',message:'QR giriş şu anda hazırlanamadı. Tekrar deneyebilir veya kullanıcı kodunla giriş yapabilirsin.'});}
   }

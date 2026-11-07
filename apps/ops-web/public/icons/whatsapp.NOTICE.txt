@@ -1,0 +1,4 @@
+WhatsApp glyph: Simple Icons
+Source: https://github.com/simple-icons/simple-icons/blob/develop/icons/whatsapp.svg
+License: CC0-1.0, https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md
+WhatsApp is a trademark of WhatsApp LLC.

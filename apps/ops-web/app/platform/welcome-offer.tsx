@@ -14,7 +14,7 @@ import s from './welcome-offer.module.css';
 import { analyticsCheckoutAttribution, trackAnalytics } from './analytics';
 
 const Context = createContext<WelcomeOfferStatus | null>(null);
-const exemptRoutes = new Set(['/kayit-ol', '/register', '/giris-yap', '/giris', '/iletisim', '/odeme-sonucu']);
+const exemptRoutes = new Set(['/kayit-ol', '/register', '/giris-yap', '/giris', '/giris-onizleme', '/iletisim', '/odeme-sonucu']);
 const confetti = [2, 6, 10, 14, 19, 24, 29, 34, 39, 44, 49, 54, 59, 64, 69, 74, 79, 84, 89, 94, 98];
 export function useWelcomeOfferStatus(): WelcomeOfferStatus | null { return useContext(Context); }
 

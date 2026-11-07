@@ -29,41 +29,98 @@ if (process.env.NODE_ENV === "production" && !resolvedApiBaseUrl) {
 export const API_BASE_URL = resolvedApiBaseUrl as string;
 
 export const isDemoMode = (process.env.NEXT_PUBLIC_APP_DEMO_MODE ?? "false") === "true";
-let refreshInFlight: Promise<string | null> | null = null;
-async function refreshPublicSession(): Promise<string | null> {
+const publicSessionKey = "flixify-public-session";
+type PublicSession = { accessToken: string; refreshToken?: string; kryptoniteCode?: string | null; user?: { id?: string; kryptoniteCode?: string | null }; [field: string]: unknown };
+type PublicSessionSnapshot = { session: PublicSession };
+const refreshInFlight = new Map<string, Promise<string | null>>();
+
+function readPublicSessionSnapshot(): PublicSessionSnapshot | null {
   if (typeof window === "undefined") return null;
-  if (refreshInFlight) return refreshInFlight;
-  refreshInFlight = (async () => {
-    const raw = localStorage.getItem("flixify-public-session");
-    const session = raw ? JSON.parse(raw) : null;
-    if (!session?.refreshToken) return null;
-    const response = await fetch(`${API_BASE_URL}/auth/refresh`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ refreshToken: session.refreshToken }), signal: AbortSignal.timeout(15000) });
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
-        localStorage.removeItem("flixify-public-session");
-        window.dispatchEvent(new Event("flixify-session"));
-      }
-      return null;
+  try {
+    const value = JSON.parse(localStorage.getItem(publicSessionKey) ?? "null");
+    return value && typeof value.accessToken === "string" && value.accessToken ? { session: value } : null;
+  } catch { return null; }
+}
+
+function publicTokenClaims(token: string): { sub?: string; exp?: number } | null {
+  try { return JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); }
+  catch { return null; }
+}
+
+function sameCredentials(left: PublicSession, right: PublicSession) {
+  return left.accessToken === right.accessToken && left.refreshToken === right.refreshToken;
+}
+
+function accountIdentity(session: PublicSession) {
+  return publicTokenClaims(session.accessToken)?.sub || session.user?.id || null;
+}
+
+function sameAccount(left: PublicSession, right: PublicSession) {
+  const identity = accountIdentity(left);
+  const hasCode = (value: PublicSession) => Boolean(value.kryptoniteCode ?? value.user?.kryptoniteCode);
+  return Boolean(identity && identity === accountIdentity(right) && hasCode(left) === hasCode(right));
+}
+
+export function publicSessionRefreshDelay(now = Date.now()): number | null {
+  const snapshot = readPublicSessionSnapshot();
+  if (!snapshot?.session.refreshToken) return null;
+  const expiry = publicTokenClaims(snapshot.session.accessToken)?.exp;
+  return typeof expiry === "number" && Number.isFinite(expiry) ? Math.max(0, expiry * 1000 - now - 60_000) : null;
+}
+
+async function performPublicSessionRefresh(snapshot: PublicSessionSnapshot): Promise<string | null> {
+  const current = readPublicSessionSnapshot();
+  if (!current) return null;
+  if (!sameCredentials(snapshot.session, current.session)) return sameAccount(snapshot.session, current.session) ? current.session.accessToken : null;
+  const response = await fetch(`${API_BASE_URL}/auth/refresh`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ refreshToken: current.session.refreshToken }), cache: "no-store", signal: AbortSignal.timeout(15000) });
+  const value = parseJsonValue(await response.text());
+  const payload = value && typeof value === "object" ? value as Partial<PublicSession> & { reason?: string } : null;
+  if (!response.ok) {
+    const definitive = response.status === 401 && ["invalid-refresh", "revoked", "expired"].includes(payload?.reason ?? "")
+      || response.status === 403 && ["account-blocked", "account-deleted"].includes(payload?.reason ?? "");
+    const latest = readPublicSessionSnapshot();
+    if (latest && !sameCredentials(snapshot.session, latest.session) && sameAccount(snapshot.session, latest.session)) return latest.session.accessToken;
+    if (definitive && latest && sameCredentials(snapshot.session, latest.session)) {
+      localStorage.removeItem(publicSessionKey); window.dispatchEvent(new Event("flixify-session"));
     }
-    const next = { ...session, ...await response.json() };
-    if (localStorage.getItem("flixify-public-session") !== raw) return null;
-    localStorage.setItem("flixify-public-session", JSON.stringify(next));
-    window.dispatchEvent(new Event("flixify-session"));
-    return next.accessToken as string;
-  })().catch(() => null).finally(() => { refreshInFlight = null; });
-  return refreshInFlight;
+    return null;
+  }
+  if (!payload || typeof payload.accessToken !== "string" || !payload.accessToken || typeof payload.refreshToken !== "string" || !payload.refreshToken || typeof payload.user?.id !== "string" || !payload.user.id) return null;
+  const nextIdentity = accountIdentity(payload as PublicSession), previousIdentity = accountIdentity(snapshot.session);
+  if (previousIdentity && nextIdentity !== previousIdentity) return null;
+  const latest = readPublicSessionSnapshot();
+  if (!latest) return null;
+  if (!sameCredentials(snapshot.session, latest.session)) return sameAccount(snapshot.session, latest.session) ? latest.session.accessToken : null;
+  const next = { ...latest.session, ...payload };
+  localStorage.setItem(publicSessionKey, JSON.stringify(next)); window.dispatchEvent(new Event("flixify-session"));
+  return next.accessToken!;
+}
+
+export function refreshPublicSession(snapshot = readPublicSessionSnapshot()): Promise<string | null> {
+  const credential = snapshot?.session.refreshToken;
+  if (!snapshot || typeof credential !== "string" || !credential) return Promise.resolve(null);
+  const existing = refreshInFlight.get(credential);
+  if (existing) return existing;
+  const pending = Promise.resolve().then(async () => {
+    const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+    return locks
+      ? await locks.request("flixify-public-session-refresh", { mode: "exclusive", signal: AbortSignal.timeout(20000) }, () => performPublicSessionRefresh(snapshot))
+      : await performPublicSessionRefresh(snapshot);
+  }).catch(() => null).finally(() => { if (refreshInFlight.get(credential) === pending) refreshInFlight.delete(credential); });
+  refreshInFlight.set(credential, pending);
+  return pending;
 }
 const ADMIN_COOKIE_NAME = "flixify-admin-token";
 
-async function waitForRefresh(signal?: AbortSignal) {
-  if (!signal) return refreshPublicSession();
+async function waitForRefresh(snapshot: PublicSessionSnapshot, signal?: AbortSignal) {
+  if (!signal) return refreshPublicSession(snapshot);
   signal.throwIfAborted();
   let abort: () => void = () => {};
   const cancelled = new Promise<never>((_, reject) => {
     abort = () => reject(signal.reason ?? new Error("Request aborted"));
     signal.addEventListener("abort", abort, { once: true });
   });
-  try { return await Promise.race([refreshPublicSession(), cancelled]); }
+  try { return await Promise.race([refreshPublicSession(snapshot), cancelled]); }
   finally { signal.removeEventListener("abort", abort); }
 }
 
@@ -182,6 +239,7 @@ export async function apiRequest<T>(
     signal?: AbortSignal;
   } = {}
 ) {
+  const publicSnapshot = options.useAdminToken ? null : readPublicSessionSnapshot();
   const token = options.accessToken ?? (options.useAdminToken ? getAdminToken() : getUserToken());
   const hasBody = options.body !== undefined;
   const headers: Record<string, string> = {
@@ -204,7 +262,7 @@ export async function apiRequest<T>(
   const responseText = await response.text();
 
   if (response.status === 401 && token && !options.useAdminToken && !options.refreshed && !options.skipAuthRefresh && !path.startsWith("/auth/")) {
-    const refreshedToken = await waitForRefresh(options.signal);
+    const refreshedToken = publicSnapshot && publicSnapshot.session.accessToken === token ? await waitForRefresh(publicSnapshot, options.signal) : null;
     if (refreshedToken) return apiRequest<T>(path, { ...options, accessToken: refreshedToken, refreshed: true });
   }
 

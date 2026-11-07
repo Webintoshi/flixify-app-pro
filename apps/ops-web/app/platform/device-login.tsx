@@ -21,10 +21,12 @@ export function DeviceLoginQr({save,onSuccess,onManual}:{save:(session:LinkedSes
     return()=>{window.removeEventListener('storage',changed);window.removeEventListener('flixify-session',changed);document.removeEventListener('visibilitychange',hidden);window.removeEventListener('pagehide',leave);active.cancel();client.current=null;};
   },[]);
   const pending=state.phase==='pending';
+  const verificationLabel=(state.verificationUri??'https://flixify.vip/cihaz').replace(/^https?:\/\//,'');
+  const localPreview=state.verificationUri?.startsWith('http://');
   const terminal={expired:'QR kodunun süresi doldu.',denied:'Giriş isteği telefonundan reddedildi.',cancelled:'Giriş isteği iptal edildi.',complete:'Bu giriş isteği tamamlandı.'};
   return <section className={styles.target} aria-label="Telefonla QR giriş">
     <h2>Telefonunla giriş yap</h2><p>Telefon kameranla QR kodunu tara. Açılan Flixify sayfasında bu cihazı onayla.</p>
-    {pending&&<><img className={styles.qr} src={state.qr} alt="Flixify cihaz giriş QR kodu" width="240" height="240"/><p className={styles.code}>{state.code}</p><p>QR okutamıyorsan telefonunda <strong>flixify.vip/cihaz</strong> adresini açıp bu kodu yaz.</p><p className={styles.countdown}>{state.remaining?`Kod ${state.remaining} saniye geçerli`:'Telefon onayının sonucu bekleniyor…'}</p></>}
+    {pending&&<><img className={styles.qr} src={state.qr} alt="Flixify cihaz giriş QR kodu" width="240" height="240"/><p className={styles.code}>{state.code}</p><p>{localPreview?'Yerel önizlemede aynı bilgisayarda':'QR okutamıyorsan telefonunda'} <strong>{verificationLabel}</strong> adresini açıp bu kodu yaz.</p><p className={styles.countdown}>{state.remaining?`Kod ${state.remaining} saniye geçerli`:'Telefon onayının sonucu bekleniyor…'}</p></>}
     {state.phase==='loading'&&<p role="status">QR hazırlanıyor…</p>}
     {state.phase==='saving'&&<><p role="alert">{state.message}</p><button type="button" onClick={()=>client.current?.retrySave()}>Girişi kaydetmeyi tekrar dene</button></>}
     {state.phase==='error'&&<p role="alert">{state.message}</p>}

@@ -1,6 +1,7 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { apiRequest } from "../../lib/api";
+import { startPublicSessionRenewal } from "../../lib/public-session-renewal";
 import { createPersonalProviderClient, selectPersonalLiveExtension, validatePersonalBootstrap, type PersonalProviderBootstrap, type PersonalRef } from "./personal-provider";
 import { sessionIdentity, hydratePersonalFavorites, personalFavoriteMutationRefs, createScopedBootstrapLoader } from "./personal-integration";
 import { loadLegacyLiveCatalog } from "./legacy-live-catalog";
@@ -13,8 +14,11 @@ import { useSharedAccountResource, type SharedAccountResource } from "./account-
 type Value = { accountResource?: SharedAccountResource; livePolicyRevision: string; providerExpiresAt: string | null | undefined; providerRevision: number; personalProvider: ReturnType<typeof createPersonalProviderClient> | null; providerMode: "loading" | "personal" | "legacy"; providerError: string; providerScope: string; session: Session | null; ready: boolean; favorites: MediaItem[]; favoritesReady: boolean; favoritesLoading: boolean; favoritesError: string; error: string; pending: Set<string>; toggle: (item: MediaItem) => Promise<void>; reload: () => void; refreshProvider: () => void; invalidateFavorites: () => void; dismissError: () => void; saveSession: (s: Session) => void; logout: () => void };
 type BootstrapRequest = { identity: string; controller?: AbortController; retryRequested: boolean };
 const Context = createContext<Value | null>(null);
+function parseSession(raw: string | null): Session | null {
+  try { const s = JSON.parse(raw ?? "null"); return typeof s?.accessToken === "string" ? s : null; } catch { return null; }
+}
 export function readSession(): Session | null {
-  try { const s = JSON.parse(localStorage.getItem(sessionKey) ?? "null"); return typeof s?.accessToken === "string" ? s : null; } catch { return null; }
+  try { return parseSession(localStorage.getItem(sessionKey)); } catch { return null; }
 }
 export function PlatformProvider({ children }: { children: ReactNode }) {
   const [providerExpiresAt, setProviderExpiresAt] = useState<string | null | undefined>(undefined);
@@ -57,10 +61,10 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     let lastStored: string | null | undefined;
     const sync = () => {
       let stored: string | null = null;
-      try { stored = localStorage.getItem(sessionKey); } catch { /* Restricted storage: remain signed out. */ }
+      try { stored = localStorage.getItem(sessionKey); } catch { setReady(true); return; }
       if (stored === lastStored) return;
       lastStored = stored;
-      const next = readSession(); const identity = sessionIdentity(next);
+      const next = parseSession(stored); const identity = sessionIdentity(next);
       setSession(next); setReady(true);
       if (identity === identityRef.current) {
         if(loadingGeneration.current===generation.current || pendingRef.current.size) favoritesPolicyDirty.current=true;
@@ -83,6 +87,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("pageshow", sync); window.removeEventListener("focus", sync); document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
+  useEffect(() => startPublicSessionRenewal(), []);
   const identity = sessionIdentity(session);
   const accountResource = useSharedAccountResource(session);
   useEffect(() => {

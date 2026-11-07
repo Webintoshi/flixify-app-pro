@@ -17,15 +17,18 @@ export function AppShell({ children, publicAccess = false }: { children: ReactNo
   const { accountResource, session, ready, error, dismissError, reload, logout } = usePlatform();
   const pathname = usePathname();
   const router = useRouter();
-  const [revealed, setRevealed] = useState(false);
+  const [revealedOwner, setRevealedOwner] = useState<string | null>(null);
   const codeRef = useRef<HTMLDivElement>(null);
   const code = session?.kryptoniteCode ?? session?.user?.kryptoniteCode ?? "";
+  const menuOwner = session ? session.user?.id ?? session.accessToken : null;
+  const revealed = Boolean(menuOwner && revealedOwner === menuOwner);
+  const hasCode = Boolean(code);
   const navigation = session ? links : [...links, { href: "/kayit-ol", label: "Kayıt Ol", icon: "arrow" }];
   const catalogRoute = ["/", "/filmler", "/diziler", "/favoriler"].includes(pathname);
-  useEffect(() => { setRevealed(false); }, [pathname]);
+  useEffect(() => { setRevealedOwner(null); }, [pathname]);
   useEffect(() => {
-    const close = (e: PointerEvent) => { if (!codeRef.current?.contains(e.target as Node)) setRevealed(false); };
-    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setRevealed(false); };
+    const close = (e: PointerEvent) => { if (!codeRef.current?.contains(e.target as Node)) setRevealedOwner(null); };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setRevealedOwner(null); };
     document.addEventListener("pointerdown", close); document.addEventListener("keydown", key);
     return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", key); };
   }, []);
@@ -37,14 +40,14 @@ export function AppShell({ children, publicAccess = false }: { children: ReactNo
     search?.focus({ preventScroll: true });
   };
   const accountControl = <div className={s.account} ref={codeRef}>
-    {session ? <button type="button" className={`${s.code}${catalogRoute ? ` ${s.catalogAccountToggle}` : ""}`} aria-label={catalogRoute ? (revealed ? "Hesap menüsünü kapat" : "Hesap menüsünü aç") : (revealed ? "Kullanıcı kodunu gizle" : "Kullanıcı kodunu göster")} aria-expanded={revealed} onClick={() => setRevealed(v => !v)}>
+    {session ? <button type="button" className={`${s.code}${catalogRoute ? ` ${s.catalogAccountToggle}` : ""}`} aria-label={catalogRoute || !hasCode ? (revealed ? "Hesap menüsünü kapat" : "Hesap menüsünü aç") : (revealed ? "Kullanıcı kodunu gizle" : "Kullanıcı kodunu göster")} aria-expanded={revealed} onClick={() => setRevealedOwner(revealed ? null : menuOwner)}>
       {catalogRoute && <svg className={s.catalogAccountIcon} width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="3"/><path d="M5.7 18.4c1.5-2.3 3.6-3.5 6.3-3.5s4.8 1.2 6.3 3.5"/></svg>}
-      <span>{revealed ? code : maskCode(code)}</span><Icon name="chevron" />
+      <span>{hasCode ? revealed ? code : maskCode(code) : "Hesabım"}</span><Icon name="chevron" />
     </button> : <div className={s.guestActions}><Link href="/giris-yap" className={s.code}>Giriş yap</Link><Link href="/kayit-ol" className={s.code}>Kayıt Ol</Link></div>}
-    {revealed && <div className={s.accountMenu}><span>Kullanıcı kodun</span><strong>{code}</strong><Link href="/ayarlar">Hesap ayarları</Link><Link href="/indir">Uygulamaları indir</Link><button onClick={() => { logout(); router.push("/"); }}>Çıkış Yap</button></div>}
+    {session && revealed && <div className={s.accountMenu}>{hasCode && <><span>Kullanıcı kodun</span><strong>{code}</strong></>}<Link href="/ayarlar">Hesap ayarları</Link><Link href="/indir">Uygulamaları indir</Link><button onClick={() => { logout(); router.push("/"); }}>Çıkış Yap</button></div>}
   </div>;
   if (!ready) return <div className={s.loading} aria-busy="true">Flixify hazırlanıyor…</div>;
-  if (!session && !publicAccess) return <div className={s.app}><Link href="/" className={s.brand}><img src="/logo/flixify-logo.png" alt="Flixify" width="142" height="37" /></Link><div className={s.loading}>İçeriklerin. Tek yerde.</div><LoginDialog onClose={() => router.push("/")} onSuccess={() => setRevealed(false)} /></div>;
+  if (!session && !publicAccess) return <div className={s.app}><Link href="/" className={s.brand}><img src="/logo/flixify-logo.png" alt="Flixify" width="142" height="37" /></Link><div className={s.loading}>İçeriklerin. Tek yerde.</div><LoginDialog onClose={() => router.push("/")} onSuccess={() => setRevealedOwner(null)} /></div>;
   const trialClock = session ? accountResource?.trialClock ?? null : null;
   const accountRoute = ["/ayarlar", "/paketler", "/davet", "/odeme-bildirimi", "/iletisim"].includes(pathname);
   return <div className={`${s.app} ${s.tvShell}${trialClock ? ` ${s.trialShell}` : ""}${pathname === "/" ? ` ${s.homeApp}` : ""}${pathname === "/canli-tv" ? ` ${s.liveTvApp}` : ""}${catalogRoute ? ` ${s.catalogApp}` : ""}`}>

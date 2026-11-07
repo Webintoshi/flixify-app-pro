@@ -10,7 +10,6 @@ import { AppShell } from "./platform/shell";
 import { usePlatform } from "./platform/session";
 import registrationStyles from "./kayit-ol/registration.module.css";
 import { WelcomeOfferBoundary } from "./platform/welcome-offer";
-import { trackAnalytics } from "./platform/analytics";
 
 const publicNavigation = [
   { href: "/", label: "Ana Sayfa" },
@@ -43,21 +42,12 @@ function BrandLockup() {
 }
 
 function PublicHeader({ pathname }: { pathname: string }) {
-  const [userCode, setUserCode] = useState<string | null>(null);
-
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem("flixify-public-session");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed?.kryptoniteCode) {
-          setUserCode(parsed.kryptoniteCode);
-        }
-      }
-    } catch {}
-  }, [pathname]);
-
-  const navItems = userCode
+  const { session, logout } = usePlatform();
+  const router = useRouter();
+  const userCode = session?.kryptoniteCode;
+  const isAuthenticated = Boolean(session?.accessToken);
+  const accountLabel = userCode ? `Hesabım (${userCode.slice(-4)})` : "Hesabım";
+  const navItems = isAuthenticated
     ? [...publicNavigation, { href: "/ayarlar", label: "Hesabım" }]
     : [...publicNavigation, { href: "/kayit-ol", label: "Kayıt Ol" }];
 
@@ -76,22 +66,18 @@ function PublicHeader({ pathname }: { pathname: string }) {
         ))}
       </nav>
       <div className="header-actions">
-        {userCode ? (
+        {isAuthenticated ? (
           <>
             <Link href="/ayarlar" className="ghost-link" title="Hesap ve Paket Durumu">
-              Hesabım ({userCode.slice(-4)})
+              {accountLabel}
             </Link>
             <button
               type="button"
               className="button button-hero"
               style={{ padding: "8px 14px", fontSize: "13px", cursor: "pointer" }}
               onClick={() => {
-                trackAnalytics("logout");
-                try {
-                  window.localStorage.removeItem("flixify-public-session");
-                } catch {}
-                setUserCode(null);
-                window.location.href = "/giris-yap";
+                logout();
+                router.push("/giris-yap");
               }}
             >
               Çıkış Yap
@@ -215,6 +201,7 @@ function SiteShellContent({ children }: { children: ReactNode }) {
     pathname === "/kayit-ol" ||
     pathname === "/register" ||
     pathname === "/giris-yap" ||
+    pathname === "/giris-onizleme" ||
     pathname === "/giris";
 
   if (isAdminRoute) {
@@ -234,7 +221,7 @@ function SiteShellContent({ children }: { children: ReactNode }) {
   }
 
   if (isAuthRoute) {
-    const isModernAuthPage = pathname === "/giris-yap" || pathname === "/kayit-ol";
+    const isModernAuthPage = pathname === "/giris-yap" || pathname === "/kayit-ol" || pathname === "/giris-onizleme";
     const registrationShellClass = pathname === "/kayit-ol" ? ` ${registrationStyles.registrationShell}` : "";
     return (
       <div className={`page-shell auth-shell${isModernAuthPage ? " login-page-shell" : " marketing-shell"}${registrationShellClass}`}>
