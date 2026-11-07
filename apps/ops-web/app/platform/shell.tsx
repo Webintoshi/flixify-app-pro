@@ -7,9 +7,7 @@ import { usePlatform } from "./session";
 import { maskCode } from "./types";
 import { LoginDialog } from "./login";
 import s from "./platform.module.css";
-import { tvDownload } from "./tv-download";
 import { windowsDownload } from "./windows-download";
-import { trackAnalyticsDownload } from "./analytics";
 import { TrialCountdown } from "./trial-countdown";
 
 const links = [{ href: "/", label: "Ana Sayfa", icon: "home" }, { href: "/canli-tv", label: "Canlı TV", icon: "live" }, { href: "/filmler", label: "Filmler", icon: "movie" }, { href: "/diziler", label: "Diziler", icon: "series" }, { href: "/favoriler", label: "Favoriler", icon: "heart" }];
@@ -57,7 +55,7 @@ export function AppShell({ children, publicAccess = false }: { children: ReactNo
       <div className={s.catalogHeaderActions}>
         {catalogRoute && <button type="button" className={s.catalogHeaderSearch} aria-label="Katalogda ara" onClick={focusCatalogSearch}><Icon name="search" /></button>}
         {accountControl}
-        <a className={s.headerDownload} href={tvDownload.href} download={tvDownload.filename} aria-label="Android TV APK indir" onClick={() => trackAnalyticsDownload("android_tv", tvDownload)}><Icon name="device"/><span>Android TV APK indir</span></a>
+        <Link className={s.headerDownload} href="/indir" aria-label="Uygulamaları indir"><Icon name="device"/><span>Uygulamaları indir</span></Link>
         <Link className={`${s.headerDownload} ${s.headerDesktopDownload}`} href={windowsDownload.pageHref} aria-label="Windows test sürümünü indir"><Icon name="windows"/><span>Windows indir</span><small>Test</small></Link>
       </div>
       {trialClock && <div className={s.trialHeaderSlot}><TrialCountdown clock={trialClock} onExpired={accountResource?.refresh}/></div>}

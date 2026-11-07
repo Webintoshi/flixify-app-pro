@@ -7,6 +7,7 @@ import HomeFooter from "../components/home/HomeFooter";
 import styles from "./page.module.css";
 import { tvDownload } from "../platform/tv-download";
 import { windowsDownload } from "../platform/windows-download";
+import { phoneDownload } from "../platform/phone-download";
 import { trackAnalytics, trackAnalyticsDownload } from "../platform/analytics";
 
 export default function DownloadsPage() {
@@ -26,7 +27,7 @@ export default function DownloadsPage() {
 
   useEffect(() => {
     const id = window.location.hash.slice(1);
-    if (id !== "android-tv" && id !== "windows") return;
+    if (id !== "android-telefon" && id !== "android-tv" && id !== "windows") return;
     const frame = window.requestAnimationFrame(() => {
       document.getElementById(id)?.scrollIntoView({ block: "start" });
     });
@@ -48,9 +49,21 @@ export default function DownloadsPage() {
       <main className={styles.content}>
         <span className={styles.eyebrow}>FLIXIFY PRO · UYGULAMALAR</span>
         <h1>Flixify’ı cihazına indir.</h1>
-        <p>TV’nde veya Windows bilgisayarında aynı kullanıcı kodunla giriş yap. Cihazına uygun sürümü seç.</p>
-        <nav className={styles.platformLinks} aria-label="Uygulama seç"><a href="#android-tv">Android TV</a><a href="#windows">Windows · Test</a></nav>
+        <p>Telefonunda, TV’nde veya Windows bilgisayarında izle. Cihazına uygun sürümü seç.</p>
+        <nav className={styles.platformLinks} aria-label="Uygulama seç"><a href="#android-telefon">Android Telefon</a><a href="#android-tv">Android TV</a><a href="#windows">Windows · Test</a></nav>
         <div className={styles.platforms}>
+          <section className={styles.platform} id="android-telefon" aria-labelledby="android-phone-heading">
+            <h2 id="android-phone-heading">Android Telefon</h2>
+            <p>Canlı TV, film ve diziler için dokunmatik telefon arayüzü.</p>
+            <a className={styles.download} href={phoneDownload.href} download={phoneDownload.filename} onClick={() => trackAnalyticsDownload("android_phone", phoneDownload)}>Android Telefon APK indir <span aria-hidden="true">↓</span></a>
+            <p className={styles.release}>{phoneDownload.version} · {phoneDownload.minimumAndroid} · {phoneDownload.size}</p>
+            <h3>Telefona nasıl kurulur?</h3>
+            <ol className={styles.steps}>
+              <li>APK dosyasını Android telefonuna indir.</li>
+              <li>İndirilen dosyayı aç. Android izin isterse, yalnız indirmeyi yaptığın tarayıcı için uygulama yükleme izni ver.</li>
+              <li>Flixify Pro’yu aç ve mevcut hesabınla giriş yap.</li>
+            </ol>
+          </section>
           <section className={styles.platform} id="android-tv" aria-labelledby="android-tv-heading">
             <h2 id="android-tv-heading">Android TV</h2>
             <p>Canlı TV, filmler ve diziler için TV’ye özel arayüz. Yön tuşları, OK ve Geri ile gez.</p>

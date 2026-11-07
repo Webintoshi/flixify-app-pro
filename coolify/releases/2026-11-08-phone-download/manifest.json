@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "sourceImageId": "sha256:b9f0545c933733b1b13bd1a6f4656aa4981dc66de1e214669389d3523aa7bde9",
+  "files": [
+    {
+      "path": "apps/ops-web/app/indir/page.tsx",
+      "beforeSha256": "42458062e8b0bd59060c9b46af7816482170226fbf8fffa7c0889bb2da56ba08",
+      "sha256": "67387fdf6f8a890b610c0ec4296c9c2612a13109e095d6a053da0278672ed4ef",
+      "bytes": 5998
+    },
+    {
+      "path": "apps/ops-web/app/platform/analytics.ts",
+      "beforeSha256": "3a25325d11ddecf70b9dbdd5efd73293f5b5f2e84af852f037f2615a07a47a2c",
+      "sha256": "40eba0bc71dd725bc6d2f072b0835ad7075da27b7f3dd3ce1386843ffc8366e1",
+      "bytes": 5917
+    },
+    {
+      "path": "apps/ops-web/app/platform/analytics-policy.ts",
+      "beforeSha256": "1e80b2373332db498994c1eb2d40f380611ce6f3b1f90b4f2c08192d23aa5e82",
+      "sha256": "42bc9e2cca08251207dbc04cc1714b6312d95061b1b223329147ff13bb206244",
+      "bytes": 13140
+    },
+    {
+      "path": "apps/ops-web/app/platform/shell.tsx",
+      "beforeSha256": "63582e8edacd00fedf744e7e1937303e79b5e5d552ade24a2b6af768a5c36abe",
+      "sha256": "110c2f4dc6ce7513b419658d14be3be1ae9cd5b7f35369ca73c84046ab9988a0",
+      "bytes": 7203
+    },
+    {
+      "path": "apps/ops-web/app/platform/phone-download.ts",
+      "beforeSha256": null,
+      "sha256": "1f146131821f3646f0fa82c04c650b088cba463fb10c5d5718eb3dc237105caf",
+      "bytes": 369
+    },
+    {
+      "path": "apps/ops-web/public/downloads/flixify-pro-android-phone-1.0.0.apk",
+      "beforeSha256": null,
+      "sha256": "cef2e7a2a904e1182708680feabe44550dc14012bc854b033f82b2e9a2c73899",
+      "bytes": 1345139
+    }
+  ]
+}

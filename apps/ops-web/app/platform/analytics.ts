@@ -97,6 +97,6 @@ async function analyticsDigest(value: string) {
   catch { return undefined; }
 }
 
-export function trackAnalyticsDownload(platform: "android_tv" | "macos" | "windows", download: { filename: string; version: string }) {
-  trackAnalytics("file_download", { download_platform: platform, target_version: download.version.match(/^\d+\.\d+\.\d+/)?.[0], file_extension: ({ android_tv: "apk", macos: "dmg", windows: "exe" })[platform], file_name: download.filename });
+export function trackAnalyticsDownload(platform: "android_phone" | "android_tv" | "macos" | "windows", download: { filename: string; version: string }) {
+  trackAnalytics("file_download", { download_platform: platform, target_version: download.version.match(/^\d+\.\d+\.\d+/)?.[0], file_extension: ({ android_phone: "apk", android_tv: "apk", macos: "dmg", windows: "exe" })[platform], file_name: download.filename });
 }

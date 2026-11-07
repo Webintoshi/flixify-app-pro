@@ -45,7 +45,7 @@ const enums: Record<string, Set<string>> = {
   content_type: new Set(["live", "movie", "series", "episode"]), method: new Set(["account_code", "whatsapp"]),
   reason: new Set(["media", "network", "startup", "expired", "unsupported", "gesture", "unknown", "closed", "ended", "replaced", "aborted", "unavailable", "recovery"]),
   timing_method: new Set(["requestVideoFrameCallback", "loadeddata-fallback", "playing-fallback"]),
-  source_platform: new Set(["android_tv", "macos", "windows"]), download_platform: new Set(["android_tv", "macos", "windows"]),
+  source_platform: new Set(["android_tv", "macos", "windows"]), download_platform: new Set(["android_phone", "android_tv", "macos", "windows"]),
   file_extension: new Set(["apk", "dmg", "exe"]), currency: new Set(["TRY"]),
   screen_name: new Set(Object.values(screenNames)),
   item_list_id: new Set(["packages", "catalog", "search", "favorites", "home"]),
