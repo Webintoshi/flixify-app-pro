@@ -276,3 +276,65 @@ it("reports successful WhatsApp sign-in through the existing consent-gated analy
   expect(state.analytics).toHaveBeenCalledExactlyOnceWith("login", { method: "whatsapp" });
   const event = JSON.stringify(state.analytics.mock.calls); expect(event).not.toContain("5551231234"); expect(event).not.toContain("fixture-access"); expect(event).not.toContain("123456");
 });
+
+
+it("ends a consumed login challenge and waits for an explicit new-account choice without sending another OTP", async () => {
+  const transport = client(); transport.verify.mockRejectedValueOnce(Object.assign(new Error("private-provider-text"), { status: 409, reason: "registration_required" }));
+  await render(transport); await type("#phone-number", "+447510123456"); await submit(); await type("#phone-otp", "123456"); await submit();
+  expect(container.querySelector("#phone-otp")).toBeNull(); expect(container.querySelector("form")).toBeNull();
+  expect(container.textContent).toContain("Bu numarayla henüz hesap oluşturulmamış."); expect(container.textContent).not.toContain("private-provider-text");
+  expect(transport.request).toHaveBeenCalledTimes(1); expect(transport.verify).toHaveBeenCalledTimes(1); expect(state.save).not.toHaveBeenCalled();
+  await settle(() => findButton("Bu numarayla hesap oluştur").click());
+  expect(container.querySelector("#phone-number")).not.toBeNull(); expect(transport.request).toHaveBeenCalledTimes(1);
+  expect(container.querySelector('button[aria-pressed="true"]')?.textContent).toBe("Hesap oluştur");
+  await submit(); expect(transport.request).toHaveBeenCalledTimes(2);
+  expect(transport.request.mock.calls[1][0]).toMatchObject({ phone: "+447510123456", intent: "register", installationId: "installation-fixture" });
+});
+
+it("offers proven existing-account binding after registration-required without creating a new trial or requesting a code automatically", async () => {
+  const transport = client(); transport.verify.mockRejectedValueOnce(Object.assign(new Error("private"), { status: 409, reason: "registration_required" }));
+  await render(transport); await type("#phone-number", "5551231234"); await submit(); await type("#phone-otp", "123456"); await submit();
+  await settle(() => findButton("Mevcut hesabımı bağla").click());
+  expect(container.querySelector("#existing-account-code")).not.toBeNull(); expect(transport.request).toHaveBeenCalledTimes(1);
+  expect(findButton("Telefonumu doğrula").disabled).toBe(true);
+  await type("#existing-account-code", "AB12CD34EF56GH78"); await submit();
+  expect(transport.request.mock.calls[1][0]).toMatchObject({ phone: "+905551231234", intent: "register", existingCode: "AB12CD34EF56GH78" });
+  expect(transport.request.mock.calls[1][0]).not.toHaveProperty("referralCode"); expect(state.save).not.toHaveBeenCalled();
+});
+
+it.each([
+  [409, "installation_limit", "Bu cihazda daha önce hesap oluşturulmuş."],
+  [429, "registration_ip_limit", "Bu internet bağlantısından toplam iki hesap oluşturulabilir."],
+  [409, "account_conflict", "Bu telefon numarası ile mevcut hesap eşleşmiyor."],
+  [403, "reauthentication_required", "Mevcut hesabına kullanıcı kodunla giriş yapıp telefonunu yeniden bağla."],
+  [403, "account_unavailable", "Bu hesaba şu anda giriş yapılamıyor."],
+  [400, "invalid_referral_code", "Davet kodu geçersiz."]
+])("clears consumed OTP state on HTTP %s %s and preserves existing-code login", async (status, reason, message) => {
+  const transport = client(); transport.verify.mockRejectedValueOnce(Object.assign(new Error("private"), { status, reason }));
+  const codeClient = { login: vi.fn().mockResolvedValue(paidSession) };
+  await render(transport, codeClient); await type("#phone-number", "5551231234"); await submit(); await type("#phone-otp", "123456"); await submit();
+  expect(container.querySelector("#phone-otp")).toBeNull(); expect(container.querySelector("form")).toBeNull();
+  expect(container.textContent).toContain(message); expect(container.textContent).not.toContain("private");
+  expect(transport.verify).toHaveBeenCalledTimes(1); expect(transport.request).toHaveBeenCalledTimes(1); expect(state.save).not.toHaveBeenCalled();
+  await settle(() => findButton("Kullanıcı koduyla giriş").click()); await type("#login-account-code", "AB12CD34EF56GH78"); await submit();
+  expect(codeClient.login).toHaveBeenCalledTimes(1); expect(state.save).toHaveBeenCalledWith(paidSession);
+  expect(transport.request).toHaveBeenCalledTimes(1);
+});
+
+it("retains an unconsumed wrong-code challenge for correction instead of inventing registration", async () => {
+  const transport = client(); transport.verify.mockRejectedValueOnce(Object.assign(new Error("private"), { status: 400, reason: "invalid_or_expired" }));
+  await render(transport); await type("#phone-number", "5551231234"); await submit(); await type("#phone-otp", "111111"); await submit();
+  expect(container.querySelector("#phone-otp")).not.toBeNull(); expect(container.textContent).toContain("Kod geçersiz veya süresi dolmuş.");
+  await type("#phone-otp", "123456"); await submit();
+  expect(transport.verify).toHaveBeenCalledTimes(2); expect(transport.request).toHaveBeenCalledTimes(1); expect(state.save).toHaveBeenCalledWith(paidSession);
+});
+
+it("uses the trusted current account during recovery binding without requiring an invisible legacy-code field", async () => {
+  state.session = paidSession;
+  const transport = client(); transport.verify.mockRejectedValueOnce(Object.assign(new Error("private"), { status: 409, reason: "registration_required" }));
+  await render(transport); await type("#phone-number", "5551231234"); await submit(); await type("#phone-otp", "123456"); await submit();
+  await settle(() => findButton("Mevcut hesabımı bağla").click());
+  expect(container.querySelector("#existing-account-code")).toBeNull(); expect(findButton("Telefonumu doğrula").disabled).toBe(false);
+  expect(transport.request).toHaveBeenCalledTimes(1); await submit();
+  expect(transport.request.mock.calls[1][0]).not.toHaveProperty("existingCode"); expect(state.save).not.toHaveBeenCalled();
+});

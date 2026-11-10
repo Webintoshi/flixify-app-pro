@@ -224,7 +224,21 @@ export function getUserToken() {
 }
 
 export class ApiRequestError extends Error {
-  constructor(message: string, public readonly status: number) { super(message); this.name = 'ApiRequestError'; }
+  constructor(message: string, public readonly status: number, public readonly reason?: string) { super(message); this.name = 'ApiRequestError'; }
+}
+
+
+const phoneAuthErrorReasons = new Set([
+  "invalid_phone", "invalid_input", "invalid_referral_code", "delivery_unavailable", "temporarily_unavailable",
+  "rate_limited", "resend_cooldown", "invalid_or_expired", "registration_required", "account_conflict",
+  "existing_account_unverified", "reauthentication_required", "account_unavailable", "installation_limit",
+  "registration_ip_limit", "origin_forbidden"
+]);
+function phoneAuthResponseReason(path: string, rawBody: string): string | undefined {
+  if (!path.startsWith("/auth/phone/")) return undefined;
+  const payload = parseJsonValue(rawBody);
+  const reason = payload && typeof payload === "object" && "reason" in payload ? payload.reason : undefined;
+  return typeof reason === "string" && phoneAuthErrorReasons.has(reason) ? reason : undefined;
 }
 
 export async function apiRequest<T>(
@@ -274,7 +288,7 @@ export async function apiRequest<T>(
       }
     }
 
-    throw new ApiRequestError(normalizeErrorMessage(responseText, response.status), response.status);
+    throw new ApiRequestError(normalizeErrorMessage(responseText, response.status), response.status, phoneAuthResponseReason(path, responseText));
   }
 
   if (response.status === 204) {

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "sourceImageId": "sha256:6f50c7988e7a0179826915e658954018f66b4b0974571e872c4fd6aa8bb97db7",
+  "files": [
+    {
+      "path": "apps/ops-web/lib/api.ts",
+      "beforeSha256": "18e36dca08c57e3ee62ef4ed1d3c184a995683310d57f3802c0af1b3f4638e33",
+      "sha256": "046c0c797c633e00f03c5e1fa1cd243d3d70f942b04357bbd3a183070e194ccc",
+      "bytes": 11849
+    },
+    {
+      "path": "apps/ops-web/app/giris-onizleme/phone-auth-client.ts",
+      "beforeSha256": "0824bb3ff509c58559cb08fe835dc934dec006171b2cfed7f0802eafadd8fc6f",
+      "sha256": "c0df469d399dd040219c63ba77126276478a4da058647df57e233926e7f729a3",
+      "bytes": 6528
+    },
+    {
+      "path": "apps/ops-web/app/giris-onizleme/phone-login-preview.tsx",
+      "beforeSha256": "bca03ce931cae946c2db81a92fe208e892ec07255e67ac78993ce6ec8041e41d",
+      "sha256": "343e59a57571e02dad8f0cbe3602777a193aefd025c4420096249367186d56df",
+      "bytes": 19853
+    },
+    {
+      "path": "apps/ops-web/app/platform/phone-download.ts",
+      "beforeSha256": "1f146131821f3646f0fa82c04c650b088cba463fb10c5d5718eb3dc237105caf",
+      "sha256": "632a1463cceba477678a76edcc1dae29f976abb432b2c4b9896acb810e2e357b",
+      "bytes": 369
+    },
+    {
+      "path": "apps/ops-web/public/downloads/flixify-pro-android-phone-1.0.1.apk",
+      "beforeSha256": null,
+      "sha256": "44eab6ddf5d2e79e0f1aab29548bae9ba0ea60297db2a1973de494c50093d84c",
+      "bytes": 1345844
+    }
+  ]
+}

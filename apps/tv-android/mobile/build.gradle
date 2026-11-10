@@ -1,0 +1,103 @@
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermission
+
+plugins { id 'com.android.application' }
+
+def signingProperties = new Properties()
+def signingPath = System.getenv('FLIXIFY_PHONE_SIGNING_FILE') ?: new File(System.getProperty('user.home'), '.codex/private/flixify-phone-android/phone-signing.properties').absolutePath
+def signingFile = new File(signingPath)
+def signingError = null
+def privateFile = { File value ->
+    if (!value.isFile() || Files.isSymbolicLink(value.toPath())) return false
+    def permissions = Files.getPosixFilePermissions(value.toPath())
+    return permissions == ([PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE] as Set) &&
+        Files.getOwner(value.toPath()).name == System.getProperty('user.name') &&
+        !value.canonicalFile.toPath().startsWith(rootProject.file('../..').canonicalFile.toPath())
+}
+try {
+    if (signingFile.exists()) {
+        if (!privateFile(signingFile)) signingError = 'Phone signing configuration must be an owned private 0600 file outside the repository.'
+        else signingFile.withInputStream { signingProperties.load(it) }
+    }
+} catch (Exception ignored) { signingError = 'Phone signing configuration could not be read securely.' }
+def signingKeys = ['FLIXIFY_PHONE_KEYSTORE_PATH', 'FLIXIFY_PHONE_KEY_ALIAS', 'FLIXIFY_PHONE_STORE_PASSWORD', 'FLIXIFY_PHONE_KEY_PASSWORD']
+def signingReady = signingError == null && signingKeys.every { signingProperties.getProperty(it)?.length() > 0 }
+
+android {
+    namespace 'vip.flixify.tv'
+    compileSdk 36
+    buildToolsVersion '36.0.0'
+    defaultConfig {
+        applicationId 'vip.flixify.mobile'
+        minSdk 23
+        targetSdk 36
+        versionCode 2
+        versionName '1.0.1'
+        buildConfigField 'boolean', 'FLIXIFY_ANALYTICS_CONFIGURED', 'false'
+        ['FIREBASE_APP_ID', 'FIREBASE_API_KEY', 'FIREBASE_PROJECT_ID', 'FIREBASE_SENDER_ID'].each { name -> buildConfigField 'String', name, '""' }
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+    signingConfigs {
+        phoneRelease {
+            enableV1Signing true
+            enableV2Signing true
+            enableV3Signing true
+            if (signingReady) {
+                storeFile file(signingProperties.getProperty('FLIXIFY_PHONE_KEYSTORE_PATH'))
+                storeType 'JKS'
+                storePassword signingProperties.getProperty('FLIXIFY_PHONE_STORE_PASSWORD')
+                keyAlias signingProperties.getProperty('FLIXIFY_PHONE_KEY_ALIAS')
+                keyPassword signingProperties.getProperty('FLIXIFY_PHONE_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        debug { applicationIdSuffix '.debug'; versionNameSuffix '-debug' }
+        release {
+            debuggable false
+            signingConfig signingConfigs.phoneRelease
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    buildFeatures { buildConfig true }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    sourceSets {
+        main.java.srcDirs = ['src/main/java', '../app/src/main/java']
+        main.java.exclude 'vip/flixify/tv/MainActivity.java', 'vip/flixify/tv/PlayerActivity.java'
+        main.res.srcDirs = ['src/main/res', '../app/src/main/res']
+        test.resources.srcDir rootProject.file('../../packages/contracts/test-fixtures')
+        androidTest.assets.srcDir rootProject.file('app/src/androidTest/assets')
+    }
+    testOptions { unitTests.returnDefaultValues = true }
+    lint { lintConfig file('lint.xml') }
+    packaging { resources.excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE*', 'META-INF/NOTICE*'] }
+}
+
+def signingCheck = tasks.register('verifyPhoneReleaseSigning') {
+    doLast {
+        if (signingError != null) throw new GradleException(signingError)
+        if (!signingReady) throw new GradleException('Phone release signing is required. Run scripts/build-phone-apk.sh --init-signing or set FLIXIFY_PHONE_SIGNING_FILE. No debug fallback is permitted.')
+        try {
+            if (!privateFile(file(signingProperties.getProperty('FLIXIFY_PHONE_KEYSTORE_PATH')))) throw new GradleException('Phone release keystore must be an owned private 0600 file outside the repository.')
+        } catch (GradleException error) { throw error }
+        catch (Exception ignored) { throw new GradleException('Phone release signing permissions could not be verified.') }
+    }
+}
+tasks.configureEach { task ->
+    if (task.name in ['preReleaseBuild', 'validateSigningRelease']) task.dependsOn(signingCheck)
+}
+
+dependencies {
+    compileOnly 'com.google.firebase:firebase-analytics:23.2.0'
+    implementation 'androidx.recyclerview:recyclerview:1.4.0'
+    implementation 'androidx.media3:media3-exoplayer:1.11.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.11.1'
+    implementation 'androidx.media3:media3-ui:1.11.1'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test:core:1.6.1'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}

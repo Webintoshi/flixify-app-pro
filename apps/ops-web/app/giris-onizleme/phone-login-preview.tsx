@@ -11,7 +11,7 @@ import { readReferralCode } from "../../lib/referral-link";
 import { DeviceLoginQr } from "../platform/device-login";
 import { usePlatform } from "../platform/session";
 import { trackAnalytics } from "../platform/analytics";
-import { createPhoneAuthClient, hasTurkishTrunkPrefix, normalizePhone, phoneAuthError, type PhoneAuthClient, type PhoneChallenge, type PhoneIntent } from "./phone-auth-client";
+import { createPhoneAuthClient, hasTurkishTrunkPrefix, normalizePhone, phoneAuthError, phoneAuthRecoveryReason, type PhoneAuthClient, type PhoneChallenge, type PhoneIntent, type PhoneAuthRecoveryReason } from "./phone-auth-client";
 import { PhoneCountrySelect } from "./phone-country-select";
 import { SegmentedOtpInput } from "./segmented-otp-input";
 import { accountCodeError, createAccountCodeClient, normalizeAccountCode, type AccountCodeClient } from "./account-code-client";
@@ -76,6 +76,7 @@ export default function PhoneLoginPreview({ client = defaultClient, codeClient =
   const [phoneInputError, setPhoneInputError] = useState("");
   const [bindExisting, setBindExisting] = useState(false), [existingCode, setExistingCode] = useState("");
   const [challenge, setChallenge] = useState<AnchoredChallenge | null>(null), [now, setNow] = useState(0);
+  const [recovery, setRecovery] = useState<PhoneAuthRecoveryReason | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [deviceReturn, setDeviceReturn] = useState<string | null>(null);
   const [referralCode, setReferralCode] = useState<string | null>(null);
   const [returnReady, setReturnReady] = useState(false);
@@ -108,11 +109,11 @@ export default function PhoneLoginPreview({ client = defaultClient, codeClient =
   const normalizedPhone = normalizePhone(phone, country);
   const ready = Boolean(availability === "ready" && normalizedPhone && !phoneInputError && (!bindExisting || existingCode.length === 16));
   function chooseIntent(next: PhoneIntent) {
-    generation.current++; request.current?.abort(); pendingCode.current = null; pendingPhone.current = null; setBusy(false); setIntent(next); setMode("phone"); setChallenge(null); setCode(""); setError(""); setPhoneInputError(""); setBindExisting(false); setExistingCode(""); setAccountCode("");
+    generation.current++; request.current?.abort(); pendingCode.current = null; pendingPhone.current = null; setBusy(false); setIntent(next); setMode("phone"); setChallenge(null); setRecovery(null); setCode(""); setError(""); setPhoneInputError(""); setBindExisting(false); setExistingCode(""); setAccountCode("");
   }
 
   function chooseMode(next: "phone" | "account_code" | "qr") {
-    generation.current++; request.current?.abort(); pendingCode.current = null; pendingPhone.current = null; setBusy(false); setIntent("login"); setMode(next); setChallenge(null); setCode(""); setError(""); setPhoneInputError(""); setBindExisting(false); setExistingCode(""); setAccountCode("");
+    generation.current++; request.current?.abort(); pendingCode.current = null; pendingPhone.current = null; setBusy(false); setIntent("login"); setMode(next); setChallenge(null); setRecovery(null); setCode(""); setError(""); setPhoneInputError(""); setBindExisting(false); setExistingCode(""); setAccountCode("");
   }
 
   function changePhone(value: string, selectedCountry = country) {
@@ -161,7 +162,13 @@ export default function PhoneLoginPreview({ client = defaultClient, codeClient =
       const response = await client.verify({ challengeId: challenge.challengeId, challengeSecret: challenge.challengeSecret, code, installationId: installationId() }, controller.signal);
       if (controller.signal.aborted || serial !== generation.current || localStorage.getItem("flixify-public-session") !== initialSession) return;
       saveSession(response); trackAnalytics("login", { method: "whatsapp" }); finishAuthentication();
-    } catch (cause) { if (!controller.signal.aborted && serial === generation.current) setError(phoneAuthError(cause)); }
+    } catch (cause) {
+      if (!controller.signal.aborted && serial === generation.current) {
+        setError(phoneAuthError(cause));
+        const reason = phoneAuthRecoveryReason(cause);
+        if (reason) { setChallenge(null); setCode(""); setRecovery(reason); }
+      }
+    }
     finally { if (pendingPhone.current === serial) pendingPhone.current = null; if (serial === generation.current) setBusy(false); }
   }
 
@@ -189,7 +196,14 @@ export default function PhoneLoginPreview({ client = defaultClient, codeClient =
           <input ref={accountInput} id="login-account-code" className={s.codeField} aria-label="Kullanıcı kodun" type="password" autoComplete="current-password" autoCapitalize="characters" spellCheck={false} placeholder="16 haneli kullanıcı kodun" value={accountCode} onChange={event => setAccountCode(normalizeAccountCode(event.target.value))} required minLength={16} maxLength={24} disabled={busy} aria-invalid={Boolean(error)}/>
           {error && <p className={s.error} role="alert">{error}</p>}
           <button className={s.primary} type="submit" disabled={busy || accountCode.length !== 16}><span>{busy ? "Giriş yapılıyor…" : "Giriş yap"}</span><ArrowIcon/></button>
-        </form> : challenge ? <form onSubmit={verify} className={s.form}>
+        </form> : recovery ? <div className={s.form}>
+          <p className={s.error} role="alert">{error}</p>
+          {recovery === "registration_required" && <>
+            <button className={s.primary} type="button" onClick={() => chooseIntent("register")}><span>Bu numarayla hesap oluştur</span><ArrowIcon/></button>
+            <button className={s.backButton} type="button" onClick={() => { chooseIntent("register"); setBindExisting(!session); }}>Mevcut hesabımı bağla</button>
+          </>}
+          <button className={s.backButton} type="button" onClick={() => chooseIntent("login")}>Numarayı değiştir</button>
+        </div> : challenge ? <form onSubmit={verify} className={s.form}>
           <label htmlFor="phone-otp">Doğrulama kodu</label><SegmentedOtpInput ref={otpInput} id="phone-otp" value={code} onValueChange={setCode} required aria-describedby="otp-time" aria-invalid={Boolean(error)}/>
           <p id="otp-time" className={s.inputHelp}>{expired ? "Kodun süresi doldu. Yeni bir kod isteyebilirsin." : <>Kodun geçerlilik süresi <span role="timer" aria-live="off">{duration(expires)}</span></>}</p>
           {error && <p className={s.error} role="alert">{error}</p>}

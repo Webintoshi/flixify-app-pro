@@ -22,7 +22,25 @@ export function normalizePhone(value: string, country: CountryCode | undefined):
   return parsed?.isPossible() && !parsed.ext ? parsed.number : null;
 }
 
+const terminalPhoneAuthErrors = {
+  registration_required: "Bu numarayla henüz hesap oluşturulmamış. Hesap oluşturabilir veya mevcut hesabını telefonuna bağlayabilirsin.",
+  installation_limit: "Bu cihazda daha önce hesap oluşturulmuş. Yeni hesap yerine mevcut kullanıcı kodunla giriş yap.",
+  registration_ip_limit: "Bu internet bağlantısından toplam iki hesap oluşturulabilir. Mevcut kullanıcı kodunla giriş yap.",
+  account_conflict: "Bu telefon numarası ile mevcut hesap eşleşmiyor. Kullanıcı kodunla giriş yap veya destekle iletişime geç.",
+  reauthentication_required: "Mevcut hesabına kullanıcı kodunla giriş yapıp telefonunu yeniden bağla.",
+  account_unavailable: "Bu hesaba şu anda giriş yapılamıyor. Destekle iletişime geç.",
+  invalid_referral_code: "Davet kodu geçersiz. Davet bağlantısını kontrol et veya destekle iletişime geç."
+} as const;
+export type PhoneAuthRecoveryReason = keyof typeof terminalPhoneAuthErrors;
+export function phoneAuthRecoveryReason(error: unknown): PhoneAuthRecoveryReason | null {
+  const reason = typeof error === "object" && error !== null && "reason" in error ? error.reason : undefined;
+  return typeof reason === "string" && Object.prototype.hasOwnProperty.call(terminalPhoneAuthErrors, reason) ? reason as PhoneAuthRecoveryReason : null;
+}
+
 export function phoneAuthError(error: unknown): string {
+  const recovery = phoneAuthRecoveryReason(error);
+  if (recovery) return terminalPhoneAuthErrors[recovery];
+  if (typeof error === "object" && error !== null && "reason" in error && error.reason === "invalid_or_expired") return "Kod geçersiz veya süresi dolmuş. Son gelen kodu kontrol et; gerekirse yeni kod iste.";
   const status = typeof error === "object" && error !== null && "status" in error ? (error as { status: unknown }).status : undefined;
   if (status === 429) return "Çok fazla kod istendi. Biraz bekleyip tekrar dene.";
   if (status === 503) return "Doğrulama hizmeti şu anda kullanılamıyor. Lütfen biraz sonra tekrar dene.";
