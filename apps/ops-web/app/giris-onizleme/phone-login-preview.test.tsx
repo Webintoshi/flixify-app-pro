@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import PhoneLoginPreview from "./phone-login-preview";
 import type { PhoneAuthClient, PhoneIntent } from "./phone-auth-client";
 import type { AccountCodeClient } from "./account-code-client";
+import type { EmailAuthClient } from "./email-auth-client";
 
 const state = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn(), save: vi.fn(), analytics: vi.fn(), session: null as unknown }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: state.replace, push: state.push }) }));
@@ -23,7 +24,16 @@ function findButton(text: string) { const found = Array.from(container.querySele
 function props(element: Element) { const key = Object.keys(element).find(key => key.startsWith("__reactProps")); if (!key) throw new Error("React input props absent"); return (element as any)[key]; }
 async function type(id: string, value: string) { await settle(() => { const element = container.querySelector<HTMLInputElement>(id)!; element.value = value; element.setSelectionRange?.(value.length, value.length); props(element).onChange({ target: element, currentTarget: element }); }); }
 async function submit() { await settle(() => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }))); }
-async function render(transport: PhoneAuthClient, codeClient?: AccountCodeClient, options: { initialIntent?: PhoneIntent; onAuthenticated?: () => void } = {}) { await settle(() => root.render(<PhoneLoginPreview client={transport} codeClient={codeClient} {...options}/>)); }
+function emailTransport(enabled = true) {
+  return {
+    status: vi.fn().mockResolvedValue({ enabled, deliveryChannel: "email" }),
+    request: vi.fn().mockResolvedValue({ challengeId: "email-challenge", challengeSecret: "email-proof", expiresInSeconds: 300, resendAfterSeconds: 60, maskedEmail: "e•••@example.invalid", delivery: "accepted" }),
+    verify: vi.fn().mockResolvedValue(paidSession)
+  };
+}
+async function render(transport: PhoneAuthClient, codeClient?: AccountCodeClient, options: { initialIntent?: PhoneIntent; onAuthenticated?: () => void; emailClient?: EmailAuthClient } = {}) {
+  await settle(() => root.render(<PhoneLoginPreview client={transport} codeClient={codeClient} emailClient={emailTransport(false)} {...options}/>));
+}
 beforeEach(() => {
   const dom = parseHTML('<html><body><div id="root"></div></body></html>');
   vi.stubGlobal("window", dom.window); vi.stubGlobal("document", dom.window.document); vi.stubGlobal("Event", dom.window.Event); vi.stubGlobal("React", React); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -337,4 +347,95 @@ it("uses the trusted current account during recovery binding without requiring a
   expect(container.querySelector("#existing-account-code")).toBeNull(); expect(findButton("Telefonumu doğrula").disabled).toBe(false);
   expect(transport.request).toHaveBeenCalledTimes(1); await submit();
   expect(transport.request.mock.calls[1][0]).not.toHaveProperty("existingCode"); expect(state.save).not.toHaveBeenCalled();
+});
+
+
+it("offers verified email registration with the same referral, device and completion rules", async () => {
+  Object.defineProperty(window, "location", { configurable: true, value: { search: "?ref=BCDFGHJKMNPQ" } });
+  const phone = client(), email = emailTransport(), complete = vi.fn();
+  await render(phone, undefined, { initialIntent: "register", onAuthenticated: complete, emailClient: email });
+  await settle(() => findButton("E-posta kullan").click());
+  await type("#email-address", "Example@example.invalid");
+  expect(email.request).not.toHaveBeenCalled();
+  await submit();
+  expect(email.request).toHaveBeenCalledExactlyOnceWith({ email: "Example@example.invalid", intent: "register", installationId: "installation-fixture", platform: "web", deviceName: "Flixify Web", referralCode: "BCDFGHJKMNPQ" }, expect.any(AbortSignal), undefined);
+  expect(phone.request).not.toHaveBeenCalled();
+  expect(container.textContent).toContain("e•••@example.invalid");
+  await type("#email-otp", "123456"); await submit();
+  expect(email.verify).toHaveBeenCalledExactlyOnceWith({ challengeId: "email-challenge", challengeSecret: "email-proof", code: "123456", installationId: "installation-fixture" }, expect.any(AbortSignal));
+  expect(state.save).toHaveBeenCalledExactlyOnceWith(paidSession);
+  expect(state.analytics).toHaveBeenCalledExactlyOnceWith("login", { method: "email" });
+  expect(complete).toHaveBeenCalledTimes(1);
+});
+
+it("shows email only when enabled and keeps it available during a WhatsApp outage", async () => {
+  const phone = client(), email = emailTransport(false);
+  phone.status.mockRejectedValue(new Error("WhatsApp unavailable"));
+  await render(phone, undefined, { emailClient: email });
+  expect(container.textContent).not.toContain("E-posta kullan");
+  await render(phone, undefined, { emailClient: emailTransport() });
+  await settle(() => findButton("E-posta kullan").click());
+  await type("#email-address", "example@example.invalid");
+  expect(findButton("E-posta ile giriş yap").disabled).toBe(false);
+});
+
+it("ends an unlinked email challenge and requires an explicit choice before binding a legacy account", async () => {
+  const email = emailTransport();
+  email.verify.mockRejectedValueOnce(Object.assign(new Error("private provider details"), { status: 409, reason: "registration_required" }));
+  await render(client(), undefined, { emailClient: email });
+  await settle(() => findButton("E-posta kullan").click());
+  await type("#email-address", "example@example.invalid"); await submit();
+  await type("#email-otp", "123456"); await submit();
+  expect(container.querySelector("#email-otp")).toBeNull();
+  expect(container.textContent).toContain("Bu e-posta adresi henüz bir hesaba bağlı değil.");
+  expect(container.textContent).not.toContain("private provider details");
+  await settle(() => findButton("Mevcut hesabımı bağla").click());
+  expect((container.querySelector("#email-address") as HTMLInputElement).value).toBe("example@example.invalid");
+  expect(email.request).toHaveBeenCalledTimes(1);
+  await type("#existing-account-code", "AB12CD34EF56GH78"); await submit();
+  expect(email.request.mock.calls[1][0]).toMatchObject({ intent: "register", existingCode: "AB12CD34EF56GH78", email: "example@example.invalid" });
+  expect(email.request.mock.calls[1][0]).not.toHaveProperty("referralCode");
+  expect(state.save).not.toHaveBeenCalled();
+});
+
+it("uses the verified email session to resume the existing TV QR approval", async () => {
+  Object.defineProperty(window, "location", { configurable: true, value: { search: "?device_code=BCDF-GHJK" } });
+  const email = emailTransport(), complete = vi.fn();
+  await render(client(), undefined, { onAuthenticated: complete, emailClient: email });
+  await settle(() => findButton("E-posta kullan").click());
+  await type("#email-address", "example@example.invalid"); await submit();
+  await type("#email-otp", "123456"); await submit();
+  expect(state.save).toHaveBeenCalledExactlyOnceWith(paidSession);
+  expect(state.replace).toHaveBeenCalledExactlyOnceWith("/cihaz?code=BCDF-GHJK");
+  expect(complete).not.toHaveBeenCalled();
+});
+
+it("uses the current account only when verifying an email address for binding", async () => {
+  state.session = paidSession;
+  const email = emailTransport();
+  await render(client(), undefined, { initialIntent: "register", emailClient: email });
+  await settle(() => findButton("E-posta kullan").click());
+  await type("#email-address", "example@example.invalid");
+  expect(findButton("E-postamı doğrula").disabled).toBe(false);
+  expect(container.querySelector("#existing-account-code")).toBeNull();
+  await submit();
+  expect(email.request.mock.calls[0][0]).toMatchObject({ email: "example@example.invalid", intent: "register" });
+  expect(email.request.mock.calls[0][2]).toBe(paidSession.accessToken);
+  expect(email.request.mock.calls[0][0]).not.toHaveProperty("existingCode");
+  expect(email.request.mock.calls[0][0]).not.toHaveProperty("referralCode");
+});
+
+it("drops an email verification that resolves after switching back to WhatsApp", async () => {
+  const email = emailTransport();
+  let resolve!: (session: typeof paidSession) => void;
+  email.verify.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+  await render(client(), undefined, { emailClient: email });
+  await settle(() => findButton("E-posta kullan").click());
+  await type("#email-address", "example@example.invalid"); await submit();
+  await type("#email-otp", "123456"); await submit();
+  await settle(() => findButton("WhatsApp kullan").click());
+  await settle(() => resolve(paidSession));
+  expect(email.verify.mock.calls[0][1].aborted).toBe(true);
+  expect(container.querySelector("#phone-number")).not.toBeNull();
+  expect(state.save).not.toHaveBeenCalled();
 });

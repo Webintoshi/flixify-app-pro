@@ -4,6 +4,11 @@ import sharp from 'sharp';
 import type { DeviceLoginStore, DeviceLoginRow, PhoneIdentity } from './device-login-store.js';
 
 export const DEVICE_VERIFICATION_URI = 'https://flixify.vip/cihaz';
+function verificationUri(localOrigin?:string){
+  if(localOrigin===undefined)return DEVICE_VERIFICATION_URI;
+  if(!['http://127.0.0.1:3192','http://localhost:3192'].includes(localOrigin))throw new Error('Invalid local verification origin');
+  return `${localOrigin}/cihaz`;
+}
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 export class DeviceLoginError extends Error {
   constructor(public statusCode: number, public reason: string) { super('Cihaz baglama islemi tamamlanamadi.'); }
@@ -59,8 +64,9 @@ export class DeviceLoginCrypto {
     return JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString('utf8'));
   }
 }
-export async function deviceLoginQr(url: string) {
-  if (!/^https:\/\/flixify\.vip\/cihaz\?code=[ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(url)) throw new Error('Invalid verification URL');
+export async function deviceLoginQr(url: string,localOrigin?:string) {
+  const prefix=`${verificationUri(localOrigin)}?code=`;
+  if (!url.startsWith(prefix)||!/^[ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(url.slice(prefix.length))) throw new Error('Invalid verification URL');
   const qr = qrcode(0, 'M'); qr.addData(url); qr.make();
   const scale = 6; const modules = qr.getModuleCount(); const width = (modules + 8) * scale;
   const pixels = Buffer.alloc(width * width, 255);
@@ -71,8 +77,9 @@ export async function deviceLoginQr(url: string) {
 }
 export type PreparedDeviceSession = { id: string; refreshHash: string; accessToken: string; refreshToken: string };
 export class DeviceLoginService {
+  private verificationUri:string;
   constructor(public store: DeviceLoginStore, private crypto: DeviceLoginCrypto,
-    private prepare: (userId: string) => Promise<PreparedDeviceSession>) {}
+    private prepare: (userId: string) => Promise<PreparedDeviceSession>,private options:{localVerificationOrigin?:string}={}) {this.verificationUri=verificationUri(options.localVerificationOrigin);}
   async rate(kind: string, identity: string, limit: number) {
     await this.store.rate(this.crypto.hash('rate', `${kind}:${identity}`), limit);
   }
@@ -80,11 +87,11 @@ export class DeviceLoginService {
     await this.rate('start', ip, 60);
     await this.store.cleanup();
     const deviceSecret = this.crypto.secret(); const requestId = randomUUID(); const userCode = this.crypto.code();
-    const verificationUriComplete = `${DEVICE_VERIFICATION_URI}?code=${userCode}`;
-    const qrPngBase64 = await deviceLoginQr(verificationUriComplete);
+    const verificationUriComplete = `${this.verificationUri}?code=${userCode}`;
+    const qrPngBase64 = await deviceLoginQr(verificationUriComplete,this.options.localVerificationOrigin);
     const row = await this.store.start({ id: requestId, code: userCode, verifier: this.crypto.verifier(deviceSecret),
       installationHash: input.installationId ? this.crypto.hash('installation', input.installationId) : null, ...input });
-    return { requestId, deviceSecret, userCode, verificationUri: DEVICE_VERIFICATION_URI, verificationUriComplete,
+    return { requestId, deviceSecret, userCode, verificationUri: this.verificationUri, verificationUriComplete,
       qrPngBase64, expiresAt: new Date(row.expires_at).toISOString(), expiresInSeconds: 180, intervalSeconds: 2 };
   }
   async target(operation: 'token' | 'ack' | 'cancel', input: { requestId: string; deviceSecret: string }) {
@@ -93,7 +100,11 @@ export class DeviceLoginService {
     if (result.envelope) return { status: 'authorized', session: this.crypto.open(result.envelope) };
     return { status: result.status, ...(result.intervalSeconds ? { intervalSeconds: result.intervalSeconds } : {}) };
   }
-  private owner(auth: PhoneIdentity) { if (auth.authMethod !== 'account_code') throw new DeviceLoginError(403, 'reauthentication_required'); }
+  private owner(auth: PhoneIdentity) {
+    if (auth.authMethod !== "account_code" && auth.authMethod !== "phone_otp" && auth.authMethod !== "email_otp") {
+      throw new DeviceLoginError(403, "reauthentication_required");
+    }
+  }
   async lookup(code: string, auth: PhoneIdentity, ip: string) {
     this.owner(auth); await this.rate('phone', ip, 30);
     const row = await this.store.lookup(normalizeUserCode(code), auth);

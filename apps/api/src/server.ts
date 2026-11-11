@@ -5,10 +5,13 @@ import { DeviceLoginCrypto, DeviceLoginService, redactDeviceLinkedPayload } from
 import { DeviceLoginStore } from "./device-login-store.js";
 import { registerDeviceLoginRoutes } from "./device-login-routes.js";
 import { PhoneAuthCrypto,PhoneAuthService } from './phone-auth.js';
-import { PostgresPhoneAuthStore } from './phone-auth-store.js';
-import { phoneAuthAccounts } from './phone-auth-accounts.js';
+import { PostgresOtpAuthStore, PostgresPhoneAuthStore } from './phone-auth-store.js';
+import { emailAuthAccounts, phoneAuthAccounts } from './phone-auth-accounts.js';
 import { VatanSmsWhatsAppSender } from './phone-auth-vatansms.js';
 import { registerPhoneAuthRoutes } from './phone-auth-routes.js';
+import { EmailAuthService } from "./email-auth.js";
+import { registerEmailAuthRoutes } from "./email-auth-routes.js";
+import { ResendEmailSender } from "./email-auth-resend.js";
 import {RememberedRefreshCrypto,RememberedSessionError,RememberedSessionStore,sessionHasExpired} from './remembered-session.js';
 import crypto from "node:crypto";
 import { TrialUnavailableError } from "./access-history.js";
@@ -220,7 +223,7 @@ import { createStripePaymentReader } from "./stripe-payment-api.js";
 type UserRequest = {
   userId: string;
   sessionId: string;
-  authMethod?: "account_code" | "device_link" | "phone_otp";
+  authMethod?: "account_code" | "device_link" | "phone_otp" | "email_otp";
 };
 
 const linkedViewerRequests = new WeakSet<FastifyRequest>();
@@ -237,6 +240,10 @@ const deviceLoginService = new DeviceLoginService(deviceLoginStore, new DeviceLo
 const phoneAuthStore=new PostgresPhoneAuthStore(pool);
 const phoneAuthService=!env.APP_DEMO_MODE&&env.PHONE_AUTH_ENABLED&&env.PHONE_AUTH_SECRET&&env.VATANSMS_WHATSAPP_API_KEY&&env.VATANSMS_WHATSAPP_REG_ID
   ?new PhoneAuthService(phoneAuthStore,new PhoneAuthCrypto(env.PHONE_AUTH_SECRET),new VatanSmsWhatsAppSender({apiKey:env.VATANSMS_WHATSAPP_API_KEY,regId:env.VATANSMS_WHATSAPP_REG_ID,baseUrl:env.VATANSMS_WHATSAPP_BASE_URL},fetch,env.PHONE_AUTH_PROVIDER_DIAGNOSTICS?value=>console.warn(JSON.stringify({operation:'phone-auth-provider',...value})):undefined),phoneAuthAccounts):null;
+const emailAuthStore = env.emailAuth ? new PostgresOtpAuthStore(pool, "email") : null;
+const emailAuthService = env.emailAuth && emailAuthStore
+  ? new EmailAuthService(emailAuthStore, new PhoneAuthCrypto(env.emailAuth.secret, "email"), new ResendEmailSender(env.emailAuth), emailAuthAccounts)
+  : null;
 
 type AdminRequest = {
   adminId: string;
@@ -1380,7 +1387,7 @@ async function authenticateUser(authorization?: string, request?: FastifyRequest
     if (!session.family_id || !await deviceLoginStore.activate(payload.sub, session.id, session.family_id)) throw new UnauthorizedUserRouteError();
     if (request) linkedViewerRequests.add(request);
   }
-  if(session.auth_method==='phone_otp'&&request)linkedViewerRequests.add(request);
+  if (request && (session.auth_method === "phone_otp" || session.auth_method === "email_otp")) linkedViewerRequests.add(request);
   await touchDeviceSession(session.id);
 
   return {
@@ -1417,16 +1424,22 @@ export function buildServer() {
     linkedViewerRequests.has(request) ? redactDeviceLinkedPayload(payload) : payload);
   registerDeviceLoginRoutes(app, { service: deviceLoginService, authenticate: authenticateUser, enabled: !isDemoMode,...(env.DEVICE_LOGIN_LOCAL_WEB_ORIGIN?{allowedOrigins:[env.DEVICE_LOGIN_LOCAL_WEB_ORIGIN]}:{}) });
   registerPhoneAuthRoutes(app,{service:phoneAuthService,enabled:env.PHONE_AUTH_ENABLED&&!isDemoMode,localOnly:env.PHONE_AUTH_LOCAL_ONLY,allowedOrigins:env.PHONE_AUTH_ALLOWED_ORIGINS,authenticate:authenticateUser});
+  registerEmailAuthRoutes(app, { service: emailAuthService, authenticate: authenticateUser });
   const deviceLoginCleanup = isDemoMode ? null : setInterval(() => {
     deviceLoginStore.cleanup().catch(() => app.log.warn({ operation: "device-login-cleanup" }, "Cihaz baglama temizligi kullanilamiyor."));
   }, 60_000);
   deviceLoginCleanup?.unref();
   const phoneAuthCleanup=phoneAuthService?setInterval(()=>{phoneAuthStore.cleanup().catch(()=>app.log.warn({operation:'phone-auth-cleanup'},'Dogrulama temizligi tamamlanamadi.'));},60_000):null;
   phoneAuthCleanup?.unref();
+  const emailAuthCleanup = emailAuthStore ? setInterval(() => {
+    emailAuthStore.cleanup().catch(() => app.log.warn({ operation: "email-auth-cleanup" }, "E-posta doğrulama temizliği tamamlanamadı."));
+  }, 60_000) : null;
+  emailAuthCleanup?.unref();
   const rememberedSessionCleanup=isDemoMode?null:setInterval(()=>{rememberedSessionStore.cleanup().catch(()=>app.log.warn({operation:'remembered-session-cleanup'},'Oturum yenileme temizligi tamamlanamadi.'));},60_000);
   rememberedSessionCleanup?.unref();
   app.addHook('onClose',async()=>{if(rememberedSessionCleanup)clearInterval(rememberedSessionCleanup);});
   app.addHook('onClose',async()=>{if(phoneAuthCleanup)clearInterval(phoneAuthCleanup);});
+  app.addHook("onClose", async () => { if (emailAuthCleanup) clearInterval(emailAuthCleanup); });
   app.addHook("onClose", async () => { if (deviceLoginCleanup) clearInterval(deviceLoginCleanup); });
   registerAccountLibrary(app, { vod: accountVodCatalog, moviePolicy:getAdultMoviePolicy,
     forceAccountMovieVod:policy=>shouldUseAccountMovieCatalog(accountVodProxyConfigured,policy),

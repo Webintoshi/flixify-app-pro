@@ -170,3 +170,9 @@ describe("forced analytics acceptance and safe delivery", () => {
     expect(runtime.attribution()?.sessionId).toBe(1700001800);
   });
 });
+
+
+it("keeps explicit authentication methods while dropping personal fields", () => {
+  expect(sanitizeAnalyticsEvent("login", { method: "whatsapp", phone: "+905551231234", otp: "123456", accessToken: "secret" })).toEqual({ name: "login", params: { method: "whatsapp" } });
+  expect(sanitizeAnalyticsEvent("login", { method: "email", email: "fixture@example.invalid", otp: "123456", accessToken: "secret" })).toEqual({ name: "login", params: { method: "email" } });
+});

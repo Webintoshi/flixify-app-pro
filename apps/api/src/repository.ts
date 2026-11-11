@@ -836,7 +836,7 @@ export async function createDeviceSession(
   refreshTokenHash: string,
   deviceName?: string,
   platform?: string,
-  authMethod: 'account_code'|'phone_otp' = 'account_code'
+  authMethod: "account_code" | "phone_otp" | "email_otp" = "account_code"
 ) {
   const result = await query<{ id: string }>(
     `
@@ -861,7 +861,7 @@ export async function getSessionById(sessionId: string) {
     id: string;
     user_id: string;
     refresh_token_hash: string;
-    auth_method: "account_code" | "device_link" | "phone_otp";
+    auth_method: "account_code" | "device_link" | "phone_otp" | "email_otp";
     family_id: string | null;
     expires_at: string | null;
     device_name: string | null;
@@ -2811,7 +2811,7 @@ export async function getAdminUserDetail(userId: string) {
       listTrialRequests(userId),
       listSubscriptions(userId),
       listAdminAuditLogsByEntity(userId),
-      query<{registration_method:'phone_otp'|'account_code'|null;registration_platform:'web'|'android_tv'|'android_phone'|'macos'|'windows'|null}>(
+      query<{registration_method:'phone_otp'|'email_otp'|'account_code'|null;registration_platform:'web'|'android_tv'|'android_phone'|'macos'|'windows'|null}>(
         "select registration_method,registration_platform from public.users where id=$1", [userId]
       )
     ]);

@@ -228,17 +228,18 @@ export class ApiRequestError extends Error {
 }
 
 
-const phoneAuthErrorReasons = new Set([
-  "invalid_phone", "invalid_input", "invalid_referral_code", "delivery_unavailable", "temporarily_unavailable",
+const otpAuthErrorReasons = new Set([
+  "invalid_input", "invalid_referral_code", "delivery_unavailable", "temporarily_unavailable",
   "rate_limited", "resend_cooldown", "invalid_or_expired", "registration_required", "account_conflict",
   "existing_account_unverified", "reauthentication_required", "account_unavailable", "installation_limit",
   "registration_ip_limit", "origin_forbidden"
 ]);
-function phoneAuthResponseReason(path: string, rawBody: string): string | undefined {
-  if (!path.startsWith("/auth/phone/")) return undefined;
+function otpAuthResponseReason(path: string, rawBody: string): string | undefined {
+  const invalidDestination = path.startsWith("/auth/phone/") ? "invalid_phone" : path.startsWith("/auth/email/") ? "invalid_email" : null;
+  if (!invalidDestination) return undefined;
   const payload = parseJsonValue(rawBody);
   const reason = payload && typeof payload === "object" && "reason" in payload ? payload.reason : undefined;
-  return typeof reason === "string" && phoneAuthErrorReasons.has(reason) ? reason : undefined;
+  return typeof reason === "string" && (reason === invalidDestination || otpAuthErrorReasons.has(reason)) ? reason : undefined;
 }
 
 export async function apiRequest<T>(
@@ -288,7 +289,7 @@ export async function apiRequest<T>(
       }
     }
 
-    throw new ApiRequestError(normalizeErrorMessage(responseText, response.status), response.status, phoneAuthResponseReason(path, responseText));
+    throw new ApiRequestError(normalizeErrorMessage(responseText, response.status), response.status, otpAuthResponseReason(path, responseText));
   }
 
   if (response.status === 204) {

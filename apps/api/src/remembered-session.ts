@@ -4,7 +4,7 @@ import {DeviceLoginStore} from './device-login-store.js';
 import type {PreparedDeviceSession} from './device-login.js';
 
 type Transaction=Parameters<Parameters<typeof withTransaction>[0]>[0];
-type AuthenticationMethod='account_code'|'phone_otp'|'device_link';
+type AuthenticationMethod = "account_code" | "phone_otp" | "email_otp" | "device_link";
 type RefreshContext={userId:string;predecessorId:string;successorId:string;authMethod:string;familyId:string|null};
 type Credentials={accessToken:string;refreshToken:string};
 type RefreshReason='invalid-refresh'|'revoked'|'expired'|'account-blocked'|'account-deleted';
@@ -54,7 +54,7 @@ export class RememberedSessionStore{
       if(metadata.auth_method==='device_link'&&(!metadata.family_id||!await this.linked.guardRememberedRefresh(client,input.userId,metadata.family_id)))return {statusCode:401,reason:'revoked'};
       const rows=await client.query(`select * from ${this.table('device_sessions')} where id=$1 and user_id=$2 for update`,[input.id,input.userId]);const old=rows.rows[0];
       const clock=await client.query('select clock_timestamp() as now');const now=clock.rows[0].now as Date;
-      if(!old||old.refresh_token_hash!==input.refreshHash||!['account_code','phone_otp','device_link'].includes(old.auth_method))return {statusCode:401,reason:'invalid-refresh'};
+      if(!old||old.refresh_token_hash!==input.refreshHash||!['account_code','phone_otp','email_otp','device_link'].includes(old.auth_method))return {statusCode:401,reason:'invalid-refresh'};
       if(sessionHasExpired(old.expires_at,now.getTime()))return {statusCode:401,reason:'expired'};
       if(old.revoked_at){
         const recovery=await client.query(`select r.*,r.predecessor_revoked_at=s.revoked_at as same_revocation from ${this.table('session_refresh_rotations')} r join ${this.table('device_sessions')} s on s.id=r.predecessor_id where r.predecessor_id=$1`,[old.id]);const retry=recovery.rows[0];

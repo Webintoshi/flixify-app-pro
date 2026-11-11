@@ -15,10 +15,19 @@ it.each([
   ["/auth/phone/verify", { reason: "private-provider-secret", message: "Fixture" }],
   ["/auth/phone/verify", { reason: { private: "secret" }, message: "Fixture" }],
   ["/auth/phone/verify", { message: "Fixture" }],
+  ["/auth/phone/request", { reason: "invalid_email", message: "Fixture" }],
+  ["/auth/email/request", { reason: "invalid_phone", message: "Fixture" }],
+  ["/auth/email/verify", { reason: "private-provider-secret", message: "Fixture" }],
   ["/me", { reason: "registration_required", message: "Fixture" }]
 ])("does not attach an unclassified or unrelated reason from %s", async (path, body) => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 409 })));
   const { apiRequest } = await import("./api");
   const error = await apiRequest(path as string).catch(error => error) as { status: number; reason?: unknown };
   expect(error.status).toBe(409); expect(error.reason).toBeUndefined();
+});
+
+it.each(["invalid_email", "registration_required", "invalid_or_expired"])("preserves a recognized email-auth reason %s", async reason => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ reason }, { status: 400 })));
+  const { apiRequest } = await import("./api");
+  await expect(apiRequest("/auth/email/verify", { method: "POST", body: { code: "fixture" } })).rejects.toMatchObject({ status: 400, reason });
 });

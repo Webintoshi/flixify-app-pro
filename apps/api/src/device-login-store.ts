@@ -35,7 +35,7 @@ export class DeviceLoginStore {
   }
   private async ownerSession(client: PoolClient, auth: PhoneIdentity) {
     const result = await client.query(`select id from ${this.table('device_sessions')} where id=$1 and user_id=$2
-      and revoked_at is null and expires_at > clock_timestamp() and auth_method='account_code'`, [auth.sessionId, auth.userId]);
+      and revoked_at is null and (expires_at is null or expires_at > clock_timestamp()) and auth_method in ('account_code','phone_otp','email_otp')`, [auth.sessionId, auth.userId]);
     if (!result.rows[0]) throw new DeviceLoginError(403, 'reauthentication_required');
   }
   private async lock(client: PoolClient, id: string): Promise<DeviceLoginRow> {
@@ -111,7 +111,7 @@ export class DeviceLoginStore {
   }
   private async insertSession(client: PoolClient, prepared: PreparedDeviceSession, userId: string, row: DeviceLoginRow) {
     await client.query(`insert into ${this.table('device_sessions')} (id,user_id,device_name,platform,refresh_token_hash,expires_at,auth_method,family_id)
-      values ($1,$2,$3,$4,$5,clock_timestamp()+interval '10 years','device_link',$6)`, [prepared.id,userId,row.device_name,row.platform,prepared.refreshHash,row.id]);
+      values ($1,$2,$3,$4,$5,null,'device_link',$6)`, [prepared.id,userId,row.device_name,row.platform,prepared.refreshHash,row.id]);
   }
   async target(id: string, verifier: string, operation: 'token'|'ack'|'cancel') {
     return this.transaction(async (client) => {
@@ -146,11 +146,17 @@ export class DeviceLoginStore {
       await this.activeUser(client, userId);
       const row = await this.lock(client, familyId); await this.expire(client, row);
       if (row.user_id !== userId || !['issued','completed'].includes(row.state)) return false;
-      const session = await client.query(`select id from ${this.table('device_sessions')} where id=$1 and user_id=$2 and family_id=$3 and auth_method='device_link' and revoked_at is null and expires_at>clock_timestamp()`, [sessionId,userId,familyId]);
+      const session = await client.query(`select id from ${this.table('device_sessions')} where id=$1 and user_id=$2 and family_id=$3 and auth_method='device_link' and revoked_at is null and (expires_at is null or expires_at>clock_timestamp())`, [sessionId,userId,familyId]);
       if (!session.rows[0]) return false;
       if (row.state !== 'completed') await this.complete(client, familyId);
       return true;
     });
+  }
+  async guardRememberedRefresh(client:PoolClient,userId:string,familyId:string){
+    const row=await this.lock(client,familyId);await this.expire(client,row);
+    if(row.user_id!==userId||!['issued','completed'].includes(row.state))return false;
+    if(row.state!=='completed')await this.complete(client,familyId);
+    return true;
   }
   async refresh(userId: string, oldSessionId: string, familyId: string, prepared: PreparedDeviceSession) {
     return this.transaction(async (client) => {
@@ -158,7 +164,7 @@ export class DeviceLoginStore {
       const row = await this.lock(client, familyId); await this.expire(client, row);
       if (row.user_id !== userId || !['issued','completed'].includes(row.state)) return false;
       const result = await client.query(`update ${this.table('device_sessions')} set revoked_at=clock_timestamp()
-        where id=$1 and user_id=$2 and family_id=$3 and auth_method='device_link' and revoked_at is null and expires_at>clock_timestamp() returning id`, [oldSessionId,userId,familyId]);
+        where id=$1 and user_id=$2 and family_id=$3 and auth_method='device_link' and revoked_at is null and (expires_at is null or expires_at>clock_timestamp()) returning id`, [oldSessionId,userId,familyId]);
       if (!result.rows[0]) return false;
       await this.insertSession(client, prepared, userId, row);
       // A valid refresh proves the target adopted its refresh token, also recovering a lost ACK.
