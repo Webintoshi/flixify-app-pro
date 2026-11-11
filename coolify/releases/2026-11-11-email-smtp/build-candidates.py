@@ -17,6 +17,8 @@ import tempfile
 
 PARENT = "a942b41b62d2d94b6fda6e65436402dbef8570d5"
 RELEASE_SOURCE = "27257ec571b3f56f112e4bf1803773d68896cbea"
+BUILD_PARENT = "e613efb9eedc2867a026945a3607d88692d104ce"
+ENV_PATH = "apps/api/src/env.ts"
 STAGED_API_METADATA = {
     "apps/api/package.json": "6f14da315b3ef7bb7aed51e411f850ef7e84fcb5ebcbaf437bd4043904ee1445",
     "package-lock.json": "46b8f1a91152537c912aaacaeaf6204f9100fbb8b7a8ac06a12908ac0ae8a3a9",
@@ -165,9 +167,24 @@ def smtp_compiler(original):
     return compile_service
 
 
+def smtp_env_overlay(baseline):
+    anchor = b'  RESEND_API_KEY: z.string().optional(),\n'
+    require(baseline.count(anchor) == 1, "staged email environment anchor differs")
+    return baseline.replace(
+        anchor,
+        b'  EMAIL_AUTH_TRANSPORT: z.enum(["resend", "smtp"]).default("resend"),\n'
+        + anchor
+        + b'  EMAIL_SMTP_HOST: z.string().optional(),\n'
+        b'  EMAIL_SMTP_PORT: z.string().optional(),\n'
+        b'  EMAIL_SMTP_USER: z.string().optional(),\n'
+        b'  EMAIL_SMTP_PASSWORD: z.string().optional(),\n',
+        1,
+    )
+
+
 def read_inputs(repo, ref, dependency):
     require(re.fullmatch("[a-f0-9]{40}", ref) and
-            git(repo, "rev-list", "--parents", "-n", "1", ref).decode().split() == [ref, RELEASE_SOURCE],
+            git(repo, "rev-list", "--parents", "-n", "1", ref).decode().split() == [ref, BUILD_PARENT],
             "reviewed release revision required")
     manifest = validate_manifest(json.loads(blob(repo, ref, f"{PROFILE}/runtime-manifest.json")))
     runtime = {}
@@ -178,6 +195,8 @@ def read_inputs(repo, ref, dependency):
             require(len(content) == entry["bytes"] and sha(content) == entry["sha256"],
                     f"SMTP release source digest differs for {entry['path']}")
             runtime[service][entry["path"]] = content
+    require(runtime["api"][ENV_PATH] == smtp_env_overlay(blob(repo, PARENT, ENV_PATH)),
+            "SMTP overlay modified existing environment configuration")
     lock = json.loads(blob(repo, RELEASE_SOURCE, "package-lock.json"))["packages"]
     package = json.loads(blob(repo, RELEASE_SOURCE, "apps/api/package.json"))
     locked = lock[DEPENDENCY_PATH]

@@ -73,6 +73,19 @@ class CandidateInputTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "frozen API compiler"):
             builder.smtp_compiler(lambda service, public: "other")("api", {})
 
+    def test_smtp_env_preserves_every_existing_setting(self):
+        anchor = b"  RESEND_API_KEY: z.string().optional(),\n"
+        baseline = b"preceding settings\n" + anchor + b"streaming and checkout settings\n"
+        updated = builder.smtp_env_overlay(baseline)
+        remaining = b"".join(
+            line for line in updated.splitlines(keepends=True)
+            if not line.startswith((b"  EMAIL_AUTH_TRANSPORT:", b"  EMAIL_SMTP_"))
+        )
+        self.assertEqual(remaining, baseline)
+        self.assertEqual(len(updated.splitlines()) - len(baseline.splitlines()), 5)
+        with self.assertRaisesRegex(RuntimeError, "environment anchor"):
+            builder.smtp_env_overlay(b"unexpected environment file")
+
     def test_dependency_archive_integrity(self):
         with self.assertRaisesRegex(RuntimeError, "archive identity"):
             builder.dependency_payload(b"wrong archive")

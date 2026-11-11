@@ -26,8 +26,8 @@
       {
         "path": "apps/api/src/env.ts",
         "beforeSha256": "ebffbff0d87727189afbfdab12d8b021afedb14e2ac42c3a615bb32db875d755",
-        "sha256": "94af8bc14ce5d416ea3444f64df3b460b5d71964b8ed6ff0cd84d1a653f30eb9",
-        "bytes": 5275
+        "sha256": "43bc833ec6128c2e15cbd7c5cd07ccb9d7818743fa3288beee3ba0fdb6374c0c",
+        "bytes": 7759
       },
       {
         "path": "apps/api/src/server.ts",
