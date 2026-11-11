@@ -55,6 +55,24 @@ class CandidateInputTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     builder.validate_manifest(manifest)
 
+    def test_npm_manifests_remain_outside_runtime_overlay(self):
+        self.assertEqual(set(builder.STAGED_API_METADATA), {"apps/api/package.json", "package-lock.json"})
+        self.assertTrue(set(builder.STAGED_API_METADATA).isdisjoint(builder.RUNTIME["api"]))
+
+    def test_smtp_dependency_is_explicitly_externalized_in_api_only(self):
+        original = lambda service, public: (
+            f'cp.execFileSync("npm",["run","build","-w","@flixify/{service}"],{{stdio:"inherit",env}});'
+        )
+        compile_service = builder.smtp_compiler(original)
+        self.assertEqual(
+            compile_service("api", {}),
+            'cp.execFileSync("npm",["run","build","-w","@flixify/api","--","--external","nodemailer"],'
+            '{stdio:"inherit",env});',
+        )
+        self.assertEqual(compile_service("ops-web", {}), original("ops-web", {}))
+        with self.assertRaisesRegex(RuntimeError, "frozen API compiler"):
+            builder.smtp_compiler(lambda service, public: "other")("api", {})
+
     def test_dependency_archive_integrity(self):
         with self.assertRaisesRegex(RuntimeError, "archive identity"):
             builder.dependency_payload(b"wrong archive")

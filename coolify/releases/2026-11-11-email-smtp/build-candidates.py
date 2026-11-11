@@ -16,6 +16,11 @@ import tempfile
 
 
 PARENT = "a942b41b62d2d94b6fda6e65436402dbef8570d5"
+RELEASE_SOURCE = "27257ec571b3f56f112e4bf1803773d68896cbea"
+STAGED_API_METADATA = {
+    "apps/api/package.json": "6f14da315b3ef7bb7aed51e411f850ef7e84fcb5ebcbaf437bd4043904ee1445",
+    "package-lock.json": "46b8f1a91152537c912aaacaeaf6204f9100fbb8b7a8ac06a12908ac0ae8a3a9",
+}
 PROFILE = "coolify/releases/2026-11-11-email-smtp"
 HELPER_REVISION = "438ae41ef672df71da7327b821c0de7d896db271"
 HELPER_PATH = "coolify/releases/2026-11-08-whatsapp-only/build.py"
@@ -34,7 +39,7 @@ PRODUCTION = {
 }
 RUNTIME = {
     "api": {
-        "apps/api/package.json", "package-lock.json", "apps/api/src/server.ts",
+        "apps/api/src/server.ts",
         "apps/api/src/email-auth-config.ts", "apps/api/src/email-auth-smtp.ts",
         "apps/api/src/env.ts",
     },
@@ -48,6 +53,7 @@ DEPENDENCY = {
 }
 DEPENDENCY_PATH = "node_modules/nodemailer"
 MAX_FILE = 2 * 1024**2
+API_COMPILER_ARGS = '["run","build","-w","@flixify/api"]'
 
 SOURCE_CHECK = r"""
 const fs = require('node:fs'), crypto = require('node:crypto');
@@ -66,8 +72,13 @@ for (const [file, expected] of Object.entries(JSON.parse(process.argv[1]))) {
 
 SMTP_IMPORT_CHECK = r"""
 const { createRequire } = require('node:module');
-const load = createRequire('/app/apps/api/dist/server.js');
-if (load('nodemailer/package.json').version !== '10.5.0' ||
+const { readFileSync } = require('node:fs');
+const serverPath = '/app/apps/api/dist/server.js';
+const bundle = readFileSync(serverPath, 'utf8');
+const load = createRequire(serverPath);
+if (!bundle.includes('from "nodemailer/lib/mail-composer"') ||
+    !bundle.includes('from "nodemailer/lib/smtp-connection"') ||
+    load('nodemailer/package.json').version !== '10.5.0' ||
     typeof load('nodemailer/lib/mail-composer') !== 'function' ||
     typeof load('nodemailer/lib/smtp-connection') !== 'function')
   throw Error('smtp_dependency_unavailable');
@@ -143,9 +154,20 @@ def dependency_payload(data):
     return files
 
 
+def smtp_compiler(original):
+    def compile_service(service, public):
+        code = original(service, public)
+        if service == "api":
+            require(code.count(API_COMPILER_ARGS) == 1, "frozen API compiler command changed")
+            args = json.loads(API_COMPILER_ARGS) + ["--", "--external", "nodemailer"]
+            return code.replace(API_COMPILER_ARGS, json.dumps(args, separators=(",", ":")), 1)
+        return code
+    return compile_service
+
+
 def read_inputs(repo, ref, dependency):
     require(re.fullmatch("[a-f0-9]{40}", ref) and
-            git(repo, "rev-list", "--parents", "-n", "1", ref).decode().split() == [ref, PARENT],
+            git(repo, "rev-list", "--parents", "-n", "1", ref).decode().split() == [ref, RELEASE_SOURCE],
             "reviewed release revision required")
     manifest = validate_manifest(json.loads(blob(repo, ref, f"{PROFILE}/runtime-manifest.json")))
     runtime = {}
@@ -156,8 +178,8 @@ def read_inputs(repo, ref, dependency):
             require(len(content) == entry["bytes"] and sha(content) == entry["sha256"],
                     f"SMTP release source digest differs for {entry['path']}")
             runtime[service][entry["path"]] = content
-    lock = json.loads(runtime["api"]["package-lock.json"])["packages"]
-    package = json.loads(runtime["api"]["apps/api/package.json"])
+    lock = json.loads(blob(repo, RELEASE_SOURCE, "package-lock.json"))["packages"]
+    package = json.loads(blob(repo, RELEASE_SOURCE, "apps/api/package.json"))
     locked = lock[DEPENDENCY_PATH]
     require(package["dependencies"][DEPENDENCY["name"]] == DEPENDENCY["version"]
             and locked["version"] == DEPENDENCY["version"] and locked["resolved"] == DEPENDENCY["url"]
@@ -212,6 +234,7 @@ def build(repo, ref, dependency, work):
         helper.target = lambda service, revision: f"flixify-{service}:email-smtp-{revision[:12]}-20261111"
         with helper.helpers(repo) as release:
             builder = release.b
+            builder.compiler_script = smtp_compiler(builder.compiler_script)
             active, protected, rows = production_state(builder, helper)
             for service, (tag, identity) in STAGED.items():
                 info = builder.image_info(tag)
@@ -220,6 +243,7 @@ def build(repo, ref, dependency, work):
                         f"staged email image identity differs for {service}")
                 expected = {entry["path"]: entry["beforeSha256"] for entry in manifest["runtime"][service]}
                 if service == "api":
+                    expected.update(STAGED_API_METADATA)
                     expected[DEPENDENCY_PATH] = None
                 node_probe(builder, identity, SOURCE_CHECK, json.dumps(expected))
             builder.require_disk()
