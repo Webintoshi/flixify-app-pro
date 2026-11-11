@@ -79,11 +79,12 @@ type PhoneLoginProps = {
 
 export default function PhoneLoginPreview({ client = defaultClient, emailClient = defaultEmailClient, codeClient = defaultCodeClient, initialIntent = "login", onAuthenticated }: PhoneLoginProps) {
   const router = useRouter(), { saveSession, session } = usePlatform();
-  const [intent, setIntent] = useState<PhoneIntent>(initialIntent), [mode, setMode] = useState<AuthMode>("phone");
+  const [intent, setIntent] = useState<PhoneIntent>(initialIntent);
+  const [selectedMode, setSelectedMode] = useState<AuthMode | null>(null);
   const [accountCode, setAccountCode] = useState("");
   const [phone, setPhone] = useState(""), [country, setCountry] = useState<CountryCode>("TR"), [code, setCode] = useState("");
   const [email, setEmail] = useState("");
-  const [emailEnabled, setEmailEnabled] = useState(false);
+  const [emailAvailability, setEmailAvailability] = useState<"loading" | "ready" | "unavailable">("loading");
   const emailInput = useRef<HTMLInputElement>(null);
   const [phoneInputError, setPhoneInputError] = useState("");
   const [bindExisting, setBindExisting] = useState(false), [existingCode, setExistingCode] = useState("");
@@ -94,6 +95,10 @@ export default function PhoneLoginPreview({ client = defaultClient, emailClient 
   const [returnReady, setReturnReady] = useState(false);
   const [availability, setAvailability] = useState<"loading" | "ready" | "disabled" | "unavailable">("loading");
   const request = useRef<AbortController | null>(null), generation = useRef(0), otpInput = useRef<HTMLInputElement>(null), accountInput = useRef<HTMLInputElement>(null), pendingCode = useRef<number | null>(null), pendingOtp = useRef<number | null>(null);
+  const defaultSignup = selectedMode === null && intent === "register";
+  const emailEnabled = emailAvailability === "ready";
+  const signupLoading = defaultSignup && emailAvailability === "loading";
+  const mode = selectedMode ?? (defaultSignup && emailEnabled ? "email" : "phone");
   useEffect(() => {
     setDeviceReturn(deviceReturnPath(new URLSearchParams(window.location.search).get("device_code") ?? ""));
     setReferralCode(readReferralCode(window.location.search));
@@ -107,11 +112,11 @@ export default function PhoneLoginPreview({ client = defaultClient, emailClient 
   }, [client]);
   useEffect(() => {
     const controller = new AbortController();
-    setEmailEnabled(false);
+    setEmailAvailability("loading");
     emailClient.status(controller.signal).then(value => {
-      if (!controller.signal.aborted) setEmailEnabled(value.enabled);
+      if (!controller.signal.aborted) setEmailAvailability(value.enabled ? "ready" : "unavailable");
     }).catch(() => {
-      if (!controller.signal.aborted) setEmailEnabled(false);
+      if (!controller.signal.aborted) setEmailAvailability("unavailable");
     });
     return () => controller.abort();
   }, [emailClient]);
@@ -135,22 +140,23 @@ export default function PhoneLoginPreview({ client = defaultClient, emailClient 
   const bindsWithCode = bindExisting && !trustedBinding;
   const destination = isEmail ? normalizeEmail(email) : normalizePhone(phone, country);
   const channelReady = isEmail ? emailEnabled : availability === "ready" && !phoneInputError;
-  const canSend = channelReady && (!bindsWithCode || existingCode.length === 16);
+  const canSend = !signupLoading && channelReady && (!bindsWithCode || existingCode.length === 16);
   const ready = Boolean(canSend && destination);
   const otpId = isEmail ? "email-otp" : "phone-otp";
   const changeDestinationLabel = isEmail ? "E-posta adresini değiştir" : "Numarayı değiştir";
   function chooseIntent(next: PhoneIntent) {
-    chooseMode(isEmail ? "email" : "phone", next);
+    const method = selectedMode === "phone" || selectedMode === "email" ? selectedMode : null;
+    chooseMode(method, next);
   }
 
-  function chooseMode(next: AuthMode, nextIntent: PhoneIntent = "login") {
+  function chooseMode(next: AuthMode | null, nextIntent: PhoneIntent = "login") {
     generation.current++;
     request.current?.abort();
     pendingCode.current = null;
     pendingOtp.current = null;
     setBusy(false);
     setIntent(nextIntent);
-    setMode(next);
+    setSelectedMode(next);
     setChallenge(null);
     setRecovery(null);
     setCode("");
@@ -188,6 +194,7 @@ export default function PhoneLoginPreview({ client = defaultClient, emailClient 
     request.current?.abort();
     request.current = controller;
     pendingOtp.current = serial;
+    setSelectedMode(mode);
     setBusy(true);
     setError("");
     try {
@@ -283,7 +290,7 @@ export default function PhoneLoginPreview({ client = defaultClient, emailClient 
           <input ref={accountInput} id="login-account-code" className={s.codeField} aria-label="Kullanıcı kodun" type="password" autoComplete="current-password" autoCapitalize="characters" spellCheck={false} placeholder="16 haneli kullanıcı kodun" value={accountCode} onChange={event => setAccountCode(normalizeAccountCode(event.target.value))} required minLength={16} maxLength={24} disabled={busy} aria-invalid={Boolean(error)}/>
           {error && <p className={s.error} role="alert">{error}</p>}
           <button className={s.primary} type="submit" disabled={busy || accountCode.length !== 16}><span>{busy ? "Giriş yapılıyor…" : "Giriş yap"}</span><ArrowIcon/></button>
-        </form> : recovery ? <div className={s.form}>
+        </form> : signupLoading ? <p className={s.availability} role="status">Kayıt seçenekleri hazırlanıyor…</p> : recovery ? <div className={s.form}>
           <p className={s.error} role="alert">{error}</p>
           {recovery === "registration_required" && <>
             <button className={s.primary} type="button" onClick={() => chooseIntent("register")}><span>{isEmail ? "Bu adresle hesap oluştur" : "Bu numarayla hesap oluştur"}</span><ArrowIcon/></button>
@@ -297,6 +304,7 @@ export default function PhoneLoginPreview({ client = defaultClient, emailClient 
           <button className={s.primary} disabled={busy || code.length !== 6 || expired} type="submit"><span>{busy ? "Doğrulanıyor…" : "Doğrula ve devam et"}</span><ArrowIcon/></button>
           <div className={s.otpActions}><button type="button" disabled={busy || resend > 0} onClick={() => void sendCode()}>{resend > 0 ? `Yeniden gönder (${duration(resend)})` : "Kodu yeniden gönder"}</button><button type="button" disabled={busy} onClick={() => { generation.current++; request.current?.abort(); setChallenge(null); setCode(""); setError(""); }}>{changeDestinationLabel}</button></div>
         </form> : <form onSubmit={sendCode} className={s.form}>
+          {defaultSignup && emailAvailability === "unavailable" && <p className={s.inputHelp} role="status">E-posta doğrulaması şu anda kullanılamıyor.</p>}
           {isEmail ? <div className={s.phoneField}>
             <input ref={emailInput} id="email-address" aria-label="E-posta adresin" autoComplete="email" autoCapitalize="none"
               spellCheck={false} inputMode="email" type="email" placeholder="E-posta adresin" value={email}
@@ -317,7 +325,7 @@ export default function PhoneLoginPreview({ client = defaultClient, emailClient 
           {intent === "register" && !trustedBinding && !bindExisting && <p className={s.accountRule}>Ücretsiz deneme: yalnız ilk üyelikte 3 saat.</p>}
         </form>}
         <div className={s.alternatives}>
-          {(isEmail || emailEnabled) && <button type="button" className={s.legacyLink} onClick={() => chooseMode(isEmail ? "phone" : "email", intent)}>{isEmail ? "WhatsApp kullan" : "E-posta kullan"}</button>}
+          {(signupLoading || isEmail || emailEnabled) && <button type="button" className={s.legacyLink} onClick={() => chooseMode(signupLoading || isEmail ? "phone" : "email", intent)}>{signupLoading || isEmail ? "WhatsApp kullan" : "E-posta kullan"}</button>}
           <button type="button" className={s.legacyLink} onClick={() => chooseMode(mode === "account_code" ? "phone" : "account_code")}>{mode === "account_code" ? "Telefonla giriş" : "Kullanıcı koduyla giriş"}</button>
         </div>
       </>}

@@ -354,7 +354,8 @@ it("offers verified email registration with the same referral, device and comple
   Object.defineProperty(window, "location", { configurable: true, value: { search: "?ref=BCDFGHJKMNPQ" } });
   const phone = client(), email = emailTransport(), complete = vi.fn();
   await render(phone, undefined, { initialIntent: "register", onAuthenticated: complete, emailClient: email });
-  await settle(() => findButton("E-posta kullan").click());
+  expect(container.querySelector("#phone-number")).toBeNull();
+  expect(findButton("WhatsApp kullan")).not.toBeNull();
   await type("#email-address", "Example@example.invalid");
   expect(email.request).not.toHaveBeenCalled();
   await submit();
@@ -414,7 +415,6 @@ it("uses the current account only when verifying an email address for binding", 
   state.session = paidSession;
   const email = emailTransport();
   await render(client(), undefined, { initialIntent: "register", emailClient: email });
-  await settle(() => findButton("E-posta kullan").click());
   await type("#email-address", "example@example.invalid");
   expect(findButton("E-postamı doğrula").disabled).toBe(false);
   expect(container.querySelector("#existing-account-code")).toBeNull();
@@ -438,4 +438,61 @@ it("drops an email verification that resolves after switching back to WhatsApp",
   expect(email.verify.mock.calls[0][1].aborted).toBe(true);
   expect(container.querySelector("#phone-number")).not.toBeNull();
   expect(state.save).not.toHaveBeenCalled();
+});
+
+
+it("waits for signup availability without briefly presenting WhatsApp as the primary form", async () => {
+  const phone = client(), email = emailTransport();
+  let resolve!: (value: { enabled: boolean; deliveryChannel: "email" }) => void;
+  email.status.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+  await render(phone, undefined, { initialIntent: "register", emailClient: email });
+  expect(Boolean(container.querySelector("form"))).toBe(false);
+  expect(container.textContent).toContain("Kayıt seçenekleri hazırlanıyor…");
+  expect(findButton("WhatsApp kullan")).not.toBeNull();
+  await settle(() => resolve({ enabled: true, deliveryChannel: "email" }));
+  expect(container.querySelector("#email-address")).not.toBeNull();
+  expect(container.querySelector("#phone-number")).toBeNull();
+  expect(findButton("E-posta ile hesap oluştur").disabled).toBe(true);
+  expect(email.request).not.toHaveBeenCalled();
+  expect(phone.request).not.toHaveBeenCalled();
+});
+
+it("keeps WhatsApp selected when the signup email availability check finishes later", async () => {
+  const phone = client(), email = emailTransport();
+  let resolve!: (value: { enabled: boolean; deliveryChannel: "email" }) => void;
+  email.status.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+  await render(phone, undefined, { initialIntent: "register", emailClient: email });
+  await settle(() => findButton("WhatsApp kullan").click());
+  await type("#phone-number", "5551231234");
+  await settle(() => resolve({ enabled: true, deliveryChannel: "email" }));
+  expect(container.querySelector("#email-address")).toBeNull();
+  expect(findButton("WhatsApp ile hesap oluştur").disabled).toBe(false);
+  expect(phone.request).not.toHaveBeenCalled();
+  await settle(() => findButton("E-posta kullan").click());
+  expect(container.querySelector("#email-address")).not.toBeNull();
+  expect(findButton("E-posta ile hesap oluştur")).not.toBeNull();
+});
+
+it.each([false, new Error("offline")])("offers a clear signup fallback when email is unavailable", async status => {
+  const email = emailTransport(false), phone = client();
+  if (status instanceof Error) email.status.mockRejectedValueOnce(status);
+  await render(phone, undefined, { initialIntent: "register", emailClient: email });
+  expect(container.textContent).toContain("E-posta doğrulaması şu anda kullanılamıyor.");
+  expect(container.textContent).not.toContain("E-posta kullan");
+  expect(container.querySelector("#phone-number")).not.toBeNull();
+  expect(findButton("WhatsApp ile hesap oluştur")).not.toBeNull();
+  expect(email.request).not.toHaveBeenCalled();
+  expect(phone.request).not.toHaveBeenCalled();
+});
+
+it("uses email as the signup default and remembers an explicit choice across the tabs", async () => {
+  await render(client(), undefined, { emailClient: emailTransport() });
+  expect(container.querySelector("#phone-number")).not.toBeNull();
+  await settle(() => findButton("Hesap oluştur").click());
+  expect(container.querySelector("#email-address")).not.toBeNull();
+  await settle(() => findButton("WhatsApp kullan").click());
+  await settle(() => findButton("Giriş yap").click());
+  await settle(() => findButton("Hesap oluştur").click());
+  expect(container.querySelector("#phone-number")).not.toBeNull();
+  expect(findButton("WhatsApp ile hesap oluştur")).not.toBeNull();
 });

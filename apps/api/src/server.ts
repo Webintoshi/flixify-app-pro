@@ -12,6 +12,7 @@ import { registerPhoneAuthRoutes } from './phone-auth-routes.js';
 import { EmailAuthService } from "./email-auth.js";
 import { registerEmailAuthRoutes } from "./email-auth-routes.js";
 import { ResendEmailSender } from "./email-auth-resend.js";
+import { SmtpEmailSender } from "./email-auth-smtp.js";
 import {RememberedRefreshCrypto,RememberedSessionError,RememberedSessionStore,sessionHasExpired} from './remembered-session.js';
 import crypto from "node:crypto";
 import { TrialUnavailableError } from "./access-history.js";
@@ -242,7 +243,12 @@ const phoneAuthService=!env.APP_DEMO_MODE&&env.PHONE_AUTH_ENABLED&&env.PHONE_AUT
   ?new PhoneAuthService(phoneAuthStore,new PhoneAuthCrypto(env.PHONE_AUTH_SECRET),new VatanSmsWhatsAppSender({apiKey:env.VATANSMS_WHATSAPP_API_KEY,regId:env.VATANSMS_WHATSAPP_REG_ID,baseUrl:env.VATANSMS_WHATSAPP_BASE_URL},fetch,env.PHONE_AUTH_PROVIDER_DIAGNOSTICS?value=>console.warn(JSON.stringify({operation:'phone-auth-provider',...value})):undefined),phoneAuthAccounts):null;
 const emailAuthStore = env.emailAuth ? new PostgresOtpAuthStore(pool, "email") : null;
 const emailAuthService = env.emailAuth && emailAuthStore
-  ? new EmailAuthService(emailAuthStore, new PhoneAuthCrypto(env.emailAuth.secret, "email"), new ResendEmailSender(env.emailAuth), emailAuthAccounts)
+  ? new EmailAuthService(
+      emailAuthStore,
+      new PhoneAuthCrypto(env.emailAuth.secret, "email"),
+      env.emailAuth.transport === "smtp" ? new SmtpEmailSender(env.emailAuth) : new ResendEmailSender(env.emailAuth),
+      emailAuthAccounts
+    )
   : null;
 
 type AdminRequest = {

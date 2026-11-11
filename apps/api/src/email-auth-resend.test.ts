@@ -15,7 +15,7 @@ const config = {
 
 describe("email sender configuration", () => {
   it("requires a valid sender, server credential and independent secret", () => {
-    expect(resolveEmailAuthConfiguration(config)).toEqual({ secret: config.EMAIL_AUTH_SECRET, from: config.EMAIL_AUTH_FROM, apiKey: config.RESEND_API_KEY });
+    expect(resolveEmailAuthConfiguration(config)).toEqual({ secret: config.EMAIL_AUTH_SECRET, from: config.EMAIL_AUTH_FROM, apiKey: config.RESEND_API_KEY, transport: "resend" });
     expect(resolveEmailAuthConfiguration({ ...config, RESEND_API_KEY: undefined })).toBeNull();
     expect(resolveEmailAuthConfiguration({ ...config, EMAIL_AUTH_FROM: "invalid sender\r\n" })).toBeNull();
     expect(resolveEmailAuthConfiguration({ ...config, EMAIL_AUTH_SECRET: config.PHONE_AUTH_SECRET })).toBeNull();

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "parent": "a942b41b62d2d94b6fda6e65436402dbef8570d5",
+  "dependency": {
+    "name": "nodemailer",
+    "version": "10.5.0",
+    "bytes": 412406,
+    "files": 165,
+    "url": "https://registry.npmjs.org/nodemailer/-/nodemailer-10.5.0.tgz",
+    "integrity": "sha512-L/w/HH5MqpzMDuZD7fQdt/+KqymuvrpaApaIjAH2XA3ILePwlcvXCVVvP75xVrXCEt2ggK2marrrHHFB5Qu0kA=="
+  },
+  "runtime": {
+    "api": [
+      {
+        "path": "apps/api/package.json",
+        "beforeSha256": "a7b91d33214ef5f348ae7f39339a284b0c0ab0b60dd1a904fc5dc53a3709ea64",
+        "sha256": "8746a98032fc2e35843428480a36a3e79ab8a1031cbf5989b6926de77457165e",
+        "bytes": 767
+      },
+      {
+        "path": "package-lock.json",
+        "beforeSha256": "cebb4f8f8100c0381c5b932024b6d743cc19c71cef4db0bb96ebe0b75d10e899",
+        "sha256": "63bccb3efa779a42e44a7b0639f9ced0703036b0c9f8a1687ee6cea8060171bd",
+        "bytes": 253999
+      },
+      {
+        "path": "apps/api/src/email-auth-config.ts",
+        "beforeSha256": "03f0caecf3bd3e5bba5c14b2d2d483ca15360c941bc4f0727909c5eb8d34ae68",
+        "sha256": "7cbda648e5ec52c5949f7826f1d467160f95ef58ad63d14ec71362ccae1abf9a",
+        "bytes": 2332
+      },
+      {
+        "path": "apps/api/src/email-auth-smtp.ts",
+        "beforeSha256": null,
+        "sha256": "df22d36829abae6bcd2e90e7cfc35af35cf31f698cde82abf69ea78604858727",
+        "bytes": 2984
+      },
+      {
+        "path": "apps/api/src/env.ts",
+        "beforeSha256": "ebffbff0d87727189afbfdab12d8b021afedb14e2ac42c3a615bb32db875d755",
+        "sha256": "94af8bc14ce5d416ea3444f64df3b460b5d71964b8ed6ff0cd84d1a653f30eb9",
+        "bytes": 5275
+      },
+      {
+        "path": "apps/api/src/server.ts",
+        "beforeSha256": "75f8db1ddb6c250cfdef04a9e96f12a3313653239dd07d288f1951d156a660ca",
+        "sha256": "30b0c54c58b88a8699252245714861740ecc84d18706616a0628f8f594ff1ad5",
+        "bytes": 141997
+      }
+    ],
+    "ops-web": [
+      {
+        "path": "apps/ops-web/app/giris-onizleme/phone-login-preview.tsx",
+        "beforeSha256": "dbb74a5b67fce4ecda0c6d96d69dd45b64ae8d0b572359295ecf9508d4aa2f49",
+        "sha256": "4801494308a47f8abedbc5a2e1d31dae5eb3ca0a54b689969fa1f1cfc0134837",
+        "bytes": 23726
+      }
+    ]
+  }
+}
